@@ -1,0 +1,9 @@
+PySide6
+PySide6-Fluent-Widgets
+pydantic>=2.0
+opencv-python-headless
+numpy
+scipy
+openpyxl
+matplotlib
+openai>=1.0
