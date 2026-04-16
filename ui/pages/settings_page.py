@@ -13,6 +13,7 @@ class SettingsPage(QWidget):
     """设置页面 - 主题切换、快捷键自定义等配置"""
 
     shortcuts_changed = Signal()  # 快捷键保存后发出
+    ai_panel_visibility_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -193,6 +194,11 @@ class SettingsPage(QWidget):
         self._ai_max_tokens_edit.setPlaceholderText("2048")
         form.addRow("Max Tokens:", self._ai_max_tokens_edit)
 
+        from qfluentwidgets import CheckBox
+        self._ai_show_panel_cb = CheckBox("显示右侧 AI 助手栏", self._ai_card)
+        self._ai_show_panel_cb.setChecked(True)
+        ai_layout.addWidget(self._ai_show_panel_cb)
+
         ai_layout.addLayout(form)
 
         ai_btn_row = QHBoxLayout()
@@ -207,34 +213,11 @@ class SettingsPage(QWidget):
 
         layout.addWidget(self._ai_card)
 
-        # ── 报告模板管理 ──
-        self._tmpl_card = CardWidget(content)
-        tmpl_layout = QVBoxLayout(self._tmpl_card)
-
-        tmpl_title = BodyLabel("报告模板", self._tmpl_card)
-        tmpl_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
-        tmpl_layout.addWidget(tmpl_title)
-
+        # 报告模板已迁入分析页和项目树，此处保留兼容字段并隐藏。
         from qfluentwidgets import ListWidget as _ListWidget
+        self._tmpl_card = CardWidget(content)
+        self._tmpl_card.hide()
         self._tmpl_list = _ListWidget(self._tmpl_card)
-        self._tmpl_list.setMaximumHeight(160)
-        tmpl_layout.addWidget(self._tmpl_list)
-
-        tmpl_btn_row = QHBoxLayout()
-        from qfluentwidgets import FluentIcon as FIF_
-        new_tmpl_btn = PushButton("新建")
-        new_tmpl_btn.clicked.connect(self._on_new_template)
-        edit_tmpl_btn = PushButton("编辑")
-        edit_tmpl_btn.clicked.connect(self._on_edit_template)
-        del_tmpl_btn = PushButton("删除")
-        del_tmpl_btn.clicked.connect(self._on_delete_template)
-        tmpl_btn_row.addWidget(new_tmpl_btn)
-        tmpl_btn_row.addWidget(edit_tmpl_btn)
-        tmpl_btn_row.addWidget(del_tmpl_btn)
-        tmpl_btn_row.addStretch()
-        tmpl_layout.addLayout(tmpl_btn_row)
-
-        layout.addWidget(self._tmpl_card)
 
         layout.addStretch()
 
@@ -328,6 +311,7 @@ class SettingsPage(QWidget):
         self._ai_timeout_edit.setText(str(cfg.timeout))
         self._ai_temperature_edit.setText(str(cfg.temperature))
         self._ai_max_tokens_edit.setText(str(cfg.max_tokens))
+        self._ai_show_panel_cb.setChecked(bool(cfg.show_assistant))
         self._on_ai_provider_changed(idx)
 
     def _on_ai_provider_changed(self, idx: int) -> None:
@@ -364,8 +348,10 @@ class SettingsPage(QWidget):
             timeout=timeout,
             temperature=temperature,
             max_tokens=max_tokens,
+            show_assistant=self._ai_show_panel_cb.isChecked(),
         )
         cfg.save()
+        self.ai_panel_visibility_changed.emit(cfg.show_assistant)
         InfoBar.success("已保存", "AI 配置已保存", parent=self, position=InfoBarPosition.TOP)
 
     def _test_ai_connection(self) -> None:
@@ -399,14 +385,8 @@ class SettingsPage(QWidget):
     # ── 报告模板方法 ──────────────────────────────────────────
 
     def refresh_templates(self) -> None:
-        """刷新报告模板列表。"""
-        from core.project_manager import project_manager
+        """报告模板已迁入分析页；保留空实现以兼容旧调用。"""
         self._tmpl_list.clear()
-        p = project_manager.current_project
-        if p is None:
-            return
-        for t in p.report_templates:
-            self._tmpl_list.addItem(f"{'[内置] ' if t.is_builtin else ''}{t.name}")
 
     def _on_new_template(self):
         from PySide6.QtWidgets import QInputDialog

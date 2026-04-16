@@ -174,6 +174,25 @@ class FigureConfig(BaseModel):
     legend_position: str = "best"      # matplotlib loc 字符串
 
 
+class FigureState(BaseModel):
+    """图表页运行时唯一状态源。"""
+    model_config = ConfigDict(extra="ignore")
+
+    theme: str = "默认"
+    x_label: str = "X"
+    y_label: str = "Y"
+    show_errbar: bool = False
+    x_min: Optional[float] = None
+    x_max: Optional[float] = None
+    y_min: Optional[float] = None
+    y_max: Optional[float] = None
+    x_log: bool = False
+    y_log: bool = False
+    grid: bool = True
+    legend_pos: str = "best"
+    font_size: int = 10
+
+
 # ─────────────────────────────────────────────────────────────
 # Project 根节点（同时兼容 .pyline 格式）
 # ─────────────────────────────────────────────────────────────
@@ -303,16 +322,25 @@ class _NodeBase(BaseModel):
 
 
 # group_type 语义：
-#   None        = 用户创建的普通文件夹
-#   "datasets"  = 系统数据集容器（不可删/重命名）
-#   "images"    = 系统图片集容器
-#   "tools"     = 系统工具集容器
-#   "pipeline_group"  = 工具集内 Pipelines 子文件夹
-#   "template_group"  = 工具集内绘图模板子文件夹
-#   "ai_group"        = 工具集内 AI 工具子文件夹
+#   None / "user"            = 用户创建的普通文件夹
+#   "datasets"/"dataset_set" = 系统数据集容器（兼容旧值）
+#   "images"/"image_set"    = 系统图片集容器（兼容旧值）
+#   "tools"/"tool_set"      = 系统工具集容器（兼容旧值）
+#   "pipeline_group"         = 工具集内 Pipelines 子文件夹
+#   "template_group"         = 旧版绘图模板组（兼容）
+#   "figure_template_group"  = 绘图模板组
+#   "report_template_group"  = 报告模板组
+#   "ai_group"               = AI 工具总分组
+#   "prompt_group"           = Prompts 子分组
+#   "skill_group"            = Skills 子分组
+#   "agent_group"            = Agents 子分组
 _GROUP_TYPE = Literal[
-    "user", "datasets", "images", "tools",
-    "pipeline_group", "template_group", "ai_group"
+    "user",
+    "datasets", "images", "tools",
+    "dataset_set", "image_set", "tool_set",
+    "pipeline_group",
+    "template_group", "figure_template_group", "report_template_group",
+    "ai_group", "prompt_group", "skill_group", "agent_group"
 ]
 
 
@@ -341,6 +369,11 @@ class FigureTemplateNode(_NodeBase):
     figure_id: str = ""
 
 
+class ReportTemplateNode(_NodeBase):
+    kind: Literal["report_template"] = "report_template"
+    template_id: str = ""
+
+
 # v0.3 新增：AI 工具节点拆分
 class AIPromptNode(_NodeBase):
     kind: Literal["ai_prompt"] = "ai_prompt"
@@ -367,7 +400,7 @@ class AIToolNode(_NodeBase):
 TreeNodeUnion = Annotated[
     Union[
         FolderNode, DataFileNode, ImageWorkNode,
-        PipelineNode, FigureTemplateNode,
+        PipelineNode, FigureTemplateNode, ReportTemplateNode,
         AIPromptNode, AISkillNode, AIAgentNode,
         AIToolNode,   # 保留用于读取 v0.2 旧文件
     ],

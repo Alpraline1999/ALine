@@ -25,11 +25,17 @@ from core.analysis_engine import render_report, _DEFAULT_REPORT_TEMPLATE
 class ReportTemplateDialog(QDialog):
     """Markdown 报告模板编辑/渲染/导出对话框。"""
 
-    def __init__(self, parent=None, result: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        parent=None,
+        result: Optional[Dict[str, Any]] = None,
+        template_id: Optional[str] = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("生成分析报告")
         self.setMinimumSize(800, 560)
         self._result = result or {}
+        self._template_id = template_id
         self._setup_ui()
         self._load_template_list()
         self._on_preview()
@@ -98,12 +104,18 @@ class ReportTemplateDialog(QDialog):
         self._tmpl_combo.clear()
         self._tmpl_combo.addItem("默认模板")
         p = project_manager.current_project
+        selected_index = 0
         if p:
-            for tmpl in p.report_templates:
+            for idx, tmpl in enumerate(p.report_templates, start=1):
                 self._tmpl_combo.addItem(tmpl.name)
+                if self._template_id and tmpl.id == self._template_id:
+                    selected_index = idx
         self._tmpl_combo.blockSignals(False)
-        # 加载默认模板
-        self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
+        self._tmpl_combo.setCurrentIndex(selected_index)
+        if selected_index == 0:
+            self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
+        else:
+            self._on_template_selected(selected_index)
 
     def _on_template_selected(self, idx: int):
         if idx == 0:

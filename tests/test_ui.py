@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -21,7 +22,7 @@ if _PROJ_ROOT not in sys.path:
     sys.path.insert(0, _PROJ_ROOT)
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 
 _app: QApplication = None
 
@@ -185,6 +186,22 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.set_filter_kinds(["folder", "pipeline"])
         self.widget.refresh()
 
+    def test_report_template_node_visible_after_add(self):
+        self.pm.add_report_template("tmpl_a", "# Report")
+        self.widget.refresh()
+        found = []
+
+        def _walk(item):
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data:
+                found.append(data[0])
+            for idx in range(item.childCount()):
+                _walk(item.child(idx))
+
+        for idx in range(self.widget._tree.topLevelItemCount()):
+            _walk(self.widget._tree.topLevelItem(idx))
+        self.assertIn("report_template", found)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. SettingsPage — AI 配置
@@ -211,6 +228,9 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_ai_model_edit_exists(self):
         self.assertIsNotNone(self.page._ai_model_edit)
+
+    def test_ai_panel_visibility_checkbox_exists(self):
+        self.assertIsNotNone(self.page._ai_show_panel_cb)
 
     def test_save_ai_config_no_crash(self):
         self.page._ai_url_edit.setText("https://api.openai.com/v1")
@@ -269,6 +289,7 @@ class TestDataPage(unittest.TestCase):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
         if node:
             self.page.on_tree_node_selected("data_file", node.id)
+            self.assertEqual(self.page._selected_id, self.s.id)
 
     def test_on_tree_node_selected_folder(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "folder"), None)
@@ -324,11 +345,57 @@ class TestChartPage(unittest.TestCase):
 
     def test_load_template_valid(self):
         """添加模板后再加载"""
-        from models.schemas import FigureConfig
+        from models.schemas import FigureConfig, AxisConfig
         cfg = FigureConfig(name="templ1")
+        cfg.theme = "Nature"
+        cfg.show_errbar = True
+        cfg.typed_axis_config = AxisConfig(x_label="Time", y_label="Signal")
         node = self.pm.add_figure_template(cfg)
         self.assertIsNotNone(node)
         self.page.load_template(node.id)
+        self.assertEqual(self.page._figure_state.theme, "Nature")
+        self.assertEqual(self.page._figure_state.x_label, "Time")
+        self.assertTrue(self.page._figure_state.show_errbar)
+
+    def test_quick_controls_update_figure_state(self):
+        self.page._x_label_edit.setText("Time")
+        self.page._y_label_edit.setText("Intensity")
+        self.page._theme_combo.setCurrentText("ACS")
+        self.page._errbar_cb.setChecked(True)
+        state = self.page._sync_state_from_controls()
+        self.assertEqual(state.x_label, "Time")
+        self.assertEqual(state.y_label, "Intensity")
+        self.assertEqual(state.theme, "ACS")
+        self.assertTrue(state.show_errbar)
+
+    def test_apply_advanced_config_updates_figure_state(self):
+        self.page._apply_advanced_config({
+            "theme": "IEEE",
+            "x_label": "Voltage",
+            "y_label": "Current",
+            "x_min": "0",
+            "x_max": "10",
+            "y_min": "1",
+            "y_max": "5",
+            "x_log": True,
+            "y_log": False,
+            "grid": False,
+            "legend_pos": "upper right",
+            "font_size": 12,
+            "show_errbar": True,
+        })
+        self.assertEqual(self.page._figure_state.theme, "IEEE")
+        self.assertEqual(self.page._figure_state.x_label, "Voltage")
+        self.assertEqual(self.page._figure_state.legend_pos, "upper right")
+        self.assertEqual(self.page._figure_state.x_max, 10.0)
+
+    def test_save_template_named_uses_figure_state(self):
+        self.page._apply_advanced_config({"theme": "Nature", "x_label": "t", "y_label": "y", "show_errbar": True})
+        node = self.page._save_template_named("模板状态A")
+        self.assertIsNotNone(node)
+        fig = next((f for f in self.p.figures if f.name == "模板状态A"), None)
+        self.assertIsNotNone(fig)
+        self.assertEqual(fig.theme, "Nature")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -389,6 +456,22 @@ class TestProcessPage(unittest.TestCase):
         self.page._load_ops_into_chain([])
         self.assertEqual(len(self.page._ops), 0)
 
+    def test_save_pipeline_template_as_named(self):
+        self.page._load_ops_into_chain([{"type": "smooth", "params": {"method": "moving_avg", "window": 5}}])
+        result = self.page._save_pipeline_template_as_named("流程模板A")
+        self.assertTrue(result)
+        self.assertTrue(any(sp.name == "流程模板A" for sp in self.p.saved_pipelines))
+
+    def test_overwrite_pipeline_template(self):
+        sp = self.pm.add_saved_pipeline("流程模板B", [{"type": "smooth", "params": {"window": 5}}])
+        node = next((n for n in self.p.tree.nodes if n.kind == "pipeline" and n.pipeline_id == sp.id), None)
+        self.assertIsNotNone(node)
+        self.page.load_pipeline(node.id)
+        self.page._load_ops_into_chain([{"type": "normalize", "params": {"mode": "minmax"}}])
+        self.assertTrue(self.page._overwrite_pipeline_template())
+        saved = self.p.find_saved_pipeline(sp.id)
+        self.assertEqual(saved.ops[0]["type"], "normalize")
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 6. AnalysisPage — on_tree_node_selected
@@ -421,6 +504,47 @@ class TestAnalysisPage(unittest.TestCase):
 
     def test_on_tree_node_selected_unknown(self):
         self.page.on_tree_node_selected("pipeline", "fake-id")
+
+    def test_load_report_template_from_tree(self):
+        tmpl = self.pm.add_report_template("analysis_tmpl", "# Report")
+        node = next((n for n in self.p.tree.nodes if n.kind == "report_template" and n.template_id == tmpl.id), None)
+        self.assertIsNotNone(node)
+        self.page.load_report_template(node.id)
+        self.assertEqual(self.page._current_report_template_id, tmpl.id)
+        self.assertEqual(self.page._report_editor.toPlainText(), "# Report")
+
+    def test_on_tree_node_activated_report_template(self):
+        tmpl = self.pm.add_report_template("analysis_tmpl", "# Report")
+        node = next((n for n in self.p.tree.nodes if n.kind == "report_template" and n.template_id == tmpl.id), None)
+        self.assertIsNotNone(node)
+        self.page.on_tree_node_activated("report_template", node.id)
+        self.assertEqual(self.page._current_report_template_id, tmpl.id)
+
+    def test_generate_report_renders_in_page(self):
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+        self.page._on_generate_report()
+        self.assertEqual(self.page._result_tabs.currentIndex(), 1)
+        self.assertIn("分析类型", self.page._report_preview.toPlainText())
+
+    def test_save_report_template_as_named(self):
+        self.page._report_editor.setPlainText("# Saved Report")
+        self.assertTrue(self.page._save_report_template_as_named("模板A"))
+        self.assertTrue(any(t.name == "模板A" for t in self.p.report_templates))
+
+    def test_export_report_to_path(self):
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+        self.page._on_generate_report()
+        fd, path = tempfile.mkstemp(suffix=".md")
+        os.close(fd)
+        try:
+            self.assertTrue(self.page._export_report_to_path(path))
+            with open(path, "r", encoding="utf-8") as handle:
+                content = handle.read()
+            self.assertIn("分析类型", content)
+        finally:
+            os.unlink(path)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -484,6 +608,9 @@ class TestMainWindow(unittest.TestCase):
     def test_tree_panel_exists(self):
         self.assertIsNotNone(self.win._tree_panel)
 
+    def test_ai_panel_exists(self):
+        self.assertIsNotNone(self.win._ai_panel)
+
     def test_tree_panel_has_tree_widget(self):
         from ui.widgets.project_tree import ProjectTreeWidget
         self.assertIsInstance(self.win._tree_panel.tree, ProjectTreeWidget)
@@ -491,14 +618,17 @@ class TestMainWindow(unittest.TestCase):
     def test_switch_to_data_page_shows_tree(self):
         self.win.switchTo(self.win.data_page)
         self.assertFalse(self.win._tree_panel.isHidden())
+        self.assertFalse(self.win._ai_panel.isHidden())
 
     def test_switch_to_settings_page_hides_tree(self):
         self.win.switchTo(self.win.settings_page)
         self.assertTrue(self.win._tree_panel.isHidden())
+        self.assertTrue(self.win._ai_panel.isHidden())
 
     def test_switch_to_home_page_hides_tree(self):
         self.win.switchTo(self.win.home_page)
         self.assertTrue(self.win._tree_panel.isHidden())
+        self.assertTrue(self.win._ai_panel.isHidden())
 
     def test_switch_to_chart_page_shows_tree(self):
         self.win.switchTo(self.win.chart_page)
@@ -529,6 +659,20 @@ class TestMainWindow(unittest.TestCase):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
         if node:
             self.win._on_tree_node_selected("data_file", node.id)
+            self.assertIn("data_file", self.win._ai_panel._node_label.text())
+
+    def test_ai_panel_can_be_hidden_by_settings(self):
+        self.win.settings_page._ai_show_panel_cb.setChecked(False)
+        self.win.settings_page._save_ai_config()
+        self.win.switchTo(self.win.data_page)
+        self.assertTrue(self.win._ai_panel.isHidden())
+        self.win.settings_page._ai_show_panel_cb.setChecked(True)
+        self.win.settings_page._save_ai_config()
+
+    def test_ai_panel_tool_runner_lists_tree_nodes(self):
+        self.win.switchTo(self.win.data_page)
+        result = self.win._run_ai_tool("list_tree_nodes")
+        self.assertIn("folder", result)
 
     def test_tree_node_selected_routes_to_process_page(self):
         self.win.switchTo(self.win.process_page)
@@ -549,6 +693,13 @@ class TestMainWindow(unittest.TestCase):
         tn = self.pm.add_figure_template(cfg)
         if tn:
             self.win._on_tree_node_activated("figure_template", tn.id)
+
+    def test_tree_node_activated_report_template(self):
+        tmpl = self.pm.add_report_template("r1", "# Report")
+        node = next((n for n in self.p.tree.nodes if n.kind == "report_template" and n.template_id == tmpl.id), None)
+        self.assertIsNotNone(node)
+        self.win._on_tree_node_activated("report_template", node.id)
+        self.assertEqual(self.win.analysis_page._current_report_template_id, tmpl.id)
 
     def test_tree_node_activated_image_work(self):
         self.win._on_tree_node_activated("image_work", "fake-img-id")
@@ -819,6 +970,33 @@ class TestImportDialogParsers(unittest.TestCase):
         self.assertIsNotNone(dlg)
         dlg.deleteLater()
 
+    def test_import_dialog_state_machine_back_and_forth(self):
+        from ui.dialogs.import_dialog import ImportDialog
+        dlg = ImportDialog()
+        dlg._file_path = "demo.csv"
+        dlg._raw_headers = ["x", "y"]
+        dlg._raw_rows = [[1.0, 2.0], [3.0, 4.0]]
+        dlg._btn_next.setEnabled(True)
+
+        dlg._go_next()
+        self.assertEqual(dlg._stack.currentIndex(), 1)
+        self.assertEqual(dlg._btn_next.text(), "导入")
+        self.assertTrue(dlg._btn_back.isEnabled())
+
+        dlg._go_next()
+        self.assertEqual(dlg._stack.currentIndex(), 2)
+        self.assertEqual(dlg._btn_next.text(), "完成")
+
+        dlg._go_back()
+        self.assertEqual(dlg._stack.currentIndex(), 1)
+        self.assertEqual(dlg._btn_next.text(), "导入")
+
+        dlg._go_back()
+        self.assertEqual(dlg._stack.currentIndex(), 0)
+        self.assertEqual(dlg._btn_next.text(), "下一步")
+        self.assertFalse(dlg._btn_back.isEnabled())
+        dlg.deleteLater()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 11. AnalysisPage — on_tree_node_activated 和输入管理
@@ -946,6 +1124,7 @@ class TestSettingsPageV3(unittest.TestCase):
 
     def test_tmpl_list_exists(self):
         self.assertIsNotNone(self.page._tmpl_list)
+        self.assertTrue(self.page._tmpl_card.isHidden())
 
     def test_refresh_templates_no_project(self):
         """无打开项目时刷新不崩溃"""
@@ -960,9 +1139,12 @@ class TestSettingsPageV3(unittest.TestCase):
         restore = _patch_pm(pm)
         try:
             self.page.refresh_templates()
-            self.assertGreater(self.page._tmpl_list.count(), 0)
+            self.assertEqual(self.page._tmpl_list.count(), 0)
         finally:
             restore()
+
+    def test_report_template_card_hidden(self):
+        self.assertTrue(self.page._tmpl_card.isHidden())
 
 
 if __name__ == "__main__":

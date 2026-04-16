@@ -30,6 +30,7 @@ class ImportDialog(QDialog):
         self.setWindowTitle("导入数据文件")
         self.setMinimumSize(600, 480)
         self.imported_series: List[DataSeries] = []
+        self._import_completed = False
 
         self._file_path: str = ""
         self._raw_headers: List[str] = []
@@ -228,8 +229,9 @@ class ImportDialog(QDialog):
             self._stack.setCurrentIndex(2)
             self._step_label.setText("步骤 3 / 3：完成")
             self._btn_next.setText("完成")
-            self._btn_next.clicked.disconnect()
-            self._btn_next.clicked.connect(self.accept)
+            self._import_completed = True
+        elif cur == 2 and self._import_completed:
+            self.accept()
 
     def _go_back(self):
         cur = self._stack.currentIndex()
@@ -238,6 +240,13 @@ class ImportDialog(QDialog):
             self._step_label.setText("步骤 1 / 3：选择文件")
             self._btn_back.setEnabled(False)
             self._btn_next.setText("下一步")
+            self._import_completed = False
+        elif cur == 2:
+            self._stack.setCurrentIndex(1)
+            self._step_label.setText("步骤 2 / 3：分配列角色")
+            self._btn_back.setEnabled(True)
+            self._btn_next.setText("导入")
+            self._import_completed = False
 
     # ── 导入逻辑 ─────────────────────────────────────────────────────────
 
@@ -288,6 +297,9 @@ class ImportDialog(QDialog):
 
     def get_results(self) -> List[DataSeries]:
         return self.imported_series
+
+    def get_file_name(self) -> str:
+        return Path(self._file_path).name if self._file_path else "导入数据"
 
 
 # ─────────────────────── 文件解析工具 ──────────────────────────────────

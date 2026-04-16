@@ -10,12 +10,12 @@ from typing import Any, Dict, List, Optional, Set
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QListWidgetItem, QSplitter, QVBoxLayout, QWidget,
+    QAbstractItemView, QFileDialog, QHBoxLayout, QListWidgetItem, QSplitter, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
     BodyLabel, ComboBox, FluentIcon as FIF,
     InfoBar, InfoBarPosition, LineEdit,
-    ListWidget, PrimaryPushButton, PushButton, ToolButton,
+    ListWidget, PlainTextEdit, PrimaryPushButton, PushButton, TabCloseButtonDisplayMode, TabWidget, ToolButton,
 )
 
 from ui.theme import make_section_label, make_hsep
@@ -48,9 +48,11 @@ _FIT_MODEL_IDS    = ["linear", "power", "exponential", "gaussian", "poly2", "pol
 class AnalysisPage(QWidget):
     """数据分析页 — 通过共享项目树选择分析数据。"""
 
+    project_modified = Signal()
+
     # 由 main_window 框架路由的节点类型
     tree_filter_kinds: List[str] = [
-        "folder", "data_file", "image_work", "series", "curve",
+        "folder", "data_file", "image_work", "report_template", "series", "curve",
     ]
 
     def __init__(self, parent=None):
@@ -58,6 +60,8 @@ class AnalysisPage(QWidget):
         self._result: Optional[Dict[str, Any]] = None
         # 已选分析数据列表：List[{"kind": str, "node_id": str, "label": str}]
         self._selected_inputs: List[dict] = []
+        self._current_report_template_id: Optional[str] = None
+        self._current_report_template_name: str = "默认模板"
         self._setup_ui()
 
     # ─────────────────────────────────────────────────────────
@@ -153,6 +157,10 @@ class AnalysisPage(QWidget):
         report_btn.clicked.connect(self._on_generate_report)
         lv.addWidget(report_btn)
 
+        self._report_template_label = BodyLabel("当前报告模板: 默认模板")
+        self._report_template_label.setWordWrap(True)
+        lv.addWidget(self._report_template_label)
+
         self._on_type_changed(0)
         return panel
 
@@ -161,25 +169,72 @@ class AnalysisPage(QWidget):
         rv = QVBoxLayout(panel)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(6)
-        rv.addWidget(make_section_label("分析结果"))
+        self._result_tabs = TabWidget(panel)
+        self._result_tabs.tabBar.setAddButtonVisible(False)
+        self._result_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
+
+        result_tab = QWidget(panel)
+        result_layout = QVBoxLayout(result_tab)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(6)
+        result_layout.addWidget(make_section_label("分析结果"))
 
         if _HAS_MPL:
             self._figure = Figure(figsize=(6, 4), tight_layout=True)
             self._canvas = FigureCanvas(self._figure)
             self._canvas.setMinimumHeight(300)
-            rv.addWidget(self._canvas, stretch=2)
+            result_layout.addWidget(self._canvas, stretch=2)
         else:
             self._figure = None
             self._canvas = None
-            rv.addWidget(BodyLabel("需要 matplotlib"), stretch=2)
+            result_layout.addWidget(BodyLabel("需要 matplotlib"), stretch=2)
 
-        rv.addWidget(make_hsep())
-        rv.addWidget(make_section_label("摘要"))
+        result_layout.addWidget(make_hsep())
+        result_layout.addWidget(make_section_label("摘要"))
         self._summary_label = BodyLabel("（运行分析后显示结果）")
         self._summary_label.setWordWrap(True)
         self._summary_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
-        rv.addWidget(self._summary_label, stretch=1)
+        result_layout.addWidget(self._summary_label, stretch=1)
+
+        report_tab = QWidget(panel)
+        report_layout = QVBoxLayout(report_tab)
+        report_layout.setContentsMargins(0, 0, 0, 0)
+        report_layout.setSpacing(6)
+        report_layout.addWidget(make_section_label("报告模板"))
+
+        top_row = QHBoxLayout()
+        self._report_editor_title = BodyLabel("当前模板内容")
+        top_row.addWidget(self._report_editor_title)
+        top_row.addStretch()
+        btn_render = PushButton(FIF.PLAY, "渲染", panel)
+        btn_render.clicked.connect(self._render_report_preview)
+        top_row.addWidget(btn_render)
+        btn_save = PushButton(FIF.SAVE, "保存模板", panel)
+        btn_save.clicked.connect(self._save_current_report_template)
+        top_row.addWidget(btn_save)
+        btn_save_as = PushButton(FIF.ADD, "另存为模板", panel)
+        btn_save_as.clicked.connect(self._save_report_template_as)
+        top_row.addWidget(btn_save_as)
+        btn_export = PushButton(FIF.SHARE, "导出 Markdown", panel)
+        btn_export.clicked.connect(self._export_report)
+        top_row.addWidget(btn_export)
+        report_layout.addLayout(top_row)
+
+        self._report_editor = PlainTextEdit(panel)
+        self._report_editor.setPlaceholderText("在此编辑报告 Markdown 模板…")
+        report_layout.addWidget(self._report_editor, stretch=1)
+
+        report_layout.addWidget(make_hsep())
+        report_layout.addWidget(make_section_label("渲染预览"))
+        self._report_preview = PlainTextEdit(panel)
+        self._report_preview.setReadOnly(True)
+        report_layout.addWidget(self._report_preview, stretch=1)
+
+        self._result_tabs.addTab(result_tab, "分析结果")
+        self._result_tabs.addTab(report_tab, "报告模板")
+        rv.addWidget(self._result_tabs, stretch=1)
+        self._sync_report_editor_from_template()
         return panel
 
     # ─────────────────────────────────────────────────────────
@@ -194,6 +249,9 @@ class AnalysisPage(QWidget):
         """双击树节点 → 加入分析输入列表。"""
         if kind.endswith("_to_analysis"):
             kind = kind[:-12]
+        if kind == "report_template":
+            self.load_report_template(node_id)
+            return
         if kind not in ("series", "curve", "data_file", "image_work"):
             return
         # 获取节点 label
@@ -203,7 +261,7 @@ class AnalysisPage(QWidget):
             return
         self._selected_inputs.append({"kind": kind, "node_id": node_id, "label": label})
         item = QListWidgetItem(label)
-        item.setData(Qt.UserRole, {"kind": kind, "node_id": node_id})
+        item.setData(Qt.ItemDataRole.UserRole, {"kind": kind, "node_id": node_id})
         self._input_list.addItem(item)
 
     def _get_node_label(self, kind: str, node_id: str) -> str:
@@ -238,14 +296,15 @@ class AnalysisPage(QWidget):
     def _remove_selected_inputs(self):
         to_remove: Set[str] = set()
         for item in self._input_list.selectedItems():
-            d = item.data(Qt.UserRole)
+            d = item.data(Qt.ItemDataRole.UserRole)
             if d:
                 to_remove.add(d["node_id"])
         self._selected_inputs = [x for x in self._selected_inputs
                                   if x["node_id"] not in to_remove]
         for i in range(self._input_list.count() - 1, -1, -1):
             item = self._input_list.item(i)
-            if item.data(Qt.UserRole) and item.data(Qt.UserRole)["node_id"] in to_remove:
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if data and data["node_id"] in to_remove:
                 self._input_list.takeItem(i)
 
     # ─────────────────────────────────────────────────────────
@@ -494,9 +553,102 @@ class AnalysisPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _on_generate_report(self):
-        from ui.dialogs.report_template_dialog import ReportTemplateDialog
-        dlg = ReportTemplateDialog(self, self._result)
-        dlg.exec()
+        self._result_tabs.setCurrentIndex(1)
+        self._render_report_preview()
+
+    def _current_report_template_content(self) -> str:
+        from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
+
+        if self._current_report_template_id:
+            template = project_manager.get_report_template(self._current_report_template_id)
+            if template is not None:
+                return template.content
+        return _DEFAULT_REPORT_TEMPLATE
+
+    def _sync_report_editor_from_template(self) -> None:
+        self._report_editor.setPlainText(self._current_report_template_content())
+        self._render_report_preview()
+
+    def _render_report_preview(self) -> None:
+        from core.analysis_engine import render_report
+
+        content = self._report_editor.toPlainText()
+        rendered = render_report(content, self._result)
+        self._report_preview.setPlainText(rendered)
+
+    def _save_report_template_as_named(self, name: str) -> bool:
+        clean_name = name.strip()
+        if not clean_name:
+            return False
+        content = self._report_editor.toPlainText()
+        template = project_manager.add_report_template(clean_name, content)
+        if template is None:
+            return False
+        self._current_report_template_id = template.id
+        self._current_report_template_name = template.name
+        self._report_template_label.setText(f"当前报告模板: {self._current_report_template_name}")
+        self.project_modified.emit()
+        return True
+
+    def _save_report_template_as(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(self, "另存为报告模板", "模板名称:")
+        if not ok or not name.strip():
+            return
+        if self._save_report_template_as_named(name):
+            InfoBar.success("已保存", f"模板 {name.strip()} 已保存", parent=self, position=InfoBarPosition.TOP)
+
+    def _save_current_report_template(self) -> None:
+        content = self._report_editor.toPlainText()
+        if self._current_report_template_id:
+            if project_manager.update_report_template(self._current_report_template_id, content=content):
+                self.project_modified.emit()
+                InfoBar.success("已保存", "当前报告模板已更新", parent=self, position=InfoBarPosition.TOP)
+                return
+        self._save_report_template_as()
+
+    def _export_report_to_path(self, path: str) -> bool:
+        if not path:
+            return False
+        rendered = self._report_preview.toPlainText()
+        if not rendered:
+            self._render_report_preview()
+            rendered = self._report_preview.toPlainText()
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(rendered)
+        return True
+
+    def _export_report(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出分析报告",
+            "analysis_report.md",
+            "Markdown (*.md);;所有文件 (*)",
+        )
+        if not path:
+            return
+        if self._export_report_to_path(path):
+            InfoBar.success("导出成功", path, parent=self, position=InfoBarPosition.TOP)
+
+    def load_report_template(self, template_node_id: str) -> None:
+        node = project_manager.get_node_by_id(template_node_id)
+        if node is None or node.kind != "report_template":
+            return
+        template = project_manager.get_report_template(node.template_id)
+        if template is None:
+            return
+        self._current_report_template_id = template.id
+        self._current_report_template_name = template.name or "默认模板"
+        self._report_template_label.setText(f"当前报告模板: {self._current_report_template_name}")
+        self._sync_report_editor_from_template()
+        InfoBar.success(
+            "已应用模板",
+            f"当前报告模板已切换为 {self._current_report_template_name}",
+            parent=self,
+            position=InfoBarPosition.TOP,
+            duration=2500,
+        )
 
     # ─────────────────────────────────────────────────────────
     # 外部接口

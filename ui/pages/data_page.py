@@ -27,7 +27,7 @@ from ui.theme import (
     make_section_label, make_hsep,
 )
 from core.project_manager import project_manager
-from models.schemas import DataSeries, Dataset, Curve
+from models.schemas import DataFile, DataSeries, Dataset, Curve
 
 
 # ── 树节点类型常量 ────────────────────────────────────────────
@@ -83,7 +83,7 @@ class DataPage(QWidget):
         # 工具栏
         toolbar = QHBoxLayout()
         toolbar.setSpacing(4)
-        lbl = make_section_label("数据树")
+        lbl = make_section_label("共享树入口")
         toolbar.addWidget(lbl)
         toolbar.addStretch()
 
@@ -97,6 +97,10 @@ class DataPage(QWidget):
         toolbar.addWidget(self._btn_import)
         layout.addLayout(toolbar)
 
+        self._shared_tree_hint = CaptionLabel("请使用左侧共享项目树选择数据资产；此处仅保留当前对象相关操作。", panel)
+        self._shared_tree_hint.setWordWrap(True)
+        layout.addWidget(self._shared_tree_hint)
+
         # 树
         self._tree = TreeWidget(self)
         self._tree.setHeaderHidden(True)
@@ -104,6 +108,7 @@ class DataPage(QWidget):
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
+        self._tree.hide()
         layout.addWidget(self._tree)
 
         # 底部操作按钮
@@ -323,16 +328,11 @@ class DataPage(QWidget):
             series_list = dlg.get_results()
             if not series_list:
                 return
-            # 放入第一个数据集或新建
-            if p.datasets:
-                target_ds = p.datasets[-1]
-            else:
-                target_ds = project_manager.add_dataset("导入数据")
-            for s in series_list:
-                project_manager.add_series_to_dataset(target_ds.id, s)
+            df = DataFile(name=dlg.get_file_name(), series=series_list)
+            project_manager.add_data_file(df)
             self.refresh()
             self.project_modified.emit()
-            InfoBar.success("导入成功", f"已导入 {len(series_list)} 条数据系列", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.success("导入成功", f"已导入 {len(series_list)} 条数据系列到数据文件 {df.name}", parent=self, position=InfoBarPosition.TOP)
 
     # ─────────────────────────────────────────────────────────
     # 操作：新建数据集
@@ -506,6 +506,16 @@ class DataPage(QWidget):
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树选中节点 → 在数据管理树中自动选中对应项并显示预览。"""
+        self._shared_tree_hint.setText(f"当前共享树节点: {kind} / {node_id}")
+        if kind in ("data_file", "series", "curve", "image_work"):
+            series = project_manager.get_series_from_node(kind, node_id)
+            if series and series.x:
+                self._selected_type = "series" if kind in ("data_file", "series") else "curve"
+                self._selected_id = series.id
+                self._show_xy_preview(series.x, series.y, series.name)
+                self._set_actions_enabled(True)
+                return
+
         # 先在当前树里找对应 obj_id
         def _search(root_item):
             for i in range(root_item.childCount()):

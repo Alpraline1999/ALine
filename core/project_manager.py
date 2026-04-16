@@ -27,6 +27,7 @@ from models.schemas import (
     ImageWorkNode,
     PipelineNode,
     FigureTemplateNode,
+    ReportTemplateNode,
     AIToolNode,
     AIPromptNode,
     AISkillNode,
@@ -42,6 +43,19 @@ from models.schemas import (
 )
 
 _ALINE_VERSION = "0.3"
+
+_GROUP_TYPE_ALIASES = {
+    "datasets": {"datasets", "dataset_set"},
+    "images": {"images", "image_set"},
+    "tools": {"tools", "tool_set"},
+    "pipeline_group": {"pipeline_group"},
+    "template_group": {"template_group", "figure_template_group"},
+    "report_template_group": {"report_template_group"},
+    "ai_group": {"ai_group"},
+    "prompt_group": {"prompt_group"},
+    "skill_group": {"skill_group"},
+    "agent_group": {"agent_group"},
+}
 
 
 class ProjectManager:
@@ -600,6 +614,7 @@ class ProjectManager:
             "工具集": "tools",
             "Pipelines": "pipeline_group",
             "绘图模板": "template_group",
+            "报告模板": "report_template_group",
             "AI 工具": "ai_group",
         }
         tools_folder_id = None
@@ -636,14 +651,18 @@ class ProjectManager:
                 new_nodes.append(node)
         p.tree.nodes = new_nodes
 
-        # 确保工具集内存在 template_group / ai_group 子文件夹
+        # 确保工具集内存在 figure/report/ai 子文件夹
         if tools_folder_id:
             has_template = any(
-                n.kind == "folder" and getattr(n, "group_type", None) == "template_group"
+                n.kind == "folder" and getattr(n, "group_type", None) in _GROUP_TYPE_ALIASES["template_group"]
+                for n in p.tree.nodes
+            )
+            has_report = any(
+                n.kind == "folder" and getattr(n, "group_type", None) in _GROUP_TYPE_ALIASES["report_template_group"]
                 for n in p.tree.nodes
             )
             has_ai = any(
-                n.kind == "folder" and getattr(n, "group_type", None) == "ai_group"
+                n.kind == "folder" and getattr(n, "group_type", None) in _GROUP_TYPE_ALIASES["ai_group"]
                 for n in p.tree.nodes
             )
             base_order = p.tree.get_siblings_max_order(tools_folder_id) + 1
@@ -651,6 +670,12 @@ class ProjectManager:
                 p.tree.nodes.append(FolderNode(
                     name="绘图模板", parent_id=tools_folder_id,
                     order=base_order, group_type="template_group",
+                ))
+                base_order += 1
+            if not has_report:
+                p.tree.nodes.append(FolderNode(
+                    name="报告模板", parent_id=tools_folder_id,
+                    order=base_order, group_type="report_template_group",
                 ))
                 base_order += 1
             if not has_ai:
@@ -681,7 +706,10 @@ class ProjectManager:
             name="绘图模板", parent_id=tools_folder.id, order=1, group_type="template_group"
         ))
         p.tree.nodes.append(FolderNode(
-            name="AI 工具", parent_id=tools_folder.id, order=2, group_type="ai_group"
+            name="报告模板", parent_id=tools_folder.id, order=2, group_type="report_template_group"
+        ))
+        p.tree.nodes.append(FolderNode(
+            name="AI 工具", parent_id=tools_folder.id, order=3, group_type="ai_group"
         ))
 
     def sync_legacy_datasets(self, project: Optional[Project] = None) -> None:
@@ -740,6 +768,10 @@ class ProjectManager:
             sp = p.find_saved_pipeline(node.pipeline_id)
             if sp:
                 sp.name = new_name
+        elif node.kind == "report_template":
+            tmpl = p.find_report_template(node.template_id)
+            if tmpl:
+                tmpl.name = new_name
         elif node.kind == "ai_prompt":
             prompt = self.get_ai_prompt(node.prompt_id)
             if prompt:
@@ -779,6 +811,8 @@ class ProjectManager:
                 p.saved_pipelines = [sp for sp in p.saved_pipelines if sp.id != node.pipeline_id]
             elif node.kind == "figure_template":
                 p.figures = [f for f in p.figures if f.id != node.figure_id]
+            elif node.kind == "report_template":
+                p.report_templates = [t for t in p.report_templates if t.id != node.template_id]
             elif node.kind == "ai_prompt":
                 p.ai_prompts = [x for x in p.ai_prompts if x.id != node.prompt_id]
             elif node.kind == "ai_skill":
@@ -834,9 +868,10 @@ class ProjectManager:
         p = self.current_project
         if p is None or p.tree is None:
             return None
+        candidates = _GROUP_TYPE_ALIASES.get(group_type, {group_type})
         for node in p.tree.nodes:
             if (node.kind == "folder"
-                    and getattr(node, "group_type", None) == group_type
+                    and getattr(node, "group_type", None) in candidates
                     and (parent_id is None or node.parent_id == parent_id)):
                 return node
         return None
@@ -867,6 +902,17 @@ class ProjectManager:
         if p is None:
             return None
         return p.find_data_file(df_id)
+
+    def add_series_to_data_file(self, data_file_id: str, series: DataSeries) -> bool:
+        p = self.current_project
+        if p is None:
+            return False
+        df = p.find_data_file(data_file_id)
+        if df is None:
+            return False
+        df.series.append(series)
+        p.is_modified = True
+        return True
 
     # ─────────────────────────────────────────────
     # v0.2 Pipeline CRUD
@@ -905,6 +951,34 @@ class ProjectManager:
             return []
         sp = p.find_saved_pipeline(pipeline_id)
         return list(sp.ops) if sp else []
+
+    def update_saved_pipeline(
+        self,
+        pipeline_id: str,
+        *,
+        name: Optional[str] = None,
+        ops: Optional[List[dict]] = None,
+        description: Optional[str] = None,
+    ) -> bool:
+        p = self.current_project
+        if p is None:
+            return False
+        sp = p.find_saved_pipeline(pipeline_id)
+        if sp is None:
+            return False
+        if name is not None:
+            sp.name = name
+        if ops is not None:
+            sp.ops = list(ops)
+        if description is not None:
+            sp.description = description
+        if name is not None and p.tree is not None:
+            for node in p.tree.nodes:
+                if node.kind == "pipeline" and node.pipeline_id == pipeline_id:
+                    node.name = name
+                    break
+        p.is_modified = True
+        return True
 
     def delete_saved_pipeline(self, pipeline_id: str) -> bool:
         p = self.current_project
@@ -965,16 +1039,40 @@ class ProjectManager:
             return True
         return False
 
+    def _report_template_parent_id(self) -> Optional[str]:
+        folder = self._find_folder_by_group_type("report_template_group")
+        return folder.id if folder else None
+
     # ─────────────────────────────────────────────
     # v0.3 ReportTemplate CRUD
     # ─────────────────────────────────────────────
 
-    def add_report_template(self, name: str, content: str = "", is_builtin: bool = False) -> Optional[ReportTemplate]:
+    def add_report_template(
+        self,
+        name: str,
+        content: str = "",
+        is_builtin: bool = False,
+        parent_id: Optional[str] = None,
+    ) -> Optional[ReportTemplate]:
         p = self.current_project
         if p is None:
             return None
+        if p.tree is None:
+            self.migrate_to_v2(p)
         tmpl = ReportTemplate(name=name, content=content, is_builtin=is_builtin)
         p.report_templates.append(tmpl)
+        if parent_id is None:
+            parent_id = self._report_template_parent_id()
+            if parent_id is None:
+                tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
+                parent_id = tools_folder.id if tools_folder else None
+        order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore[union-attr]
+        p.tree.nodes.append(ReportTemplateNode(  # type: ignore[union-attr]
+            name=name,
+            parent_id=parent_id,
+            template_id=tmpl.id,
+            order=order,
+        ))
         p.is_modified = True
         return tmpl
 
@@ -993,6 +1091,11 @@ class ProjectManager:
             return False
         if name is not None:
             tmpl.name = name
+            if p.tree is not None:
+                for node in p.tree.nodes:
+                    if node.kind == "report_template" and node.template_id == template_id:
+                        node.name = name
+                        break
         if content is not None:
             tmpl.content = content
         p.is_modified = True
@@ -1006,6 +1109,11 @@ class ProjectManager:
         if tmpl is None or tmpl.is_builtin:
             return False
         p.report_templates = [t for t in p.report_templates if t.id != template_id]
+        if p.tree is not None:
+            p.tree.nodes = [
+                n for n in p.tree.nodes
+                if not (n.kind == "report_template" and n.template_id == template_id)
+            ]
         p.is_modified = True
         return True
 

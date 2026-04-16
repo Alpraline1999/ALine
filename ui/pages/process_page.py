@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout,
-    QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem,
+    QInputDialog, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem,
 )
 from qfluentwidgets import (
     BodyLabel, ComboBox, FluentIcon as FIF,
@@ -74,6 +74,8 @@ class ProcessPage(QWidget):
         self._ops: List[Dict[str, Any]] = []
         self._param_widgets: List[_ParamWidget] = []
         self._selected_src_id: Optional[str] = None
+        self._current_pipeline_id: Optional[str] = None
+        self._pipeline_template_ids: List[str] = []
         # 防抖定时器：参数变更时防止每次按键都触发管道计算
         self._run_timer = QTimer(self)
         self._run_timer.setSingleShot(True)
@@ -105,15 +107,20 @@ class ProcessPage(QWidget):
         lv = QVBoxLayout(panel)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(6)
-        lv.addWidget(make_section_label("输入数据"))
+        lv.addWidget(make_section_label("当前输入"))
+        self._shared_tree_hint = BodyLabel("请通过共享项目树选择处理输入。")
+        self._shared_tree_hint.setWordWrap(True)
+        lv.addWidget(self._shared_tree_hint)
         self._src_tree = TreeWidget(self)
         self._src_tree.setHeaderHidden(True)
         self._src_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._src_tree.itemSelectionChanged.connect(self._on_src_selected)
+        self._src_tree.hide()
         lv.addWidget(self._src_tree)
         refresh_btn = ToolButton(FIF.SYNC)
         refresh_btn.setToolTip("刷新数据源列表")
         refresh_btn.clicked.connect(self._refresh_tree)
+        refresh_btn.hide()
         lv.addWidget(refresh_btn)
         return panel
 
@@ -125,6 +132,24 @@ class ProcessPage(QWidget):
         mv.setContentsMargins(0, 0, 0, 0)
         mv.setSpacing(6)
         mv.addWidget(make_section_label("操作链"))
+
+        template_row = QHBoxLayout()
+        self._pipeline_combo = ComboBox(self)
+        template_row.addWidget(self._pipeline_combo, 1)
+        load_tpl_btn = ToolButton(FIF.FOLDER)
+        load_tpl_btn.setToolTip("加载模板")
+        load_tpl_btn.clicked.connect(self._load_pipeline_from_combo)
+        template_row.addWidget(load_tpl_btn)
+        save_as_btn = ToolButton(FIF.ADD)
+        save_as_btn.setToolTip("另存为模板")
+        save_as_btn.clicked.connect(self._on_save_pipeline_template_as)
+        template_row.addWidget(save_as_btn)
+        overwrite_btn = ToolButton(FIF.SAVE)
+        overwrite_btn.setToolTip("覆盖当前模板")
+        overwrite_btn.clicked.connect(self._overwrite_current_pipeline)
+        template_row.addWidget(overwrite_btn)
+        mv.addLayout(template_row)
+
         self._op_list = ListWidget(self)
         self._op_list.currentRowChanged.connect(self._on_op_selected)
         mv.addWidget(self._op_list, stretch=1)
@@ -160,6 +185,7 @@ class ProcessPage(QWidget):
         save_btn = PrimaryPushButton(FIF.SAVE, "另存为新系列")
         save_btn.clicked.connect(self._save_result)
         mv.addWidget(save_btn)
+        self._refresh_pipeline_templates()
         return panel
 
     def _build_right(self) -> QWidget:
@@ -210,6 +236,7 @@ class ProcessPage(QWidget):
                     it.setData(0, Qt.ItemDataRole.UserRole, ("series", s.id))
                     ds_root.addChild(it)
         self._src_tree.addTopLevelItem(ds_root)
+        self._refresh_pipeline_templates()
 
     def _on_src_selected(self):
         items = self._src_tree.selectedItems()
@@ -235,6 +262,16 @@ class ProcessPage(QWidget):
                 self._src_ys = list(s.y)
                 self._selected_src_id = obj_id
         self._run_pipeline()
+
+    def _set_source_from_tree_node(self, kind: str, node_id: str) -> bool:
+        series = project_manager.get_series_from_node(kind, node_id)
+        if series is None or not series.x:
+            return False
+        self._src_xs = list(series.x)
+        self._src_ys = list(series.y)
+        self._selected_src_id = series.id
+        self._run_pipeline()
+        return True
 
     # ─────────────────────────────────────────────────────────
     # 操作链管理
@@ -380,11 +417,88 @@ class ProcessPage(QWidget):
         InfoBar.success("已保存", f"'{s.name}' → '{p.datasets[-1].name}'",
                         parent=self, position=InfoBarPosition.TOP)
 
+    def _refresh_pipeline_templates(self) -> None:
+        current_id = self._current_pipeline_id
+        self._pipeline_combo.clear()
+        self._pipeline_template_ids.clear()
+        p = project_manager.current_project
+        if p is None:
+            return
+        selected_index = -1
+        for index, pipeline in enumerate(p.saved_pipelines):
+            self._pipeline_combo.addItem(pipeline.name)
+            self._pipeline_template_ids.append(pipeline.id)
+            if pipeline.id == current_id:
+                selected_index = index
+        if selected_index >= 0:
+            self._pipeline_combo.setCurrentIndex(selected_index)
+
+    def _selected_pipeline_id(self) -> Optional[str]:
+        idx = self._pipeline_combo.currentIndex()
+        if idx < 0 or idx >= len(self._pipeline_template_ids):
+            return None
+        return self._pipeline_template_ids[idx]
+
+    def _load_pipeline_from_combo(self) -> None:
+        pipeline_id = self._selected_pipeline_id()
+        if not pipeline_id:
+            return
+        p = project_manager.current_project
+        if p is None:
+            return
+        for node in p.tree.nodes if p.tree is not None else []:
+            if node.kind == "pipeline" and node.pipeline_id == pipeline_id:
+                self.load_pipeline(node.id)
+                return
+
+    def _save_pipeline_template_as_named(self, name: str) -> bool:
+        clean_name = name.strip()
+        if not clean_name:
+            return False
+        if not self._ops:
+            return False
+        sp = project_manager.add_saved_pipeline(clean_name, list(self._ops))
+        if sp is None:
+            return False
+        self._current_pipeline_id = sp.id
+        self._refresh_pipeline_templates()
+        self.project_modified.emit()
+        return True
+
+    def _on_save_pipeline_template_as(self) -> None:
+        if not self._ops:
+            InfoBar.warning("提示", "当前没有可保存的处理链", parent=self, position=InfoBarPosition.TOP)
+            return
+        name, ok = QInputDialog.getText(self, "另存为 Pipeline 模板", "模板名称:")
+        if not ok or not name.strip():
+            return
+        if self._save_pipeline_template_as_named(name):
+            InfoBar.success("已保存", f"Pipeline 模板 {name.strip()} 已保存", parent=self, position=InfoBarPosition.TOP)
+
+    def _overwrite_pipeline_template(self) -> bool:
+        if not self._current_pipeline_id or not self._ops:
+            return False
+        updated = project_manager.update_saved_pipeline(self._current_pipeline_id, ops=list(self._ops))
+        if updated:
+            self.project_modified.emit()
+            self._refresh_pipeline_templates()
+        return updated
+
+    def _overwrite_current_pipeline(self) -> None:
+        if not self._current_pipeline_id:
+            InfoBar.warning("提示", "请先加载一个模板后再覆盖", parent=self, position=InfoBarPosition.TOP)
+            return
+        if self._overwrite_pipeline_template():
+            InfoBar.success("已覆盖", "当前 Pipeline 模板已更新", parent=self, position=InfoBarPosition.TOP)
+
     # ─────────────────────────────────────────────────────────
     # 外部接口
     # ─────────────────────────────────────────────────────────
 
     def receive_data(self, data_type: str, obj_id: str):
+        if self._set_source_from_tree_node(data_type, obj_id):
+            self._shared_tree_hint.setText(f"当前输入来自共享树: {data_type} / {obj_id}")
+            return
         self._refresh_tree()
         for i in range(self._src_tree.topLevelItemCount()):
             root = self._src_tree.topLevelItem(i)
@@ -410,18 +524,32 @@ class ProcessPage(QWidget):
         if node is None or node.kind != "pipeline":
             return
         ops = project_manager.load_pipeline(node.pipeline_id)
+        self._current_pipeline_id = node.pipeline_id
+        self._refresh_pipeline_templates()
         self._load_ops_into_chain(ops)
 
     def _load_ops_into_chain(self, ops: list) -> None:
         """将 ops 列表填充到操作链 UI。"""
+        for widget in self._param_widgets:
+            self._param_stack.removeWidget(widget)
+            widget.deleteLater()
+        self._param_widgets.clear()
         self._ops.clear()
         self._op_list.clear()
         for op in ops:
-            self._ops.append(dict(op))
-            self._op_list.addItem(op.get("type", "?"))
+            op_type = op.get("type", "")
+            params = dict(op.get("params", {}))
+            self._ops.append({"type": op_type, "params": params})
+            self._op_list.addItem(op_type or "?")
+            widget = _make_param_widget(op_type, self, self._run_pipeline)
+            if hasattr(widget, "set_params"):
+                widget.set_params(params)
+            self._param_widgets.append(widget)
+            self._param_stack.addWidget(widget)
         if self._ops:
             self._op_list.setCurrentRow(len(self._ops) - 1)
             self._on_op_selected(len(self._ops) - 1)
+            self._run_pipeline()
 
     def update_theme(self):
         if self._out_xs:
@@ -435,6 +563,9 @@ class ProcessPage(QWidget):
 class _ParamWidget(QWidget):
     def get_params(self) -> dict:
         return {}
+
+    def set_params(self, params: dict) -> None:
+        del params
 
 
 class _CropParam(_ParamWidget):
@@ -463,6 +594,12 @@ class _CropParam(_ParamWidget):
             try: return float(e.text())
             except: return default
         return {"x_min": _f(self._min, -math.inf), "x_max": _f(self._max, math.inf)}
+
+    def set_params(self, params: dict) -> None:
+        x_min = params.get("x_min")
+        x_max = params.get("x_max")
+        self._min.setText("" if x_min in (None, -math.inf) else str(x_min))
+        self._max.setText("" if x_max in (None, math.inf) else str(x_max))
 
 
 class _SmoothParam(_ParamWidget):
@@ -498,6 +635,14 @@ class _SmoothParam(_ParamWidget):
         return {"method": self._method.currentText(),
                 "window": _i(self._window, 11), "poly": _i(self._poly, 3)}
 
+    def set_params(self, params: dict) -> None:
+        method = params.get("method", "savgol")
+        idx = self._method.findText(method)
+        if idx >= 0:
+            self._method.setCurrentIndex(idx)
+        self._window.setText(str(params.get("window", 11)))
+        self._poly.setText(str(params.get("poly", 3)))
+
 
 class _NormalizeParam(_ParamWidget):
     def __init__(self, parent, on_change):
@@ -512,6 +657,12 @@ class _NormalizeParam(_ParamWidget):
 
     def get_params(self):
         return {"mode": self._mode.currentText()}
+
+    def set_params(self, params: dict) -> None:
+        mode = params.get("mode", "minmax")
+        idx = self._mode.findText(mode)
+        if idx >= 0:
+            self._mode.setCurrentIndex(idx)
 
 
 class _ResampleParam(_ParamWidget):
@@ -528,6 +679,9 @@ class _ResampleParam(_ParamWidget):
     def get_params(self):
         try: return {"n": max(2, int(self._n.text()))}
         except: return {"n": 200}
+
+    def set_params(self, params: dict) -> None:
+        self._n.setText(str(params.get("n", 200)))
 
 
 class _EmptyParam(_ParamWidget):
@@ -554,6 +708,9 @@ class _IntegralParam(_ParamWidget):
     def get_params(self):
         return {"cumulative": self._cum.isChecked()}
 
+    def set_params(self, params: dict) -> None:
+        self._cum.setChecked(bool(params.get("cumulative", True)))
+
 
 class _TransformParam(_ParamWidget):
     def __init__(self, parent, on_change):
@@ -575,6 +732,10 @@ class _TransformParam(_ParamWidget):
 
     def get_params(self):
         return {"x_expr": self._x_expr.text().strip(), "y_expr": self._y_expr.text().strip()}
+
+    def set_params(self, params: dict) -> None:
+        self._x_expr.setText(params.get("x_expr", ""))
+        self._y_expr.setText(params.get("y_expr", ""))
 
 
 class _FilterParam(_ParamWidget):
@@ -608,6 +769,10 @@ class _FilterParam(_ParamWidget):
             except: return d
         return {"cutoff": max(0.001, min(0.999, _f(self._cutoff, 0.1))),
                 "order": _i(self._order, 4)}
+
+    def set_params(self, params: dict) -> None:
+        self._cutoff.setText(str(params.get("cutoff", 0.1)))
+        self._order.setText(str(params.get("order", 4)))
 
 
 def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:

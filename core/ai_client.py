@@ -26,6 +26,7 @@ class AIConfig(BaseModel):
     timeout: int = 60
     temperature: float = 0.7
     max_tokens: int = 2048
+    show_assistant: bool = True
 
     @classmethod
     def load(cls) -> "AIConfig":

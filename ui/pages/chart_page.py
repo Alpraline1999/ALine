@@ -13,6 +13,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QColorDialog,
     QFileDialog,
     QGridLayout,
@@ -100,6 +101,7 @@ except Exception as _e:
     _MATPLOTLIB_ERROR = f"{type(_e).__name__}: {_e}"
 
 from core.project_manager import project_manager
+from models.schemas import FigureState
 
 _STYLES = [
     ("实线 —",         "-",   ""),
@@ -137,6 +139,7 @@ class ChartPage(QWidget):
         self._chart_series: List[dict] = []
         self._curve_styles: Dict[str, dict] = {}  # name → {color, linestyle, marker}
         self._style_target: Optional[str] = None
+        self._figure_state = FigureState()
 
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
@@ -152,7 +155,7 @@ class ChartPage(QWidget):
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(12)
 
-        splitter = QSplitter(Qt.Horizontal, self)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.setHandleWidth(6)
 
         # ── 左侧控制面板 ──────────────────────────────────────────────
@@ -165,7 +168,7 @@ class ChartPage(QWidget):
 
         # 当前图表中的系列（可多选+删除）
         self._chart_list = ListWidget(left_card)
-        self._chart_list.setSelectionMode(ListWidget.MultiSelection)
+        self._chart_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self._chart_list.currentItemChanged.connect(self._on_current_changed)
         lv.addWidget(self._chart_list)
 
@@ -218,7 +221,7 @@ class ChartPage(QWidget):
         xlabel_row.addWidget(BodyLabel("X:", left_card))
         self._x_label_edit = LineEdit(left_card)
         self._x_label_edit.setPlaceholderText("X")
-        self._x_label_edit.textChanged.connect(self._redraw)
+        self._x_label_edit.textChanged.connect(self._on_quick_config_changed)
         xlabel_row.addWidget(self._x_label_edit)
         lv.addLayout(xlabel_row)
 
@@ -226,7 +229,7 @@ class ChartPage(QWidget):
         ylabel_row.addWidget(BodyLabel("Y:", left_card))
         self._y_label_edit = LineEdit(left_card)
         self._y_label_edit.setPlaceholderText("Y")
-        self._y_label_edit.textChanged.connect(self._redraw)
+        self._y_label_edit.textChanged.connect(self._on_quick_config_changed)
         ylabel_row.addWidget(self._y_label_edit)
         lv.addLayout(ylabel_row)
 
@@ -238,12 +241,12 @@ class ChartPage(QWidget):
         theme_row.addWidget(BodyLabel("主题:", left_card))
         self._theme_combo = ComboBox(left_card)
         self._theme_combo.addItems(["默认", "Nature", "IEEE", "ACS", "简洁黑白"])
-        self._theme_combo.currentIndexChanged.connect(self._redraw_now)
+        self._theme_combo.currentIndexChanged.connect(self._on_quick_config_changed)
         theme_row.addWidget(self._theme_combo, 1)
         lv.addLayout(theme_row)
 
         self._errbar_cb = CheckBox("显示误差棒", left_card)
-        self._errbar_cb.stateChanged.connect(self._redraw_now)
+        self._errbar_cb.stateChanged.connect(self._on_quick_config_changed)
         lv.addWidget(self._errbar_cb)
 
         lv.addWidget(make_hsep(left_card))
@@ -256,15 +259,20 @@ class ChartPage(QWidget):
         self._btn_advanced.clicked.connect(self._on_advanced_settings)
         btn_grid.addWidget(self._btn_advanced, 0, 0)
 
+        self._btn_load_template = PushButton(FIF.FOLDER, "加载模板", left_card)
+        self._btn_load_template.setFixedHeight(32)
+        self._btn_load_template.clicked.connect(self._on_load_template)
+        btn_grid.addWidget(self._btn_load_template, 0, 1)
+
         self._btn_save_template = PushButton(FIF.SAVE, "保存模板", left_card)
         self._btn_save_template.setFixedHeight(32)
         self._btn_save_template.clicked.connect(self._on_save_template)
-        btn_grid.addWidget(self._btn_save_template, 0, 1)
+        btn_grid.addWidget(self._btn_save_template, 1, 0)
 
         self._btn_export = PushButton(FIF.SHARE, "导出图片", left_card)
         self._btn_export.setFixedHeight(32)
         self._btn_export.clicked.connect(self._on_export_image)
-        btn_grid.addWidget(self._btn_export, 1, 0, 1, 2)
+        btn_grid.addWidget(self._btn_export, 1, 1)
 
         btn_grid.setColumnStretch(0, 1)
         btn_grid.setColumnStretch(1, 1)
@@ -290,7 +298,7 @@ class ChartPage(QWidget):
                       if _MATPLOTLIB_ERROR else
                       "请安装 matplotlib：uv pip install matplotlib")
             no_mpl = BodyLabel(errtxt, self)
-            no_mpl.setAlignment(Qt.AlignCenter)
+            no_mpl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             no_mpl.setWordWrap(True)
             rv.addWidget(no_mpl)
             self._figure = None
@@ -300,6 +308,7 @@ class ChartPage(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         root.addWidget(splitter, 1)
+        self._apply_figure_state(self._figure_state)
 
     # ──────────────────────────── 共享树接口 ─────────────────────────────
 
@@ -351,20 +360,51 @@ class ChartPage(QWidget):
         if fig is None:
             return
 
-        # 恢复主题
-        themes = ["默认", "Nature", "IEEE", "ACS", "简洁黑白"]
-        if fig.theme in themes:
-            self._theme_combo.setCurrentIndex(themes.index(fig.theme))
-
-        # 恢复轴标签（typed_axis_config 优先，回退 axis_config dict）
         ax = fig.typed_axis_config
-        self._x_label_edit.setText(ax.x_label or "X")
-        self._y_label_edit.setText(ax.y_label or "Y")
+        state = FigureState(
+            theme=fig.theme or "默认",
+            x_label=ax.x_label or "X",
+            y_label=ax.y_label or "Y",
+            show_errbar=fig.show_errbar,
+            x_min=ax.x_min,
+            x_max=ax.x_max,
+            y_min=ax.y_min,
+            y_max=ax.y_max,
+            x_log=ax.x_log,
+            y_log=ax.y_log,
+            grid=fig.grid,
+            legend_pos=fig.legend_position or "best",
+            font_size=fig.font_size or 10,
+        )
+        self._apply_figure_state(state)
 
-        # 恢复误差棒
-        self._errbar_cb.setChecked(fig.show_errbar)
+    def _save_template_named(self, name: str):
+        clean_name = name.strip()
+        if not clean_name:
+            return None
+        from models.schemas import FigureConfig, AxisConfig
 
-        self._redraw_now()
+        state = self._sync_state_from_controls()
+        ax = AxisConfig(
+            x_label=state.x_label,
+            y_label=state.y_label,
+            x_min=state.x_min,
+            x_max=state.x_max,
+            y_min=state.y_min,
+            y_max=state.y_max,
+            x_log=state.x_log,
+            y_log=state.y_log,
+        )
+        config = FigureConfig(
+            name=clean_name,
+            theme=state.theme,
+            show_errbar=state.show_errbar,
+            typed_axis_config=ax,
+            grid=state.grid,
+            legend_position=state.legend_pos,
+            font_size=state.font_size,
+        )
+        return project_manager.add_figure_template(config)
 
     def _on_save_template(self) -> None:
         """将当前绘图配置保存为 FigureConfig 挂到工具集树。"""
@@ -372,28 +412,28 @@ class ChartPage(QWidget):
         name, ok = QInputDialog.getText(self, "保存绘图模板", "模板名称:")
         if not ok or not name.strip():
             return
-
-        from models.schemas import FigureConfig, AxisConfig
-        themes = ["默认", "Nature", "IEEE", "ACS", "简洁黑白"]
-        theme_name = self._theme_combo.currentText()
-
-        ax = AxisConfig(
-            x_label=self._x_label_edit.text().strip() or "X",
-            y_label=self._y_label_edit.text().strip() or "Y",
-        )
-        config = FigureConfig(
-            name=name.strip(),
-            theme=theme_name,
-            show_errbar=self._errbar_cb.isChecked(),
-            typed_axis_config=ax,
-        )
-        node = project_manager.add_figure_template(config)
+        node = self._save_template_named(name)
         if node:
             InfoBar.success(
                 title="已保存", content=f"模板「{name}」已存入工具集",
                 position=InfoBarPosition.TOP, duration=2500, parent=self,
             )
             self.project_modified.emit()
+
+    def _on_load_template(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+
+        p = project_manager.current_project
+        if p is None or not p.figures:
+            InfoBar.warning("提示", "当前项目没有可加载的绘图模板", parent=self, position=InfoBarPosition.TOP)
+            return
+        names = [fig.name for fig in p.figures]
+        selected, ok = QInputDialog.getItem(self, "加载绘图模板", "模板名称:", names, 0, False)
+        if not ok or not selected:
+            return
+        node = next((n for n in p.tree.nodes if n.kind == "figure_template" and n.name == selected), None) if p.tree else None
+        if node:
+            self.load_template(node.id)
 
     # ──────────────────────────── 高级设置 ──────────────────────────────
 
@@ -406,44 +446,68 @@ class ChartPage(QWidget):
             self._redraw_now()
 
     def _get_current_config(self) -> dict:
-        themes = ["默认", "Nature", "IEEE", "ACS", "简洁黑白"]
-        return {
-            "theme": self._theme_combo.currentText(),
-            "x_label": self._x_label_edit.text(),
-            "y_label": self._y_label_edit.text(),
-            "show_errbar": self._errbar_cb.isChecked(),
-            "x_min": "",
-            "x_max": "",
-            "y_min": "",
-            "y_max": "",
-            "x_log": False,
-            "y_log": False,
-            "grid": True,
-            "legend_pos": "best",
-            "font_size": 10,
-        }
+        return self._figure_state.model_dump()
 
     def _apply_advanced_config(self, cfg: dict) -> None:
+        state = FigureState(
+            theme=cfg.get("theme", self._figure_state.theme),
+            x_label=cfg.get("x_label", self._figure_state.x_label) or "X",
+            y_label=cfg.get("y_label", self._figure_state.y_label) or "Y",
+            show_errbar=cfg.get("show_errbar", self._figure_state.show_errbar),
+            x_min=_safe_float(cfg.get("x_min")),
+            x_max=_safe_float(cfg.get("x_max")),
+            y_min=_safe_float(cfg.get("y_min")),
+            y_max=_safe_float(cfg.get("y_max")),
+            x_log=bool(cfg.get("x_log", self._figure_state.x_log)),
+            y_log=bool(cfg.get("y_log", self._figure_state.y_log)),
+            grid=bool(cfg.get("grid", self._figure_state.grid)),
+            legend_pos=cfg.get("legend_pos", self._figure_state.legend_pos) or "best",
+            font_size=int(cfg.get("font_size", self._figure_state.font_size) or self._figure_state.font_size),
+        )
+        self._apply_figure_state(state)
+
+    def _apply_figure_state(self, state: FigureState) -> None:
+        self._figure_state = state
         themes = ["默认", "Nature", "IEEE", "ACS", "简洁黑白"]
-        if cfg.get("theme") in themes:
-            self._theme_combo.setCurrentIndex(themes.index(cfg["theme"]))
-        self._x_label_edit.setText(cfg.get("x_label", "X"))
-        self._y_label_edit.setText(cfg.get("y_label", "Y"))
-        self._errbar_cb.setChecked(cfg.get("show_errbar", False))
-        # 存储高级设置供 _redraw_now 读取
-        self._adv_cfg = cfg
+        if state.theme in themes:
+            self._theme_combo.setCurrentIndex(themes.index(state.theme))
+        self._x_label_edit.setText(state.x_label)
+        self._y_label_edit.setText(state.y_label)
+        self._errbar_cb.setChecked(state.show_errbar)
+
+    def _sync_state_from_controls(self) -> FigureState:
+        self._figure_state = FigureState(
+            theme=self._theme_combo.currentText(),
+            x_label=self._x_label_edit.text().strip() or "X",
+            y_label=self._y_label_edit.text().strip() or "Y",
+            show_errbar=self._errbar_cb.isChecked(),
+            x_min=self._figure_state.x_min,
+            x_max=self._figure_state.x_max,
+            y_min=self._figure_state.y_min,
+            y_max=self._figure_state.y_max,
+            x_log=self._figure_state.x_log,
+            y_log=self._figure_state.y_log,
+            grid=self._figure_state.grid,
+            legend_pos=self._figure_state.legend_pos,
+            font_size=self._figure_state.font_size,
+        )
+        return self._figure_state
+
+    def _on_quick_config_changed(self):
+        self._sync_state_from_controls()
+        self._redraw()
 
     # ──────────────────────────── 内部状态管理 ────────────────────────────
 
     def _refresh_chart_list(self) -> None:
         prev_names = {
-            item.data(Qt.UserRole).get("name")
+            item.data(Qt.ItemDataRole.UserRole).get("name")
             for item in self._chart_list.selectedItems()
         }
         self._chart_list.clear()
         for c in self._chart_series:
             item = QListWidgetItem(c["name"])
-            item.setData(Qt.UserRole, c)
+            item.setData(Qt.ItemDataRole.UserRole, c)
             if c["name"] in prev_names:
                 item.setSelected(True)
             self._chart_list.addItem(item)
@@ -456,7 +520,7 @@ class ChartPage(QWidget):
 
     def _on_remove_selected(self) -> None:
         to_remove = {
-            item.data(Qt.UserRole).get("name")
+            item.data(Qt.ItemDataRole.UserRole).get("name")
             for item in self._chart_list.selectedItems()
         }
         self._chart_series = [c for c in self._chart_series if c["name"] not in to_remove]
@@ -515,29 +579,26 @@ class ChartPage(QWidget):
         for spine in ax.spines.values():
             spine.set_edgecolor(fg)
 
-        adv = getattr(self, "_adv_cfg", {})
-        grid_on = adv.get("grid", True)
+        state = self._sync_state_from_controls()
+        grid_on = state.grid
         ax.grid(grid_on, color=grid_c, linestyle="--", linewidth=0.5, alpha=0.7)
 
-        theme_name = self._theme_combo.currentText()
+        theme_name = state.theme
         if theme_name in self._ACADEMIC_THEMES:
             for k, v in self._ACADEMIC_THEMES[theme_name].items():
                 plt.rcParams[k] = v
 
-        fsize = adv.get("font_size", 10)
+        fsize = state.font_size
         if fsize:
             matplotlib.rcParams["font.size"] = max(1, fsize)
 
-        show_errbar = self._errbar_cb.isChecked()
+        show_errbar = state.show_errbar
         bw_colors = ["#000000", "#444444", "#888888", "#aaaaaa"]
         bw_idx = 0
         _MAX_PTS = 2000
 
         selected_items = self._chart_list.selectedItems()
-        visible_series = (
-            [item.data(Qt.UserRole) for item in selected_items]
-            if selected_items else self._chart_series
-        )
+        visible_series = [item.data(Qt.ItemDataRole.UserRole) for item in selected_items] if selected_items else self._chart_series
 
         for c in visible_series:
             if c is None:
@@ -576,27 +637,27 @@ class ChartPage(QWidget):
                 ax.plot(px, py, linewidth=1.4, **kw)
 
         if visible_series:
-            legend_pos = adv.get("legend_pos", "best")
+            legend_pos = state.legend_pos
             ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8,
                       loc=legend_pos or "best")
 
-        xl = self._x_label_edit.text().strip()
-        yl = self._y_label_edit.text().strip()
+        xl = state.x_label
+        yl = state.y_label
         ax.set_xlabel(xl or "X")
         ax.set_ylabel(yl or "Y")
 
-        x_min = _safe_float(adv.get("x_min"))
-        x_max = _safe_float(adv.get("x_max"))
-        y_min = _safe_float(adv.get("y_min"))
-        y_max = _safe_float(adv.get("y_max"))
+        x_min = state.x_min
+        x_max = state.x_max
+        y_min = state.y_min
+        y_max = state.y_max
         if x_min is not None or x_max is not None:
             ax.set_xlim(left=x_min, right=x_max)
         if y_min is not None or y_max is not None:
             ax.set_ylim(bottom=y_min, top=y_max)
 
-        if adv.get("x_log"):
+        if state.x_log:
             ax.set_xscale("log")
-        if adv.get("y_log"):
+        if state.y_log:
             ax.set_yscale("log")
 
         self._figure.subplots_adjust(left=0.12, right=0.96, top=0.96, bottom=0.10)
@@ -608,7 +669,7 @@ class ChartPage(QWidget):
         if current is None:
             self._set_style_enabled(False)
         else:
-            self._set_style_enabled(True, current.data(Qt.UserRole))
+            self._set_style_enabled(True, current.data(Qt.ItemDataRole.UserRole))
 
     def _set_style_enabled(self, enabled: bool, curve: Optional[dict] = None):
         self._style_color_btn.setEnabled(enabled)

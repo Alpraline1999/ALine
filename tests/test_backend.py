@@ -71,7 +71,8 @@ class TestSchemas(unittest.TestCase):
     def test_tree_node_discriminated_union_all_kinds(self):
         from models.schemas import (
             FolderNode, DataFileNode, ImageWorkNode,
-            PipelineNode, FigureTemplateNode, AIToolNode, ProjectTree,
+            PipelineNode, FigureTemplateNode, ReportTemplateNode,
+            AIToolNode, ProjectTree,
         )
         nodes = [
             FolderNode(name="f"),
@@ -79,14 +80,15 @@ class TestSchemas(unittest.TestCase):
             ImageWorkNode(name="img", image_work_id="x2"),
             PipelineNode(name="pipe", pipeline_id="x3"),
             FigureTemplateNode(name="fig", figure_id="x4"),
-            AIToolNode(name="ai", tool_id="x5"),
+            ReportTemplateNode(name="report", template_id="x5"),
+            AIToolNode(name="ai", tool_id="x6"),
         ]
         tree = ProjectTree(nodes=nodes)
         data = tree.model_dump()
         tree2 = ProjectTree(**data)
         kinds = [n.kind for n in tree2.nodes]
         self.assertEqual(kinds, ["folder", "data_file", "image_work", "pipeline",
-                                  "figure_template", "ai_tool"])
+                                  "figure_template", "report_template", "ai_tool"])
 
     def test_project_tree_get_children(self):
         from models.schemas import FolderNode, DataFileNode, ProjectTree
@@ -115,6 +117,15 @@ class TestSchemas(unittest.TestCase):
         data = sp.model_dump()
         sp2 = SavedPipeline(**data)
         self.assertEqual(sp2.ops[0]["type"], "smooth")
+
+    def test_figure_state_model(self):
+        from models.schemas import FigureState
+        state = FigureState(theme="Nature", x_label="Time", y_label="Value", show_errbar=True)
+        data = state.model_dump()
+        restored = FigureState(**data)
+        self.assertEqual(restored.theme, "Nature")
+        self.assertEqual(restored.x_label, "Time")
+        self.assertTrue(restored.show_errbar)
 
     def test_analysis_result_model(self):
         from models.schemas import AnalysisResult
@@ -1098,12 +1109,28 @@ class TestProjectManagerV3(unittest.TestCase):
         self.assertIsNotNone(tmpl)
         self.assertEqual(tmpl.name, "my_tmpl")
         self.assertIn(tmpl, self.p.report_templates)
+        self.assertTrue(any(
+            n.kind == "report_template" and n.template_id == tmpl.id
+            for n in self.p.tree.nodes
+        ))
 
     def test_delete_report_template(self):
         tmpl = self.pm.add_report_template("del_tmpl", "content")
         result = self.pm.delete_report_template(tmpl.id)
         self.assertTrue(result)
         self.assertNotIn(tmpl, self.p.report_templates)
+        self.assertFalse(any(
+            n.kind == "report_template" and n.template_id == tmpl.id
+            for n in self.p.tree.nodes
+        ))
+
+    def test_new_project_has_report_template_group(self):
+        groups = [
+            getattr(n, "group_type", None)
+            for n in self.p.tree.nodes
+            if n.kind == "folder"
+        ]
+        self.assertIn("report_template_group", groups)
 
     def test_get_series_from_node_series_kind(self):
         from models.schemas import DataFile, DataSeries
@@ -1136,6 +1163,18 @@ class TestProjectManagerV3(unittest.TestCase):
         # Parent should be datasets folder
         datasets_folder = self.pm._find_folder_by_group_type("datasets")
         self.assertEqual(node.parent_id, datasets_folder.id)
+
+    def test_update_saved_pipeline_updates_tree_node_name(self):
+        sp = self.pm.add_saved_pipeline("旧流程", [{"type": "smooth", "params": {}}])
+        self.assertIsNotNone(sp)
+        updated = self.pm.update_saved_pipeline(sp.id, name="新流程", ops=[{"type": "normalize", "params": {"mode": "minmax"}}])
+        self.assertTrue(updated)
+        saved = self.p.find_saved_pipeline(sp.id)
+        self.assertEqual(saved.name, "新流程")
+        self.assertEqual(saved.ops[0]["type"], "normalize")
+        node = next((n for n in self.p.tree.nodes if n.kind == "pipeline" and n.pipeline_id == sp.id), None)
+        self.assertIsNotNone(node)
+        self.assertEqual(node.name, "新流程")
 
 
 # ══════════════════════════════════════════════════════════════════

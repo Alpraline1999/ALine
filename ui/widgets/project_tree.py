@@ -35,6 +35,7 @@ _KIND_CONFIG = {
     "image_work":      (FIF.PHOTO,           None),
     "pipeline":        (FIF.DEVELOPER_TOOLS, "#0078D4"),
     "figure_template": (FIF.PIE_SINGLE,      "#107C10"),
+    "report_template": (FIF.DOCUMENT,        "#8C6C00"),
     "ai_tool":         (FIF.CHAT,            "#881798"),   # v0.2 compat
     "ai_prompt":       (FIF.CHAT,            "#881798"),
     "ai_skill":        (FIF.DEVELOPER_TOOLS, "#881798"),
@@ -44,17 +45,25 @@ _KIND_CONFIG = {
 # group_type → FluentIcon（系统文件夹专用图标）
 _GROUP_ICON = {
     "datasets":       FIF.FOLDER,
+    "dataset_set":    FIF.FOLDER,
     "images":         FIF.PHOTO,
+    "image_set":      FIF.PHOTO,
     "tools":          FIF.DEVELOPER_TOOLS,
+    "tool_set":       FIF.DEVELOPER_TOOLS,
     "pipeline_group": FIF.DEVELOPER_TOOLS,
     "template_group": FIF.PIE_SINGLE,
+    "figure_template_group": FIF.PIE_SINGLE,
+    "report_template_group": FIF.DOCUMENT,
     "ai_group":       FIF.ROBOT,
 }
 
 # 系统文件夹不可重命名/删除
 _PROTECTED_GROUP_TYPES = frozenset({
-    "datasets", "images", "tools",
-    "pipeline_group", "template_group", "ai_group",
+    "datasets", "dataset_set",
+    "images", "image_set",
+    "tools", "tool_set",
+    "pipeline_group", "template_group", "figure_template_group",
+    "report_template_group", "ai_group",
 })
 
 # QTreeWidgetItem UserRole 存储 (kind, id)
@@ -332,6 +341,8 @@ class ProjectTreeWidget(QWidget):
                 lambda: self.node_activated.emit("curve_to_chart", node_id))
             menu.addAction(FIF.DEVELOPER_TOOLS.icon(), "发送到处理").triggered.connect(
                 lambda: self.node_activated.emit("curve_to_process", node_id))
+            menu.addAction(FIF.SEARCH.icon(), "发送到分析").triggered.connect(
+                lambda: self.node_activated.emit("curve_to_analysis", node_id))
 
         elif kind == "pipeline":
             menu.addAction(FIF.DEVELOPER_TOOLS.icon(), "加载到处理页").triggered.connect(
@@ -345,6 +356,15 @@ class ProjectTreeWidget(QWidget):
         elif kind == "figure_template":
             menu.addAction(FIF.PIE_SINGLE.icon(), "加载到可视化").triggered.connect(
                 lambda: self.node_activated.emit("figure_template", node_id))
+            menu.addSeparator()
+            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
+                lambda: self._tree.editItem(item, 0))
+            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
+                lambda: self._cmd_delete(node_id, item.text(0)))
+
+        elif kind == "report_template":
+            menu.addAction(FIF.SEARCH.icon(), "加载到分析页").triggered.connect(
+                lambda: self.node_activated.emit("report_template", node_id))
             menu.addSeparator()
             menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
                 lambda: self._tree.editItem(item, 0))

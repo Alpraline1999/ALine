@@ -12,7 +12,7 @@ from ui.theme import text_color, secondary_color, placeholder_color, make_sectio
 from ui.widgets import ImageViewer
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from core.project_manager import project_manager
-from models.schemas import CalibrationData
+from models.schemas import CalibrationData, DataFile, DataSeries
 
 
 class _InputDialog(MessageBoxBase):
@@ -54,6 +54,8 @@ class DigitizePage(QWidget):
         self._current_image_item = None
         self._current_image_id = None
         self._current_curve_id = None
+        self._export_target_kind = None
+        self._export_target_id = None
         self._current_curve_points = []
         self._active_tool = None  # 当前激活的工具按钮
         self._hidden_curves = set()  # 隐藏的曲线ID集合
@@ -237,6 +239,10 @@ class DigitizePage(QWidget):
         toolbar_layout.addStretch()
         layout.addWidget(toolbar_widget)
 
+        self._shared_tree_hint = BodyLabel("图片选择与导出目标请使用共享项目树；此处不再作为第二入口。", panel)
+        self._shared_tree_hint.setWordWrap(True)
+        layout.addWidget(self._shared_tree_hint)
+
         self._project_tree = TreeWidget(panel)
         self._project_tree.setHeaderHidden(True)
         self._project_tree.setIndentation(15)
@@ -253,6 +259,7 @@ class DigitizePage(QWidget):
         self._project_tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._project_tree.dropEvent = self._on_tree_drop_event
         self._refresh_project_tree()
+        self._project_tree.hide()
         layout.addWidget(self._project_tree)
 
         return panel
@@ -843,6 +850,14 @@ class DigitizePage(QWidget):
         clipboard_btn = PushButton("复制到剪贴板", tab)
         clipboard_btn.clicked.connect(self._on_export_to_clipboard)
         layout.addWidget(clipboard_btn)
+
+        self._export_target_label = BodyLabel("导出目标: 共享树中选择数据文件或数据目录")
+        self._export_target_label.setWordWrap(True)
+        layout.addWidget(self._export_target_label)
+
+        export_data_btn = PushButton("导出为数据列", tab)
+        export_data_btn.clicked.connect(self._on_export_to_data_file)
+        layout.addWidget(export_data_btn)
 
         # 保存项目
         save_btn = PushButton("保存项目", tab)
@@ -1691,6 +1706,94 @@ class DigitizePage(QWidget):
         Exporter.export_to_clipboard(curve, timestamp=ts_str)
         self._status_label.setText("已复制到剪贴板")
 
+    def _get_export_curves(self):
+        if self._export_scope_combo.currentIndex() == 1:
+            project = project_manager.current_project
+            if project is None:
+                return []
+            curves = []
+            for img in project.images:
+                curves.extend(img.curves)
+            curves.extend(project.imported_curves)
+            return [curve for curve in curves if curve.x_actual]
+        if self._current_curve_id is None:
+            return []
+        curve = project_manager.get_curve(self._current_curve_id)
+        if curve and curve.x_actual:
+            return [curve]
+        return []
+
+    def _is_data_folder_target(self, node_id: str) -> bool:
+        node = project_manager.get_node_by_id(node_id)
+        while node is not None:
+            if node.kind == "folder" and getattr(node, "group_type", None) in ("datasets", "dataset_set"):
+                return True
+            node = project_manager.get_node_by_id(node.parent_id) if getattr(node, "parent_id", None) else None
+        return False
+
+    def _curve_to_data_series(self, curve) -> DataSeries:
+        return DataSeries(
+            name=curve.name or "提取曲线",
+            x=list(curve.x_actual),
+            y=list(curve.y_actual),
+            color=curve.color,
+            source="pyline_curve_copy",
+            source_curve_id=curve.id,
+        )
+
+    def _on_export_to_data_file(self):
+        curves = self._get_export_curves()
+        if not curves:
+            InfoBar.warning(title="警告", content="请先选择有效曲线", parent=self, duration=3000)
+            return
+
+        target_kind = self._export_target_kind
+        target_id = self._export_target_id
+        appended = 0
+
+        if target_kind == "data_file" and target_id:
+            for curve in curves:
+                if project_manager.add_series_to_data_file(target_id, self._curve_to_data_series(curve)):
+                    appended += 1
+            if appended == 0:
+                InfoBar.error(title="导出失败", content="未能追加到目标数据文件", parent=self, duration=3000)
+                return
+            self._status_label.setText(f"已追加 {appended} 条数据列到数据文件")
+        else:
+            parent_id = None
+            if target_kind == "folder" and target_id and self._is_data_folder_target(target_id):
+                parent_id = target_id
+            else:
+                folder = project_manager._find_folder_by_group_type("datasets")
+                parent_id = folder.id if folder else None
+
+            file_name = curves[0].name or "提取曲线"
+            if len(curves) > 1:
+                file_name = f"{file_name}_等_{len(curves)}条曲线"
+            df = DataFile(
+                name=f"{file_name}.derived",
+                series=[self._curve_to_data_series(curve) for curve in curves],
+            )
+            node = project_manager.add_data_file(df, parent_id=parent_id)
+            if node is None:
+                InfoBar.error(title="导出失败", content="未能创建目标数据文件", parent=self, duration=3000)
+                return
+            self._status_label.setText(f"已导出为数据文件: {df.name}")
+
+        self.project_modified.emit()
+
+    def _update_export_target_label(self):
+        if self._export_target_kind == "data_file" and self._export_target_id:
+            node = project_manager.get_node_by_id(self._export_target_id)
+            name = node.name if node else "目标数据文件"
+            self._export_target_label.setText(f"导出目标: 数据文件 / {name}")
+        elif self._export_target_kind == "folder" and self._export_target_id:
+            node = project_manager.get_node_by_id(self._export_target_id)
+            name = node.name if node else "数据目录"
+            self._export_target_label.setText(f"导出目标: 数据目录 / {name}")
+        else:
+            self._export_target_label.setText("导出目标: 共享树中选择数据文件或数据目录")
+
     # ==================== 曲线平滑槽函数 ====================
 
     def _on_smooth_curve(self):
@@ -2332,8 +2435,19 @@ class DigitizePage(QWidget):
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树节点选中时，若为图片节点则加载到查看器。"""
+        self._shared_tree_hint.setText(f"当前共享树节点: {kind} / {node_id}")
         if kind == "image_work":
             self.load_image_by_id(node_id)
+            return
+        if kind == "data_file":
+            self._export_target_kind = kind
+            self._export_target_id = node_id
+            self._update_export_target_label()
+            return
+        if kind == "folder" and self._is_data_folder_target(node_id):
+            self._export_target_kind = kind
+            self._export_target_id = node_id
+            self._update_export_target_label()
 
     def load_image_by_id(self, image_work_id: str) -> None:
         """通过 ImageWork.id 加载图像到查看器（供共享树双击激活调用）。"""
