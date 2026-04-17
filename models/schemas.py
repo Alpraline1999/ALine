@@ -169,8 +169,14 @@ class FigureConfig(BaseModel):
     figure_size: Tuple[float, float] = (7.0, 5.0)   # 英寸
     dpi: int = 150
     font_size: int = 10
+    font_family: str = ""
+    legend_font_size: int = 8
     show_errbar: bool = False
     grid: bool = True
+    grid_alpha: float = 0.7
+    grid_line_width: float = 0.5
+    line_width: float = 1.4
+    marker_size: float = 5.0
     legend_position: str = "best"      # matplotlib loc 字符串
 
 
@@ -181,6 +187,9 @@ class FigureState(BaseModel):
     theme: str = "默认"
     x_label: str = "X"
     y_label: str = "Y"
+    figure_width: float = 7.0
+    figure_height: float = 5.0
+    dpi: int = 150
     show_errbar: bool = False
     x_min: Optional[float] = None
     x_max: Optional[float] = None
@@ -189,8 +198,14 @@ class FigureState(BaseModel):
     x_log: bool = False
     y_log: bool = False
     grid: bool = True
+    grid_alpha: float = 0.7
+    grid_line_width: float = 0.5
     legend_pos: str = "best"
     font_size: int = 10
+    font_family: str = ""
+    legend_font_size: int = 8
+    line_width: float = 1.4
+    marker_size: float = 5.0
 
 
 # ─────────────────────────────────────────────────────────────

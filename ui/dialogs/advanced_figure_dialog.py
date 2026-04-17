@@ -104,14 +104,75 @@ class AdvancedFigureDialog(QDialog):
 
         # 字体大小
         font_row = QHBoxLayout()
+        font_row.addWidget(BodyLabel("字体族:", self))
+        self._font_family = LineEdit(self)
+        self._font_family.setPlaceholderText("默认")
+        self._font_family.setText(self._cfg.get("font_family", ""))
+        font_row.addWidget(self._font_family, 1)
         font_row.addWidget(BodyLabel("字体大小:", self))
         self._font_size = LineEdit(self)
         self._font_size.setPlaceholderText("10")
         self._font_size.setText(str(self._cfg.get("font_size", 10)))
         self._font_size.setFixedWidth(60)
         font_row.addWidget(self._font_size)
+        font_row.addWidget(BodyLabel("图例字号:", self))
+        self._legend_font_size = LineEdit(self)
+        self._legend_font_size.setPlaceholderText("8")
+        self._legend_font_size.setText(str(self._cfg.get("legend_font_size", 8)))
+        self._legend_font_size.setFixedWidth(60)
+        font_row.addWidget(self._legend_font_size)
         font_row.addStretch()
         layout.addLayout(font_row)
+
+        size_row = QHBoxLayout()
+        size_row.addWidget(BodyLabel("图宽:", self))
+        self._figure_width = LineEdit(self)
+        self._figure_width.setPlaceholderText("7.0")
+        self._figure_width.setText(str(self._cfg.get("figure_width", 7.0)))
+        self._figure_width.setFixedWidth(70)
+        size_row.addWidget(self._figure_width)
+        size_row.addWidget(BodyLabel("图高:", self))
+        self._figure_height = LineEdit(self)
+        self._figure_height.setPlaceholderText("5.0")
+        self._figure_height.setText(str(self._cfg.get("figure_height", 5.0)))
+        self._figure_height.setFixedWidth(70)
+        size_row.addWidget(self._figure_height)
+        size_row.addWidget(BodyLabel("DPI:", self))
+        self._dpi = LineEdit(self)
+        self._dpi.setPlaceholderText("150")
+        self._dpi.setText(str(self._cfg.get("dpi", 150)))
+        self._dpi.setFixedWidth(70)
+        size_row.addWidget(self._dpi)
+        size_row.addStretch()
+        layout.addLayout(size_row)
+
+        style_row = QHBoxLayout()
+        style_row.addWidget(BodyLabel("线宽:", self))
+        self._line_width = LineEdit(self)
+        self._line_width.setPlaceholderText("1.4")
+        self._line_width.setText(str(self._cfg.get("line_width", 1.4)))
+        self._line_width.setFixedWidth(70)
+        style_row.addWidget(self._line_width)
+        style_row.addWidget(BodyLabel("点大小:", self))
+        self._marker_size = LineEdit(self)
+        self._marker_size.setPlaceholderText("5.0")
+        self._marker_size.setText(str(self._cfg.get("marker_size", 5.0)))
+        self._marker_size.setFixedWidth(70)
+        style_row.addWidget(self._marker_size)
+        style_row.addWidget(BodyLabel("网格透明度:", self))
+        self._grid_alpha = LineEdit(self)
+        self._grid_alpha.setPlaceholderText("0.7")
+        self._grid_alpha.setText(str(self._cfg.get("grid_alpha", 0.7)))
+        self._grid_alpha.setFixedWidth(70)
+        style_row.addWidget(self._grid_alpha)
+        style_row.addWidget(BodyLabel("网格线宽:", self))
+        self._grid_line_width = LineEdit(self)
+        self._grid_line_width.setPlaceholderText("0.5")
+        self._grid_line_width.setText(str(self._cfg.get("grid_line_width", 0.5)))
+        self._grid_line_width.setFixedWidth(70)
+        style_row.addWidget(self._grid_line_width)
+        style_row.addStretch()
+        layout.addLayout(style_row)
 
         # 主题
         theme_row = QHBoxLayout()
@@ -156,6 +217,15 @@ class AdvancedFigureDialog(QDialog):
             "grid": self._grid_cb.isChecked(),
             "legend_pos": self._legend_pos.currentText(),
             "font_size": _safe_int(self._font_size.text(), 10),
+            "font_family": self._font_family.text().strip(),
+            "legend_font_size": _safe_int(self._legend_font_size.text(), 8),
+            "figure_width": _safe_float(self._figure_width.text(), 7.0),
+            "figure_height": _safe_float(self._figure_height.text(), 5.0),
+            "dpi": _safe_int(self._dpi.text(), 150),
+            "line_width": _safe_float(self._line_width.text(), 1.4),
+            "marker_size": _safe_float(self._marker_size.text(), 5.0),
+            "grid_alpha": _safe_float(self._grid_alpha.text(), 0.7),
+            "grid_line_width": _safe_float(self._grid_line_width.text(), 0.5),
             "theme": self._theme.currentText(),
             "show_errbar": self._errbar.isChecked(),
         }
@@ -164,5 +234,12 @@ class AdvancedFigureDialog(QDialog):
 def _safe_int(v: str, default: int) -> int:
     try:
         return int(v.strip())
+    except Exception:
+        return default
+
+
+def _safe_float(v: str, default: float) -> float:
+    try:
+        return float(v.strip())
     except Exception:
         return default

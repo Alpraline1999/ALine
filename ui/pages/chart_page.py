@@ -365,6 +365,9 @@ class ChartPage(QWidget):
             theme=fig.theme or "默认",
             x_label=ax.x_label or "X",
             y_label=ax.y_label or "Y",
+            figure_width=fig.figure_size[0] if len(fig.figure_size) > 0 else 7.0,
+            figure_height=fig.figure_size[1] if len(fig.figure_size) > 1 else 5.0,
+            dpi=fig.dpi or 150,
             show_errbar=fig.show_errbar,
             x_min=ax.x_min,
             x_max=ax.x_max,
@@ -373,10 +376,35 @@ class ChartPage(QWidget):
             x_log=ax.x_log,
             y_log=ax.y_log,
             grid=fig.grid,
+            grid_alpha=fig.grid_alpha,
+            grid_line_width=fig.grid_line_width,
             legend_pos=fig.legend_position or "best",
             font_size=fig.font_size or 10,
+            font_family=fig.font_family or "",
+            legend_font_size=fig.legend_font_size or 8,
+            line_width=fig.line_width or 1.4,
+            marker_size=fig.marker_size or 5.0,
         )
         self._apply_figure_state(state)
+
+    def _figure_template_choices(self) -> list[tuple[str, str]]:
+        p = project_manager.current_project
+        if p is None or p.tree is None:
+            return []
+        choices: list[tuple[str, str]] = []
+        used_labels: set[str] = set()
+        for node in p.tree.nodes:
+            if node.kind != "figure_template":
+                continue
+            fig = p.find_figure(node.figure_id)
+            if fig is None:
+                continue
+            label = node.name or fig.name or node.figure_id[:8]
+            if label in used_labels:
+                label = f"{label} ({node.figure_id[:8]})"
+            used_labels.add(label)
+            choices.append((label, node.id))
+        return choices
 
     def _save_template_named(self, name: str):
         clean_name = name.strip()
@@ -400,9 +428,17 @@ class ChartPage(QWidget):
             theme=state.theme,
             show_errbar=state.show_errbar,
             typed_axis_config=ax,
+            figure_size=(state.figure_width, state.figure_height),
+            dpi=state.dpi,
             grid=state.grid,
+            grid_alpha=state.grid_alpha,
+            grid_line_width=state.grid_line_width,
             legend_position=state.legend_pos,
             font_size=state.font_size,
+            font_family=state.font_family,
+            legend_font_size=state.legend_font_size,
+            line_width=state.line_width,
+            marker_size=state.marker_size,
         )
         return project_manager.add_figure_template(config)
 
@@ -423,17 +459,17 @@ class ChartPage(QWidget):
     def _on_load_template(self) -> None:
         from PySide6.QtWidgets import QInputDialog
 
-        p = project_manager.current_project
-        if p is None or not p.figures:
+        choices = self._figure_template_choices()
+        if not choices:
             InfoBar.warning("提示", "当前项目没有可加载的绘图模板", parent=self, position=InfoBarPosition.TOP)
             return
-        names = [fig.name for fig in p.figures]
+        names = [label for label, _ in choices]
         selected, ok = QInputDialog.getItem(self, "加载绘图模板", "模板名称:", names, 0, False)
         if not ok or not selected:
             return
-        node = next((n for n in p.tree.nodes if n.kind == "figure_template" and n.name == selected), None) if p.tree else None
-        if node:
-            self.load_template(node.id)
+        selected_node_id = next((node_id for label, node_id in choices if label == selected), None)
+        if selected_node_id:
+            self.load_template(selected_node_id)
 
     # ──────────────────────────── 高级设置 ──────────────────────────────
 
@@ -453,6 +489,9 @@ class ChartPage(QWidget):
             theme=cfg.get("theme", self._figure_state.theme),
             x_label=cfg.get("x_label", self._figure_state.x_label) or "X",
             y_label=cfg.get("y_label", self._figure_state.y_label) or "Y",
+            figure_width=_safe_float_or(cfg.get("figure_width"), self._figure_state.figure_width),
+            figure_height=_safe_float_or(cfg.get("figure_height"), self._figure_state.figure_height),
+            dpi=_safe_int_or(cfg.get("dpi"), self._figure_state.dpi),
             show_errbar=cfg.get("show_errbar", self._figure_state.show_errbar),
             x_min=_safe_float(cfg.get("x_min")),
             x_max=_safe_float(cfg.get("x_max")),
@@ -461,8 +500,14 @@ class ChartPage(QWidget):
             x_log=bool(cfg.get("x_log", self._figure_state.x_log)),
             y_log=bool(cfg.get("y_log", self._figure_state.y_log)),
             grid=bool(cfg.get("grid", self._figure_state.grid)),
+            grid_alpha=_safe_float_or(cfg.get("grid_alpha"), self._figure_state.grid_alpha),
+            grid_line_width=_safe_float_or(cfg.get("grid_line_width"), self._figure_state.grid_line_width),
             legend_pos=cfg.get("legend_pos", self._figure_state.legend_pos) or "best",
-            font_size=int(cfg.get("font_size", self._figure_state.font_size) or self._figure_state.font_size),
+            font_size=_safe_int_or(cfg.get("font_size"), self._figure_state.font_size),
+            font_family=(cfg.get("font_family", self._figure_state.font_family) or "").strip(),
+            legend_font_size=_safe_int_or(cfg.get("legend_font_size"), self._figure_state.legend_font_size),
+            line_width=_safe_float_or(cfg.get("line_width"), self._figure_state.line_width),
+            marker_size=_safe_float_or(cfg.get("marker_size"), self._figure_state.marker_size),
         )
         self._apply_figure_state(state)
 
@@ -474,12 +519,18 @@ class ChartPage(QWidget):
         self._x_label_edit.setText(state.x_label)
         self._y_label_edit.setText(state.y_label)
         self._errbar_cb.setChecked(state.show_errbar)
+        if self._figure is not None:
+            self._figure.set_size_inches(state.figure_width, state.figure_height, forward=True)
+            self._figure.set_dpi(state.dpi)
 
     def _sync_state_from_controls(self) -> FigureState:
         self._figure_state = FigureState(
             theme=self._theme_combo.currentText(),
             x_label=self._x_label_edit.text().strip() or "X",
             y_label=self._y_label_edit.text().strip() or "Y",
+            figure_width=self._figure_state.figure_width,
+            figure_height=self._figure_state.figure_height,
+            dpi=self._figure_state.dpi,
             show_errbar=self._errbar_cb.isChecked(),
             x_min=self._figure_state.x_min,
             x_max=self._figure_state.x_max,
@@ -488,8 +539,14 @@ class ChartPage(QWidget):
             x_log=self._figure_state.x_log,
             y_log=self._figure_state.y_log,
             grid=self._figure_state.grid,
+            grid_alpha=self._figure_state.grid_alpha,
+            grid_line_width=self._figure_state.grid_line_width,
             legend_pos=self._figure_state.legend_pos,
             font_size=self._figure_state.font_size,
+            font_family=self._figure_state.font_family,
+            legend_font_size=self._figure_state.legend_font_size,
+            line_width=self._figure_state.line_width,
+            marker_size=self._figure_state.marker_size,
         )
         return self._figure_state
 
@@ -581,7 +638,15 @@ class ChartPage(QWidget):
 
         state = self._sync_state_from_controls()
         grid_on = state.grid
-        ax.grid(grid_on, color=grid_c, linestyle="--", linewidth=0.5, alpha=0.7)
+        ax.grid(
+            grid_on,
+            color=grid_c,
+            linestyle="--",
+            linewidth=state.grid_line_width,
+            alpha=state.grid_alpha,
+        )
+        if state.font_family:
+            matplotlib.rcParams["font.family"] = [state.font_family, "sans-serif"]
 
         theme_name = state.theme
         if theme_name in self._ACADEMIC_THEMES:
@@ -611,7 +676,7 @@ class ChartPage(QWidget):
             kw: dict = {"label": name, "linestyle": ls or "none"}
             if marker:
                 kw["marker"] = marker
-                kw["markersize"] = 5
+                kw["markersize"] = state.marker_size
             if theme_name == "简洁黑白":
                 kw["color"] = bw_colors[bw_idx % len(bw_colors)]
                 bw_idx += 1
@@ -631,14 +696,14 @@ class ChartPage(QWidget):
                 kw.pop("linestyle", None)
                 ax.errorbar(px, py, yerr=y_err,
                             fmt=f"{marker or 'o'}{ls or '-'}",
-                            linewidth=1.4, capsize=3,
+                            linewidth=state.line_width, capsize=3,
                             **{k: v for k, v in kw.items() if k not in ("marker", "markersize")})
             else:
-                ax.plot(px, py, linewidth=1.4, **kw)
+                ax.plot(px, py, linewidth=state.line_width, **kw)
 
         if visible_series:
             legend_pos = state.legend_pos
-            ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8,
+            ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=state.legend_font_size,
                       loc=legend_pos or "best")
 
         xl = state.x_label
@@ -744,7 +809,7 @@ class ChartPage(QWidget):
             self, "导出图片", "chart.png", "PNG (*.png);;SVG (*.svg);;PDF (*.pdf)",
         )
         if file_path:
-            self._figure.savefig(file_path, dpi=150, bbox_inches="tight")
+            self._figure.savefig(file_path, dpi=self._figure_state.dpi, bbox_inches="tight")
             InfoBar.success(
                 title="导出成功", content=file_path,
                 position=InfoBarPosition.TOP, duration=3000, parent=self,
@@ -761,6 +826,20 @@ def _safe_float(v) -> Optional[float]:
         return float(str(v).strip()) if v not in (None, "", "None") else None
     except Exception:
         return None
+
+
+def _safe_float_or(v, default: float) -> float:
+    parsed = _safe_float(v)
+    return default if parsed is None else parsed
+
+
+def _safe_int_or(v, default: int) -> int:
+    try:
+        if v in (None, "", "None"):
+            return default
+        return int(str(v).strip())
+    except Exception:
+        return default
 
 
 def _load_data_file(file_path: str) -> List[dict]:

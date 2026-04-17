@@ -61,14 +61,7 @@ class DataPage(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(4)
-        root.addWidget(splitter)
-
-        splitter.addWidget(self._build_left_panel())
-        splitter.addWidget(self._build_right_panel())
-        splitter.setSizes([300, 700])
+        root.addWidget(self._build_right_panel())
 
     # ── 左侧面板 ─────────────────────────────────────────────
 
@@ -135,6 +128,12 @@ class DataPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
+        self._shared_tree_hint = CaptionLabel("请使用左侧共享项目树选择数据资产。", panel)
+        self._shared_tree_hint.setWordWrap(True)
+        layout.addWidget(self._shared_tree_hint)
+
+        layout.addWidget(make_hsep())
+
         # 数据预览表格
         layout.addWidget(make_section_label("数据预览"))
         self._table = TableWidget(self)
@@ -177,56 +176,13 @@ class DataPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def refresh(self):
-        """重新从当前项目构建整棵树。"""
-        self._tree.clear()
+        """刷新页面状态。"""
         self._clear_preview()
         p = project_manager.current_project
         if p is None:
-            return
-
-        # 根节点1：图像提取曲线
-        img_root = QTreeWidgetItem(["🖼  图像提取曲线"])
-        img_root.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_ROOT, "images"))
-        img_root.setExpanded(True)
-        for img in p.images:
-            img_item = QTreeWidgetItem([f"  {img.name}"])
-            img_item.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_IMAGE, img.id))
-            for curve in img.curves:
-                n = len(curve.x_actual)
-                c_item = QTreeWidgetItem([f"    {curve.name}  ({n}pts)"])
-                c_item.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_CURVE, curve.id))
-                c_item.setForeground(0, QColor(curve.color))
-                img_item.addChild(c_item)
-            img_item.setExpanded(True)
-            img_root.addChild(img_item)
-        self._tree.addTopLevelItem(img_root)
-
-        # 根节点2：数据集
-        ds_root = QTreeWidgetItem(["📁  数据集"])
-        ds_root.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_ROOT, "datasets"))
-        ds_root.setExpanded(True)
-        for ds in p.datasets:
-            ds_item = QTreeWidgetItem([f"  {ds.name}  ({len(ds.series)} 系列)"])
-            ds_item.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_DATASET, ds.id))
-            for s in ds.series:
-                n = len(s.x)
-                s_item = QTreeWidgetItem([f"    {s.name}  ({n}pts)"])
-                s_item.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_SERIES, s.id))
-                s_item.setForeground(0, QColor(s.color))
-                ds_item.addChild(s_item)
-            ds_item.setExpanded(True)
-            ds_root.addChild(ds_item)
-        self._tree.addTopLevelItem(ds_root)
-
-        # 根节点3：分析结果
-        anal_root = QTreeWidgetItem(["📊  分析结果"])
-        anal_root.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_ROOT, "analyses"))
-        anal_root.setExpanded(True)
-        for a in p.analyses:
-            a_item = QTreeWidgetItem([f"  {a.name}  [{a.analysis_type}]"])
-            a_item.setData(0, Qt.ItemDataRole.UserRole, (_TYPE_ANALYSIS, a.id))
-            anal_root.addChild(a_item)
-        self._tree.addTopLevelItem(anal_root)
+            self._shared_tree_hint.setText("请先打开项目，然后通过左侧共享项目树选择数据资产。")
+        else:
+            self._shared_tree_hint.setText("请使用左侧共享项目树选择数据资产。")
 
     def _clear_preview(self):
         self._table.setRowCount(0)
@@ -505,7 +461,7 @@ class DataPage(QWidget):
         pass
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
-        """共享树选中节点 → 在数据管理树中自动选中对应项并显示预览。"""
+        """共享树选中节点 → 显示预览。"""
         self._shared_tree_hint.setText(f"当前共享树节点: {kind} / {node_id}")
         if kind in ("data_file", "series", "curve", "image_work"):
             series = project_manager.get_series_from_node(kind, node_id)
@@ -515,27 +471,9 @@ class DataPage(QWidget):
                 self._show_xy_preview(series.x, series.y, series.name)
                 self._set_actions_enabled(True)
                 return
-
-        # 先在当前树里找对应 obj_id
-        def _search(root_item):
-            for i in range(root_item.childCount()):
-                child = root_item.child(i)
-                d = child.data(0, Qt.ItemDataRole.UserRole)
-                if d and d[1] == node_id:
-                    return child
-                found = _search(child)
-                if found:
-                    return found
-            return None
-
-        for i in range(self._tree.topLevelItemCount()):
-            root = self._tree.topLevelItem(i)
-            item = _search(root)
-            if item:
-                self._tree.clearSelection()
-                item.setSelected(True)
-                self._tree.setCurrentItem(item)
-                return
+        self._selected_type = None
+        self._selected_id = None
+        self._clear_preview()
 
 
 # ── 辅助对话框 ────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -202,6 +203,33 @@ class TestProjectTreeWidget(unittest.TestCase):
             _walk(self.widget._tree.topLevelItem(idx))
         self.assertIn("report_template", found)
 
+    def test_root_folders_remain_visible_when_empty(self):
+        from core.project_manager import ProjectManager
+        pm = ProjectManager()
+        pm.create_new("tree_empty")
+        restore = _patch_pm(pm)
+        widget = None
+        try:
+            from ui.widgets.project_tree import ProjectTreeWidget
+            widget = ProjectTreeWidget()
+            widget.set_filter_kinds(["folder", "image_work"])
+            names = [widget._tree.topLevelItem(i).text(0) for i in range(widget._tree.topLevelItemCount())]
+            self.assertEqual(names, ["数据集", "图片集", "工具集"])
+        finally:
+            restore()
+            if widget is not None:
+                widget.deleteLater()
+
+    def test_move_series_between_data_files(self):
+        from models.schemas import DataFile, DataSeries
+
+        other = DataFile(name="other.csv", series=[DataSeries(name="other", x=[1.0], y=[2.0])])
+        self.pm.add_data_file(other)
+        moved = self.widget._move_node_to_target("series", self.s.id, other.id)
+        self.assertTrue(moved)
+        self.assertEqual(len(self.df.series), 0)
+        self.assertTrue(any(series.id == self.s.id for series in other.series))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. SettingsPage — AI 配置
@@ -307,6 +335,12 @@ class TestDataPage(unittest.TestCase):
             getattr(self.page, "tree_filter_kinds", []), list
         )
 
+    def test_legacy_left_entry_not_built(self):
+        self.assertFalse(hasattr(self.page, "_btn_add_ds"))
+        self.assertFalse(hasattr(self.page, "_btn_import"))
+        self.assertFalse(hasattr(self.page, "_btn_copy_curve"))
+        self.assertFalse(hasattr(self.page, "_btn_delete"))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. ChartPage — on_tree_node_selected, load_template
@@ -349,6 +383,16 @@ class TestChartPage(unittest.TestCase):
         cfg = FigureConfig(name="templ1")
         cfg.theme = "Nature"
         cfg.show_errbar = True
+        cfg.figure_size = (9.0, 6.0)
+        cfg.dpi = 220
+        cfg.font_size = 14
+        cfg.font_family = "DejaVu Sans"
+        cfg.legend_font_size = 12
+        cfg.line_width = 2.5
+        cfg.marker_size = 7.0
+        cfg.grid_alpha = 0.4
+        cfg.grid_line_width = 1.1
+        cfg.legend_position = "lower left"
         cfg.typed_axis_config = AxisConfig(x_label="Time", y_label="Signal")
         node = self.pm.add_figure_template(cfg)
         self.assertIsNotNone(node)
@@ -356,6 +400,14 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._figure_state.theme, "Nature")
         self.assertEqual(self.page._figure_state.x_label, "Time")
         self.assertTrue(self.page._figure_state.show_errbar)
+        self.assertEqual(self.page._figure_state.figure_width, 9.0)
+        self.assertEqual(self.page._figure_state.figure_height, 6.0)
+        self.assertEqual(self.page._figure_state.dpi, 220)
+        self.assertEqual(self.page._figure_state.font_family, "DejaVu Sans")
+        self.assertEqual(self.page._figure_state.legend_font_size, 12)
+        self.assertEqual(self.page._figure_state.line_width, 2.5)
+        self.assertEqual(self.page._figure_state.marker_size, 7.0)
+        self.assertEqual(self.page._figure_state.legend_pos, "lower left")
 
     def test_quick_controls_update_figure_state(self):
         self.page._x_label_edit.setText("Time")
@@ -382,20 +434,70 @@ class TestChartPage(unittest.TestCase):
             "grid": False,
             "legend_pos": "upper right",
             "font_size": 12,
+            "font_family": "DejaVu Sans",
+            "legend_font_size": 11,
+            "figure_width": 8.5,
+            "figure_height": 6.5,
+            "dpi": 180,
+            "line_width": 2.1,
+            "marker_size": 6.2,
+            "grid_alpha": 0.4,
+            "grid_line_width": 0.8,
             "show_errbar": True,
         })
         self.assertEqual(self.page._figure_state.theme, "IEEE")
         self.assertEqual(self.page._figure_state.x_label, "Voltage")
         self.assertEqual(self.page._figure_state.legend_pos, "upper right")
         self.assertEqual(self.page._figure_state.x_max, 10.0)
+        self.assertEqual(self.page._figure_state.figure_width, 8.5)
+        self.assertEqual(self.page._figure_state.figure_height, 6.5)
+        self.assertEqual(self.page._figure_state.dpi, 180)
+        self.assertEqual(self.page._figure_state.font_family, "DejaVu Sans")
+        self.assertEqual(self.page._figure_state.legend_font_size, 11)
+        self.assertEqual(self.page._figure_state.line_width, 2.1)
+        self.assertEqual(self.page._figure_state.marker_size, 6.2)
 
     def test_save_template_named_uses_figure_state(self):
-        self.page._apply_advanced_config({"theme": "Nature", "x_label": "t", "y_label": "y", "show_errbar": True})
+        self.page._apply_advanced_config({
+            "theme": "Nature",
+            "x_label": "t",
+            "y_label": "y",
+            "show_errbar": True,
+            "figure_width": 8.0,
+            "figure_height": 5.5,
+            "dpi": 240,
+            "font_family": "DejaVu Sans",
+            "legend_font_size": 10,
+            "line_width": 2.0,
+            "marker_size": 6.0,
+        })
         node = self.page._save_template_named("模板状态A")
         self.assertIsNotNone(node)
         fig = next((f for f in self.p.figures if f.name == "模板状态A"), None)
         self.assertIsNotNone(fig)
         self.assertEqual(fig.theme, "Nature")
+        self.assertEqual(fig.figure_size, (8.0, 5.5))
+        self.assertEqual(fig.dpi, 240)
+        self.assertEqual(fig.font_family, "DejaVu Sans")
+        self.assertEqual(fig.legend_font_size, 10)
+        self.assertEqual(fig.line_width, 2.0)
+        self.assertEqual(fig.marker_size, 6.0)
+
+    def test_load_template_dialog_uses_renamed_template_name(self):
+        from models.schemas import FigureConfig
+
+        node = self.pm.add_figure_template(FigureConfig(name="old_name", theme="ACS"))
+        self.assertIsNotNone(node)
+        self.pm.rename_node(node.id, "renamed_template")
+
+        def _fake_get_item(_parent, _title, _label, items, _current, _editable):
+            self.assertIn("renamed_template", items)
+            return ("renamed_template", True)
+
+        with mock.patch("PySide6.QtWidgets.QInputDialog.getItem", side_effect=_fake_get_item):
+            self.page._on_load_template()
+
+        self.assertEqual(self.page._figure_state.theme, "ACS")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -578,6 +680,15 @@ class TestDigitizePage(unittest.TestCase):
         if node:
             self.page.on_tree_node_selected("folder", node.id)
 
+    def test_legacy_project_panel_removed(self):
+        self.assertIsNone(self.page._project_tree)
+        self.assertFalse(hasattr(self.page, "_new_project_btn"))
+        self.assertFalse(hasattr(self.page, "_open_project_btn"))
+        self.assertFalse(hasattr(self.page, "_save_project_btn"))
+        self.assertFalse(hasattr(self.page, "_close_project_btn"))
+        self.assertIsNotNone(self.page._add_image_btn)
+        self.assertIsNotNone(self.page._add_curve_btn)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 8. MainWindow — 树面板注入、页面切换、信号路由
@@ -679,6 +790,32 @@ class TestMainWindow(unittest.TestCase):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
         if node:
             self.win._on_tree_node_selected("data_file", node.id)
+
+    def test_tree_panel_data_actions_visible_only_on_data_page(self):
+        self.win.switchTo(self.win.data_page)
+        self.assertFalse(self.win._tree_panel.add_dataset_btn.isHidden())
+        self.assertFalse(self.win._tree_panel.import_file_btn.isHidden())
+        self.win.switchTo(self.win.process_page)
+        self.assertTrue(self.win._tree_panel.add_dataset_btn.isHidden())
+        self.assertTrue(self.win._tree_panel.import_file_btn.isHidden())
+
+    def test_tree_node_activated_series_stays_on_analysis_page(self):
+        self.win.switchTo(self.win.analysis_page)
+        self.win._on_tree_node_activated("series", self.s.id)
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.analysis_page)
+        self.assertEqual(len(self.win.analysis_page._selected_inputs), 1)
+
+    def test_tree_node_activated_series_stays_on_process_page(self):
+        self.win.switchTo(self.win.process_page)
+        self.win._on_tree_node_activated("series", self.s.id)
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.process_page)
+        self.assertEqual(self.win.process_page._selected_src_id, self.s.id)
+
+    def test_tree_node_activated_series_stays_on_chart_page(self):
+        self.win.switchTo(self.win.chart_page)
+        self.win._on_tree_node_activated("series", self.s.id)
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.chart_page)
+        self.assertEqual(len(self.win.chart_page._chart_series), 1)
 
     def test_tree_node_activated_pipeline_loads(self):
         ops = [{"type": "smooth", "params": {"method": "moving_avg", "window": 3}}]

@@ -1,5 +1,5 @@
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon as FIF, FluentWindow, NavigationItemPosition,
     setTheme, Theme, MessageBox, SubtitleLabel, ToolButton,
@@ -49,8 +49,30 @@ class _SharedTreePanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(4)
+        self._data_actions_label = SubtitleLabel("数据操作", self)
+        toolbar.addWidget(self._data_actions_label)
+        toolbar.addStretch()
+
+        self.add_dataset_btn = ToolButton(FIF.ADD, self)
+        self.add_dataset_btn.setToolTip("新建数据集")
+        toolbar.addWidget(self.add_dataset_btn)
+
+        self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
+        self.import_file_btn.setToolTip("导入文件")
+        toolbar.addWidget(self.import_file_btn)
+        layout.addLayout(toolbar)
+
         self.tree = ProjectTreeWidget(self)
         layout.addWidget(self.tree)
+        self.set_data_actions_visible(False)
+
+    def set_data_actions_visible(self, visible: bool) -> None:
+        self._data_actions_label.setVisible(visible)
+        self.add_dataset_btn.setVisible(visible)
+        self.import_file_btn.setVisible(visible)
 
 
 class MainWindow(FluentWindow):
@@ -106,6 +128,8 @@ class MainWindow(FluentWindow):
         self._tree_panel.hide()
         # widgetLayout 是 FluentWindow 里包含 stackedWidget 的 QHBoxLayout
         self.widgetLayout.insertWidget(0, self._tree_panel)
+        self._tree_panel.add_dataset_btn.clicked.connect(self.data_page._add_dataset)
+        self._tree_panel.import_file_btn.clicked.connect(self.data_page._import_file)
 
         self._ai_panel = AIAssistantPanel(self)
         self._ai_panel.hide()
@@ -147,6 +171,7 @@ class MainWindow(FluentWindow):
         kinds = _PAGE_TREE_KINDS.get(obj_name, [])
         show = bool(kinds)
         self._tree_panel.setVisible(show)
+        self._tree_panel.set_data_actions_visible(interface is self.data_page)
         self._ai_panel.setVisible(show and AIConfig.load().show_assistant)
         if show:
             self._tree_panel.tree.set_filter_kinds(kinds)
@@ -197,8 +222,30 @@ class MainWindow(FluentWindow):
     # 树节点路由
     # ─────────────────────────────────────────────────────────
 
+    def _dispatch_activation_to_current_page(self, kind: str, node_id: str) -> bool:
+        page = self.stackedWidget.currentWidget()
+        if page is self.digitize_page and kind == "image_work":
+            if hasattr(self.digitize_page, 'load_image_by_id'):
+                self.digitize_page.load_image_by_id(node_id)
+                self._update_ai_panel_context(page=page, selected_kind=kind, node_id=node_id)
+                return True
+            return False
+
+        if hasattr(page, 'on_tree_node_activated'):
+            page.on_tree_node_activated(kind, node_id)
+            self._update_ai_panel_context(page=page, selected_kind=kind, node_id=node_id)
+            return True
+        if hasattr(page, 'on_tree_node_selected'):
+            page.on_tree_node_selected(kind, node_id)
+            self._update_ai_panel_context(page=page, selected_kind=kind, node_id=node_id)
+            return True
+        return False
+
     def _on_tree_node_activated(self, kind: str, node_id: str) -> None:
-        """双击节点 → 跳转到对应功能页并传递选中。"""
+        """双击节点 → 在当前页面执行主动作；显式发送动作才跨页。"""
+        if kind in ("data_file", "series", "curve", "image_work"):
+            if self._dispatch_activation_to_current_page(kind, node_id):
+                return
         if kind == "image_work":
             self.switchTo(self.digitize_page)
             if hasattr(self.digitize_page, 'load_image_by_id'):
@@ -215,8 +262,7 @@ class MainWindow(FluentWindow):
             self.switchTo(self.analysis_page)
             if hasattr(self.analysis_page, 'load_report_template'):
                 self.analysis_page.load_report_template(node_id)
-        elif kind in ("data_file", "series", "curve",
-                       "data_file_to_chart", "image_work_to_chart",
+        elif kind in ("data_file_to_chart", "image_work_to_chart",
                        "series_to_chart", "curve_to_chart"):
             self.switchTo(self.chart_page)
             if hasattr(self.chart_page, 'on_tree_node_activated'):

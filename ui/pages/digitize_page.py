@@ -93,9 +93,6 @@ class DigitizePage(QWidget):
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self._left_panel = self._create_left_panel()
-        self._splitter.addWidget(self._left_panel)
-
         center_panel = CardWidget(self)
         # center_panel.setFrameShape(QFrame.Shape.StyledPanel)
         center_layout = QVBoxLayout(center_panel)
@@ -123,8 +120,8 @@ class DigitizePage(QWidget):
         self._right_panel = self._create_right_panel()
         self._splitter.addWidget(self._right_panel)
 
-        self._splitter.setSizes([260, 600, 300])
-        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([760, 320])
+        self._splitter.setStretchFactor(0, 1)
 
         main_layout.addWidget(self._splitter)
 
@@ -320,12 +317,26 @@ class DigitizePage(QWidget):
         return panel
 
     def _create_top_viewer_toolbar(self, parent) -> QWidget:
-        """创建图片查看器上方工具栏（橡皮/清空/撤销/重做，靠右排列）"""
+        """创建图片查看器上方工具栏。"""
         bar = QWidget(parent)
         bar.setFixedHeight(36)
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(4, 2, 4, 2)
         bar_layout.setSpacing(2)
+
+        self._add_image_btn = ToolButton(FIF.IMAGE_EXPORT, bar)
+        self._add_image_btn.setToolTip("添加图片到当前项目")
+        self._add_image_btn.setFixedSize(32, 32)
+        self._add_image_btn.clicked.connect(self._on_add_image)
+        bar_layout.addWidget(self._add_image_btn)
+
+        self._add_curve_btn = ToolButton(FIF.ADD_TO, bar)
+        self._add_curve_btn.setToolTip("添加新曲线到当前图片")
+        self._add_curve_btn.setFixedSize(32, 32)
+        self._add_curve_btn.clicked.connect(self._on_add_curve)
+        bar_layout.addWidget(self._add_curve_btn)
+
+        bar_layout.addWidget(make_vsep(bar))
         bar_layout.addStretch()  # 推到右侧
 
         # 橡皮擦
@@ -859,11 +870,6 @@ class DigitizePage(QWidget):
         export_data_btn.clicked.connect(self._on_export_to_data_file)
         layout.addWidget(export_data_btn)
 
-        # 保存项目
-        save_btn = PushButton("保存项目", tab)
-        save_btn.clicked.connect(self._on_save_project)
-        layout.addWidget(save_btn)
-
         layout.addStretch()
         return tab
 
@@ -923,6 +929,8 @@ class DigitizePage(QWidget):
                         self._curve_table.setItem(row, 1, y_item)
 
     def _refresh_project_tree(self, show_indicator: bool = False):
+        if self._project_tree is None:
+            return
         self._project_tree.clear()
 
         current_img_id = self._current_image_id
@@ -2435,7 +2443,7 @@ class DigitizePage(QWidget):
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树节点选中时，若为图片节点则加载到查看器。"""
-        self._shared_tree_hint.setText(f"当前共享树节点: {kind} / {node_id}")
+        self._status_label.setText(f"当前共享树节点: {kind} / {node_id}")
         if kind == "image_work":
             self.load_image_by_id(node_id)
             return

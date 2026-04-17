@@ -444,6 +444,63 @@ class ProjectManager:
             self.current_project.is_modified = True
         return changed
 
+    def _find_series_owner(self, series_id: str):
+        p = self.current_project
+        if p is None:
+            return None, None, None
+        for df in p.data_files:
+            for series in df.series:
+                if series.id == series_id:
+                    return "data_file", df, series
+        for ds in p.datasets:
+            for series in ds.series:
+                if series.id == series_id:
+                    return "dataset", ds, series
+        return None, None, None
+
+    def rename_series(self, series_id: str, new_name: str) -> bool:
+        owner_kind, _owner, series = self._find_series_owner(series_id)
+        if owner_kind is None or series is None:
+            return False
+        series.name = new_name
+        if self.current_project is not None:
+            self.current_project.is_modified = True
+        return True
+
+    def delete_series(self, series_id: str) -> bool:
+        owner_kind, owner, _series = self._find_series_owner(series_id)
+        if owner_kind is None or owner is None or self.current_project is None:
+            return False
+        if owner_kind == "data_file":
+            before = len(owner.series)
+            owner.series = [s for s in owner.series if s.id != series_id]
+            changed = len(owner.series) < before
+        else:
+            before = len(owner.series)
+            owner.series = [s for s in owner.series if s.id != series_id]
+            changed = len(owner.series) < before
+        if changed:
+            self.current_project.is_modified = True
+        return changed
+
+    def move_series_to_data_file(self, series_id: str, target_data_file_id: str) -> bool:
+        p = self.current_project
+        if p is None:
+            return False
+        target = p.find_data_file(target_data_file_id)
+        owner_kind, owner, series = self._find_series_owner(series_id)
+        if target is None or owner_kind is None or owner is None or series is None:
+            return False
+        if owner_kind == "data_file" and owner.id == target.id:
+            return False
+        if owner_kind == "data_file":
+            owner.series = [s for s in owner.series if s.id != series_id]
+        else:
+            owner.series = [s for s in owner.series if s.id != series_id]
+        target.series.append(series)
+        p.is_modified = True
+        return True
+
     def import_curve_as_series(self, curve_id: str, dataset_id: str) -> Optional[DataSeries]:
         """将 PyLine 图像提取曲线复制为 ALine DataSeries（核心互通方法）。
 
@@ -468,6 +525,51 @@ class ProjectManager:
             y_label=y_label,
         )
         return series if self.add_series_to_dataset(dataset_id, series) else None
+
+    def _find_curve_owner(self, curve_id: str):
+        p = self.current_project
+        if p is None:
+            return None, None
+        for img in p.images:
+            for curve in img.curves:
+                if curve.id == curve_id:
+                    return img, curve
+        return None, None
+
+    def rename_curve(self, curve_id: str, new_name: str) -> bool:
+        image, curve = self._find_curve_owner(curve_id)
+        if image is None or curve is None:
+            return False
+        curve.name = new_name
+        if self.current_project is not None:
+            self.current_project.is_modified = True
+        return True
+
+    def delete_curve(self, curve_id: str) -> bool:
+        image, _curve = self._find_curve_owner(curve_id)
+        if image is None or self.current_project is None:
+            return False
+        before = len(image.curves)
+        image.curves = [c for c in image.curves if c.id != curve_id]
+        changed = len(image.curves) < before
+        if changed:
+            self.current_project.is_modified = True
+        return changed
+
+    def move_curve_to_image(self, curve_id: str, target_image_id: str) -> bool:
+        p = self.current_project
+        if p is None:
+            return False
+        source_image, curve = self._find_curve_owner(curve_id)
+        target_image = self.get_image(target_image_id)
+        if source_image is None or curve is None or target_image is None:
+            return False
+        if source_image.id == target_image.id:
+            return False
+        source_image.curves = [c for c in source_image.curves if c.id != curve_id]
+        target_image.curves.append(curve)
+        p.is_modified = True
+        return True
 
     # ─────────────────────────────────────────────
     # ALine 分析管理（新增）
@@ -651,38 +753,27 @@ class ProjectManager:
                 new_nodes.append(node)
         p.tree.nodes = new_nodes
 
-        # 确保工具集内存在 figure/report/ai 子文件夹
+        # 将旧工具分组文件夹拍平到工具集根下
         if tools_folder_id:
-            has_template = any(
-                n.kind == "folder" and getattr(n, "group_type", None) in _GROUP_TYPE_ALIASES["template_group"]
-                for n in p.tree.nodes
-            )
-            has_report = any(
-                n.kind == "folder" and getattr(n, "group_type", None) in _GROUP_TYPE_ALIASES["report_template_group"]
-                for n in p.tree.nodes
-            )
-            has_ai = any(
-                n.kind == "folder" and getattr(n, "group_type", None) in _GROUP_TYPE_ALIASES["ai_group"]
-                for n in p.tree.nodes
-            )
+            removable_ids = set()
             base_order = p.tree.get_siblings_max_order(tools_folder_id) + 1
-            if not has_template:
-                p.tree.nodes.append(FolderNode(
-                    name="绘图模板", parent_id=tools_folder_id,
-                    order=base_order, group_type="template_group",
-                ))
-                base_order += 1
-            if not has_report:
-                p.tree.nodes.append(FolderNode(
-                    name="报告模板", parent_id=tools_folder_id,
-                    order=base_order, group_type="report_template_group",
-                ))
-                base_order += 1
-            if not has_ai:
-                p.tree.nodes.append(FolderNode(
-                    name="AI 工具", parent_id=tools_folder_id,
-                    order=base_order, group_type="ai_group",
-                ))
+            for node in list(p.tree.nodes):
+                if node.kind != "folder":
+                    continue
+                group_type = getattr(node, "group_type", None)
+                if group_type not in {
+                    "pipeline_group", "template_group", "figure_template_group",
+                    "report_template_group", "ai_group", "prompt_group",
+                    "skill_group", "agent_group",
+                }:
+                    continue
+                for child in p.tree.get_children(node.id):
+                    child.parent_id = tools_folder_id
+                    child.order = base_order
+                    base_order += 1
+                removable_ids.add(node.id)
+            if removable_ids:
+                p.tree.nodes = [n for n in p.tree.nodes if n.id not in removable_ids]
 
         p.aline_version = "0.3"
         p.is_modified = True
@@ -699,18 +790,6 @@ class ProjectManager:
         # 工具集文件夹 + 子文件夹
         tools_folder = FolderNode(name="工具集", order=2, group_type="tools")
         p.tree.nodes.append(tools_folder)
-        p.tree.nodes.append(FolderNode(
-            name="Pipelines", parent_id=tools_folder.id, order=0, group_type="pipeline_group"
-        ))
-        p.tree.nodes.append(FolderNode(
-            name="绘图模板", parent_id=tools_folder.id, order=1, group_type="template_group"
-        ))
-        p.tree.nodes.append(FolderNode(
-            name="报告模板", parent_id=tools_folder.id, order=2, group_type="report_template_group"
-        ))
-        p.tree.nodes.append(FolderNode(
-            name="AI 工具", parent_id=tools_folder.id, order=3, group_type="ai_group"
-        ))
 
     def sync_legacy_datasets(self, project: Optional[Project] = None) -> None:
         """保存前将 data_files[*].series 同步回 datasets（确保旧 PyLine 可读）。"""
@@ -768,6 +847,10 @@ class ProjectManager:
             sp = p.find_saved_pipeline(node.pipeline_id)
             if sp:
                 sp.name = new_name
+        elif node.kind == "figure_template":
+            fig = p.find_figure(node.figure_id)
+            if fig:
+                fig.name = new_name
         elif node.kind == "report_template":
             tmpl = p.find_report_template(node.template_id)
             if tmpl:
@@ -836,6 +919,19 @@ class ProjectManager:
         node = p.tree.get_node(node_id)
         if node is None:
             return False
+        if node.kind == "folder":
+            return False
+        parent = p.tree.get_node(new_parent_id) if new_parent_id else None
+        if parent is None or parent.kind != "folder":
+            return False
+        parent_group_type = getattr(parent, "group_type", None)
+        if node.kind == "data_file" and parent_group_type not in _GROUP_TYPE_ALIASES["datasets"]:
+            return False
+        if node.kind == "image_work" and parent_group_type not in _GROUP_TYPE_ALIASES["images"]:
+            return False
+        if node.kind in {"pipeline", "figure_template", "report_template", "ai_prompt", "ai_skill", "ai_agent", "ai_tool"}:
+            if parent_group_type not in _GROUP_TYPE_ALIASES["tools"]:
+                return False
         node.parent_id = new_parent_id
         node.order = new_order
         p.is_modified = True
@@ -930,14 +1026,8 @@ class ProjectManager:
         p.saved_pipelines.append(sp)
         # 默认挂在工具集/Pipelines 文件夹
         if parent_id is None:
-            pipelines_folder = self._find_folder_by_group_type("pipeline_group")
-            if pipelines_folder is None:
-                tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
-                if tools_folder:
-                    pipelines_folder = self._find_folder_by_name("Pipelines", tools_folder.id)
-                    parent_id = pipelines_folder.id if pipelines_folder else tools_folder.id
-            else:
-                parent_id = pipelines_folder.id
+            tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
+            parent_id = tools_folder.id if tools_folder else None
         order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
         node = PipelineNode(name=name, parent_id=parent_id, pipeline_id=sp.id, order=order)
         p.tree.nodes.append(node)  # type: ignore
@@ -1010,12 +1100,8 @@ class ProjectManager:
         # 保存 FigureConfig（复用现有 save_figure_config）
         self.save_figure_config(config)
         if parent_id is None:
-            template_folder = self._find_folder_by_group_type("template_group")
-            if template_folder is None:
-                tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
-                parent_id = tools_folder.id if tools_folder else None
-            else:
-                parent_id = template_folder.id
+            tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
+            parent_id = tools_folder.id if tools_folder else None
         order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
         node = FigureTemplateNode(name=config.name, parent_id=parent_id, figure_id=config.id, order=order)
         p.tree.nodes.append(node)  # type: ignore
@@ -1041,6 +1127,8 @@ class ProjectManager:
 
     def _report_template_parent_id(self) -> Optional[str]:
         folder = self._find_folder_by_group_type("report_template_group")
+        if folder is None:
+            folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
         return folder.id if folder else None
 
     # ─────────────────────────────────────────────
@@ -1123,6 +1211,8 @@ class ProjectManager:
 
     def _ai_group_parent_id(self) -> Optional[str]:
         folder = self._find_folder_by_group_type("ai_group")
+        if folder is None:
+            folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
         return folder.id if folder else None
 
     def add_ai_prompt(self, name: str, content: str = "", description: str = "") -> Optional[AIPrompt]:

@@ -95,10 +95,9 @@ class ProcessPage(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(4)
         root.addWidget(splitter)
-        splitter.addWidget(self._build_left())
         splitter.addWidget(self._build_middle())
         splitter.addWidget(self._build_right())
-        splitter.setSizes([240, 300, 460])
+        splitter.setSizes([360, 620])
 
     def _build_left(self) -> QWidget:
         panel = QWidget()
@@ -132,6 +131,10 @@ class ProcessPage(QWidget):
         mv.setContentsMargins(0, 0, 0, 0)
         mv.setSpacing(6)
         mv.addWidget(make_section_label("操作链"))
+
+        self._current_input_label = BodyLabel("当前输入: 未选择")
+        self._current_input_label.setWordWrap(True)
+        mv.addWidget(self._current_input_label)
 
         template_row = QHBoxLayout()
         self._pipeline_combo = ComboBox(self)
@@ -213,6 +216,8 @@ class ProcessPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _refresh_tree(self):
+        if not hasattr(self, "_src_tree") or self._src_tree is None:
+            return
         self._src_tree.clear()
         p = project_manager.current_project
         if p is None:
@@ -270,6 +275,7 @@ class ProcessPage(QWidget):
         self._src_xs = list(series.x)
         self._src_ys = list(series.y)
         self._selected_src_id = series.id
+        self._current_input_label.setText(f"当前输入: {series.name}")
         self._run_pipeline()
         return True
 
@@ -497,9 +503,11 @@ class ProcessPage(QWidget):
 
     def receive_data(self, data_type: str, obj_id: str):
         if self._set_source_from_tree_node(data_type, obj_id):
-            self._shared_tree_hint.setText(f"当前输入来自共享树: {data_type} / {obj_id}")
             return
+        self._current_input_label.setText("当前输入: 未选择")
         self._refresh_tree()
+        if not hasattr(self, "_src_tree") or self._src_tree is None:
+            return
         for i in range(self._src_tree.topLevelItemCount()):
             root = self._src_tree.topLevelItem(i)
             for j in range(root.childCount()):

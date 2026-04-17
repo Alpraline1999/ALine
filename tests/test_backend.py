@@ -120,12 +120,25 @@ class TestSchemas(unittest.TestCase):
 
     def test_figure_state_model(self):
         from models.schemas import FigureState
-        state = FigureState(theme="Nature", x_label="Time", y_label="Value", show_errbar=True)
+        state = FigureState(
+            theme="Nature",
+            x_label="Time",
+            y_label="Value",
+            show_errbar=True,
+            font_family="DejaVu Sans",
+            line_width=2.2,
+            marker_size=6.5,
+            dpi=220,
+        )
         data = state.model_dump()
         restored = FigureState(**data)
         self.assertEqual(restored.theme, "Nature")
         self.assertEqual(restored.x_label, "Time")
         self.assertTrue(restored.show_errbar)
+        self.assertEqual(restored.font_family, "DejaVu Sans")
+        self.assertEqual(restored.line_width, 2.2)
+        self.assertEqual(restored.marker_size, 6.5)
+        self.assertEqual(restored.dpi, 220)
 
     def test_analysis_result_model(self):
         from models.schemas import AnalysisResult
@@ -211,6 +224,19 @@ class TestProjectManager(unittest.TestCase):
         self.assertTrue(result)
         node = p.tree.get_node(folder.id)
         self.assertEqual(node.name, "renamed")
+
+    def test_rename_figure_template_updates_figure_name(self):
+        from models.schemas import FigureConfig
+
+        p = self.pm.create_new("test")
+        self.pm.migrate_to_v2(p)
+        node = self.pm.add_figure_template(FigureConfig(name="old_template"))
+        self.assertIsNotNone(node)
+        result = self.pm.rename_node(node.id, "renamed_template")
+        self.assertTrue(result)
+        fig = p.find_figure(node.figure_id)
+        self.assertIsNotNone(fig)
+        self.assertEqual(fig.name, "renamed_template")
 
     def test_delete_node_with_cascade(self):
         p = self.pm.create_new("test")
@@ -1124,13 +1150,73 @@ class TestProjectManagerV3(unittest.TestCase):
             for n in self.p.tree.nodes
         ))
 
-    def test_new_project_has_report_template_group(self):
+    def test_new_project_has_only_root_system_groups(self):
         groups = [
             getattr(n, "group_type", None)
             for n in self.p.tree.nodes
             if n.kind == "folder"
         ]
-        self.assertIn("report_template_group", groups)
+        self.assertIn("datasets", groups)
+        self.assertIn("images", groups)
+        self.assertIn("tools", groups)
+        self.assertNotIn("report_template_group", groups)
+        self.assertNotIn("pipeline_group", groups)
+        self.assertNotIn("template_group", groups)
+
+    def test_rename_series(self):
+        from models.schemas import DataFile, DataSeries
+
+        series = DataSeries(name="old_series", x=[1.0], y=[2.0])
+        self.pm.add_data_file(DataFile(name="a.csv", series=[series]))
+        result = self.pm.rename_series(series.id, "new_series")
+        self.assertTrue(result)
+        self.assertEqual(self.p.find_series(series.id).name, "new_series")
+
+    def test_delete_series(self):
+        from models.schemas import DataFile, DataSeries
+
+        series = DataSeries(name="drop_series", x=[1.0], y=[2.0])
+        df = DataFile(name="a.csv", series=[series])
+        self.pm.add_data_file(df)
+        result = self.pm.delete_series(series.id)
+        self.assertTrue(result)
+        self.assertIsNone(self.p.find_series(series.id))
+
+    def test_move_series_to_other_data_file(self):
+        from models.schemas import DataFile, DataSeries
+
+        series = DataSeries(name="move_series", x=[1.0], y=[2.0])
+        df1 = DataFile(name="a.csv", series=[series])
+        df2 = DataFile(name="b.csv", series=[])
+        self.pm.add_data_file(df1)
+        self.pm.add_data_file(df2)
+        result = self.pm.move_series_to_data_file(series.id, df2.id)
+        self.assertTrue(result)
+        self.assertEqual(len(df1.series), 0)
+        self.assertEqual(df2.series[0].id, series.id)
+
+    def test_rename_curve(self):
+        img = self.pm.add_image("fake.png", "img_a")
+        curve = self.pm.add_curve_to_image(img.id, [1.0, 2.0], [3.0, 4.0], name="old_curve")
+        result = self.pm.rename_curve(curve.id, "new_curve")
+        self.assertTrue(result)
+        self.assertEqual(self.pm.get_curve(curve.id).name, "new_curve")
+
+    def test_delete_curve(self):
+        img = self.pm.add_image("fake.png", "img_a")
+        curve = self.pm.add_curve_to_image(img.id, [1.0, 2.0], [3.0, 4.0], name="drop_curve")
+        result = self.pm.delete_curve(curve.id)
+        self.assertTrue(result)
+        self.assertIsNone(self.pm.get_curve(curve.id))
+
+    def test_move_curve_to_other_image(self):
+        img1 = self.pm.add_image("fake_1.png", "img_a")
+        img2 = self.pm.add_image("fake_2.png", "img_b")
+        curve = self.pm.add_curve_to_image(img1.id, [1.0, 2.0], [3.0, 4.0], name="move_curve")
+        result = self.pm.move_curve_to_image(curve.id, img2.id)
+        self.assertTrue(result)
+        self.assertEqual(len(img1.curves), 0)
+        self.assertEqual(img2.curves[0].id, curve.id)
 
     def test_get_series_from_node_series_kind(self):
         from models.schemas import DataFile, DataSeries
