@@ -56,6 +56,7 @@ class DigitizePage(QWidget):
         self._current_curve_id = None
         self._export_target_kind = None
         self._export_target_id = None
+        self._last_export_suggestion = ""
         self._current_curve_points = []
         self._active_tool = None  # 当前激活的工具按钮
         self._hidden_curves = set()  # 隐藏的曲线ID集合
@@ -115,13 +116,13 @@ class DigitizePage(QWidget):
         self._viewer_status_bar = self._create_viewer_status_bar(center_panel)
         center_layout.addWidget(self._viewer_status_bar)
 
-        self._splitter.addWidget(center_panel)
-
         self._right_panel = self._create_right_panel()
         self._splitter.addWidget(self._right_panel)
 
-        self._splitter.setSizes([760, 320])
-        self._splitter.setStretchFactor(0, 1)
+        self._splitter.addWidget(center_panel)
+
+        self._splitter.setSizes([320, 760])
+        self._splitter.setStretchFactor(1, 1)
 
         main_layout.addWidget(self._splitter)
 
@@ -502,7 +503,7 @@ class DigitizePage(QWidget):
 
         self._crosshair_color_btn = ColorPickerButton(QColor("#00C2FF"), "", manual_row, enableAlpha=False)
         self._crosshair_color_btn.setToolTip("十字颜色")
-        self._crosshair_color_btn.setFixedSize(28, 28)
+        self._crosshair_color_btn.setFixedSize(34, 34)
         self._crosshair_color_btn.colorChanged.connect(self._on_crosshair_color_changed)
         ml.addWidget(self._crosshair_color_btn)
 
@@ -831,13 +832,26 @@ class DigitizePage(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
+        export_hint = BodyLabel("默认会将新建导出结果归档到 数据集 / 数字化结果，可在共享树中改为追加到已有数据文件。", tab)
+        export_hint.setWordWrap(True)
+        export_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        layout.addWidget(export_hint)
+
         # 导出范围
         scope_row = QHBoxLayout()
         scope_row.addWidget(BodyLabel("导出范围:", tab))
         self._export_scope_combo = ComboBox(tab)
         self._export_scope_combo.addItems(["当前曲线", "全部曲线"])
+        self._export_scope_combo.currentIndexChanged.connect(lambda: self._refresh_export_name_suggestion())
         scope_row.addWidget(self._export_scope_combo)
         layout.addLayout(scope_row)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(BodyLabel("结果名称:", tab))
+        self._export_name_edit = LineEdit(tab)
+        self._export_name_edit.setPlaceholderText("不填写时自动生成")
+        name_row.addWidget(self._export_name_edit)
+        layout.addLayout(name_row)
 
         # 格式
         fmt_row = QHBoxLayout()
@@ -871,6 +885,7 @@ class DigitizePage(QWidget):
         layout.addWidget(export_data_btn)
 
         layout.addStretch()
+        self._refresh_export_name_suggestion(force=True)
         return tab
 
     def _border_color(self):
@@ -905,9 +920,17 @@ class DigitizePage(QWidget):
                     row = self._curve_table.rowCount()
                     self._curve_table.insertRow(row)
 
-                    if has_calibration and curve.x_actual and curve.y_actual:
-                        x_item = QTableWidgetItem(f"{curve.x_actual[i]:.4f}")
-                        y_item = QTableWidgetItem(f"{curve.y_actual[i]:.4f}")
+                    if has_calibration:
+                        # 重新从像素坐标实时计算确保与导出一致
+                        try:
+                            xa, ya = project_manager.pixel_to_actual_coords(
+                                self._current_curve_id, curve.x_data[i], curve.y_data[i]
+                            )
+                            x_item = QTableWidgetItem(f"{xa:.4f}")
+                            y_item = QTableWidgetItem(f"{ya:.4f}")
+                        except Exception:
+                            x_item = QTableWidgetItem(f"{curve.x_data[i]:.4f}")
+                            y_item = QTableWidgetItem(f"{curve.y_data[i]:.4f}")
                     else:
                         x_item = QTableWidgetItem(f"{curve.x_data[i]:.4f}")
                         y_item = QTableWidgetItem(f"{curve.y_data[i]:.4f}")
@@ -1740,14 +1763,79 @@ class DigitizePage(QWidget):
         return False
 
     def _curve_to_data_series(self, curve) -> DataSeries:
+        """将 Curve 转换为 DataSeries，导出时重新从像素坐标计算实际坐标以确保一致性。"""
+        if curve.calibration and curve.x_data:
+            x_vals: list = []
+            y_vals: list = []
+            for px, py in zip(curve.x_data, curve.y_data):
+                xa, ya = project_manager.pixel_to_actual_coords(curve.id, px, py)
+                x_vals.append(xa)
+                y_vals.append(ya)
+        elif curve.x_data:
+            x_vals = list(curve.x_data)
+            y_vals = list(curve.y_data)
+        else:
+            x_vals = list(curve.x_actual or [])
+            y_vals = list(curve.y_actual or [])
         return DataSeries(
             name=curve.name or "提取曲线",
-            x=list(curve.x_actual),
-            y=list(curve.y_actual),
+            x=x_vals,
+            y=y_vals,
             color=curve.color,
             source="pyline_curve_copy",
             source_curve_id=curve.id,
         )
+
+    def _sanitize_export_name(self, name: str) -> str:
+        value = (name or "").strip()
+        if not value:
+            return "digitized_result"
+        value = value.replace(".digitize", "").replace(".derived", "")
+        value = value.replace("/", "_").replace("\\", "_")
+        value = "_".join(part for part in value.split() if part)
+        return value or "digitized_result"
+
+    def _find_curve_image_name(self, curve_id: str) -> str:
+        project = project_manager.current_project
+        if project is None:
+            return ""
+        for image in project.images:
+            if any(curve.id == curve_id for curve in image.curves):
+                return image.name or ""
+        return ""
+
+    def _suggest_export_name(self) -> str:
+        curves = self._get_export_curves()
+        if not curves:
+            return "digitized_result"
+        if len(curves) == 1:
+            curve = curves[0]
+            image_name = self._find_curve_image_name(curve.id)
+            parts = [part for part in [image_name, curve.name or "提取曲线"] if part]
+            return self._sanitize_export_name("_".join(parts))
+        base_name = self._find_curve_image_name(curves[0].id)
+        if not base_name and project_manager.current_project is not None:
+            base_name = project_manager.current_project.name
+        return self._sanitize_export_name(f"{base_name or 'digitized'}_{len(curves)}条曲线")
+
+    def _refresh_export_name_suggestion(self, force: bool = False) -> None:
+        if not hasattr(self, "_export_name_edit") or self._export_name_edit is None:
+            return
+        suggestion = self._suggest_export_name()
+        current = self._export_name_edit.text().strip()
+        if force or not current or current == self._last_export_suggestion:
+            self._export_name_edit.setText(suggestion)
+        self._last_export_suggestion = suggestion
+
+    def _ensure_digitize_result_folder(self) -> str | None:
+        dataset_root = project_manager._find_folder_by_group_type("datasets")
+        if dataset_root is None:
+            return None
+        for node in project_manager.get_children(dataset_root.id):
+            if node.kind == "folder" and node.name == "数字化结果":
+                return node.id
+        folder = project_manager.add_folder("数字化结果", parent_id=dataset_root.id)
+        return folder.id if folder is not None else dataset_root.id
 
     def _on_export_to_data_file(self):
         curves = self._get_export_curves()
@@ -1760,32 +1848,39 @@ class DigitizePage(QWidget):
         appended = 0
 
         if target_kind == "data_file" and target_id:
+            target_node = project_manager.get_node_by_id(target_id)
+            data_file_id = target_node.data_file_id if target_node is not None and target_node.kind == "data_file" else target_id
             for curve in curves:
-                if project_manager.add_series_to_data_file(target_id, self._curve_to_data_series(curve)):
+                if project_manager.add_series_to_data_file(data_file_id, self._curve_to_data_series(curve)):
                     appended += 1
             if appended == 0:
                 InfoBar.error(title="导出失败", content="未能追加到目标数据文件", parent=self, duration=3000)
                 return
-            self._status_label.setText(f"已追加 {appended} 条数据列到数据文件")
+            target_name = target_node.name if target_node is not None else "目标数据文件"
+            self._status_label.setText(f"已追加 {appended} 条数据列到数据文件: {target_name}")
         else:
             parent_id = None
             if target_kind == "folder" and target_id and self._is_data_folder_target(target_id):
-                parent_id = target_id
+                target_node = project_manager.get_node_by_id(target_id)
+                if getattr(target_node, "group_type", None) in ("datasets", "dataset_set"):
+                    parent_id = self._ensure_digitize_result_folder()
+                else:
+                    parent_id = target_id
             else:
-                folder = project_manager._find_folder_by_group_type("datasets")
-                parent_id = folder.id if folder else None
+                parent_id = self._ensure_digitize_result_folder()
 
-            file_name = curves[0].name or "提取曲线"
-            if len(curves) > 1:
-                file_name = f"{file_name}_等_{len(curves)}条曲线"
+            file_name = self._sanitize_export_name(self._export_name_edit.text().strip() or self._suggest_export_name())
             df = DataFile(
-                name=f"{file_name}.derived",
+                name=f"{file_name}.digitize",
                 series=[self._curve_to_data_series(curve) for curve in curves],
             )
             node = project_manager.add_data_file(df, parent_id=parent_id)
             if node is None:
                 InfoBar.error(title="导出失败", content="未能创建目标数据文件", parent=self, duration=3000)
                 return
+            self._export_target_kind = "data_file"
+            self._export_target_id = node.id
+            self._update_export_target_label()
             self._status_label.setText(f"已导出为数据文件: {df.name}")
 
         self.project_modified.emit()
@@ -2443,7 +2538,6 @@ class DigitizePage(QWidget):
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树节点选中时，若为图片节点则加载到查看器。"""
-        self._status_label.setText(f"当前共享树节点: {kind} / {node_id}")
         if kind == "image_work":
             self.load_image_by_id(node_id)
             return
@@ -2468,9 +2562,11 @@ class DigitizePage(QWidget):
         self._current_image_id = image_work_id
         if img.curves:
             self._current_curve_id = img.curves[0].id
+            self._refresh_export_name_suggestion()
             self._display_current_curve_on_image()
         else:
             self._current_curve_id = None
+            self._refresh_export_name_suggestion()
             self._image_viewer.clear_curves()
         self._update_curve_table()
         self._refresh_project_tree(show_indicator=True)

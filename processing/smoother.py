@@ -93,6 +93,29 @@ def resample_uniform(
     return x_new, y_new
 
 
+def resample_uniform_spacing(
+    x: List[float],
+    y: List[float],
+    spacing: float,
+) -> Tuple[List[float], List[float]]:
+    """按固定间距重采样，并始终保留末端点。"""
+    if len(x) < 2 or spacing <= 0:
+        return list(x), list(y)
+    x_min, x_max = x[0], x[-1]
+    if x_min == x_max:
+        return list(x), list(y)
+
+    x_new = [x_min]
+    next_x = x_min + spacing
+    while next_x < x_max - 1e-12:
+        x_new.append(next_x)
+        next_x += spacing
+    if not math.isclose(x_new[-1], x_max, rel_tol=0.0, abs_tol=1e-12):
+        x_new.append(x_max)
+    y_new = [_interp(xv, x, y) for xv in x_new]
+    return x_new, y_new
+
+
 # ── 内部辅助 ────────────────────────────────────────────────
 
 def _savgol_coeffs(window: int, poly: int) -> List[float]:

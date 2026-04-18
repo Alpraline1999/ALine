@@ -1,32 +1,30 @@
-"""图表页面 — 共享项目树驱动的可视化"""
+"""图表页面 - 共享项目树驱动的可视化。"""
 
 from __future__ import annotations
 
-import json
-import os
-import platform
-import re
-from pathlib import Path
-from typing import Dict, List, Optional
+import warnings
+from typing import Any, Dict, List, Optional
 
-import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QColorDialog,
+    QFrame,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QListWidgetItem,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CardWidget,
     CheckBox,
+    ColorPickerButton,
     ComboBox,
     FluentIcon as FIF,
     InfoBar,
@@ -34,386 +32,937 @@ from qfluentwidgets import (
     LineEdit,
     ListWidget,
     PushButton,
+    RoundMenu,
+    SmoothScrollArea,
+    TabCloseButtonDisplayMode,
+    TabWidget,
     ToolButton,
+    ToolTipFilter,
+    ToolTipPosition,
     isDarkTheme,
 )
 
-from ui.theme import make_hsep, make_section_label
+from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
+from core.extension_api import build_extension_entry, extension_registry
+from core.project_manager import project_manager
+from models.schemas import AxisConfig, CurveStyle, CurveStyleTemplate, FigureConfig, FigureState
+from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
+from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
+from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.theme import make_hint_label, make_hsep, make_section_label
 
 try:
     import matplotlib
+
     matplotlib.use("QtAgg")
-    import matplotlib.pyplot as plt
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
-    from matplotlib import font_manager
-
-    _sys = platform.system().lower()
-    if _sys == "windows":
-        _CJK_FONT_FILES = [
-            r"C:\\Windows\\Fonts\\msyh.ttc",
-            r"C:\\Windows\\Fonts\\msyhbd.ttc",
-            r"C:\\Windows\\Fonts\\simhei.ttf",
-            r"C:\\Windows\\Fonts\\simsun.ttc",
-        ]
-        _CJK_NAMES = ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"]
-    else:
-        _CJK_FONT_FILES = [
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/wqy/wqy-microhei.ttc",
-            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        ]
-        _CJK_NAMES = ["Noto Sans CJK JP", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "SimHei"]
-
-    _selected_font = None
-    for _f in _CJK_FONT_FILES:
-        if not os.path.exists(_f):
-            continue
-        try:
-            font_manager.fontManager.addfont(_f)
-            _prop = font_manager.FontProperties(fname=_f)
-            _name = _prop.get_name()
-            if _name:
-                _selected_font = _name
-                break
-        except Exception:
-            continue
-
-    if _selected_font is None:
-        _available_names = {fm.name for fm in font_manager.fontManager.ttflist if fm.name}
-        _selected_font = next((n for n in _CJK_NAMES if n in _available_names), None)
-
-    if _selected_font:
-        matplotlib.rcParams["font.family"] = [_selected_font, "sans-serif"]
-    else:
-        matplotlib.rcParams["font.family"] = ["sans-serif"]
-    matplotlib.rcParams["font.sans-serif"] = [
-        "Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "DejaVu Sans"
-    ]
-    matplotlib.rcParams["font.size"] = max(1, float(matplotlib.rcParams.get("font.size", 10) or 10))
-    matplotlib.rcParams["axes.unicode_minus"] = False
+    configure_matplotlib_cjk(matplotlib)
     HAS_MATPLOTLIB = True
     _MATPLOTLIB_ERROR = ""
-except Exception as _e:
+except Exception as exc:
     HAS_MATPLOTLIB = False
-    _MATPLOTLIB_ERROR = f"{type(_e).__name__}: {_e}"
-
-from core.project_manager import project_manager
-from models.schemas import FigureState
+    _MATPLOTLIB_ERROR = f"{type(exc).__name__}: {exc}"
 
 _STYLES = [
-    ("实线 —",         "-",   ""),
-    ("虚线 - -",       "--",  ""),
-    ("点线 ···",       ":",   ""),
-    ("点划线 —·",      "-.",  ""),
-    ("散点 ○",         "",    "o"),
-    ("散点 □",         "",    "s"),
-    ("散点 △",         "",    "^"),
-    ("散点+线 ○—",     "-",   "o"),
-    ("散点+线 □—",     "-",   "s"),
+    ("实线 —", "-", ""),
+    ("虚线 - -", "--", ""),
+    ("点线 ···", ":", ""),
+    ("点划线 —·", "-.", ""),
+    ("散点 ○", "", "o"),
+    ("散点 □", "", "s"),
+    ("散点 △", "", "^"),
+    ("散点+线 ○—", "-", "o"),
+    ("散点+线 □—", "-", "s"),
 ]
-_STYLE_LABELS     = [s[0] for s in _STYLES]
-_STYLE_LINESTYLES = [s[1] for s in _STYLES]
-_STYLE_MARKERS    = [s[2] for s in _STYLES]
+_STYLE_LABELS = [item[0] for item in _STYLES]
+_STYLE_LINESTYLES = [item[1] for item in _STYLES]
+_STYLE_MARKERS = [item[2] for item in _STYLES]
+
+_THEME_HINTS = {
+    "默认": "跟随应用配色，适合日常预览和交互调参。",
+    "Nature": "紧凑、克制，适合论文主图。",
+    "IEEE": "偏工程排版，适合双栏和黑白打印。",
+    "ACS": "强调线宽和标记，可读性更高。",
+    "简洁黑白": "强制黑白输出，适合打印和审稿。",
+}
+
+_ICON_SHOW = getattr(FIF, "VIEW", FIF.SEARCH)
+_ICON_HIDE = getattr(FIF, "HIDE", FIF.CANCEL)
 
 
 class ChartPage(QWidget):
-    """数据可视化页面 — 由共享项目树驱动，不再含内置曲线列表。"""
+    """数据可视化页面。"""
 
-    # 对外信号：通知 main_window 刷新树（当保存模板时）
     project_modified = Signal()
+    assets_modified = Signal()
 
-    # 页面可显示的节点类型（main_window 按此过滤共享树）
     tree_filter_kinds: List[str] = [
-        "folder", "data_file", "image_work", "figure_template",
-        "series", "curve",
+        "folder",
+        "data_file",
+        "image_work",
+        "global_curve_style_template",
+        "global_plot_style",
+        "global_plot_theme",
+        "series",
+        "curve",
     ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # 当前图表中的数据系列列表
-        # 每项: {"name": str, "x": list, "y": list, "y_err": list|None,
-        #        "color": str, "obj_id": str, "source": str}
+        self._extension_panel_visible = True
         self._chart_series: List[dict] = []
-        self._curve_styles: Dict[str, dict] = {}  # name → {color, linestyle, marker}
+        self._curve_styles: Dict[str, dict] = {}
         self._style_target: Optional[str] = None
         self._figure_state = FigureState()
+        self._plot_style_refs: List[Optional[str]] = [None]
+        self._applied_plot_style_ref: Optional[str] = None
+        self._active_template_node_id: Optional[str] = None
+        self._curve_style_template_ids: List[Optional[str]] = [None]
+        self._active_curve_style_ref: Optional[str] = None
+        self._active_curve_style_template_id: Optional[str] = None
+        self._current_plot_theme_id: Optional[str] = None
+        self._plot_style_extension_options: Dict[str, dict] = {}
+        self._curve_style_extension_options: Dict[str, dict] = {}
+        self._display_dpi = 100.0
+        self._display_canvas_size: Optional[tuple[int, int]] = None
+        self._canvas_host: Optional[QWidget] = None
 
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
-        self._redraw_timer.setInterval(300)
+        self._redraw_timer.setInterval(250)
         self._redraw_timer.timeout.connect(self._redraw_now)
 
         self._setup_ui()
 
-    # ──────────────────────────── UI ────────────────────────────────────
-
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(12)
 
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(8)
+
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.setHandleWidth(6)
 
-        # ── 左侧控制面板 ──────────────────────────────────────────────
         left_card = CardWidget(self)
-        lv = QVBoxLayout(left_card)
-        lv.setContentsMargins(12, 12, 12, 12)
-        lv.setSpacing(8)
+        left_layout = QVBoxLayout(left_card)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(8)
 
-        lv.addWidget(make_section_label("已绘图曲线", left_card))
-
-        # 当前图表中的系列（可多选+删除）
+        left_layout.addWidget(make_section_label("已绘图曲线", left_card))
         self._chart_list = ListWidget(left_card)
-        self._chart_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self._chart_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._chart_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._chart_list.currentItemChanged.connect(self._on_current_changed)
-        lv.addWidget(self._chart_list)
+        self._chart_list.customContextMenuRequested.connect(self._on_chart_list_context_menu)
+        left_layout.addWidget(self._chart_list)
 
-        sel_row = QHBoxLayout()
-        self._btn_clear = PushButton(FIF.DELETE, "清除绘图", left_card)
-        self._btn_clear.setFixedHeight(30)
+        toolbar_row = QHBoxLayout()
+        self._btn_clear = ToolButton(FIF.DELETE, left_card)
+        self._btn_clear.setToolTip("清除当前画布中的所有曲线")
         self._btn_clear.clicked.connect(self._on_clear_chart)
-        sel_row.addWidget(self._btn_clear)
-        self._btn_remove = PushButton(FIF.REMOVE, "移除选中", left_card)
-        self._btn_remove.setFixedHeight(30)
+        toolbar_row.addWidget(self._btn_clear)
+        self._btn_remove = ToolButton(FIF.REMOVE, left_card)
+        self._btn_remove.setToolTip("移除当前选中的曲线")
         self._btn_remove.clicked.connect(self._on_remove_selected)
-        sel_row.addWidget(self._btn_remove)
-        lv.addLayout(sel_row)
+        toolbar_row.addWidget(self._btn_remove)
+        self._btn_toggle_visible = ToolButton(_ICON_HIDE, left_card)
+        self._btn_toggle_visible.setToolTip("隐藏当前曲线")
+        self._btn_toggle_visible.clicked.connect(self._toggle_selected_visibility)
+        toolbar_row.addWidget(self._btn_toggle_visible)
+        toolbar_row.addStretch()
+        left_layout.addLayout(toolbar_row)
 
-        lv.addWidget(make_hsep(left_card))
+        left_layout.addWidget(make_hsep(left_card))
 
-        # 曲线样式
-        lv.addWidget(make_section_label("曲线样式(选中后设置)", left_card))
-        self._style_target_label = BodyLabel("— 未选中 —", left_card)
-        self._style_target_label.setStyleSheet("color: gray; font-size: 11px;")
-        self._style_target_label.setWordWrap(True)
-        lv.addWidget(self._style_target_label)
+        self._style_tabs = TabWidget(left_card)
+        self._style_tabs.tabBar.setAddButtonVisible(False)
+        self._style_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
+        self._style_tabs.addTab(self._build_curve_style_tab(left_card), "曲线样式")
+        self._style_tabs.addTab(self._build_plot_style_tab(left_card), "绘图样式")
+        left_layout.addWidget(self._style_tabs, 1)
 
-        style_row = QHBoxLayout()
-        style_row.setSpacing(6)
-        style_row.addWidget(BodyLabel("颜色:", left_card))
-        self._style_color_btn = PushButton(left_card)
-        self._style_color_btn.setFixedSize(28, 28)
-        self._style_color_btn.setEnabled(False)
-        self._style_color_btn.clicked.connect(self._on_style_color_click)
-        style_row.addWidget(self._style_color_btn)
-        self._style_reset_color_btn = ToolButton(FIF.CANCEL, left_card)
-        self._style_reset_color_btn.setFixedSize(24, 24)
-        self._style_reset_color_btn.setEnabled(False)
-        self._style_reset_color_btn.clicked.connect(self._on_style_reset_color)
-        style_row.addWidget(self._style_reset_color_btn)
-        style_row.addWidget(BodyLabel("线型:", left_card))
-        self._style_line_combo = ComboBox(left_card)
-        self._style_line_combo.addItems(_STYLE_LABELS)
-        self._style_line_combo.setEnabled(False)
-        self._style_line_combo.currentIndexChanged.connect(self._on_style_line_changed)
-        style_row.addWidget(self._style_line_combo, 1)
-        lv.addLayout(style_row)
-
-        lv.addWidget(make_hsep(left_card))
-
-        # 简单坐标轴控制（快速使用；完整设置在高级对话框中）
-        lv.addWidget(make_section_label("坐标轴标签", left_card))
-        xlabel_row = QHBoxLayout()
-        xlabel_row.addWidget(BodyLabel("X:", left_card))
-        self._x_label_edit = LineEdit(left_card)
-        self._x_label_edit.setPlaceholderText("X")
-        self._x_label_edit.textChanged.connect(self._on_quick_config_changed)
-        xlabel_row.addWidget(self._x_label_edit)
-        lv.addLayout(xlabel_row)
-
-        ylabel_row = QHBoxLayout()
-        ylabel_row.addWidget(BodyLabel("Y:", left_card))
-        self._y_label_edit = LineEdit(left_card)
-        self._y_label_edit.setPlaceholderText("Y")
-        self._y_label_edit.textChanged.connect(self._on_quick_config_changed)
-        ylabel_row.addWidget(self._y_label_edit)
-        lv.addLayout(ylabel_row)
-
-        lv.addWidget(make_hsep(left_card))
-
-        # 图表主题 + 误差棒
-        lv.addWidget(make_section_label("图表主题", left_card))
-        theme_row = QHBoxLayout()
-        theme_row.addWidget(BodyLabel("主题:", left_card))
-        self._theme_combo = ComboBox(left_card)
-        self._theme_combo.addItems(["默认", "Nature", "IEEE", "ACS", "简洁黑白"])
-        self._theme_combo.currentIndexChanged.connect(self._on_quick_config_changed)
-        theme_row.addWidget(self._theme_combo, 1)
-        lv.addLayout(theme_row)
-
-        self._errbar_cb = CheckBox("显示误差棒", left_card)
-        self._errbar_cb.stateChanged.connect(self._on_quick_config_changed)
-        lv.addWidget(self._errbar_cb)
-
-        lv.addWidget(make_hsep(left_card))
-
-        # 操作按钮行
-        btn_grid = QGridLayout()
-        btn_grid.setSpacing(4)
-        self._btn_advanced = PushButton(FIF.SETTING, "高级设置", left_card)
-        self._btn_advanced.setFixedHeight(32)
-        self._btn_advanced.clicked.connect(self._on_advanced_settings)
-        btn_grid.addWidget(self._btn_advanced, 0, 0)
-
-        self._btn_load_template = PushButton(FIF.FOLDER, "加载模板", left_card)
-        self._btn_load_template.setFixedHeight(32)
-        self._btn_load_template.clicked.connect(self._on_load_template)
-        btn_grid.addWidget(self._btn_load_template, 0, 1)
-
-        self._btn_save_template = PushButton(FIF.SAVE, "保存模板", left_card)
-        self._btn_save_template.setFixedHeight(32)
-        self._btn_save_template.clicked.connect(self._on_save_template)
-        btn_grid.addWidget(self._btn_save_template, 1, 0)
-
-        self._btn_export = PushButton(FIF.SHARE, "导出图片", left_card)
-        self._btn_export.setFixedHeight(32)
+        left_layout.addWidget(make_hsep(left_card))
+        self._plot_actions_bar = QWidget(left_card)
+        plot_actions_layout = QGridLayout(self._plot_actions_bar)
+        plot_actions_layout.setContentsMargins(0, 0, 0, 0)
+        plot_actions_layout.setHorizontalSpacing(6)
+        plot_actions_layout.setVerticalSpacing(4)
+        self._btn_export = PushButton(FIF.SHARE, "导出图片", self._plot_actions_bar)
         self._btn_export.clicked.connect(self._on_export_image)
-        btn_grid.addWidget(self._btn_export, 1, 1)
+        plot_actions_layout.addWidget(self._btn_export, 0, 0)
+        plot_actions_layout.setColumnStretch(0, 1)
+        left_layout.addWidget(self._plot_actions_bar)
 
-        btn_grid.setColumnStretch(0, 1)
-        btn_grid.setColumnStretch(1, 1)
-        lv.addLayout(btn_grid)
-
-        lv.addStretch()
-        left_card.setMinimumWidth(220)
-        left_card.setMaximumWidth(320)
+        left_card.setMinimumWidth(300)
+        left_card.setMaximumWidth(360)
         splitter.addWidget(left_card)
 
-        # ── 右侧画布 ────────────────────────────────────────────────
         right_card = CardWidget(self)
-        rv = QVBoxLayout(right_card)
-        rv.setContentsMargins(8, 8, 8, 8)
-
+        right_layout = QVBoxLayout(right_card)
+        right_layout.setContentsMargins(8, 8, 8, 8)
+        self._canvas_host = QScrollArea(right_card)
+        self._canvas_host.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._canvas_host.setWidgetResizable(True)
+        self._canvas_host.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._canvas_host.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        canvas_stage = QWidget(self._canvas_host)
+        canvas_stage.setMinimumSize(0, 0)
+        self._canvas_host.setWidget(canvas_stage)
+        canvas_host_layout = QVBoxLayout(canvas_stage)
+        canvas_host_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_host_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if HAS_MATPLOTLIB:
-            self._figure = Figure()
+            self._figure = Figure(
+                figsize=(self._figure_state.figure_width, self._figure_state.figure_height),
+                dpi=self._display_dpi,
+            )
             self._canvas = FigureCanvas(self._figure)
-            self._canvas.setMinimumHeight(300)
-            rv.addWidget(self._canvas)
+            self._canvas.setMinimumSize(1, 1)
+            canvas_host_layout.addWidget(self._canvas, 0, Qt.AlignmentFlag.AlignCenter)
+            self._canvas_host.viewport().installEventFilter(self)
+            right_layout.addWidget(self._canvas_host, 1)
         else:
-            errtxt = (f"matplotlib 加载失败：{_MATPLOTLIB_ERROR}"
-                      if _MATPLOTLIB_ERROR else
-                      "请安装 matplotlib：uv pip install matplotlib")
-            no_mpl = BodyLabel(errtxt, self)
-            no_mpl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            no_mpl.setWordWrap(True)
-            rv.addWidget(no_mpl)
+            message = f"matplotlib 加载失败：{_MATPLOTLIB_ERROR}" if _MATPLOTLIB_ERROR else "请安装 matplotlib"
+            label = BodyLabel(message, self)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setWordWrap(True)
+            canvas_host_layout.addWidget(label)
+            right_layout.addWidget(self._canvas_host, 1)
             self._figure = None
             self._canvas = None
-
         splitter.addWidget(right_card)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        root.addWidget(splitter, 1)
-        self._apply_figure_state(self._figure_state)
+        splitter.setSizes([340, 980])
 
-    # ──────────────────────────── 共享树接口 ─────────────────────────────
+        content_row.addWidget(splitter, 1)
+
+        self._extension_panel = ExtensionConfigPanel("样式扩展", "应用样式扩展", self)
+        self._extension_panel.apply_requested.connect(self._on_chart_extension_apply)
+        content_row.addWidget(self._extension_panel)
+
+        root.addLayout(content_row, 1)
+
+        self._refresh_curve_style_template_combo()
+        self._refresh_template_combo()
+        self._style_tabs.stackedWidget.currentChanged.connect(self._refresh_style_extension_panel)
+        self._refresh_style_extension_panel()
+        self._apply_figure_state(self._figure_state)
+        self._update_color_btn("#888888")
+        self._update_visibility_button()
+        self._install_tooltip_filters()
+
+    def supports_extension_panel_toggle(self) -> bool:
+        return True
+
+    def is_extension_panel_visible(self) -> bool:
+        return bool(self._extension_panel_visible)
+
+    def set_extension_panel_visible(self, visible: bool) -> None:
+        self._extension_panel_visible = bool(visible)
+        if hasattr(self, "_extension_panel"):
+            self._extension_panel.setVisible(self._extension_panel_visible)
+
+    def eventFilter(self, watched, event):
+        if self._canvas_host is not None and watched is self._canvas_host.viewport() and event.type() == QEvent.Type.Resize:
+            self._sync_canvas_display_geometry()
+        return super().eventFilter(watched, event)
+
+    def _install_tooltip_filters(self) -> None:
+        for widget in self.findChildren(QWidget):
+            if widget.toolTip():
+                widget.installEventFilter(ToolTipFilter(widget, 500, ToolTipPosition.TOP))
+
+    @staticmethod
+    def _set_compact_edit_width(edit: LineEdit, width: int = 88) -> None:
+        edit.setMaximumWidth(width)
+
+    def _build_curve_style_tab(self, parent: QWidget) -> QWidget:
+        page = QWidget(parent)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+
+        layout.addWidget(make_section_label("曲线样式", page))
+        self._curve_style_template_label = make_hint_label("当前曲线样式未绑定全局模板。", page)
+        layout.addWidget(self._curve_style_template_label)
+
+        curve_template_row = QHBoxLayout()
+        self._curve_style_template_combo = ComboBox(page)
+        self._curve_style_template_combo.currentIndexChanged.connect(self._on_curve_style_template_selected)
+        curve_template_row.addWidget(self._curve_style_template_combo, 1)
+        self._btn_load_curve_style_template = ToolButton(FIF.FOLDER, page)
+        self._btn_load_curve_style_template.setToolTip("加载选中的全局曲线样式")
+        self._btn_load_curve_style_template.clicked.connect(self._load_selected_curve_style_template)
+        curve_template_row.addWidget(self._btn_load_curve_style_template)
+        self._btn_save_curve_style_template = ToolButton(FIF.ADD, page)
+        self._btn_save_curve_style_template.setToolTip("将当前曲线样式另存为全局样式")
+        self._btn_save_curve_style_template.clicked.connect(self._on_save_curve_style_template)
+        curve_template_row.addWidget(self._btn_save_curve_style_template)
+        self._btn_update_curve_style_template = ToolButton(FIF.SAVE, page)
+        self._btn_update_curve_style_template.setToolTip("覆盖当前全局曲线样式")
+        self._btn_update_curve_style_template.clicked.connect(self._on_update_curve_style_template)
+        curve_template_row.addWidget(self._btn_update_curve_style_template)
+        layout.addLayout(curve_template_row)
+
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("当前曲线", page))
+        self._style_target_label = BodyLabel("— 未选中 —", page)
+        self._style_target_label.setWordWrap(True)
+        self._style_target_label.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(self._style_target_label)
+
+        color_row = QHBoxLayout()
+        color_row.addWidget(BodyLabel("颜色:", page))
+        self._style_color_btn = ColorPickerButton(QColor("#888888"), "", page, enableAlpha=False)
+        self._style_color_btn.setToolTip("当前曲线颜色")
+        self._style_color_btn.setFixedSize(32, 32)
+        self._style_color_btn.setEnabled(False)
+        self._style_color_btn.colorChanged.connect(self._on_style_color_changed)
+        color_row.addWidget(self._style_color_btn)
+        self._style_reset_color_btn = ToolButton(FIF.CANCEL, page)
+        self._style_reset_color_btn.setToolTip("恢复原始曲线颜色")
+        self._style_reset_color_btn.setEnabled(False)
+        self._style_reset_color_btn.clicked.connect(self._on_style_reset_color)
+        color_row.addWidget(self._style_reset_color_btn)
+        color_row.addWidget(BodyLabel("线型:", page))
+        self._style_line_combo = ComboBox(page)
+        self._style_line_combo.addItems(_STYLE_LABELS)
+        self._style_line_combo.setEnabled(False)
+        self._style_line_combo.currentIndexChanged.connect(self._on_style_line_changed)
+        color_row.addWidget(self._style_line_combo, 1)
+        layout.addLayout(color_row)
+
+        metric_row = QHBoxLayout()
+        metric_row.addWidget(BodyLabel("线宽:", page))
+        self._style_line_width_edit = LineEdit(page)
+        self._style_line_width_edit.setPlaceholderText("1.4")
+        self._style_line_width_edit.setEnabled(False)
+        self._style_line_width_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._set_compact_edit_width(self._style_line_width_edit)
+        metric_row.addWidget(self._style_line_width_edit)
+        metric_row.addWidget(BodyLabel("点大小:", page))
+        self._style_marker_size_edit = LineEdit(page)
+        self._style_marker_size_edit.setPlaceholderText("5.0")
+        self._style_marker_size_edit.setEnabled(False)
+        self._style_marker_size_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._set_compact_edit_width(self._style_marker_size_edit)
+        metric_row.addWidget(self._style_marker_size_edit)
+        metric_row.addStretch()
+        layout.addLayout(metric_row)
+
+        density_row = QHBoxLayout()
+        density_row.addWidget(BodyLabel("密度:", page))
+        self._style_density_edit = LineEdit(page)
+        self._style_density_edit.setPlaceholderText("1")
+        self._style_density_edit.setEnabled(False)
+        self._style_density_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._set_compact_edit_width(self._style_density_edit)
+        density_row.addWidget(self._style_density_edit)
+        density_row.addStretch()
+        layout.addLayout(density_row)
+
+        layout.addStretch()
+        return page
+
+    def _build_plot_style_tab(self, parent: QWidget) -> QWidget:
+        scroll = SmoothScrollArea(parent)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+        page = QWidget(scroll)
+        page.setStyleSheet("background: transparent;")
+        self._plot_style_scroll = scroll
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+
+        layout.addWidget(make_section_label("绘图样式", page))
+        self._template_summary_label = make_hint_label("当前为临时绘图样式。", page)
+        layout.addWidget(self._template_summary_label)
+
+        template_row = QHBoxLayout()
+        self._template_combo = ComboBox(page)
+        self._template_combo.currentIndexChanged.connect(self._on_template_selected)
+        template_row.addWidget(self._template_combo, 1)
+        self._btn_load_template = ToolButton(FIF.FOLDER, page)
+        self._btn_load_template.setToolTip("加载当前选中的绘图样式")
+        self._btn_load_template.clicked.connect(self._load_selected_plot_style)
+        template_row.addWidget(self._btn_load_template)
+        self._btn_save_template = ToolButton(FIF.ADD, page)
+        self._btn_save_template.setToolTip("将当前绘图样式另存为全局样式")
+        self._btn_save_template.clicked.connect(self._on_save_template)
+        template_row.addWidget(self._btn_save_template)
+        self._btn_update_template = ToolButton(FIF.SAVE, page)
+        self._btn_update_template.setToolTip("覆盖当前已保存绘图样式")
+        self._btn_update_template.clicked.connect(self._on_update_template)
+        template_row.addWidget(self._btn_update_template)
+        layout.addLayout(template_row)
+
+        self._theme_hint_label = make_hint_label("", page)
+        layout.addWidget(self._theme_hint_label)
+
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("基础配置", page))
+
+        x_row = QHBoxLayout()
+        x_row.addWidget(BodyLabel("X:", page))
+        self._x_label_edit = LineEdit(page)
+        self._x_label_edit.setPlaceholderText("X")
+        self._x_label_edit.textChanged.connect(self._on_quick_config_changed)
+        x_row.addWidget(self._x_label_edit)
+        layout.addLayout(x_row)
+
+        y_row = QHBoxLayout()
+        y_row.addWidget(BodyLabel("Y:", page))
+        self._y_label_edit = LineEdit(page)
+        self._y_label_edit.setPlaceholderText("Y")
+        self._y_label_edit.textChanged.connect(self._on_quick_config_changed)
+        y_row.addWidget(self._y_label_edit)
+        layout.addLayout(y_row)
+
+        self._errbar_cb = CheckBox("显示误差棒", page)
+        self._errbar_cb.stateChanged.connect(self._on_quick_config_changed)
+        layout.addWidget(self._errbar_cb)
+
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("坐标轴", page))
+
+        x_range_row = QHBoxLayout()
+        x_range_row.addWidget(BodyLabel("X 最小:", page))
+        self._x_min_edit = LineEdit(page)
+        self._x_min_edit.setPlaceholderText("自动")
+        self._x_min_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._x_min_edit)
+        x_range_row.addWidget(self._x_min_edit)
+        x_range_row.addWidget(BodyLabel("最大:", page))
+        self._x_max_edit = LineEdit(page)
+        self._x_max_edit.setPlaceholderText("自动")
+        self._x_max_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._x_max_edit)
+        x_range_row.addWidget(self._x_max_edit)
+        layout.addLayout(x_range_row)
+
+        y_range_row = QHBoxLayout()
+        y_range_row.addWidget(BodyLabel("Y 最小:", page))
+        self._y_min_edit = LineEdit(page)
+        self._y_min_edit.setPlaceholderText("自动")
+        self._y_min_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._y_min_edit)
+        y_range_row.addWidget(self._y_min_edit)
+        y_range_row.addWidget(BodyLabel("最大:", page))
+        self._y_max_edit = LineEdit(page)
+        self._y_max_edit.setPlaceholderText("自动")
+        self._y_max_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._y_max_edit)
+        y_range_row.addWidget(self._y_max_edit)
+        layout.addLayout(y_range_row)
+
+        axis_flag_row = QHBoxLayout()
+        self._x_log_cb = CheckBox("X 对数坐标", page)
+        self._x_log_cb.stateChanged.connect(self._on_quick_config_changed)
+        axis_flag_row.addWidget(self._x_log_cb)
+        self._y_log_cb = CheckBox("Y 对数坐标", page)
+        self._y_log_cb.stateChanged.connect(self._on_quick_config_changed)
+        axis_flag_row.addWidget(self._y_log_cb)
+        self._grid_cb = CheckBox("显示网格", page)
+        self._grid_cb.stateChanged.connect(self._on_quick_config_changed)
+        axis_flag_row.addWidget(self._grid_cb)
+        axis_flag_row.addStretch()
+        layout.addLayout(axis_flag_row)
+
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("版式与标注", page))
+
+        legend_row = QHBoxLayout()
+        legend_row.addWidget(BodyLabel("图例位置:", page))
+        self._legend_pos_combo = ComboBox(page)
+        self._legend_pos_combo.addItems([
+            "best", "upper right", "upper left", "lower left", "lower right",
+            "right", "center left", "center right", "lower center", "upper center", "center",
+        ])
+        self._legend_pos_combo.currentIndexChanged.connect(self._on_quick_config_changed)
+        legend_row.addWidget(self._legend_pos_combo, 1)
+        layout.addLayout(legend_row)
+
+        font_row = QHBoxLayout()
+        font_row.addWidget(BodyLabel("字体族:", page))
+        self._font_family_combo = ComboBox(page)
+        self._font_family_combo.currentIndexChanged.connect(self._on_quick_config_changed)
+        font_row.addWidget(self._font_family_combo, 1)
+        layout.addLayout(font_row)
+
+        font_metric_row = QHBoxLayout()
+        font_metric_row.addWidget(BodyLabel("字号:", page))
+        self._font_size_edit = LineEdit(page)
+        self._font_size_edit.setPlaceholderText("10")
+        self._font_size_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._font_size_edit)
+        font_metric_row.addWidget(self._font_size_edit)
+        font_metric_row.addWidget(BodyLabel("图例字号:", page))
+        self._legend_font_size_edit = LineEdit(page)
+        self._legend_font_size_edit.setPlaceholderText("8")
+        self._legend_font_size_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._legend_font_size_edit)
+        font_metric_row.addWidget(self._legend_font_size_edit)
+        font_metric_row.addStretch()
+        layout.addLayout(font_metric_row)
+
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("画布与默认样式", page))
+
+        figure_size_row = QHBoxLayout()
+        figure_size_row.addWidget(BodyLabel("图宽:", page))
+        self._figure_width_edit = LineEdit(page)
+        self._figure_width_edit.setPlaceholderText("7.0")
+        self._figure_width_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._figure_width_edit)
+        figure_size_row.addWidget(self._figure_width_edit)
+        figure_size_row.addWidget(BodyLabel("图高:", page))
+        self._figure_height_edit = LineEdit(page)
+        self._figure_height_edit.setPlaceholderText("5.0")
+        self._figure_height_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._figure_height_edit)
+        figure_size_row.addWidget(self._figure_height_edit)
+        figure_size_row.addStretch()
+        layout.addLayout(figure_size_row)
+
+        dpi_row = QHBoxLayout()
+        dpi_row.addWidget(BodyLabel("DPI:", page))
+        self._dpi_edit = LineEdit(page)
+        self._dpi_edit.setPlaceholderText("150")
+        self._dpi_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._dpi_edit)
+        dpi_row.addWidget(self._dpi_edit)
+        dpi_row.addStretch()
+        layout.addLayout(dpi_row)
+
+        style_row = QHBoxLayout()
+        style_row.addWidget(BodyLabel("默认线宽:", page))
+        self._plot_line_width_edit = LineEdit(page)
+        self._plot_line_width_edit.setPlaceholderText("1.4")
+        self._plot_line_width_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._plot_line_width_edit)
+        style_row.addWidget(self._plot_line_width_edit)
+        style_row.addStretch()
+        layout.addLayout(style_row)
+
+        marker_row = QHBoxLayout()
+        marker_row.addWidget(BodyLabel("默认点大小:", page))
+        self._plot_marker_size_edit = LineEdit(page)
+        self._plot_marker_size_edit.setPlaceholderText("5.0")
+        self._plot_marker_size_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._plot_marker_size_edit)
+        marker_row.addWidget(self._plot_marker_size_edit)
+        marker_row.addStretch()
+        layout.addLayout(marker_row)
+
+        grid_style_row = QHBoxLayout()
+        grid_style_row.addWidget(BodyLabel("网格透明度:", page))
+        self._grid_alpha_edit = LineEdit(page)
+        self._grid_alpha_edit.setPlaceholderText("0.7")
+        self._grid_alpha_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._grid_alpha_edit)
+        grid_style_row.addWidget(self._grid_alpha_edit)
+        grid_style_row.addStretch()
+        layout.addLayout(grid_style_row)
+
+        grid_width_row = QHBoxLayout()
+        grid_width_row.addWidget(BodyLabel("网格线宽:", page))
+        self._grid_line_width_edit = LineEdit(page)
+        self._grid_line_width_edit.setPlaceholderText("0.5")
+        self._grid_line_width_edit.textChanged.connect(self._on_quick_config_changed)
+        self._set_compact_edit_width(self._grid_line_width_edit)
+        grid_width_row.addWidget(self._grid_line_width_edit)
+        grid_width_row.addStretch()
+        layout.addLayout(grid_width_row)
+
+        layout.addStretch()
+        scroll.setWidget(page)
+        return scroll
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
-        """主窗口路由过来的选中事件 → 将节点下的系列加入图表。"""
-        pass  # 单击不自动加入，双击（node_activated）才加入
+        del kind, node_id
 
     def on_tree_node_activated(self, kind: str, node_id: str) -> None:
-        """双击树节点 → 将对应数据加入图表。"""
-        # 规范化 kind（右键菜单会发 xxx_to_chart）
+        if kind == "global_curve_style_template":
+            self.load_curve_style_template(node_id)
+            return
+        if kind in ("global_plot_style", "global_plot_theme"):
+            self.load_plot_style(node_id)
+            return
         if kind.endswith("_to_chart"):
             kind = kind[:-9]
-
         series_list = project_manager.get_all_series_from_node(kind, node_id)
         if not series_list:
             return
-        for s in series_list:
-            self.add_series_to_chart({
-                "name": s.name,
-                "x": list(s.x),
-                "y": list(s.y),
-                "y_err": list(s.y_err) if s.y_err else None,
-                "color": s.color,
-                "obj_id": s.id,
-                "source": "tree",
-            })
+        self._add_series_batch(series_list, source="tree")
 
-    def add_series_to_chart(self, series_data: dict) -> None:
-        """将一条数据系列加入图表（去重 by obj_id）。"""
+    def _add_series_batch(self, series_list: List, source: str) -> None:
+        added = False
+        for series in series_list:
+            added = self.add_series_to_chart({
+                "name": series.name,
+                "x": list(series.x),
+                "y": list(series.y),
+                "y_err": list(series.y_err) if getattr(series, "y_err", None) else None,
+                "color": series.color,
+                "obj_id": series.id,
+                "source": source,
+                "visible": True,
+            }, redraw=False) or added
+        if added:
+            self._refresh_chart_list()
+            self._redraw_now()
+
+    def add_series_to_chart(self, series_data: dict, redraw: bool = True) -> bool:
         obj_id = series_data.get("obj_id", "")
-        # 去重
-        if obj_id and any(c.get("obj_id") == obj_id for c in self._chart_series):
-            return
-        self._chart_series.append(series_data)
-        self._refresh_chart_list()
-        self._redraw_now()
+        if obj_id and any(item.get("obj_id") == obj_id for item in self._chart_series):
+            return False
+        payload = dict(series_data)
+        payload.setdefault("visible", True)
+        payload.setdefault("display_name", payload.get("name", ""))
+        self._chart_series.append(payload)
+        if redraw:
+            self._refresh_chart_list()
+            self._redraw_now()
+        return True
 
-    # ──────────────────────────── 模板支持 ──────────────────────────────
+    @staticmethod
+    def _curve_display_name(curve: dict) -> str:
+        return (curve.get("display_name") or curve.get("name") or "未命名曲线").strip() or "未命名曲线"
 
-    def load_template(self, template_node_id: str) -> None:
-        """从工具集加载绘图模板，恢复全部 FigureConfig 字段。"""
-        p = project_manager.current_project
-        if p is None or p.tree is None:
-            return
-        node = p.tree.get_node(template_node_id)
-        if node is None or node.kind != "figure_template":
-            return
-        fig = p.find_figure(node.figure_id)
-        if fig is None:
-            return
+    @staticmethod
+    def _curve_identity(curve: dict) -> str:
+        return curve.get("obj_id") or curve.get("name", "")
 
-        ax = fig.typed_axis_config
-        state = FigureState(
-            theme=fig.theme or "默认",
-            x_label=ax.x_label or "X",
-            y_label=ax.y_label or "Y",
-            figure_width=fig.figure_size[0] if len(fig.figure_size) > 0 else 7.0,
-            figure_height=fig.figure_size[1] if len(fig.figure_size) > 1 else 5.0,
-            dpi=fig.dpi or 150,
-            show_errbar=fig.show_errbar,
-            x_min=ax.x_min,
-            x_max=ax.x_max,
-            y_min=ax.y_min,
-            y_max=ax.y_max,
-            x_log=ax.x_log,
-            y_log=ax.y_log,
-            grid=fig.grid,
-            grid_alpha=fig.grid_alpha,
-            grid_line_width=fig.grid_line_width,
-            legend_pos=fig.legend_position or "best",
-            font_size=fig.font_size or 10,
-            font_family=fig.font_family or "",
-            legend_font_size=fig.legend_font_size or 8,
-            line_width=fig.line_width or 1.4,
-            marker_size=fig.marker_size or 5.0,
-        )
-        self._apply_figure_state(state)
-
-    def _figure_template_choices(self) -> list[tuple[str, str]]:
-        p = project_manager.current_project
-        if p is None or p.tree is None:
-            return []
-        choices: list[tuple[str, str]] = []
-        used_labels: set[str] = set()
-        for node in p.tree.nodes:
-            if node.kind != "figure_template":
-                continue
-            fig = p.find_figure(node.figure_id)
-            if fig is None:
-                continue
-            label = node.name or fig.name or node.figure_id[:8]
-            if label in used_labels:
-                label = f"{label} ({node.figure_id[:8]})"
+    @staticmethod
+    def _unique_style_label(base_label: str, used_labels: set[str], duplicate_suffix: str) -> str:
+        label = base_label.strip() or "未命名样式"
+        if label not in used_labels:
             used_labels.add(label)
-            choices.append((label, node.id))
+            return label
+        candidate = f"{label}（{duplicate_suffix}）"
+        counter = 2
+        while candidate in used_labels:
+            candidate = f"{label}（{duplicate_suffix}{counter}）"
+            counter += 1
+        used_labels.add(candidate)
+        return candidate
+
+    def _plot_style_choices(self) -> List[tuple[str, str]]:
+        choices: List[tuple[str, str]] = []
+        used_labels: set[str] = set()
+        for theme in global_assets.list_plot_themes(include_builtin=True):
+            label = self._unique_style_label(theme.name or theme.id[:8], used_labels, "内置")
+            choices.append((label, make_plot_style_asset_key("theme", theme.id or theme.name)))
+        for figure in global_assets.list_figure_templates():
+            label = self._unique_style_label(figure.name or figure.id[:8], used_labels, "已保存")
+            choices.append((label, make_plot_style_asset_key("template", figure.id)))
+        for extension in extension_registry.list_plot_style():
+            label = self._unique_style_label(f"扩展 · {extension.name}", used_labels, "扩展")
+            choices.append((label, make_plot_style_asset_key("extension", extension.type)))
         return choices
 
-    def _save_template_named(self, name: str):
+    def _plot_style_extension_entries(self) -> List[dict]:
+        return [build_extension_entry(extension) for extension in extension_registry.list_plot_style()]
+
+    def _curve_style_extension_entries(self) -> List[dict]:
+        return [build_extension_entry(extension) for extension in extension_registry.list_curve_style()]
+
+    def _refresh_style_extension_panel(self, _index: Optional[int] = None) -> None:
+        if self._style_tabs.currentIndex() == 0:
+            selected_curve = self._selected_curve()
+            target = selected_curve["name"] if selected_curve is not None else "未选中曲线"
+            current_type = None
+            if self._active_curve_style_ref and self._active_curve_style_ref.startswith("curve_extension:"):
+                current_type = parse_plot_style_asset_key(self._active_curve_style_ref)[1]
+            self._extension_panel.set_panel_title("曲线样式扩展")
+            self._extension_panel.set_action_text("应用曲线扩展")
+            self._extension_panel.set_context("图表样式", target)
+            self._extension_panel.set_entries(
+                self._curve_style_extension_entries(),
+                saved_options=self._curve_style_extension_options,
+                current_type=current_type,
+            )
+            return
+        current_type = None
+        if self._applied_plot_style_ref and self._applied_plot_style_ref.startswith("extension:"):
+            current_type = parse_plot_style_asset_key(self._applied_plot_style_ref)[1]
+        self._extension_panel.set_panel_title("绘图样式扩展")
+        self._extension_panel.set_action_text("应用绘图扩展")
+        self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
+        self._extension_panel.set_entries(
+            self._plot_style_extension_entries(),
+            saved_options=self._plot_style_extension_options,
+            current_type=current_type,
+        )
+
+    def _on_chart_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
+        if self._style_tabs.currentIndex() == 0:
+            self._curve_style_extension_options[type_id] = dict(options)
+            self._apply_curve_style_extension(type_id)
+            return
+        self._plot_style_extension_options[type_id] = dict(options)
+        self._apply_plot_style_extension(type_id)
+
+    def _available_font_family_choices(self) -> List[str]:
+        matplotlib_fonts = list_matplotlib_font_families()
+        qt_fonts: List[str] = []
+        try:
+            qt_fonts = [name.strip() for name in QFontDatabase.families() if name.strip()]
+        except Exception:
+            qt_fonts = []
+        if qt_fonts:
+            qt_set = set(qt_fonts)
+            matched = [name for name in matplotlib_fonts if name in qt_set]
+            if matched:
+                return matched
+        return matplotlib_fonts or sorted(set(qt_fonts), key=str.casefold)
+
+    def _refresh_font_family_combo(self, current_font: str = "") -> None:
+        choices = self._available_font_family_choices()
+        clean_font = current_font.strip()
+        if clean_font and clean_font not in choices:
+            choices = [clean_font, *choices]
+
+        self._font_family_combo.blockSignals(True)
+        self._font_family_combo.clear()
+        self._font_family_combo.addItem("默认")
+        for name in choices:
+            self._font_family_combo.addItem(name)
+        if clean_font:
+            idx = self._font_family_combo.findText(clean_font)
+            self._font_family_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        else:
+            self._font_family_combo.setCurrentIndex(0)
+        self._font_family_combo.blockSignals(False)
+
+    def receive_data(self, data_type: str, obj_id: str) -> None:
+        series_list = project_manager.get_all_series_from_node(data_type, obj_id)
+        self._add_series_batch(series_list, source="send")
+
+    def _figure_template_choices(self) -> List[tuple[str, str]]:
+        choices: List[tuple[str, str]] = []
+        used_labels: set[str] = set()
+        for figure in global_assets.list_figure_templates():
+            label = figure.name or figure.id[:8]
+            if label in used_labels:
+                label = f"{label} ({figure.id[:8]})"
+            used_labels.add(label)
+            choices.append((label, figure.id))
+        return choices
+
+    def _refresh_template_combo(self, select_node_id: Optional[str] = None) -> None:
+        choices = self._plot_style_choices()
+        self._template_combo.blockSignals(True)
+        self._template_combo.clear()
+        self._template_combo.addItem("无")
+        self._plot_style_refs = [None]
+        for label, node_id in choices:
+            self._template_combo.addItem(label)
+            self._plot_style_refs.append(node_id)
+        default_ref = self._applied_plot_style_ref
+        if default_ref is None and self._active_template_node_id:
+            default_ref = make_plot_style_asset_key("template", self._active_template_node_id)
+        target_node_id = select_node_id if select_node_id is not None else default_ref
+        if target_node_id in self._plot_style_refs:
+            self._template_combo.setCurrentIndex(self._plot_style_refs.index(target_node_id))
+        else:
+            self._template_combo.setCurrentIndex(0)
+        self._template_combo.blockSignals(False)
+        self._update_template_summary()
+        self._refresh_style_extension_panel()
+
+    def _selected_template_node_id(self) -> Optional[str]:
+        idx = self._template_combo.currentIndex()
+        if idx < 0 or idx >= len(self._plot_style_refs):
+            return None
+        return self._plot_style_refs[idx]
+
+    def _on_template_selected(self, idx: int) -> None:
+        del idx
+        self._update_template_summary()
+
+    def _current_plot_style_ref(self) -> Optional[str]:
+        return self._applied_plot_style_ref
+
+    def _update_template_summary(self) -> None:
+        current_ref = self._current_plot_style_ref()
+        selected_ref = self._selected_template_node_id()
+        pending_message = ""
+        if selected_ref and selected_ref != current_ref:
+            pending_message = f"已选择 {self._template_combo.currentText()}，点击加载后应用。\n"
+        elif selected_ref is None and current_ref is not None and self._template_combo.currentIndex() == 0:
+            pending_message = "已选择当前配置，点击加载后将解除样式绑定。\n"
+
+        if self._active_template_node_id is not None:
+            template = global_assets.get_figure_template(self._active_template_node_id)
+            if template is not None:
+                self._btn_update_template.setEnabled(True)
+                if self._applied_plot_style_ref and self._applied_plot_style_ref.startswith("theme:"):
+                    theme = global_assets.get_plot_theme(parse_plot_style_asset_key(self._applied_plot_style_ref)[1])
+                    if theme is not None:
+                        self._template_summary_label.setText(
+                            f"{pending_message}正在编辑已保存样式: {template.name} · 已套用内置样式 {theme.name}".strip()
+                        )
+                        return
+                self._template_summary_label.setText(
+                    f"{pending_message}当前样式: {template.name} · 基础样式 {self._figure_state.theme}".strip()
+                )
+                return
+            self._active_template_node_id = None
+
+        if self._applied_plot_style_ref is None:
+            self._template_summary_label.setText(
+                f"{pending_message}当前为临时绘图样式，基础样式 {self._figure_state.theme}。".strip()
+            )
+            self._btn_update_template.setEnabled(False)
+            return
+
+        style_type, asset_id = parse_plot_style_asset_key(self._applied_plot_style_ref)
+        if style_type == "template":
+            template = global_assets.get_figure_template(asset_id)
+            if template is not None:
+                self._template_summary_label.setText(
+                    f"{pending_message}当前样式: {template.name} · 基础样式 {self._figure_state.theme}".strip()
+                )
+                self._btn_update_template.setEnabled(True)
+                return
+        elif style_type == "extension":
+            extension = extension_registry.get_plot_style(asset_id)
+            if extension is not None:
+                self._template_summary_label.setText(
+                    f"{pending_message}当前使用扩展绘图样式: {extension.name}".strip()
+                )
+                self._btn_update_template.setEnabled(False)
+                return
+        else:
+            theme = global_assets.get_plot_theme(asset_id)
+            if theme is not None:
+                self._template_summary_label.setText(
+                    f"{pending_message}当前使用内置绘图样式: {theme.name}".strip()
+                )
+                self._btn_update_template.setEnabled(False)
+                return
+
+        self._applied_plot_style_ref = None
+        self._template_summary_label.setText(
+            f"{pending_message}当前为临时绘图样式，基础样式 {self._figure_state.theme}。".strip()
+        )
+        self._btn_update_template.setEnabled(False)
+
+    def _load_selected_plot_style(self) -> None:
+        node_id = self._selected_template_node_id()
+        if node_id is None:
+            self._active_template_node_id = None
+            self._applied_plot_style_ref = None
+            self._refresh_template_combo()
+            return
+        self.load_plot_style(node_id)
+
+    def load_plot_style(self, style_key: str) -> None:
+        style_type, asset_id = parse_plot_style_asset_key(style_key)
+        if style_type == "template":
+            self.load_template(asset_id)
+            return
+        if style_type == "extension":
+            self._apply_plot_style_extension(asset_id)
+            return
+        theme = global_assets.get_plot_theme(asset_id)
+        if theme is None:
+            return
+        active_template_node_id = self._active_template_node_id
+        current_state = self._sync_state_from_controls().model_copy(deep=True)
+        state = theme.state.model_copy(deep=True)
+        state.theme = theme.name
+        state.x_label = current_state.x_label
+        state.y_label = current_state.y_label
+        state.x_min = current_state.x_min
+        state.x_max = current_state.x_max
+        state.y_min = current_state.y_min
+        state.y_max = current_state.y_max
+        state.x_log = current_state.x_log
+        state.y_log = current_state.y_log
+        state.show_errbar = current_state.show_errbar
+        self._active_template_node_id = active_template_node_id
+        self._applied_plot_style_ref = make_plot_style_asset_key("theme", theme.id or theme.name)
+        self._current_plot_theme_id = theme.id
+        self._apply_figure_state(state)
+        self._redraw_now()
+        self._refresh_style_extension_panel()
+
+    def _apply_plot_style_extension(self, type_id: str) -> None:
+        extension = extension_registry.get_plot_style(type_id)
+        if extension is None:
+            return
+        current_state = self._sync_state_from_controls().model_dump()
+        options = dict(self._plot_style_extension_options.get(type_id, extension.default_options))
+        state_patch = extension.handler(dict(current_state), options)
+        if not isinstance(state_patch, dict):
+            return
+        merged_state = dict(current_state)
+        merged_state.update(state_patch)
+        merged_state.setdefault("theme", extension.name)
+        self._active_template_node_id = None
+        self._current_plot_theme_id = None
+        self._applied_plot_style_ref = make_plot_style_asset_key("extension", type_id)
+        self._apply_figure_state(FigureState(**merged_state))
+        self._refresh_template_combo(self._applied_plot_style_ref)
+        self._refresh_style_extension_panel()
+        self._redraw_now()
+
+    def load_plot_theme(self, theme_id: str) -> None:
+        self.load_plot_style(theme_id)
+
+    def _resolve_plot_theme(self):
+        return global_assets.get_plot_theme(self._current_plot_theme_id or self._figure_state.theme)
+
+    def load_template(self, template_node_id: str) -> None:
+        figure = global_assets.get_figure_template(template_node_id)
+        if figure is None:
+            return
+        axis = figure.typed_axis_config
+        state = FigureState(
+            theme=figure.theme or "默认",
+            x_label=axis.x_label or "X",
+            y_label=axis.y_label or "Y",
+            figure_width=figure.figure_size[0] if len(figure.figure_size) > 0 else 7.0,
+            figure_height=figure.figure_size[1] if len(figure.figure_size) > 1 else 5.0,
+            dpi=figure.dpi or 150,
+            show_errbar=figure.show_errbar,
+            x_min=axis.x_min,
+            x_max=axis.x_max,
+            y_min=axis.y_min,
+            y_max=axis.y_max,
+            x_log=axis.x_log,
+            y_log=axis.y_log,
+            grid=figure.grid,
+            grid_alpha=_clamp_float(figure.grid_alpha, 0.0, 1.0),
+            grid_line_width=figure.grid_line_width,
+            legend_pos=figure.legend_position or "best",
+            font_size=figure.font_size or 10,
+            font_family=figure.font_family or "",
+            legend_font_size=figure.legend_font_size or 8,
+            line_width=figure.line_width or 1.4,
+            marker_size=figure.marker_size or 5.0,
+        )
+        self._active_template_node_id = figure.id
+        self._applied_plot_style_ref = make_plot_style_asset_key("template", figure.id)
+        self._apply_figure_state(state)
+        self._refresh_style_extension_panel()
+        self._redraw_now()
+
+    def _build_figure_config(self, name: str, figure_id: Optional[str] = None) -> Optional[FigureConfig]:
         clean_name = name.strip()
         if not clean_name:
             return None
-        from models.schemas import FigureConfig, AxisConfig
-
         state = self._sync_state_from_controls()
-        ax = AxisConfig(
+        axis = AxisConfig(
             x_label=state.x_label,
             y_label=state.y_label,
             x_min=state.x_min,
@@ -427,7 +976,7 @@ class ChartPage(QWidget):
             name=clean_name,
             theme=state.theme,
             show_errbar=state.show_errbar,
-            typed_axis_config=ax,
+            typed_axis_config=axis,
             figure_size=(state.figure_width, state.figure_height),
             dpi=state.dpi,
             grid=state.grid,
@@ -440,46 +989,259 @@ class ChartPage(QWidget):
             line_width=state.line_width,
             marker_size=state.marker_size,
         )
-        return project_manager.add_figure_template(config)
+        if figure_id:
+            config.id = figure_id
+        return config
+
+    def _save_template_named(self, name: str):
+        config = self._build_figure_config(name)
+        if config is None:
+            return None
+        template = project_manager.add_figure_template(config)
+        if template is not None:
+            self._active_template_node_id = template.id
+            self._applied_plot_style_ref = make_plot_style_asset_key("template", template.id)
+            self._refresh_template_combo(self._applied_plot_style_ref)
+        return template
 
     def _on_save_template(self) -> None:
-        """将当前绘图配置保存为 FigureConfig 挂到工具集树。"""
-        from PySide6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "保存绘图模板", "模板名称:")
+        name, ok = TextInputDialog.get_text(self, "保存绘图样式", "样式名称:", placeholder="输入样式名称")
         if not ok or not name.strip():
             return
-        node = self._save_template_named(name)
-        if node:
-            InfoBar.success(
-                title="已保存", content=f"模板「{name}」已存入工具集",
-                position=InfoBarPosition.TOP, duration=2500, parent=self,
-            )
+        template = self._save_template_named(name)
+        if template is not None:
+            InfoBar.success("已保存", f"样式「{name.strip()}」已存入全局资源", parent=self, position=InfoBarPosition.TOP)
             self.project_modified.emit()
+            self.assets_modified.emit()
 
     def _on_load_template(self) -> None:
-        from PySide6.QtWidgets import QInputDialog
-
-        choices = self._figure_template_choices()
+        choices = self._plot_style_choices()
         if not choices:
-            InfoBar.warning("提示", "当前项目没有可加载的绘图模板", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning("提示", "当前没有可加载的绘图样式", parent=self, position=InfoBarPosition.TOP)
             return
         names = [label for label, _ in choices]
-        selected, ok = QInputDialog.getItem(self, "加载绘图模板", "模板名称:", names, 0, False)
+        selected, ok = SelectionDialog.get_item(self, "加载绘图样式", "样式名称:", names)
         if not ok or not selected:
             return
         selected_node_id = next((node_id for label, node_id in choices if label == selected), None)
         if selected_node_id:
-            self.load_template(selected_node_id)
+            self._refresh_template_combo(selected_node_id)
+            self._load_selected_plot_style()
 
-    # ──────────────────────────── 高级设置 ──────────────────────────────
+    def _on_update_template(self) -> None:
+        if self._update_current_template():
+            InfoBar.success("已更新", "当前绘图样式已覆盖更新", parent=self, position=InfoBarPosition.TOP)
 
-    def _on_advanced_settings(self) -> None:
-        from ui.dialogs.advanced_figure_dialog import AdvancedFigureDialog
-        dlg = AdvancedFigureDialog(self, self._get_current_config())
-        if dlg.exec():
-            cfg = dlg.get_config()
-            self._apply_advanced_config(cfg)
-            self._redraw_now()
+    def _update_current_template(self) -> bool:
+        if self._active_template_node_id is None:
+            InfoBar.warning("提示", "请先加载一个已保存绘图样式", parent=self, position=InfoBarPosition.TOP)
+            return False
+        template = global_assets.get_figure_template(self._active_template_node_id)
+        if template is None:
+            InfoBar.warning("提示", "当前绘图样式已不存在，请刷新样式列表", parent=self, position=InfoBarPosition.TOP)
+            self._refresh_template_combo()
+            return False
+        config = self._build_figure_config(template.name, figure_id=template.id)
+        if config is None:
+            return False
+        if not project_manager.save_figure_config(config):
+            InfoBar.error("失败", "更新绘图样式失败", parent=self, position=InfoBarPosition.TOP)
+            return False
+        self._applied_plot_style_ref = make_plot_style_asset_key("template", template.id)
+        self._refresh_template_combo(self._applied_plot_style_ref)
+        self.project_modified.emit()
+        self.assets_modified.emit()
+        return True
+
+    def _refresh_curve_style_template_combo(self) -> None:
+        templates = global_assets.list_curve_style_templates()
+        self._curve_style_template_combo.blockSignals(True)
+        self._curve_style_template_combo.clear()
+        self._curve_style_template_combo.addItem("无")
+        self._curve_style_template_ids = [None]
+        for item in templates:
+            self._curve_style_template_combo.addItem(item.name)
+            self._curve_style_template_ids.append(item.id)
+        for extension in extension_registry.list_curve_style():
+            self._curve_style_template_combo.addItem(f"扩展 · {extension.name}")
+            self._curve_style_template_ids.append(make_plot_style_asset_key("curve_extension", extension.type))
+        target_id = self._active_curve_style_ref
+        if target_id in self._curve_style_template_ids:
+            self._curve_style_template_combo.setCurrentIndex(self._curve_style_template_ids.index(target_id))
+        else:
+            self._curve_style_template_combo.setCurrentIndex(0)
+        self._curve_style_template_combo.blockSignals(False)
+        self._update_curve_style_template_summary()
+        self._refresh_style_extension_panel()
+
+    def _update_curve_style_template_summary(self) -> None:
+        if not self._active_curve_style_ref:
+            self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
+            self._btn_update_curve_style_template.setEnabled(False)
+            return
+        if self._active_curve_style_ref.startswith("curve_extension:"):
+            extension = extension_registry.get_curve_style(parse_plot_style_asset_key(self._active_curve_style_ref)[1])
+            if extension is None:
+                self._active_curve_style_ref = None
+                self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
+                self._btn_update_curve_style_template.setEnabled(False)
+                self._refresh_style_extension_panel()
+                return
+            self._curve_style_template_label.setText(f"当前扩展样式: {extension.name}")
+            self._btn_update_curve_style_template.setEnabled(False)
+            self._refresh_style_extension_panel()
+            return
+        template = global_assets.get_curve_style_template(self._active_curve_style_ref)
+        if template is None:
+            self._active_curve_style_template_id = None
+            self._active_curve_style_ref = None
+            self._active_curve_style_template_id = None
+            self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
+            self._btn_update_curve_style_template.setEnabled(False)
+            self._refresh_style_extension_panel()
+            return
+        self._curve_style_template_label.setText(f"当前全局模板: {template.name}")
+        self._btn_update_curve_style_template.setEnabled(True)
+        self._refresh_style_extension_panel()
+
+    def _selected_curve_style_template_id(self) -> Optional[str]:
+        idx = self._curve_style_template_combo.currentIndex()
+        if idx < 0 or idx >= len(self._curve_style_template_ids):
+            return None
+        return self._curve_style_template_ids[idx]
+
+    def _on_curve_style_template_selected(self, idx: int) -> None:
+        if idx <= 0:
+            self._active_curve_style_template_id = None
+            self._active_curve_style_ref = None
+            self._update_curve_style_template_summary()
+            return
+        style_ref = self._selected_curve_style_template_id()
+        if style_ref:
+            self._active_curve_style_ref = style_ref
+            if style_ref.startswith("curve_extension:"):
+                self._active_curve_style_template_id = None
+            else:
+                self._active_curve_style_template_id = style_ref
+            self._update_curve_style_template_summary()
+
+    def _load_selected_curve_style_template(self) -> None:
+        style_ref = self._selected_curve_style_template_id()
+        if not style_ref:
+            InfoBar.warning("提示", "请先选择一个曲线样式", parent=self, position=InfoBarPosition.TOP)
+            return
+        if style_ref.startswith("curve_extension:"):
+            self._apply_curve_style_extension(parse_plot_style_asset_key(style_ref)[1])
+            return
+        self.load_curve_style_template(style_ref)
+
+    def load_curve_style_template(self, template_id: str) -> None:
+        template = global_assets.get_curve_style_template(template_id)
+        if template is None:
+            return
+        curve = self._selected_curve()
+        if curve is None:
+            InfoBar.warning("提示", "请先选中一条曲线再应用样式模板", parent=self, position=InfoBarPosition.TOP)
+            return
+        self._apply_curve_style(curve["name"], template.style)
+        self._active_curve_style_template_id = template.id
+        self._active_curve_style_ref = template.id
+        self._refresh_curve_style_template_combo()
+        self._redraw_now()
+
+    def _apply_curve_style_extension(self, type_id: str) -> None:
+        extension = extension_registry.get_curve_style(type_id)
+        if extension is None:
+            return
+        curve = self._selected_curve()
+        if curve is None:
+            InfoBar.warning("提示", "请先选中一条曲线再应用扩展样式", parent=self, position=InfoBarPosition.TOP)
+            return
+        current_style = self._current_curve_style(curve)
+        if current_style is None:
+            return
+        options = dict(self._curve_style_extension_options.get(type_id, extension.default_options))
+        style_patch = extension.handler(current_style.model_dump(), options)
+        if not isinstance(style_patch, dict):
+            return
+        merged_style = current_style.model_dump()
+        merged_style.update(style_patch)
+        self._apply_curve_style(curve["name"], CurveStyle(**merged_style))
+        self._active_curve_style_template_id = None
+        self._active_curve_style_ref = make_plot_style_asset_key("curve_extension", type_id)
+        self._refresh_curve_style_template_combo()
+        self._redraw_now()
+
+    def _current_curve_style(self, curve: Optional[dict] = None) -> Optional[CurveStyle]:
+        target_curve = curve or self._selected_curve()
+        if target_curve is None:
+            return None
+        overrides = self._curve_styles.get(target_curve["name"], {})
+        return CurveStyle(
+            color=overrides.get("color") or target_curve.get("color"),
+            linestyle=overrides.get("linestyle", "-"),
+            marker=overrides.get("marker", ""),
+            linewidth=_safe_float_or(overrides.get("linewidth"), self._figure_state.line_width),
+            marker_size=_safe_float_or(overrides.get("marker_size"), self._figure_state.marker_size),
+            alpha=_safe_float_or(overrides.get("alpha"), 1.0),
+            markevery=max(1, _safe_int_or(overrides.get("markevery"), 1)),
+            dash_scale=_safe_float_or(overrides.get("dash_scale"), 1.0),
+            visible=bool(target_curve.get("visible", True)),
+        )
+
+    def _apply_curve_style(self, curve_name: str, style: CurveStyle) -> None:
+        style_dict = self._curve_styles.setdefault(curve_name, {})
+        style_dict.update({
+            "color": style.color,
+            "linestyle": style.linestyle,
+            "marker": style.marker,
+            "linewidth": style.linewidth,
+            "marker_size": style.marker_size,
+            "alpha": style.alpha,
+            "markevery": style.markevery,
+            "dash_scale": style.dash_scale,
+        })
+        for curve in self._chart_series:
+            if curve["name"] == curve_name:
+                curve["visible"] = style.visible
+                break
+        self._refresh_chart_list()
+        selected_curve = self._selected_curve()
+        if selected_curve and selected_curve["name"] == curve_name:
+            self._set_style_enabled(True, selected_curve)
+
+    def _save_curve_style_template_named(self, name: str) -> bool:
+        style = self._current_curve_style()
+        if style is None or not name.strip():
+            return False
+        template = global_assets.add_curve_style_template(CurveStyleTemplate(name=name.strip(), style=style))
+        self._active_curve_style_template_id = template.id
+        self._active_curve_style_ref = template.id
+        self._refresh_curve_style_template_combo()
+        self.assets_modified.emit()
+        return True
+
+    def _on_save_curve_style_template(self) -> None:
+        if self._selected_curve() is None:
+            InfoBar.warning("提示", "请先选中一条曲线", parent=self, position=InfoBarPosition.TOP)
+            return
+        name, ok = TextInputDialog.get_text(self, "保存曲线样式", "样式名称:", placeholder="输入样式名称")
+        if ok and self._save_curve_style_template_named(name):
+            InfoBar.success("已保存", f"曲线样式 {name.strip()} 已保存", parent=self, position=InfoBarPosition.TOP)
+
+    def _on_update_curve_style_template(self) -> None:
+        if not self._active_curve_style_template_id:
+            InfoBar.warning("提示", "请先选择一个曲线样式", parent=self, position=InfoBarPosition.TOP)
+            return
+        if self._selected_curve() is None:
+            InfoBar.warning("提示", "请先选中一条曲线", parent=self, position=InfoBarPosition.TOP)
+            return
+        style = self._current_curve_style()
+        if style is None:
+            return
+        if global_assets.update_curve_style_template(self._active_curve_style_template_id, style=style):
+            self.assets_modified.emit()
+            InfoBar.success("已更新", "当前曲线样式已覆盖更新", parent=self, position=InfoBarPosition.TOP)
 
     def _get_current_config(self) -> dict:
         return self._figure_state.model_dump()
@@ -492,7 +1254,7 @@ class ChartPage(QWidget):
             figure_width=_safe_float_or(cfg.get("figure_width"), self._figure_state.figure_width),
             figure_height=_safe_float_or(cfg.get("figure_height"), self._figure_state.figure_height),
             dpi=_safe_int_or(cfg.get("dpi"), self._figure_state.dpi),
-            show_errbar=cfg.get("show_errbar", self._figure_state.show_errbar),
+            show_errbar=bool(cfg.get("show_errbar", self._figure_state.show_errbar)),
             x_min=_safe_float(cfg.get("x_min")),
             x_max=_safe_float(cfg.get("x_max")),
             y_min=_safe_float(cfg.get("y_min")),
@@ -500,7 +1262,7 @@ class ChartPage(QWidget):
             x_log=bool(cfg.get("x_log", self._figure_state.x_log)),
             y_log=bool(cfg.get("y_log", self._figure_state.y_log)),
             grid=bool(cfg.get("grid", self._figure_state.grid)),
-            grid_alpha=_safe_float_or(cfg.get("grid_alpha"), self._figure_state.grid_alpha),
+            grid_alpha=_clamp_float(_safe_float_or(cfg.get("grid_alpha"), self._figure_state.grid_alpha), 0.0, 1.0),
             grid_line_width=_safe_float_or(cfg.get("grid_line_width"), self._figure_state.grid_line_width),
             legend_pos=cfg.get("legend_pos", self._figure_state.legend_pos) or "best",
             font_size=_safe_int_or(cfg.get("font_size"), self._figure_state.font_size),
@@ -509,462 +1271,597 @@ class ChartPage(QWidget):
             line_width=_safe_float_or(cfg.get("line_width"), self._figure_state.line_width),
             marker_size=_safe_float_or(cfg.get("marker_size"), self._figure_state.marker_size),
         )
+        self._applied_plot_style_ref = (
+            make_plot_style_asset_key("template", self._active_template_node_id)
+            if self._active_template_node_id
+            else None
+        )
         self._apply_figure_state(state)
 
     def _apply_figure_state(self, state: FigureState) -> None:
         self._figure_state = state
-        themes = ["默认", "Nature", "IEEE", "ACS", "简洁黑白"]
-        if state.theme in themes:
-            self._theme_combo.setCurrentIndex(themes.index(state.theme))
-        self._x_label_edit.setText(state.x_label)
-        self._y_label_edit.setText(state.y_label)
+        self._refresh_template_combo()
+
+        _set_line_edit_text(self._x_label_edit, state.x_label)
+        _set_line_edit_text(self._y_label_edit, state.y_label)
+        _set_line_edit_text(self._x_min_edit, state.x_min, allow_blank=True)
+        _set_line_edit_text(self._x_max_edit, state.x_max, allow_blank=True)
+        _set_line_edit_text(self._y_min_edit, state.y_min, allow_blank=True)
+        _set_line_edit_text(self._y_max_edit, state.y_max, allow_blank=True)
+        self._refresh_font_family_combo(state.font_family)
+        _set_line_edit_text(self._font_size_edit, state.font_size)
+        _set_line_edit_text(self._legend_font_size_edit, state.legend_font_size)
+        _set_line_edit_text(self._figure_width_edit, state.figure_width)
+        _set_line_edit_text(self._figure_height_edit, state.figure_height)
+        _set_line_edit_text(self._dpi_edit, state.dpi)
+        _set_line_edit_text(self._plot_line_width_edit, state.line_width)
+        _set_line_edit_text(self._plot_marker_size_edit, state.marker_size)
+        _set_line_edit_text(self._grid_alpha_edit, state.grid_alpha)
+        _set_line_edit_text(self._grid_line_width_edit, state.grid_line_width)
+
+        self._errbar_cb.blockSignals(True)
         self._errbar_cb.setChecked(state.show_errbar)
-        if self._figure is not None:
-            self._figure.set_size_inches(state.figure_width, state.figure_height, forward=True)
-            self._figure.set_dpi(state.dpi)
+        self._errbar_cb.blockSignals(False)
+        self._x_log_cb.blockSignals(True)
+        self._x_log_cb.setChecked(state.x_log)
+        self._x_log_cb.blockSignals(False)
+        self._y_log_cb.blockSignals(True)
+        self._y_log_cb.setChecked(state.y_log)
+        self._y_log_cb.blockSignals(False)
+        self._grid_cb.blockSignals(True)
+        self._grid_cb.setChecked(state.grid)
+        self._grid_cb.blockSignals(False)
+        legend_idx = self._legend_pos_combo.findText(state.legend_pos or "best")
+        self._legend_pos_combo.blockSignals(True)
+        if legend_idx >= 0:
+            self._legend_pos_combo.setCurrentIndex(legend_idx)
+        self._legend_pos_combo.blockSignals(False)
+        theme = global_assets.get_plot_theme(state.theme)
+        self._current_plot_theme_id = theme.id if theme is not None else None
+        self._theme_hint_label.setText(_THEME_HINTS.get(state.theme, ""))
+        self._update_template_summary()
+        self._sync_canvas_display_geometry(state)
+
+    @staticmethod
+    def _fitted_canvas_size(available_width: int, available_height: int, aspect_ratio: float) -> tuple[int, int]:
+        safe_width = max(1, available_width)
+        safe_height = max(1, available_height)
+        safe_ratio = max(0.05, aspect_ratio)
+        target_width = safe_width
+        target_height = target_width / safe_ratio
+        if target_height > safe_height:
+            target_height = safe_height
+            target_width = target_height * safe_ratio
+        return max(1, int(round(target_width))), max(1, int(round(target_height)))
+
+    def _sync_canvas_display_geometry(self, state: Optional[FigureState] = None) -> None:
+        if not HAS_MATPLOTLIB or self._figure is None or self._canvas is None or self._canvas_host is None:
+            return
+        state = state or self._figure_state
+        aspect_ratio = max(0.1, state.figure_width) / max(0.1, state.figure_height)
+        host_rect = self._canvas_host.viewport().contentsRect()
+        canvas_width, canvas_height = self._fitted_canvas_size(host_rect.width(), host_rect.height(), aspect_ratio)
+        target_size = (canvas_width, canvas_height)
+        if target_size != self._display_canvas_size:
+            self._display_canvas_size = target_size
+            self._canvas.setFixedSize(canvas_width, canvas_height)
+            self._canvas.updateGeometry()
+        self._figure.set_dpi(self._display_dpi)
+        self._figure.set_size_inches(canvas_width / self._display_dpi, canvas_height / self._display_dpi, forward=False)
+
+    def _fallback_layout_margins(self, state: Optional[FigureState] = None) -> dict[str, float]:
+        state = state or self._figure_state
+        if self._figure is None:
+            return {"left": 0.14, "right": 0.97, "top": 0.95, "bottom": 0.12}
+
+        width_inch, height_inch = self._figure.get_size_inches()
+        figure_dpi = max(1.0, self._figure.get_dpi())
+        width_px = width_inch * figure_dpi
+        height_px = height_inch * figure_dpi
+        font_padding = max(0.0, state.font_size - 10)
+
+        left = min(0.24, 0.12 + font_padding * 0.003)
+        bottom = min(0.22, 0.11 + font_padding * 0.0035)
+        top = max(0.84, 0.97 - font_padding * 0.002)
+        right = 0.97
+
+        if width_px < 520:
+            left = max(left, 0.16)
+            right = min(right, 0.95)
+        if width_px < 380:
+            left = max(left, 0.20)
+            right = min(right, 0.94)
+        if height_px < 360:
+            bottom = max(bottom, 0.15)
+            top = min(top, 0.94)
+        if height_px < 260:
+            bottom = max(bottom, 0.18)
+            top = min(top, 0.92)
+        if state.legend_pos in {"center left", "upper left", "lower left"}:
+            left = max(left, 0.15)
+
+        return {
+            "left": left,
+            "right": right,
+            "top": top,
+            "bottom": bottom,
+        }
+
+    def _apply_figure_layout(self, state: Optional[FigureState] = None) -> None:
+        if not HAS_MATPLOTLIB or self._figure is None:
+            return
+
+        state = state or self._figure_state
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "error",
+                    message="Tight layout not applied.*",
+                    category=UserWarning,
+                )
+                self._figure.tight_layout(pad=1.1)
+                return
+        except Exception:
+            pass
+
+        self._figure.subplots_adjust(**self._fallback_layout_margins(state))
 
     def _sync_state_from_controls(self) -> FigureState:
         self._figure_state = FigureState(
-            theme=self._theme_combo.currentText(),
+            theme=self._figure_state.theme or "默认",
             x_label=self._x_label_edit.text().strip() or "X",
             y_label=self._y_label_edit.text().strip() or "Y",
-            figure_width=self._figure_state.figure_width,
-            figure_height=self._figure_state.figure_height,
-            dpi=self._figure_state.dpi,
+            figure_width=max(0.1, _safe_float_or(self._figure_width_edit.text(), self._figure_state.figure_width)),
+            figure_height=max(0.1, _safe_float_or(self._figure_height_edit.text(), self._figure_state.figure_height)),
+            dpi=max(1, _safe_int_or(self._dpi_edit.text(), self._figure_state.dpi)),
             show_errbar=self._errbar_cb.isChecked(),
-            x_min=self._figure_state.x_min,
-            x_max=self._figure_state.x_max,
-            y_min=self._figure_state.y_min,
-            y_max=self._figure_state.y_max,
-            x_log=self._figure_state.x_log,
-            y_log=self._figure_state.y_log,
-            grid=self._figure_state.grid,
-            grid_alpha=self._figure_state.grid_alpha,
-            grid_line_width=self._figure_state.grid_line_width,
-            legend_pos=self._figure_state.legend_pos,
-            font_size=self._figure_state.font_size,
-            font_family=self._figure_state.font_family,
-            legend_font_size=self._figure_state.legend_font_size,
-            line_width=self._figure_state.line_width,
-            marker_size=self._figure_state.marker_size,
+            x_min=_safe_float(self._x_min_edit.text()),
+            x_max=_safe_float(self._x_max_edit.text()),
+            y_min=_safe_float(self._y_min_edit.text()),
+            y_max=_safe_float(self._y_max_edit.text()),
+            x_log=self._x_log_cb.isChecked(),
+            y_log=self._y_log_cb.isChecked(),
+            grid=self._grid_cb.isChecked(),
+            grid_alpha=_clamp_float(_safe_float_or(self._grid_alpha_edit.text(), self._figure_state.grid_alpha), 0.0, 1.0),
+            grid_line_width=max(0.0, _safe_float_or(self._grid_line_width_edit.text(), self._figure_state.grid_line_width)),
+            legend_pos=self._legend_pos_combo.currentText() or self._figure_state.legend_pos,
+            font_size=max(1, _safe_int_or(self._font_size_edit.text(), self._figure_state.font_size)),
+            font_family="" if self._font_family_combo.currentText() == "默认" else self._font_family_combo.currentText().strip(),
+            legend_font_size=max(1, _safe_int_or(self._legend_font_size_edit.text(), self._figure_state.legend_font_size)),
+            line_width=max(0.1, _safe_float_or(self._plot_line_width_edit.text(), self._figure_state.line_width)),
+            marker_size=max(0.1, _safe_float_or(self._plot_marker_size_edit.text(), self._figure_state.marker_size)),
         )
         return self._figure_state
 
-    def _on_quick_config_changed(self):
+    def _on_quick_config_changed(self) -> None:
         self._sync_state_from_controls()
+        self._theme_hint_label.setText(_THEME_HINTS.get(self._figure_state.theme, ""))
         self._redraw()
 
-    # ──────────────────────────── 内部状态管理 ────────────────────────────
+    def _selected_curve(self) -> Optional[dict]:
+        item = self._chart_list.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole)
+
+    def _set_curve_display_name(self, curve: dict, display_name: str) -> None:
+        curve["display_name"] = display_name.strip() or curve.get("name", "")
+        self._refresh_chart_list()
+        self._redraw_now()
+
+    def _reset_curve_display_name(self, curve: dict) -> None:
+        curve["display_name"] = curve.get("name", "")
+        self._refresh_chart_list()
+        self._redraw_now()
+
+    def _rename_selected_curve_display_name(self) -> None:
+        curve = self._selected_curve()
+        if curve is None:
+            return
+        current_name = self._curve_display_name(curve)
+        new_name, ok = TextInputDialog.get_text(self, "重命名图例显示名称", "显示名称:", text=current_name)
+        if not ok or not new_name.strip():
+            return
+        self._set_curve_display_name(curve, new_name)
+
+    def _on_chart_list_context_menu(self, pos) -> None:
+        item = self._chart_list.itemAt(pos)
+        if item is None:
+            return
+        self._chart_list.setCurrentItem(item)
+        curve = item.data(Qt.ItemDataRole.UserRole)
+        if curve is None:
+            return
+        menu = RoundMenu(parent=self)
+        rename_action = Action(FIF.EDIT, "重命名显示名称")
+        rename_action.triggered.connect(self._rename_selected_curve_display_name)
+        menu.addAction(rename_action)
+        reset_action = Action(FIF.SYNC, "恢复原始名称")
+        reset_action.setEnabled(self._curve_display_name(curve) != (curve.get("name") or ""))
+        reset_action.triggered.connect(lambda checked=False: self._reset_curve_display_name(curve))
+        menu.addAction(reset_action)
+        menu.exec(self._chart_list.mapToGlobal(pos))
 
     def _refresh_chart_list(self) -> None:
-        prev_names = {
-            item.data(Qt.ItemDataRole.UserRole).get("name")
-            for item in self._chart_list.selectedItems()
-        }
+        current_name = self._style_target
+        current_identity = None
+        current_curve = self._selected_curve()
+        if current_curve is not None:
+            current_name = current_curve.get("name")
+            current_identity = self._curve_identity(current_curve)
+
+        self._chart_list.blockSignals(True)
         self._chart_list.clear()
-        for c in self._chart_series:
-            item = QListWidgetItem(c["name"])
-            item.setData(Qt.ItemDataRole.UserRole, c)
-            if c["name"] in prev_names:
-                item.setSelected(True)
+        current_item = None
+        for curve in self._chart_series:
+            display_name = self._curve_display_name(curve)
+            label = display_name if curve.get("visible", True) else f"[隐藏] {display_name}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, curve)
+            if not curve.get("visible", True):
+                item.setForeground(QColor("#888888"))
             self._chart_list.addItem(item)
+            if current_identity and self._curve_identity(curve) == current_identity:
+                current_item = item
+            elif current_item is None and current_name and curve["name"] == current_name:
+                current_item = item
+        if current_item is None and self._chart_list.count() > 0:
+            current_item = self._chart_list.item(0)
+        if current_item is not None:
+            self._chart_list.setCurrentItem(current_item)
+        self._chart_list.blockSignals(False)
+
+        if current_item is not None:
+            self._on_current_changed(current_item, None)
+        else:
+            self._set_style_enabled(False)
+        self._update_visibility_button()
+
+    def _update_visibility_button(self) -> None:
+        curve = self._selected_curve()
+        if curve is None:
+            self._btn_toggle_visible.setEnabled(False)
+            self._btn_toggle_visible.setIcon(_ICON_HIDE.icon())
+            return
+        visible = bool(curve.get("visible", True))
+        self._btn_toggle_visible.setEnabled(True)
+        self._btn_toggle_visible.setIcon((_ICON_HIDE if visible else _ICON_SHOW).icon())
+        self._btn_toggle_visible.setToolTip("隐藏当前曲线" if visible else "显示当前曲线")
 
     def _on_clear_chart(self) -> None:
         self._chart_series.clear()
         self._curve_styles.clear()
+        self._style_target = None
         self._refresh_chart_list()
         self._redraw_now()
 
     def _on_remove_selected(self) -> None:
-        to_remove = {
-            item.data(Qt.ItemDataRole.UserRole).get("name")
-            for item in self._chart_list.selectedItems()
-        }
-        self._chart_series = [c for c in self._chart_series if c["name"] not in to_remove]
-        for k in list(self._curve_styles):
-            if k in to_remove:
-                del self._curve_styles[k]
+        curve = self._selected_curve()
+        if curve is None:
+            return
+        target_name = curve["name"]
+        self._chart_series = [item for item in self._chart_series if item["name"] != target_name]
+        self._curve_styles.pop(target_name, None)
+        if self._style_target == target_name:
+            self._style_target = None
         self._refresh_chart_list()
         self._redraw_now()
 
-    def receive_data(self, data_type: str, obj_id: str):
-        """来自数据管理页的快捷发送。"""
-        series_list = project_manager.get_all_series_from_node(data_type, obj_id)
-        for s in series_list:
-            self.add_series_to_chart({
-                "name": s.name,
-                "x": list(s.x),
-                "y": list(s.y),
-                "y_err": list(s.y_err) if s.y_err else None,
-                "color": s.color,
-                "obj_id": s.id,
-                "source": "send",
-            })
+    def _toggle_selected_visibility(self) -> None:
+        curve = self._selected_curve()
+        if curve is None:
+            return
+        curve["visible"] = not bool(curve.get("visible", True))
+        self._refresh_chart_list()
+        self._redraw_now()
 
-    # ──────────────────────────── 绘图 ──────────────────────────────────
-
-    _ACADEMIC_THEMES = {
-        "Nature": {"font.size": 9, "axes.linewidth": 1.2, "xtick.major.width": 1.2,
-                   "ytick.major.width": 1.2, "lines.linewidth": 1.5},
-        "IEEE":   {"font.size": 8, "axes.linewidth": 1.0, "xtick.major.width": 1.0,
-                   "ytick.major.width": 1.0, "lines.linewidth": 1.2, "font.family": "serif"},
-        "ACS":    {"font.size": 9, "axes.linewidth": 1.5, "xtick.major.width": 1.5,
-                   "ytick.major.width": 1.5, "lines.linewidth": 1.8},
-        "简洁黑白": {"font.size": 10, "axes.linewidth": 1.2, "lines.linewidth": 1.5},
-    }
-
-    def _redraw(self):
+    def _redraw(self) -> None:
         self._redraw_timer.start()
 
-    def _redraw_now(self):
-        if not HAS_MATPLOTLIB or self._figure is None:
+    @staticmethod
+    def _apply_text_style(text_obj, *, font_family: str, font_size: int, color: Optional[str] = None) -> None:
+        if text_obj is None:
             return
+        text_obj.set_fontsize(max(1, font_size))
+        if font_family:
+            text_obj.set_fontfamily(font_family)
+        if color is not None:
+            text_obj.set_color(color)
+
+    def _apply_axis_text_style(self, axis, state: FigureState, fg: str) -> None:
+        axis.tick_params(colors=fg, labelcolor=fg, labelsize=state.font_size)
+        self._apply_text_style(axis.xaxis.label, font_family=state.font_family, font_size=state.font_size, color=fg)
+        self._apply_text_style(axis.yaxis.label, font_family=state.font_family, font_size=state.font_size, color=fg)
+        self._apply_text_style(axis.title, font_family=state.font_family, font_size=state.font_size, color=fg)
+        self._apply_text_style(axis.xaxis.get_offset_text(), font_family=state.font_family, font_size=state.font_size, color=fg)
+        self._apply_text_style(axis.yaxis.get_offset_text(), font_family=state.font_family, font_size=state.font_size, color=fg)
+        for tick_label in [*axis.get_xticklabels(), *axis.get_yticklabels()]:
+            self._apply_text_style(tick_label, font_family=state.font_family, font_size=state.font_size, color=fg)
+
+    def _redraw_now(self) -> None:
+        if not HAS_MATPLOTLIB or self._figure is None or self._canvas is None:
+            return
+
+        self._redraw_timer.stop()
+        state = self._sync_state_from_controls()
+        self._sync_canvas_display_geometry(state)
         self._figure.clear()
-        ax = self._figure.add_subplot(111)
+        axis = self._figure.add_subplot(111)
+        theme = self._resolve_plot_theme()
 
         dark = isDarkTheme()
-        bg = "#1e1e1e" if dark else "#ffffff"
-        fg = "#cccccc" if dark else "#222222"
-        grid_c = "#444444" if dark else "#dddddd"
+        if theme is None or theme.canvas_mode == "app":
+            bg = theme.background_color if theme and theme.background_color else ("#1e1e1e" if dark else "#ffffff")
+            fg = theme.foreground_color if theme and theme.foreground_color else ("#cccccc" if dark else "#222222")
+            grid_color = theme.grid_color if theme and theme.grid_color else ("#444444" if dark else "#dddddd")
+        elif theme.canvas_mode == "dark":
+            bg = theme.background_color or "#1e1e1e"
+            fg = theme.foreground_color or "#e6e6e6"
+            grid_color = theme.grid_color or "#454545"
+        else:
+            bg = theme.background_color or "#ffffff"
+            fg = theme.foreground_color or "#222222"
+            grid_color = theme.grid_color or "#dddddd"
 
         self._figure.patch.set_facecolor(bg)
-        ax.set_facecolor(bg)
-        ax.tick_params(colors=fg, labelcolor=fg)
-        ax.xaxis.label.set_color(fg)
-        ax.yaxis.label.set_color(fg)
-        ax.title.set_color(fg)
-        for spine in ax.spines.values():
+        axis.set_facecolor(bg)
+        for spine in axis.spines.values():
             spine.set_edgecolor(fg)
 
-        state = self._sync_state_from_controls()
-        grid_on = state.grid
-        ax.grid(
-            grid_on,
-            color=grid_c,
+        axis.grid(
+            state.grid,
+            color=grid_color,
             linestyle="--",
             linewidth=state.grid_line_width,
             alpha=state.grid_alpha,
         )
-        if state.font_family:
-            matplotlib.rcParams["font.family"] = [state.font_family, "sans-serif"]
 
-        theme_name = state.theme
-        if theme_name in self._ACADEMIC_THEMES:
-            for k, v in self._ACADEMIC_THEMES[theme_name].items():
-                plt.rcParams[k] = v
-
-        fsize = state.font_size
-        if fsize:
-            matplotlib.rcParams["font.size"] = max(1, fsize)
-
-        show_errbar = state.show_errbar
+        visible_series = [curve for curve in self._chart_series if curve.get("visible", True)]
         bw_colors = ["#000000", "#444444", "#888888", "#aaaaaa"]
-        bw_idx = 0
-        _MAX_PTS = 2000
+        bw_index = 0
 
-        selected_items = self._chart_list.selectedItems()
-        visible_series = [item.data(Qt.ItemDataRole.UserRole) for item in selected_items] if selected_items else self._chart_series
+        for curve in visible_series:
+            name = curve["name"]
+            display_name = self._curve_display_name(curve)
+            style_overrides = self._curve_styles.get(name, {})
+            color = style_overrides.get("color") or curve.get("color")
+            linestyle = style_overrides.get("linestyle", "-")
+            marker = style_overrides.get("marker", "")
+            line_width = _safe_float_or(style_overrides.get("linewidth"), state.line_width)
+            marker_size = _safe_float_or(style_overrides.get("marker_size"), state.marker_size)
+            markevery = max(1, _safe_int_or(style_overrides.get("markevery"), 1))
+            dash_scale = _safe_float_or(style_overrides.get("dash_scale"), 1.0)
+            alpha = _safe_float_or(style_overrides.get("alpha"), 1.0)
 
-        for c in visible_series:
-            if c is None:
-                continue
-            name = c["name"]
-            ov = self._curve_styles.get(name, {})
-            color = ov.get("color") or c.get("color")
-            ls = ov.get("linestyle", "-")
-            marker = ov.get("marker", "")
-            kw: dict = {"label": name, "linestyle": ls or "none"}
+            plot_kwargs = {
+                "label": display_name,
+                "linestyle": linestyle or "none",
+                "linewidth": line_width,
+                "alpha": alpha,
+            }
             if marker:
-                kw["marker"] = marker
-                kw["markersize"] = state.marker_size
-            if theme_name == "简洁黑白":
-                kw["color"] = bw_colors[bw_idx % len(bw_colors)]
-                bw_idx += 1
+                plot_kwargs["marker"] = marker
+                plot_kwargs["markersize"] = marker_size
+                if markevery > 1:
+                    plot_kwargs["markevery"] = markevery
+            if state.theme == "简洁黑白":
+                plot_kwargs["color"] = bw_colors[bw_index % len(bw_colors)]
+                bw_index += 1
             elif color:
-                kw["color"] = color
+                plot_kwargs["color"] = color
+            if linestyle in ("--", ":", "-.") and dash_scale != 1.0:
+                base_dashes = {"--": [6, 4], ":": [1, 2], "-.": [8, 3, 1, 3]}.get(linestyle)
+                if base_dashes:
+                    plot_kwargs["dashes"] = [segment * dash_scale for segment in base_dashes]
 
-            px, py = list(c.get("x", [])), list(c.get("y", []))
-            n_pts = len(px)
-            if n_pts > _MAX_PTS:
-                stride = n_pts // _MAX_PTS
-                px = px[::stride]
-                py = py[::stride]
-            y_err = c.get("y_err")
-            if show_errbar and y_err and len(y_err) == len(c.get("x", [])):
-                if n_pts > _MAX_PTS:
-                    y_err = y_err[::stride]
-                kw.pop("linestyle", None)
-                ax.errorbar(px, py, yerr=y_err,
-                            fmt=f"{marker or 'o'}{ls or '-'}",
-                            linewidth=state.line_width, capsize=3,
-                            **{k: v for k, v in kw.items() if k not in ("marker", "markersize")})
+            x_values = list(curve.get("x", []))
+            y_values = list(curve.get("y", []))
+            y_err = list(curve.get("y_err", []) or [])
+            if state.show_errbar and y_err and len(y_err) == len(x_values):
+                axis.errorbar(x_values, y_values, yerr=y_err, capsize=3, **plot_kwargs)
             else:
-                ax.plot(px, py, linewidth=state.line_width, **kw)
+                axis.plot(x_values, y_values, **plot_kwargs)
 
+        legend = None
         if visible_series:
-            legend_pos = state.legend_pos
-            ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=state.legend_font_size,
-                      loc=legend_pos or "best")
+            legend_kwargs = {
+                "facecolor": bg,
+                "edgecolor": fg,
+                "labelcolor": fg,
+                "loc": state.legend_pos or "best",
+            }
+            if state.font_family:
+                legend_kwargs["prop"] = {"family": state.font_family, "size": state.legend_font_size}
+            else:
+                legend_kwargs["fontsize"] = state.legend_font_size
+            legend = axis.legend(
+                **legend_kwargs,
+            )
 
-        xl = state.x_label
-        yl = state.y_label
-        ax.set_xlabel(xl or "X")
-        ax.set_ylabel(yl or "Y")
-
-        x_min = state.x_min
-        x_max = state.x_max
-        y_min = state.y_min
-        y_max = state.y_max
-        if x_min is not None or x_max is not None:
-            ax.set_xlim(left=x_min, right=x_max)
-        if y_min is not None or y_max is not None:
-            ax.set_ylim(bottom=y_min, top=y_max)
-
+        axis.set_xlabel(state.x_label or "X")
+        axis.set_ylabel(state.y_label or "Y")
+        if state.x_min is not None or state.x_max is not None:
+            axis.set_xlim(left=state.x_min, right=state.x_max)
+        if state.y_min is not None or state.y_max is not None:
+            axis.set_ylim(bottom=state.y_min, top=state.y_max)
         if state.x_log:
-            ax.set_xscale("log")
+            axis.set_xscale("log")
         if state.y_log:
-            ax.set_yscale("log")
+            axis.set_yscale("log")
 
-        self._figure.subplots_adjust(left=0.12, right=0.96, top=0.96, bottom=0.10)
+        self._apply_axis_text_style(axis, state, fg)
+        if legend is not None:
+            for text in legend.get_texts():
+                self._apply_text_style(text, font_family=state.font_family, font_size=state.legend_font_size, color=fg)
+            self._apply_text_style(legend.get_title(), font_family=state.font_family, font_size=state.legend_font_size, color=fg)
+
+        self._apply_figure_layout(state)
         self._canvas.draw()
+        self._canvas.updateGeometry()
 
-    # ──────────────────────────── 样式面板 ──────────────────────────────
-
-    def _on_current_changed(self, current, _prev):
+    def _on_current_changed(self, current, _prev) -> None:
         if current is None:
             self._set_style_enabled(False)
         else:
             self._set_style_enabled(True, current.data(Qt.ItemDataRole.UserRole))
+        self._update_visibility_button()
+        self._refresh_style_extension_panel()
 
-    def _set_style_enabled(self, enabled: bool, curve: Optional[dict] = None):
+    def _set_style_enabled(self, enabled: bool, curve: Optional[dict] = None) -> None:
         self._style_color_btn.setEnabled(enabled)
         self._style_reset_color_btn.setEnabled(enabled)
         self._style_line_combo.setEnabled(enabled)
+        self._style_line_width_edit.setEnabled(enabled)
+        self._style_marker_size_edit.setEnabled(enabled)
+        self._style_density_edit.setEnabled(enabled)
+        self._btn_load_curve_style_template.setEnabled(enabled)
+        self._btn_save_curve_style_template.setEnabled(enabled)
         if enabled and curve:
             name = curve["name"]
             self._style_target = name
-            self._style_target_label.setText(name[:30] + ("…" if len(name) > 30 else ""))
-            ov = self._curve_styles.get(name, {})
-            eff_color = ov.get("color") or curve.get("color") or "#888888"
-            self._update_color_btn(eff_color)
-            ls = ov.get("linestyle", "-")
-            mk = ov.get("marker", "")
+            display_name = self._curve_display_name(curve)
+            self._style_target_label.setText(display_name[:30] + ("…" if len(display_name) > 30 else ""))
+            style = self._current_curve_style(curve)
+            if style is None:
+                return
+            self._update_color_btn(style.color or curve.get("color") or "#888888")
             try:
-                idx = next(i for i, (sl, sm) in enumerate(
-                    zip(_STYLE_LINESTYLES, _STYLE_MARKERS)) if sl == ls and sm == mk)
+                idx = next(
+                    index for index, (line_style, marker_style) in enumerate(zip(_STYLE_LINESTYLES, _STYLE_MARKERS))
+                    if line_style == style.linestyle and marker_style == style.marker
+                )
             except StopIteration:
                 idx = 0
             self._style_line_combo.blockSignals(True)
             self._style_line_combo.setCurrentIndex(idx)
             self._style_line_combo.blockSignals(False)
+            self._style_line_width_edit.blockSignals(True)
+            self._style_line_width_edit.setText(f"{style.linewidth:g}")
+            self._style_line_width_edit.blockSignals(False)
+            self._style_marker_size_edit.blockSignals(True)
+            self._style_marker_size_edit.setText(f"{style.marker_size:g}")
+            self._style_marker_size_edit.blockSignals(False)
+            self._style_density_edit.blockSignals(True)
+            self._style_density_edit.setText(str(style.markevery))
+            self._style_density_edit.blockSignals(False)
         else:
             self._style_target = None
             self._style_target_label.setText("— 未选中 —")
             self._update_color_btn("#888888")
+            self._style_line_width_edit.clear()
+            self._style_marker_size_edit.clear()
+            self._style_density_edit.clear()
 
-    def _update_color_btn(self, color_str: str):
-        c = QColor(color_str)
-        if not c.isValid():
-            color_str = "#888888"
-        self._style_color_btn.setStyleSheet(
-            f"QPushButton{{background:{color_str};border:1px solid #888;border-radius:4px;}}"
-            f"QPushButton:hover{{border:2px solid #aaa;}}"
-        )
+    def _update_color_btn(self, color_str: str) -> None:
+        color = QColor(color_str)
+        if not color.isValid():
+            color = QColor("#888888")
+        self._style_color_btn.blockSignals(True)
+        self._style_color_btn.setColor(color)
+        self._style_color_btn.blockSignals(False)
 
-    def _on_style_color_click(self):
+    def _on_style_color_changed(self, color) -> None:
         if not self._style_target:
             return
-        cur_c = self._curve_styles.get(self._style_target, {}).get("color", "#0078D4")
-        color = QColorDialog.getColor(QColor(cur_c), self, "选择曲线颜色")
-        if color.isValid():
-            self._curve_styles.setdefault(self._style_target, {})["color"] = color.name()
-            self._update_color_btn(color.name())
-            self._redraw_now()
+        color_obj = color if isinstance(color, QColor) else QColor(str(color))
+        if not color_obj.isValid():
+            return
+        self._curve_styles.setdefault(self._style_target, {})["color"] = color_obj.name(QColor.NameFormat.HexRgb)
+        self._redraw_now()
 
-    def _on_style_reset_color(self):
+    def _on_style_reset_color(self) -> None:
         if not self._style_target:
             return
         self._curve_styles.get(self._style_target, {}).pop("color", None)
-        # find default color from _chart_series
-        for c in self._chart_series:
-            if c["name"] == self._style_target:
-                self._update_color_btn(c.get("color") or "#888888")
+        for curve in self._chart_series:
+            if curve["name"] == self._style_target:
+                self._update_color_btn(curve.get("color") or "#888888")
                 break
         self._redraw_now()
 
-    def _on_style_line_changed(self, idx: int):
+    def _on_style_line_changed(self, idx: int) -> None:
         if not self._style_target:
             return
-        s = self._curve_styles.setdefault(self._style_target, {})
-        s["linestyle"] = _STYLE_LINESTYLES[idx]
-        s["marker"] = _STYLE_MARKERS[idx]
+        style = self._curve_styles.setdefault(self._style_target, {})
+        style["linestyle"] = _STYLE_LINESTYLES[idx]
+        style["marker"] = _STYLE_MARKERS[idx]
         self._redraw_now()
 
-    # ──────────────────────────── 文件操作 ──────────────────────────────
+    def _on_style_metrics_changed(self) -> None:
+        if not self._style_target:
+            return
+        style = self._curve_styles.setdefault(self._style_target, {})
+        style["linewidth"] = max(0.1, _safe_float_or(self._style_line_width_edit.text(), self._figure_state.line_width))
+        style["marker_size"] = max(0.1, _safe_float_or(self._style_marker_size_edit.text(), self._figure_state.marker_size))
+        density = max(1, _safe_int_or(self._style_density_edit.text(), 1))
+        style["markevery"] = density
+        style["dash_scale"] = float(density)
+        self._redraw()
 
-    def _on_export_image(self):
+    def _on_export_image(self) -> None:
         if not HAS_MATPLOTLIB or self._figure is None:
             return
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "导出图片", "chart.png", "PNG (*.png);;SVG (*.svg);;PDF (*.pdf)",
+            self,
+            "导出图片",
+            "chart.png",
+            "PNG (*.png);;SVG (*.svg);;PDF (*.pdf)",
         )
-        if file_path:
-            self._figure.savefig(file_path, dpi=self._figure_state.dpi, bbox_inches="tight")
-            InfoBar.success(
-                title="导出成功", content=file_path,
-                position=InfoBarPosition.TOP, duration=3000, parent=self,
-            )
+        if not file_path:
+            return
+        display_size = self._figure.get_size_inches()
+        display_dpi = self._figure.get_dpi()
+        try:
+            self._figure.set_dpi(self._figure_state.dpi)
+            self._figure.set_size_inches(self._figure_state.figure_width, self._figure_state.figure_height, forward=False)
+            self._apply_figure_layout(self._figure_state)
+            self._figure.savefig(file_path, dpi=self._figure_state.dpi)
+        except Exception as exc:
+            InfoBar.error("导出失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        finally:
+            self._figure.set_dpi(display_dpi)
+            self._figure.set_size_inches(display_size[0], display_size[1], forward=False)
+            self._sync_canvas_display_geometry()
+            self._canvas.draw_idle()
+        InfoBar.success("导出成功", file_path, parent=self, position=InfoBarPosition.TOP)
 
-    def update_theme(self):
+    def update_theme(self) -> None:
         self._redraw_now()
 
 
-# ─────────────────────── 工具函数 ────────────────────────
-
-def _safe_float(v) -> Optional[float]:
+def _safe_float(value) -> Optional[float]:
     try:
-        return float(str(v).strip()) if v not in (None, "", "None") else None
+        return float(str(value).strip()) if value not in (None, "", "None") else None
     except Exception:
         return None
 
 
-def _safe_float_or(v, default: float) -> float:
-    parsed = _safe_float(v)
+def _safe_float_or(value, default: float) -> float:
+    parsed = _safe_float(value)
     return default if parsed is None else parsed
 
 
-def _safe_int_or(v, default: int) -> int:
+def _clamp_float(value: float, minimum: float, maximum: float) -> float:
+    return min(maximum, max(minimum, value))
+
+
+def _safe_int_or(value, default: int) -> int:
     try:
-        if v in (None, "", "None"):
+        if value in (None, "", "None"):
             return default
-        return int(str(v).strip())
+        return int(str(value).strip())
     except Exception:
         return default
 
 
-def _load_data_file(file_path: str) -> List[dict]:
-    """支持 CSV/TXT/DAT/TSV/JSON/NumPy .npy"""
-    p = Path(file_path)
-    name = p.stem
-    suffix = p.suffix.lower()
-    if suffix == ".npy":
-        return _load_npy(p, name)
-    if suffix == ".json":
-        return _load_json(p, name)
-    return _load_tabular(p, name)
+def _set_line_edit_text(widget: LineEdit, value, allow_blank: bool = False) -> None:
+    widget.blockSignals(True)
+    if value in (None, "", "None"):
+        widget.setText("" if allow_blank else str(value or ""))
+    elif isinstance(value, float):
+        widget.setText(f"{value:g}")
+    else:
+        widget.setText(str(value))
+    widget.blockSignals(False)
 
-
-def _load_npy(p: Path, name: str) -> List[dict]:
-    arr = np.load(str(p))
-    if arr.ndim == 1:
-        return [{"name": name, "x": list(range(len(arr))), "y": arr.tolist(), "source": "import"}]
-    if arr.ndim == 2:
-        return _cols_to_curves(arr, name)
-    raise ValueError("NumPy 数组维度应为 1 或 2")
-
-
-def _load_json(p: Path, name: str) -> List[dict]:
-    with open(p, encoding="utf-8") as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        if data and isinstance(data[0], (list, tuple)):
-            return _cols_to_curves(np.array(data, dtype=float), name)
-        if data and isinstance(data[0], dict):
-            curves = []
-            for i, item in enumerate(data):
-                y = item.get("y", item.get("Y", []))
-                x = item.get("x", item.get("X", list(range(len(y)))))
-                n = item.get("name", f"{name}_{i + 1}")
-                curves.append({"name": n, "x": list(map(float, x)), "y": list(map(float, y)), "source": "import"})
-            return curves
-    if isinstance(data, dict):
-        y = data.get("y", data.get("Y", []))
-        x = data.get("x", data.get("X", list(range(len(y)))))
-        n = data.get("name", name)
-        return [{"name": n, "x": list(map(float, x)), "y": list(map(float, y)), "source": "import"}]
-    raise ValueError("无法识别的 JSON 结构")
-
-
-def _load_tabular(p: Path, name: str) -> List[dict]:
-    raw_lines: List[str] = []
-    for enc in ("utf-8-sig", "utf-8", "gbk", "latin-1"):
-        try:
-            with open(p, encoding=enc, newline="") as f:
-                raw_lines = f.readlines()
-            break
-        except UnicodeDecodeError:
-            continue
-    if not raw_lines:
-        raise ValueError("文件读取失败或为空")
-    data_lines = [l.rstrip("\r\n") for l in raw_lines
-                  if l.strip() and not l.lstrip().startswith(("#", "%", "!", "/"))]
-    if not data_lines:
-        raise ValueError("文件中无有效数据行")
-    delimiter = _detect_delimiter(data_lines)
-    col_names = None
-    start_row = 0
-    first_parts = _split_line(data_lines[0], delimiter)
-    if not _all_numeric(first_parts) and len(first_parts) >= 2:
-        col_names = [pp.strip().strip('"\'') for pp in first_parts]
-        start_row = 1
-    rows: List[List[float]] = []
-    for line in data_lines[start_row:]:
-        parts = _split_line(line, delimiter)
-        try:
-            row = [float(v) for v in parts if v.strip()]
-            if row:
-                rows.append(row)
-        except ValueError:
-            continue
-    if not rows:
-        raise ValueError("文件中未找到数值数据")
-    col_counts = [len(r) for r in rows]
-    ncols = max(set(col_counts), key=col_counts.count)
-    rows = [r for r in rows if len(r) == ncols]
-    arr = np.array(rows, dtype=float)
-    if col_names and len(col_names) != ncols:
-        col_names = None
-    return _cols_to_curves(arr, name, col_names=col_names)
-
-
-def _cols_to_curves(arr: np.ndarray, name: str, col_names=None) -> List[dict]:
-    if arr.ndim == 1:
-        return [{"name": name, "x": list(range(len(arr))), "y": arr.tolist(), "source": "import"}]
-    n_cols = arr.shape[1]
-    if n_cols < 2:
-        return [{"name": name, "x": list(range(len(arr))), "y": arr[:, 0].tolist(), "source": "import"}]
-    x = arr[:, 0].tolist()
-    curves = []
-    for i in range(1, n_cols):
-        if col_names and len(col_names) > i:
-            c_name = f"{name} / {col_names[i]}"
-        else:
-            c_name = name if n_cols == 2 else f"{name}_Y{i}"
-        curves.append({"name": c_name, "x": x, "y": arr[:, i].tolist(), "source": "import"})
-    return curves
-
-
-def _detect_delimiter(lines: List[str]):
-    sample = "\n".join(lines[:10])
-    if "\t" in sample:
-        return "\t"
-    comma_count = sample.count(",")
-    semi_count = sample.count(";")
-    if comma_count > 0 or semi_count > 0:
-        return "," if comma_count >= semi_count else ";"
-    return None
-
-
-def _split_line(line: str, delimiter) -> List[str]:
-    if delimiter is None:
-        return re.split(r"\s+", line.strip())
-    return line.split(delimiter)
-
-
-def _all_numeric(parts: List[str]) -> bool:
-    for pp in parts:
-        try:
-            float(pp.strip())
-        except (ValueError, AttributeError):
-            return False
-    return bool(parts)

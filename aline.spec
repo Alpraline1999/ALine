@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 _root = os.path.dirname(os.path.abspath(SPEC))
+_binaries = []
 
 
 # ─── 隐式导入 ─────────────────────────────────────────────────────
@@ -75,6 +76,20 @@ try:
 except ImportError:
     pass
 
+# PySide6 输入法插件（Linux/Wayland/fcitx/ibus）
+try:
+    import PySide6
+
+    _pyside_dir = os.path.dirname(PySide6.__file__)
+    _im_plugin_dir = os.path.join(_pyside_dir, "Qt", "plugins", "platforminputcontexts")
+    if os.path.isdir(_im_plugin_dir):
+        for _name in os.listdir(_im_plugin_dir):
+            _plugin_path = os.path.join(_im_plugin_dir, _name)
+            if os.path.isfile(_plugin_path):
+                _binaries.append((_plugin_path, os.path.join("PySide6", "Qt", "plugins", "platforminputcontexts")))
+except ImportError:
+    pass
+
 # 应用图标 (可选)
 _icon_dir = os.path.join(_root, "assets")
 if os.path.isdir(_icon_dir):
@@ -105,7 +120,7 @@ else:
 a = Analysis(
     [os.path.join(_root, "main.py")],
     pathex=[_root],
-    binaries=[],
+    binaries=_binaries,
     datas=_datas,
     hiddenimports=_hidden,
     hookspath=[],

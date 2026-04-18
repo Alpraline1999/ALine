@@ -12,12 +12,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QTreeWidgetItem, QAbstractItemView, QHeaderView,
+    QTreeWidgetItem, QAbstractItemView,
     QFileDialog, QFrame, QSizePolicy,
 )
 from qfluentwidgets import (
+    ComboBox,
     CardWidget, ToolButton, PushButton, PrimaryPushButton,
-    TreeWidget, TableWidget, BodyLabel, CaptionLabel,
+    TreeWidget, BodyLabel, CaptionLabel,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit,
 )
@@ -26,8 +27,22 @@ from ui.theme import (
     text_color, secondary_color, card_background_color,
     make_section_label, make_hsep,
 )
+from ui.matplotlib_fonts import configure_matplotlib_cjk
 from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, Dataset, Curve
+
+try:
+    import matplotlib
+
+    matplotlib.use("QtAgg")
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.figure import Figure
+    configure_matplotlib_cjk(matplotlib)
+    HAS_MATPLOTLIB = True
+    _MATPLOTLIB_ERROR = ""
+except Exception as exc:
+    HAS_MATPLOTLIB = False
+    _MATPLOTLIB_ERROR = f"{type(exc).__name__}: {exc}"
 
 
 # ── 树节点类型常量 ────────────────────────────────────────────
@@ -46,11 +61,19 @@ class DataPage(QWidget):
     send_to_visualize = Signal(str, str)   # (type: "curve"|"series", id)
     send_to_process   = Signal(str, str)   # (type, id)
     project_modified  = Signal()
+    tree_filter_kinds = ["folder", "data_file", "image_work", "series", "curve"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._selected_type: Optional[str] = None
         self._selected_id:   Optional[str] = None
+        self._selected_node_kind: Optional[str] = None
+        self._selected_node_id: Optional[str] = None
+        self._preview_xs: list[float] = []
+        self._preview_ys: list[float] = []
+        self._preview_name = ""
+        self._preview_x_label = "X"
+        self._preview_y_label = "Y"
         self._setup_ui()
 
     # ─────────────────────────────────────────────────────────
@@ -128,37 +151,91 @@ class DataPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        self._shared_tree_hint = CaptionLabel("请使用左侧共享项目树选择数据资产。", panel)
-        self._shared_tree_hint.setWordWrap(True)
-        layout.addWidget(self._shared_tree_hint)
+        preview_card = CardWidget(panel)
+        preview_layout = QVBoxLayout(preview_card)
+        preview_layout.setContentsMargins(14, 14, 14, 14)
+        preview_layout.setSpacing(8)
 
-        layout.addWidget(make_hsep())
+        preview_header = QHBoxLayout()
+        preview_header.addWidget(make_section_label("数据预览"))
+        preview_header.addStretch()
+        preview_header.addWidget(CaptionLabel("图型", preview_card))
+        self._preview_type_combo = ComboBox(preview_card)
+        self._preview_type_combo.addItems(["折线", "散点", "折线+点", "柱状", "阶梯"])
+        self._preview_type_combo.currentIndexChanged.connect(self._draw_preview)
+        preview_header.addWidget(self._preview_type_combo)
+        preview_layout.addLayout(preview_header)
 
-        # 数据预览表格
-        layout.addWidget(make_section_label("数据预览"))
-        self._table = TableWidget(self)
-        self._table.setColumnCount(2)
-        self._table.setHorizontalHeaderLabels(["X", "Y"])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setAlternatingRowColors(True)
-        layout.addWidget(self._table, stretch=3)
+        if HAS_MATPLOTLIB:
+            self._preview_figure = Figure(figsize=(5.6, 3.4), dpi=100)
+            self._preview_canvas = FigureCanvas(self._preview_figure)
+            preview_layout.addWidget(self._preview_canvas, stretch=3)
+        else:
+            self._preview_figure = None
+            self._preview_canvas = None
+            self._preview_canvas_label = BodyLabel(
+                f"matplotlib 加载失败：{_MATPLOTLIB_ERROR}" if _MATPLOTLIB_ERROR else "请安装 matplotlib 以启用绘图预览",
+                preview_card,
+            )
+            self._preview_canvas_label.setWordWrap(True)
+            self._preview_canvas_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            preview_layout.addWidget(self._preview_canvas_label, stretch=3)
 
-        layout.addWidget(make_hsep())
+        preview_layout.addWidget(make_hsep())
 
-        # 统计摘要
-        layout.addWidget(make_section_label("统计摘要"))
+        preview_layout.addWidget(make_section_label("统计摘要"))
         self._stats_label = BodyLabel("（选择数据后显示统计信息）")
         self._stats_label.setWordWrap(True)
-        layout.addWidget(self._stats_label)
+        self._stats_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        preview_layout.addWidget(self._stats_label)
 
-        layout.addWidget(make_hsep())
+        layout.addWidget(preview_card, stretch=3)
 
-        # 发送按钮
+        manage_card = CardWidget(panel)
+        manage_layout = QVBoxLayout(manage_card)
+        manage_layout.setContentsMargins(14, 14, 14, 14)
+        manage_layout.setSpacing(8)
+
+        manage_layout.addWidget(make_section_label("节点管理"))
+        self._shared_tree_hint = CaptionLabel("从左侧共享项目树选择数据节点后，可在这里直接重命名、复制或删除。", manage_card)
+        self._shared_tree_hint.setWordWrap(True)
+        manage_layout.addWidget(self._shared_tree_hint)
+
+        self._manage_target_label = BodyLabel("当前节点: 未选择")
+        self._manage_target_label.setWordWrap(True)
+        self._manage_target_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        manage_layout.addWidget(self._manage_target_label)
+
+        self._manage_type_label = CaptionLabel("节点类型: -", manage_card)
+        self._manage_type_label.setWordWrap(True)
+        manage_layout.addWidget(self._manage_type_label)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(BodyLabel("名称:"))
+        self._manage_name_edit = LineEdit(manage_card)
+        self._manage_name_edit.setPlaceholderText("选择节点后可编辑名称")
+        name_row.addWidget(self._manage_name_edit, 1)
+        self._btn_apply_name = PushButton("应用重命名", manage_card)
+        self._btn_apply_name.clicked.connect(self._apply_rename_current_node)
+        name_row.addWidget(self._btn_apply_name)
+        manage_layout.addLayout(name_row)
+
+        manage_layout.addWidget(make_hsep())
+
+        primary_row = QHBoxLayout()
+        self._btn_copy_to_data_file = PushButton("复制为数据文件", manage_card)
+        self._btn_copy_to_data_file.clicked.connect(self._duplicate_current_node_as_data_file)
+        primary_row.addWidget(self._btn_copy_to_data_file)
+        self._btn_delete_node = PushButton("删除当前节点", manage_card)
+        self._btn_delete_node.clicked.connect(self._delete_current_node)
+        primary_row.addWidget(self._btn_delete_node)
+        primary_row.addStretch()
+        manage_layout.addLayout(primary_row)
+
         action_row = QHBoxLayout()
-        self._btn_to_vis  = PrimaryPushButton(FIF.PIE_SINGLE, "→ 可视化")
+        self._btn_to_vis = PrimaryPushButton(FIF.PIE_SINGLE, "→ 可视化")
         self._btn_to_proc = PushButton(FIF.DEVELOPER_TOOLS, "→ 处理")
-        self._btn_export  = PushButton(FIF.SHARE, "导出 CSV")
+        self._btn_export = PushButton(FIF.SHARE, "导出 CSV")
         self._btn_to_vis.clicked.connect(self._send_to_visualize)
         self._btn_to_proc.clicked.connect(self._send_to_process)
         self._btn_export.clicked.connect(self._export_csv)
@@ -166,9 +243,16 @@ class DataPage(QWidget):
         action_row.addWidget(self._btn_to_proc)
         action_row.addStretch()
         action_row.addWidget(self._btn_export)
-        layout.addLayout(action_row)
+        manage_layout.addLayout(action_row)
+
+        self._manage_help_label = CaptionLabel("数据文件、系列和曲线支持直接复制为新的数据文件；图像节点支持重命名和删除。", manage_card)
+        self._manage_help_label.setWordWrap(True)
+        manage_layout.addWidget(self._manage_help_label)
+
+        layout.addWidget(manage_card, stretch=2)
 
         self._set_actions_enabled(False)
+        self._set_management_actions_enabled(False)
         return panel
 
     # ─────────────────────────────────────────────────────────
@@ -180,14 +264,179 @@ class DataPage(QWidget):
         self._clear_preview()
         p = project_manager.current_project
         if p is None:
+            self._selected_node_kind = None
+            self._selected_node_id = None
             self._shared_tree_hint.setText("请先打开项目，然后通过左侧共享项目树选择数据资产。")
         else:
-            self._shared_tree_hint.setText("请使用左侧共享项目树选择数据资产。")
+            n_files = len(p.data_files)
+            n_series = sum(len(df.series) for df in p.data_files)
+            n_curves = sum(len(img.curves) for img in p.images)
+            self._shared_tree_hint.setText(
+                f"数据文件 {n_files} 个 · 系列 {n_series} 条 · 图像曲线 {n_curves} 条　│　"
+                "请从左侧共享项目树选择数据资产"
+            )
+        self._refresh_management_panel()
 
     def _clear_preview(self):
-        self._table.setRowCount(0)
+        self._preview_xs = []
+        self._preview_ys = []
+        self._preview_name = ""
+        self._preview_x_label = "X"
+        self._preview_y_label = "Y"
+        self._draw_preview()
         self._stats_label.setText("（选择数据后显示统计信息）")
         self._set_actions_enabled(False)
+
+    def _set_management_actions_enabled(self, enabled: bool, *, allow_copy: bool = False) -> None:
+        self._manage_name_edit.setEnabled(enabled)
+        self._btn_apply_name.setEnabled(enabled)
+        self._btn_delete_node.setEnabled(enabled)
+        self._btn_copy_to_data_file.setEnabled(enabled and allow_copy)
+
+    def _current_tree_node(self):
+        project = project_manager.current_project
+        if project is None or project.tree is None or not self._selected_node_id:
+            return None
+        return project.tree.get_node(self._selected_node_id)
+
+    def _current_node_name(self) -> str:
+        project = project_manager.current_project
+        if project is None or not self._selected_node_kind or not self._selected_node_id:
+            return ""
+        if self._selected_node_kind == "series":
+            series = project.find_series(self._selected_node_id)
+            return "" if series is None else series.name
+        if self._selected_node_kind == "curve":
+            curve = self._find_curve(project, self._selected_node_id)
+            return "" if curve is None else curve.name
+        if self._selected_node_kind == "image_work":
+            node = self._current_tree_node()
+            if node is None:
+                return ""
+            image = project_manager.get_image(node.image_work_id)
+            return image.name if image is not None else node.name
+        node = self._current_tree_node()
+        return "" if node is None else node.name
+
+    @staticmethod
+    def _canonical_folder_group(group_type: Optional[str]) -> Optional[str]:
+        if group_type in {"dataset_set", "datasets"}:
+            return "datasets"
+        if group_type in {"image_set", "images"}:
+            return "images"
+        if group_type in {"tool_set", "tools"}:
+            return "tools"
+        if group_type in {"template_group", "figure_template_group"}:
+            return "figure_template_group"
+        return group_type
+
+    def _folder_collection_group(self, node) -> Optional[str]:
+        current = node
+        while current is not None and getattr(current, "kind", None) == "folder":
+            group_type = self._canonical_folder_group(getattr(current, "group_type", None))
+            if group_type in {"datasets", "images", "analysis_result_group"}:
+                return group_type
+            parent_id = getattr(current, "parent_id", None)
+            current = project_manager.get_node_by_id(parent_id) if parent_id else None
+        return None
+
+    def _is_protected_folder_node(self, node) -> bool:
+        if node is None or getattr(node, "kind", None) != "folder":
+            return False
+        group_type = self._canonical_folder_group(getattr(node, "group_type", None))
+        if group_type in {"datasets", "images", "analysis_result_group"}:
+            return getattr(node, "parent_id", None) is None
+        return group_type in {
+            "tools", "pipeline_group", "figure_template_group",
+            "report_template_group", "ai_group", "prompt_group",
+            "skill_group", "agent_group",
+        }
+
+    def _current_data_file_node(self):
+        project = project_manager.current_project
+        if project is None or project.tree is None or not self._selected_node_kind or not self._selected_node_id:
+            return None
+        if self._selected_node_kind == "data_file":
+            node = self._current_tree_node()
+            return node if node is not None and getattr(node, "kind", None) == "data_file" else None
+        if self._selected_node_kind != "series":
+            return None
+        for node in project.tree.nodes:
+            if node.kind != "data_file":
+                continue
+            data_file = project.find_data_file(node.data_file_id)
+            if data_file and any(series.id == self._selected_node_id for series in data_file.series):
+                return node
+        return None
+
+    def _current_dataset_parent_id(self) -> Optional[str]:
+        project = project_manager.current_project
+        if project is None or project.tree is None:
+            return None
+        if self._selected_node_kind == "folder":
+            node = self._current_tree_node()
+            if self._folder_collection_group(node) == "datasets":
+                return getattr(node, "id", None)
+            return None
+        data_file_node = self._current_data_file_node()
+        if data_file_node is None or not getattr(data_file_node, "parent_id", None):
+            return None
+        parent = project.tree.get_node(data_file_node.parent_id)
+        if self._folder_collection_group(parent) == "datasets":
+            return parent.id
+        return None
+
+    @staticmethod
+    def _node_kind_label(kind: Optional[str]) -> str:
+        mapping = {
+            "folder": "文件夹",
+            "data_file": "数据文件",
+            "series": "数据系列",
+            "image_work": "图像",
+            "curve": "图像曲线",
+        }
+        return mapping.get(kind or "", "-")
+
+    def _can_rename_current_node(self) -> bool:
+        if not self._selected_node_kind or not self._selected_node_id:
+            return False
+        if self._selected_node_kind in {"data_file", "series", "curve", "image_work"}:
+            return True
+        if self._selected_node_kind == "folder":
+            return not self._is_protected_folder_node(self._current_tree_node())
+        return False
+
+    def _can_delete_current_node(self) -> bool:
+        if not self._selected_node_kind or not self._selected_node_id:
+            return False
+        if self._selected_node_kind in {"data_file", "series", "curve", "image_work"}:
+            return True
+        if self._selected_node_kind == "folder":
+            return not self._is_protected_folder_node(self._current_tree_node())
+        return False
+
+    def _refresh_management_panel(self) -> None:
+        if not self._selected_node_kind or not self._selected_node_id:
+            self._manage_target_label.setText("当前节点: 未选择")
+            self._manage_type_label.setText("节点类型: -")
+            self._manage_name_edit.clear()
+            self._set_management_actions_enabled(False)
+            return
+
+        current_name = self._current_node_name() or "未命名节点"
+        self._manage_target_label.setText(f"当前节点: {current_name}")
+        self._manage_type_label.setText(f"节点类型: {self._node_kind_label(self._selected_node_kind)}")
+        self._manage_name_edit.setText(current_name)
+        allow_copy = self._selected_node_kind in {"data_file", "series", "curve"}
+        enabled = self._can_rename_current_node() or self._can_delete_current_node()
+        self._manage_name_edit.setEnabled(self._can_rename_current_node())
+        self._btn_apply_name.setEnabled(self._can_rename_current_node())
+        self._btn_delete_node.setEnabled(self._can_delete_current_node())
+        self._btn_copy_to_data_file.setEnabled(allow_copy)
+        if not enabled and not allow_copy:
+            self._manage_help_label.setText("当前节点仅支持预览，不支持直接管理操作。")
+        else:
+            self._manage_help_label.setText("数据文件、系列和曲线支持直接复制为新的数据文件；图像节点支持重命名和删除。")
 
     # ─────────────────────────────────────────────────────────
     # 选中事件 → 更新预览
@@ -220,7 +469,7 @@ class DataPage(QWidget):
         elif typ == _TYPE_SERIES:
             series = p.find_series(obj_id)
             if series:
-                self._show_xy_preview(series.x, series.y, series.name)
+                self._show_xy_preview(series.x, series.y, series.name, series.x_label, series.y_label)
         else:
             self._clear_preview()
             return
@@ -237,19 +486,52 @@ class DataPage(QWidget):
                 return c
         return None
 
-    def _show_xy_preview(self, xs, ys, name: str):
-        """填充预览表格和统计摘要。"""
+    @staticmethod
+    def _preview_bar_width(xs: list[float]) -> float:
+        if len(xs) < 2:
+            return 0.8
+        diffs = [abs(xs[idx + 1] - xs[idx]) for idx in range(len(xs) - 1) if xs[idx + 1] != xs[idx]]
+        return min(diffs) * 0.8 if diffs else 0.8
+
+    def _draw_preview(self, *_args) -> None:
+        if self._preview_figure is None or self._preview_canvas is None:
+            return
+        self._preview_figure.clear()
+        axis = self._preview_figure.add_subplot(111)
+        if not self._preview_xs or not self._preview_ys:
+            axis.text(0.5, 0.5, "选择数据后显示绘图预览", ha="center", va="center", transform=axis.transAxes)
+            axis.set_axis_off()
+            self._preview_canvas.draw()
+            return
+
+        plot_type = self._preview_type_combo.currentText()
+        if plot_type == "散点":
+            axis.scatter(self._preview_xs, self._preview_ys, s=22, color="#0078D4")
+        elif plot_type == "折线+点":
+            axis.plot(self._preview_xs, self._preview_ys, marker="o", linewidth=1.5, markersize=4.2, color="#0078D4")
+        elif plot_type == "柱状":
+            axis.bar(self._preview_xs, self._preview_ys, width=self._preview_bar_width(self._preview_xs), color="#0078D4", alpha=0.85)
+        elif plot_type == "阶梯":
+            axis.step(self._preview_xs, self._preview_ys, where="mid", linewidth=1.5, color="#0078D4")
+        else:
+            axis.plot(self._preview_xs, self._preview_ys, linewidth=1.8, color="#0078D4")
+
+        axis.set_title(self._preview_name or "数据预览")
+        axis.set_xlabel(self._preview_x_label or "X")
+        axis.set_ylabel(self._preview_y_label or "Y")
+        axis.grid(True, alpha=0.2)
+        self._preview_figure.tight_layout()
+        self._preview_canvas.draw()
+
+    def _show_xy_preview(self, xs, ys, name: str, x_label: str = "X", y_label: str = "Y"):
+        """填充绘图预览和统计摘要。"""
         n = min(len(xs), len(ys))
-        self._table.setRowCount(n)
-
-        x_lbl = "X"
-        y_lbl = "Y"
-        self._table.setHorizontalHeaderLabels([x_lbl, y_lbl])
-
-        from PySide6.QtWidgets import QTableWidgetItem
-        for i in range(n):
-            self._table.setItem(i, 0, QTableWidgetItem(f"{xs[i]:.6g}"))
-            self._table.setItem(i, 1, QTableWidgetItem(f"{ys[i]:.6g}"))
+        self._preview_xs = [float(value) for value in xs[:n]]
+        self._preview_ys = [float(value) for value in ys[:n]]
+        self._preview_name = name
+        self._preview_x_label = x_label or "X"
+        self._preview_y_label = y_label or "Y"
+        self._draw_preview()
 
         # 统计
         if n > 0:
@@ -268,6 +550,113 @@ class DataPage(QWidget):
         self._btn_to_proc.setEnabled(enabled)
         self._btn_export.setEnabled(enabled)
 
+    def _clone_series(self, series: DataSeries, *, name: Optional[str] = None) -> DataSeries:
+        return DataSeries(
+            name=name or series.name,
+            x=list(series.x),
+            y=list(series.y),
+            y_err=list(series.y_err or []) if getattr(series, "y_err", None) else None,
+            color=series.color,
+            source=series.source,
+            source_curve_id=series.source_curve_id,
+            x_label=series.x_label,
+            y_label=series.y_label,
+        )
+
+    def _build_data_file_copy_for_selection(self) -> Optional[DataFile]:
+        project = project_manager.current_project
+        if project is None or not self._selected_node_kind or not self._selected_node_id:
+            return None
+        base_name = self._current_node_name() or "copied_data"
+        if self._selected_node_kind == "data_file":
+            node = self._current_tree_node()
+            if node is None:
+                return None
+            source = project.find_data_file(node.data_file_id)
+            if source is None:
+                return None
+            series_list = [self._clone_series(series) for series in source.series]
+            return DataFile(name=f"{base_name}_copy", series=series_list)
+        if self._selected_node_kind in {"series", "curve"}:
+            source_series = project_manager.get_series_from_node(self._selected_node_kind, self._selected_node_id)
+            if source_series is None:
+                return None
+            return DataFile(name=f"{base_name}_copy", series=[self._clone_series(source_series)])
+        return None
+
+    def _apply_rename_current_node(self) -> None:
+        new_name = self._manage_name_edit.text().strip()
+        if not new_name or not self._selected_node_kind or not self._selected_node_id:
+            return
+        ok = False
+        if self._selected_node_kind in {"folder", "data_file"}:
+            ok = project_manager.rename_node(self._selected_node_id, new_name)
+        elif self._selected_node_kind == "series":
+            ok = project_manager.rename_series(self._selected_node_id, new_name)
+        elif self._selected_node_kind == "curve":
+            ok = project_manager.rename_curve(self._selected_node_id, new_name)
+        elif self._selected_node_kind == "image_work":
+            node = self._current_tree_node()
+            if node is not None:
+                ok = project_manager.rename_image(node.image_work_id, new_name)
+                if ok:
+                    node.name = new_name
+        if not ok:
+            InfoBar.warning("提示", "当前节点不支持重命名", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.project_modified.emit()
+        self.refresh()
+        self.on_tree_node_selected(self._selected_node_kind, self._selected_node_id)
+        InfoBar.success("已更新", new_name, parent=self, position=InfoBarPosition.TOP)
+
+    def _duplicate_current_node_as_data_file(self) -> None:
+        data_file = self._build_data_file_copy_for_selection()
+        if data_file is None:
+            InfoBar.warning("提示", "当前节点不支持复制为数据文件", parent=self, position=InfoBarPosition.TOP)
+            return
+        node = project_manager.add_data_file(data_file, parent_id=self._current_dataset_parent_id())
+        if node is None:
+            InfoBar.error("复制失败", "未能创建新的数据文件", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.project_modified.emit()
+        self.refresh()
+        self.on_tree_node_selected("data_file", node.id)
+        InfoBar.success("已复制", data_file.name, parent=self, position=InfoBarPosition.TOP)
+
+    def _delete_current_node(self) -> None:
+        if not self._selected_node_kind or not self._selected_node_id:
+            return
+
+        target_name = self._current_node_name() or self._selected_node_id
+        dialog = MessageBox("确认删除", f"确定删除当前节点“{target_name}”吗？", self)
+        if not dialog.exec():
+            return
+
+        ok = False
+        if self._selected_node_kind in {"folder", "data_file"}:
+            ok = project_manager.delete_node(self._selected_node_id)
+        elif self._selected_node_kind == "series":
+            ok = project_manager.delete_series(self._selected_node_id)
+        elif self._selected_node_kind == "curve":
+            ok = project_manager.delete_curve(self._selected_node_id)
+        elif self._selected_node_kind == "image_work":
+            node = self._current_tree_node()
+            if node is not None:
+                ok = project_manager.remove_image(node.image_work_id) is not None
+                if ok:
+                    ok = project_manager.delete_node(self._selected_node_id)
+        if not ok:
+            InfoBar.warning("提示", "当前节点删除失败或不支持删除", parent=self, position=InfoBarPosition.TOP)
+            return
+
+        self._selected_node_kind = None
+        self._selected_node_id = None
+        self._selected_type = None
+        self._selected_id = None
+        self.project_modified.emit()
+        self.refresh()
+        InfoBar.success("已删除", target_name, parent=self, position=InfoBarPosition.TOP)
+
     # ─────────────────────────────────────────────────────────
     # 操作：导入文件
     # ─────────────────────────────────────────────────────────
@@ -285,7 +674,7 @@ class DataPage(QWidget):
             if not series_list:
                 return
             df = DataFile(name=dlg.get_file_name(), series=series_list)
-            project_manager.add_data_file(df)
+            project_manager.add_data_file(df, parent_id=self._current_dataset_parent_id())
             self.refresh()
             self.project_modified.emit()
             InfoBar.success("导入成功", f"已导入 {len(series_list)} 条数据系列到数据文件 {df.name}", parent=self, position=InfoBarPosition.TOP)
@@ -298,14 +687,16 @@ class DataPage(QWidget):
         p = project_manager.current_project
         if p is None:
             return
-        from qfluentwidgets import MessageBoxBase, SubtitleLabel
         dlg = _NameDialog("新建数据集", "数据集名称:", "新数据集", self)
         if dlg.exec():
             name = dlg.get_name()
             if name:
-                project_manager.add_dataset(name)
-                self.refresh()
-                self.project_modified.emit()
+                from models.schemas import DataFile
+                df = DataFile(name=name)
+                node = project_manager.add_data_file(df, parent_id=self._current_dataset_parent_id())
+                if node is not None:
+                    self.refresh()
+                    self.project_modified.emit()
 
     # ─────────────────────────────────────────────────────────
     # 操作：曲线 → DataSeries
@@ -462,18 +853,22 @@ class DataPage(QWidget):
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树选中节点 → 显示预览。"""
+        self._selected_node_kind = kind
+        self._selected_node_id = node_id
         self._shared_tree_hint.setText(f"当前共享树节点: {kind} / {node_id}")
         if kind in ("data_file", "series", "curve", "image_work"):
             series = project_manager.get_series_from_node(kind, node_id)
             if series and series.x:
                 self._selected_type = "series" if kind in ("data_file", "series") else "curve"
                 self._selected_id = series.id
-                self._show_xy_preview(series.x, series.y, series.name)
+                self._show_xy_preview(series.x, series.y, series.name, series.x_label, series.y_label)
                 self._set_actions_enabled(True)
+                self._refresh_management_panel()
                 return
         self._selected_type = None
         self._selected_id = None
         self._clear_preview()
+        self._refresh_management_panel()
 
 
 # ── 辅助对话框 ────────────────────────────────────────────────

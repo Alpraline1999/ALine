@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.extension_api import extension_registry
+
 # ─────────────────────────────────────────────────────────────
 # 曲线拟合
 # ─────────────────────────────────────────────────────────────
@@ -140,7 +142,8 @@ def detect_peaks(
     xs: List[float],
     ys: List[float],
     min_height: Optional[float] = None,
-    min_distance: int = 1,
+    min_distance: Optional[int] = 1,
+    min_distance_x: Optional[float] = None,
     prominence: Optional[float] = None,
 ) -> Dict[str, Any]:
     """使用 scipy.signal.find_peaks 检测峰值。
@@ -155,15 +158,79 @@ def detect_peaks(
         raise ImportError("需要 numpy 和 scipy")
 
     y = np.array(ys)
-    kwargs: Dict[str, Any] = {"distance": max(1, min_distance)}
+    kwargs: Dict[str, Any] = {}
+    if min_distance is not None:
+        kwargs["distance"] = max(1, int(min_distance))
     if min_height is not None:
         kwargs["height"] = min_height
     if prominence is not None:
         kwargs["prominence"] = prominence
 
     indices, props = find_peaks(y, **kwargs)
+    if min_distance_x is not None and min_distance_x > 0:
+        indices = _filter_indices_by_x_distance(xs, ys, indices, min_distance_x, prefer="higher")
     peaks = [{"x": xs[i], "y": ys[i], "index": int(i)} for i in indices]
     return {"peaks": peaks, "count": len(peaks)}
+
+
+def detect_valleys(
+    xs: List[float],
+    ys: List[float],
+    min_depth: Optional[float] = None,
+    min_distance: Optional[int] = 1,
+    min_distance_x: Optional[float] = None,
+    prominence: Optional[float] = None,
+) -> Dict[str, Any]:
+    """检测波谷（对 y 取反后用 find_peaks）。
+
+    Returns:
+        {"valleys": [{"x": float, "y": float, "index": int}, ...], "count": int}
+    """
+    try:
+        import numpy as np
+        from scipy.signal import find_peaks
+    except ImportError:
+        raise ImportError("需要 numpy 和 scipy")
+
+    y = np.array(ys)
+    kwargs: Dict[str, Any] = {}
+    if min_distance is not None:
+        kwargs["distance"] = max(1, int(min_distance))
+    if min_depth is not None:
+        kwargs["height"] = min_depth
+    if prominence is not None:
+        kwargs["prominence"] = prominence
+
+    indices, _ = find_peaks(-y, **kwargs)
+    if min_distance_x is not None and min_distance_x > 0:
+        indices = _filter_indices_by_x_distance(xs, ys, indices, min_distance_x, prefer="lower")
+    valleys = [{"x": xs[i], "y": ys[i], "index": int(i)} for i in indices]
+    return {"valleys": valleys, "count": len(valleys)}
+
+
+def _filter_indices_by_x_distance(
+    xs: List[float],
+    ys: List[float],
+    indices,
+    min_distance_x: float,
+    *,
+    prefer: str,
+) -> List[int]:
+    if min_distance_x <= 0:
+        return [int(index) for index in indices]
+
+    ordered = [int(index) for index in indices]
+    if prefer == "lower":
+        ranked = sorted(ordered, key=lambda index: (ys[index], xs[index]))
+    else:
+        ranked = sorted(ordered, key=lambda index: (-ys[index], xs[index]))
+
+    kept: List[int] = []
+    for index in ranked:
+        x_value = xs[index]
+        if all(abs(x_value - xs[kept_index]) >= min_distance_x for kept_index in kept):
+            kept.append(index)
+    return sorted(kept)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -269,6 +336,123 @@ def compute_correlation(
         return {"method": "pearson", "r": r, "p_value": None}
 
 
+def compute_error_metrics(
+    xs1: List[float],
+    ys1: List[float],
+    xs2: List[float],
+    ys2: List[float],
+) -> Dict[str, Any]:
+    """计算两条序列按索引对齐后的误差指标与误差曲线。"""
+    n = min(len(xs1), len(ys1), len(xs2), len(ys2))
+    if n < 2:
+        raise ValueError("误差比较至少需要 2 个对齐数据点")
+
+    xs = list(xs1[:n])
+    ref = list(ys1[:n])
+    cmp = list(ys2[:n])
+    error_y = [a - b for a, b in zip(ref, cmp)]
+    abs_error = [abs(v) for v in error_y]
+
+    mae = sum(abs_error) / n
+    rmse = math.sqrt(sum(v * v for v in error_y) / n)
+    mean_error = sum(error_y) / n
+    max_abs_error = max(abs_error)
+
+    relative_errors = [abs(err / base) for err, base in zip(error_y, ref) if base not in (0, 0.0)]
+    relative_mae = (sum(relative_errors) / len(relative_errors)) if relative_errors else None
+
+    return {
+        "analysis_type": "error_compare",
+        "n": n,
+        "error_x": xs,
+        "error_y": error_y,
+        "mae": mae,
+        "rmse": rmse,
+        "mean_error": mean_error,
+        "max_abs_error": max_abs_error,
+        "relative_mae": relative_mae,
+    }
+
+
+def run_analysis(
+    analysis_type: str,
+    inputs: List[Dict[str, Any]],
+    params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    params = dict(params or {})
+    normalized_inputs = [
+        {
+            "x": list(item.get("x", []) or []),
+            "y": list(item.get("y", []) or []),
+            "name": item.get("name", ""),
+        }
+        for item in inputs
+    ]
+    if analysis_type == "curve_fit":
+        if not normalized_inputs:
+            raise ValueError("curve_fit 需要至少一条输入数据")
+        first = normalized_inputs[0]
+        model = params.get("model", "linear")
+        result = fit_curve(first["x"], first["y"], model, params.get("p0"))
+        result["analysis_type"] = "curve_fit"
+        result["source_name"] = first.get("name", "")
+        return result
+    if analysis_type == "peak_detect":
+        if not normalized_inputs:
+            raise ValueError("peak_detect 需要至少一条输入数据")
+        first = normalized_inputs[0]
+        result = detect_peaks(
+            first["x"],
+            first["y"],
+            min_height=params.get("min_height"),
+            min_distance=params.get("min_distance", 1),
+            min_distance_x=params.get("min_distance_x"),
+            prominence=params.get("prominence"),
+        )
+        valleys = detect_valleys(
+            first["x"],
+            first["y"],
+            min_depth=params.get("min_depth"),
+            min_distance=params.get("min_distance", 1),
+            min_distance_x=params.get("min_distance_x"),
+            prominence=params.get("prominence"),
+        )
+        result["valleys"] = valleys.get("valleys", [])
+        result["valley_count"] = valleys.get("count", 0)
+        result["analysis_type"] = "peak_detect"
+        result["source_name"] = first.get("name", "")
+        return result
+    if analysis_type == "statistics":
+        if not normalized_inputs:
+            raise ValueError("statistics 需要至少一条输入数据")
+        first = normalized_inputs[0]
+        result = compute_statistics(first["x"], first["y"])
+        result["analysis_type"] = "statistics"
+        result["source_name"] = first.get("name", "")
+        return result
+    if analysis_type == "correlation":
+        if len(normalized_inputs) < 2:
+            raise ValueError("correlation 需要两条输入数据")
+        first, second = normalized_inputs[:2]
+        result = compute_correlation(first["y"], second["y"], str(params.get("method", "pearson")))
+        result["analysis_type"] = "correlation"
+        result["name1"] = first.get("name", "")
+        result["name2"] = second.get("name", "")
+        return result
+    if analysis_type == "error_compare":
+        if len(normalized_inputs) < 2:
+            raise ValueError("error_compare 需要两条输入数据")
+        first, second = normalized_inputs[:2]
+        result = compute_error_metrics(first["x"], first["y"], second["x"], second["y"])
+        result["name1"] = first.get("name", "")
+        result["name2"] = second.get("name", "")
+        return result
+    custom_analysis = extension_registry.get_analysis(analysis_type)
+    if custom_analysis is not None:
+        return custom_analysis.handler(normalized_inputs, params)
+    raise ValueError(f"未知分析类型: {analysis_type}")
+
+
 # ─────────────────────────────────────────────────────────────
 # 报告渲染（v0.3）
 # ─────────────────────────────────────────────────────────────
@@ -287,10 +471,20 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     - {{y_mean}}            Y 均值
     - {{y_std}}             Y 标准差
     - {{y_min}},{{y_max}}   Y 范围
+    - {{x_mean}}            X 均值
+    - {{x_std}}             X 标准差
+    - {{x_min}},{{x_max}}   X 范围
     - {{r}}                 相关系数（correlation）
     - {{peak_count}}        峰值个数（peak_detect）
+    - {{valley_count}}      波谷个数（peak_detect）
+    - {{name1}},{{name2}}   双输入分析数据名
+    - {{mae}},{{rmse}}      误差比较指标
+    - {{mean_error}}        平均误差
+    - {{max_abs_error}}     最大绝对误差
+    - {{relative_mae}}      相对平均误差
     - {{table:params}}      参数表格（Markdown 格式）
     - {{table:peaks}}       峰值列表
+    - {{table:valleys}}     波谷列表
     """
     from datetime import datetime
     import re
@@ -324,7 +518,15 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
         "x_max": f"{r.get('x_max', 0):.6g}",
         "r": f"{r.get('r', float('nan')):.6f}",
         "peak_count": str(r.get("count", 0)),
+        "valley_count": str(r.get("valley_count", 0)),
         "source_name": r.get("source_name", ""),
+        "name1": r.get("name1", ""),
+        "name2": r.get("name2", ""),
+        "mae": f"{r.get('mae', 0):.6f}",
+        "rmse": f"{r.get('rmse', 0):.6f}",
+        "mean_error": f"{r.get('mean_error', 0):.6f}",
+        "max_abs_error": f"{r.get('max_abs_error', 0):.6f}",
+        "relative_mae": f"{r.get('relative_mae', 0):.6f}" if r.get("relative_mae") is not None else "",
     }
 
     # 处理 {{r2:.Nf}} 自定义精度
@@ -359,6 +561,14 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     else:
         content = content.replace("{{table:peaks}}", "_（无峰值数据）_")
 
+    valleys = r.get("valleys", [])
+    if valleys:
+        rows = ["| # | X | Y |", "|---|---|---|"]
+        rows += [f"| {i+1} | {p['x']:.6g} | {p['y']:.6g} |" for i, p in enumerate(valleys[:50])]
+        content = content.replace("{{table:valleys}}", "\n".join(rows))
+    else:
+        content = content.replace("{{table:valleys}}", "_（无波谷数据）_")
+
     # 清理未替换的占位符
     content = re.sub(r"\{\{[^}]+\}\}", "_（N/A）_", content)
     return content
@@ -373,7 +583,19 @@ _DEFAULT_REPORT_TEMPLATE = """\
 
 **数据来源：** {{source_name}}
 
+**主数据：** {{name1}}
+
+**对比数据：** {{name2}}
+
 ---
+
+## 可用占位符
+
+- 基础信息: {{date}}, {{analysis_type}}, {{source_name}}, {{name1}}, {{name2}}
+- 拟合结果: {{model}}, {{equation}}, {{r2}}, {{table:params}}
+- 峰谷检测: {{peak_count}}, {{valley_count}}, {{table:peaks}}, {{table:valleys}}
+- 统计结果: {{n}}, {{x_mean}}, {{x_std}}, {{x_min}}, {{x_max}}, {{y_mean}}, {{y_std}}, {{y_min}}, {{y_max}}
+- 相关性/误差: {{r}}, {{mae}}, {{rmse}}, {{mean_error}}, {{max_abs_error}}, {{relative_mae}}
 
 ## 结果摘要
 
@@ -381,9 +603,17 @@ _DEFAULT_REPORT_TEMPLATE = """\
 
 {{table:peaks}}
 
+{{table:valleys}}
+
 - **R²：** {{r2}}
 - **相关系数 r：** {{r}}
 - **峰值个数：** {{peak_count}}
+- **波谷个数：** {{valley_count}}
+- **MAE：** {{mae}}
+- **RMSE：** {{rmse}}
+- **平均误差：** {{mean_error}}
+- **最大绝对误差：** {{max_abs_error}}
+- **相对平均误差：** {{relative_mae}}
 
 ---
 
@@ -392,6 +622,9 @@ _DEFAULT_REPORT_TEMPLATE = """\
 | 指标 | 值 |
 |------|-----|
 | N   | {{n}} |
+| X 均值 | {{x_mean}} |
+| X 标准差 | {{x_std}} |
+| X 范围 | [{{x_min}}, {{x_max}}] |
 | Y 均值 | {{y_mean}} |
 | Y 标准差 | {{y_std}} |
 | Y 范围 | [{{y_min}}, {{y_max}}] |

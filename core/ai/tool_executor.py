@@ -9,11 +9,12 @@ from .tool_registry import TOOLS
 
 def execute_tool(tool_name: str, context: Dict[str, Any] | None = None) -> str:
     ctx = context or {}
+    current_pm = ctx.get("project_manager", project_manager)
     if tool_name not in TOOLS:
         return f"未知工具: {tool_name}"
 
     if tool_name == "list_tree_nodes":
-        project = project_manager.current_project
+        project = current_pm.current_project
         if project is None or project.tree is None:
             return "当前没有已打开项目"
         lines = [f"- {node.kind}: {node.name}" for node in project.tree.nodes[:50]]
@@ -23,13 +24,13 @@ def execute_tool(tool_name: str, context: Dict[str, Any] | None = None) -> str:
         node_id = ctx.get("selected_node_id")
         if not node_id:
             return "当前没有选中节点"
-        node = project_manager.get_node_by_id(node_id)
+        node = current_pm.get_node_by_id(node_id)
         if node is None:
             return f"未找到节点: {node_id}"
         return str(node.model_dump())
 
     if tool_name == "list_data_files":
-        project = project_manager.current_project
+        project = current_pm.current_project
         if project is None:
             return "当前没有已打开项目"
         lines = [f"- {df.name}: {len(df.series)} 列" for df in project.data_files]

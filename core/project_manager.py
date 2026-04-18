@@ -14,8 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from core.global_assets import global_assets
 from models.schemas import (
     AnalysisResult,
+    AnalysisResultNode,
     CalibrationData,
     Curve,
     Dataset,
@@ -50,11 +52,45 @@ _GROUP_TYPE_ALIASES = {
     "tools": {"tools", "tool_set"},
     "pipeline_group": {"pipeline_group"},
     "template_group": {"template_group", "figure_template_group"},
+    "figure_template_group": {"figure_template_group", "template_group"},
     "report_template_group": {"report_template_group"},
+    "analysis_result_group": {"analysis_result_group"},
     "ai_group": {"ai_group"},
     "prompt_group": {"prompt_group"},
     "skill_group": {"skill_group"},
     "agent_group": {"agent_group"},
+}
+
+_GROUP_DISPLAY_NAMES = {
+    "datasets": "数据集",
+    "images": "图片集",
+    "tools": "工具集",
+    "pipeline_group": "Pipelines",
+    "figure_template_group": "绘图模板组",
+    "report_template_group": "报告模板组",
+    "analysis_result_group": "分析结果",
+    "ai_group": "AI 工具",
+    "prompt_group": "Prompts",
+    "skill_group": "Skills",
+    "agent_group": "Agents",
+}
+
+_TOOL_NODE_PARENT_GROUP = {
+    "pipeline": "pipeline_group",
+    "figure_template": "figure_template_group",
+    "report_template": "report_template_group",
+    "ai_prompt": "prompt_group",
+    "ai_skill": "skill_group",
+    "ai_agent": "agent_group",
+}
+
+_LEGACY_TOOL_GROUP_TYPES = {
+    "tools", "tool_set", "pipeline_group", "template_group", "figure_template_group",
+    "report_template_group", "ai_group", "prompt_group", "skill_group", "agent_group",
+}
+
+_LEGACY_TOOL_NODE_KINDS = {
+    "pipeline", "figure_template", "report_template", "ai_prompt", "ai_skill", "ai_agent", "ai_tool",
 }
 
 
@@ -228,6 +264,19 @@ class ProjectManager:
             self._backup_image_for_project(image_work, self.current_project.file_path, None)
         self.current_project.images.append(image_work)
         self.current_project.is_modified = True
+        # 同时在项目树中添加 ImageWorkNode
+        if self.current_project.tree is not None:
+            self._ensure_project_tree_groups(self.current_project)
+            img_folder = self._find_folder_by_group_type("images")
+            parent_id = img_folder.id if img_folder else None
+            order = self.current_project.tree.get_siblings_max_order(parent_id) + 1
+            img_node = ImageWorkNode(
+                name=image_work.name,
+                parent_id=parent_id,
+                image_work_id=image_work.id,
+                order=order,
+            )
+            self.current_project.tree.nodes.append(img_node)
         return image_work
 
     def get_image(self, image_id: str) -> Optional[ImageWork]:
@@ -578,7 +627,21 @@ class ProjectManager:
     def add_analysis(self, result: AnalysisResult) -> bool:
         if self.current_project is None:
             return False
+        if self.current_project.tree is None:
+            self.migrate_to_v2(self.current_project)
         self.current_project.analyses.append(result)
+        self._ensure_project_tree_groups(self.current_project)
+        folder = self._find_folder_by_group_type("analysis_result_group")
+        parent_id = folder.id if folder is not None else None
+        order = self.current_project.tree.get_siblings_max_order(parent_id) + 1  # type: ignore[union-attr]
+        self.current_project.tree.nodes.append(  # type: ignore[union-attr]
+            AnalysisResultNode(
+                name=result.name or result.analysis_type or "分析结果",
+                parent_id=parent_id,
+                analysis_id=result.id,
+                order=order,
+            )
+        )
         self.current_project.is_modified = True
         return True
 
@@ -591,6 +654,11 @@ class ProjectManager:
         ]
         changed = len(self.current_project.analyses) < before
         if changed:
+            if self.current_project.tree is not None:
+                self.current_project.tree.nodes = [
+                    node for node in self.current_project.tree.nodes
+                    if not (node.kind == "analysis_result" and node.analysis_id == analysis_id)
+                ]
             self.current_project.is_modified = True
         return changed
 
@@ -601,27 +669,15 @@ class ProjectManager:
     def save_figure_config(self, config: FigureConfig) -> bool:
         if self.current_project is None:
             return False
-        # 替换同 id 或追加
-        for i, existing in enumerate(self.current_project.figures):
-            if existing.id == config.id:
-                self.current_project.figures[i] = config
-                self.current_project.is_modified = True
-                return True
-        self.current_project.figures.append(config)
-        self.current_project.is_modified = True
+        if global_assets.update_figure_template(config.id, template=config):
+            return True
+        global_assets.ensure_figure_template(config)
         return True
 
     def remove_figure_config(self, figure_id: str) -> bool:
         if self.current_project is None:
             return False
-        before = len(self.current_project.figures)
-        self.current_project.figures = [
-            f for f in self.current_project.figures if f.id != figure_id
-        ]
-        changed = len(self.current_project.figures) < before
-        if changed:
-            self.current_project.is_modified = True
-        return changed
+        return global_assets.delete_figure_template(figure_id)
 
     # ─────────────────────────────────────────────
     # v0.2 迁移
@@ -638,6 +694,7 @@ class ProjectManager:
         if p is None:
             return
         if p.tree is not None:
+            self._ensure_project_tree_groups(p)
             return
 
         p.tree = ProjectTree()
@@ -687,6 +744,8 @@ class ProjectManager:
         )
         p.tree.nodes.append(pipelines_folder)
 
+        self._ensure_project_tree_groups(p)
+
         p.aline_version = "0.2"
         p.is_modified = True
 
@@ -704,9 +763,7 @@ class ProjectManager:
             return
         if p.tree is None:
             self.migrate_to_v2(p)
-
-        # 幂等检查
-        if p.aline_version == "0.3":
+        if p.tree is None:
             return
 
         # 为旧 FolderNode 推断 group_type
@@ -715,17 +772,19 @@ class ProjectManager:
             "图片集": "images",
             "工具集": "tools",
             "Pipelines": "pipeline_group",
-            "绘图模板": "template_group",
+            "绘图模板": "figure_template_group",
+            "绘图模板组": "figure_template_group",
             "报告模板": "report_template_group",
+            "分析结果": "analysis_result_group",
             "AI 工具": "ai_group",
+            "Prompts": "prompt_group",
+            "Skills": "skill_group",
+            "Agents": "agent_group",
         }
-        tools_folder_id = None
         for node in p.tree.nodes:
             if node.kind == "folder":
                 if node.group_type is None:
                     node.group_type = _name_to_group.get(node.name)  # type: ignore[assignment]
-                if node.group_type == "tools":
-                    tools_folder_id = node.id
 
         # 把 AIToolNode 转换为具体类型
         new_nodes = []
@@ -753,27 +812,9 @@ class ProjectManager:
                 new_nodes.append(node)
         p.tree.nodes = new_nodes
 
-        # 将旧工具分组文件夹拍平到工具集根下
-        if tools_folder_id:
-            removable_ids = set()
-            base_order = p.tree.get_siblings_max_order(tools_folder_id) + 1
-            for node in list(p.tree.nodes):
-                if node.kind != "folder":
-                    continue
-                group_type = getattr(node, "group_type", None)
-                if group_type not in {
-                    "pipeline_group", "template_group", "figure_template_group",
-                    "report_template_group", "ai_group", "prompt_group",
-                    "skill_group", "agent_group",
-                }:
-                    continue
-                for child in p.tree.get_children(node.id):
-                    child.parent_id = tools_folder_id
-                    child.order = base_order
-                    base_order += 1
-                removable_ids.add(node.id)
-            if removable_ids:
-                p.tree.nodes = [n for n in p.tree.nodes if n.id not in removable_ids]
+        self._migrate_project_assets_to_global(p)
+
+        self._ensure_project_tree_groups(p)
 
         p.aline_version = "0.3"
         p.is_modified = True
@@ -781,15 +822,68 @@ class ProjectManager:
     def _init_new_project_tree(self, p: Project) -> None:
         """直接为新建（空）项目创建 v0.3 标准树结构。"""
         p.tree = ProjectTree()
-        # 数据集文件夹
-        ds_folder = FolderNode(name="数据集", order=0, group_type="datasets")
-        p.tree.nodes.append(ds_folder)
-        # 图片集文件夹
-        img_folder = FolderNode(name="图片集", order=1, group_type="images")
-        p.tree.nodes.append(img_folder)
-        # 工具集文件夹 + 子文件夹
-        tools_folder = FolderNode(name="工具集", order=2, group_type="tools")
-        p.tree.nodes.append(tools_folder)
+        self._ensure_project_tree_groups(p)
+
+    def _migrate_project_assets_to_global(self, project: Project) -> bool:
+        changed = False
+
+        for pipeline in list(project.saved_pipelines):
+            global_assets.ensure_saved_pipeline(pipeline)
+            changed = True
+        if project.saved_pipelines:
+            project.saved_pipelines = []
+
+        for figure in list(project.figures):
+            global_assets.ensure_figure_template(figure)
+            changed = True
+        if project.figures:
+            project.figures = []
+
+        for template in list(project.report_templates):
+            global_assets.ensure_report_template(template)
+            changed = True
+        if project.report_templates:
+            project.report_templates = []
+
+        for prompt in list(project.ai_prompts):
+            global_assets.ensure_ai_prompt(prompt)
+            changed = True
+        if project.ai_prompts:
+            project.ai_prompts = []
+
+        for skill in list(project.ai_skills):
+            global_assets.ensure_ai_skill(skill)
+            changed = True
+        if project.ai_skills:
+            project.ai_skills = []
+
+        for agent in list(project.ai_agents):
+            global_assets.ensure_ai_agent(agent)
+            changed = True
+        if project.ai_agents:
+            project.ai_agents = []
+
+        if project.tree is not None:
+            removed_ids: set[str] = set()
+
+            def _collect_descendants(parent_id: str) -> None:
+                for child in project.tree.get_children(parent_id):
+                    removed_ids.add(child.id)
+                    _collect_descendants(child.id)
+
+            for node in list(project.tree.nodes):
+                canonical_group = self._canonical_group_type(getattr(node, "group_type", None))
+                if node.kind in _LEGACY_TOOL_NODE_KINDS or canonical_group in _LEGACY_TOOL_GROUP_TYPES:
+                    removed_ids.add(node.id)
+                    _collect_descendants(node.id)
+
+            if removed_ids:
+                project.tree.nodes = [node for node in project.tree.nodes if node.id not in removed_ids]
+                changed = True
+
+        if changed:
+            project.is_modified = True
+        return changed
 
     def sync_legacy_datasets(self, project: Optional[Project] = None) -> None:
         """保存前将 data_files[*].series 同步回 datasets（确保旧 PyLine 可读）。"""
@@ -824,6 +918,7 @@ class ProjectManager:
             return None
         if p.tree is None:
             self.migrate_to_v2(p)
+        group_type = self._canonical_group_type(group_type)
         order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
         node = FolderNode(name=name, parent_id=parent_id, order=order, group_type=group_type)  # type: ignore[arg-type]
         p.tree.nodes.append(node)  # type: ignore
@@ -844,29 +939,21 @@ class ProjectManager:
             if df:
                 df.name = new_name
         elif node.kind == "pipeline":
-            sp = p.find_saved_pipeline(node.pipeline_id)
-            if sp:
-                sp.name = new_name
+            global_assets.update_saved_pipeline(node.pipeline_id, name=new_name)
         elif node.kind == "figure_template":
-            fig = p.find_figure(node.figure_id)
-            if fig:
-                fig.name = new_name
+            global_assets.update_figure_template(node.figure_id, name=new_name)
         elif node.kind == "report_template":
-            tmpl = p.find_report_template(node.template_id)
-            if tmpl:
-                tmpl.name = new_name
+            global_assets.update_report_template(node.template_id, name=new_name)
+        elif node.kind == "analysis_result":
+            analysis = p.find_analysis(node.analysis_id)
+            if analysis:
+                analysis.name = new_name
         elif node.kind == "ai_prompt":
-            prompt = self.get_ai_prompt(node.prompt_id)
-            if prompt:
-                prompt.name = new_name
+            global_assets.update_ai_prompt(node.prompt_id, name=new_name)
         elif node.kind == "ai_skill":
-            skill = self.get_ai_skill(node.skill_id)
-            if skill:
-                skill.name = new_name
+            global_assets.update_ai_skill(node.skill_id, name=new_name)
         elif node.kind == "ai_agent":
-            agent = self.get_ai_agent(node.agent_id)
-            if agent:
-                agent.name = new_name
+            global_assets.update_ai_agent(node.agent_id, name=new_name)
         p.is_modified = True
         return True
 
@@ -891,22 +978,24 @@ class ProjectManager:
             if node.kind == "data_file":
                 p.data_files = [df for df in p.data_files if df.id != node.data_file_id]
             elif node.kind == "pipeline":
-                p.saved_pipelines = [sp for sp in p.saved_pipelines if sp.id != node.pipeline_id]
+                global_assets.delete_saved_pipeline(node.pipeline_id)
             elif node.kind == "figure_template":
-                p.figures = [f for f in p.figures if f.id != node.figure_id]
+                global_assets.delete_figure_template(node.figure_id)
             elif node.kind == "report_template":
-                p.report_templates = [t for t in p.report_templates if t.id != node.template_id]
+                global_assets.delete_report_template(node.template_id)
+            elif node.kind == "analysis_result":
+                p.analyses = [a for a in p.analyses if a.id != node.analysis_id]
             elif node.kind == "ai_prompt":
-                p.ai_prompts = [x for x in p.ai_prompts if x.id != node.prompt_id]
+                global_assets.delete_ai_prompt(node.prompt_id)
             elif node.kind == "ai_skill":
-                p.ai_skills = [x for x in p.ai_skills if x.id != node.skill_id]
+                global_assets.delete_ai_skill(node.skill_id)
             elif node.kind == "ai_agent":
-                p.ai_agents = [x for x in p.ai_agents if x.id != node.agent_id]
+                global_assets.delete_ai_agent(node.agent_id)
             elif node.kind == "ai_tool":  # v0.2 legacy
                 tool_id = getattr(node, "tool_id", "")
-                p.ai_prompts = [x for x in p.ai_prompts if x.id != tool_id]
-                p.ai_skills = [x for x in p.ai_skills if x.id != tool_id]
-                p.ai_agents = [x for x in p.ai_agents if x.id != tool_id]
+                global_assets.delete_ai_prompt(tool_id)
+                global_assets.delete_ai_skill(tool_id)
+                global_assets.delete_ai_agent(tool_id)
 
         p.tree.nodes = [n for n in p.tree.nodes if n.id not in ids_to_delete]
         p.is_modified = True
@@ -919,18 +1008,47 @@ class ProjectManager:
         node = p.tree.get_node(node_id)
         if node is None:
             return False
-        if node.kind == "folder":
-            return False
         parent = p.tree.get_node(new_parent_id) if new_parent_id else None
         if parent is None or parent.kind != "folder":
             return False
-        parent_group_type = getattr(parent, "group_type", None)
+        parent_group_type = self._canonical_group_type(getattr(parent, "group_type", None))
+        if node.kind == "folder":
+            if node.parent_id is None:
+                return False
+            node_group_type = self._canonical_group_type(getattr(node, "group_type", None))
+            if node_group_type is None:
+                current = p.tree.get_node(node.parent_id) if node.parent_id else None
+                while current is not None and current.kind == "folder":
+                    node_group_type = self._canonical_group_type(getattr(current, "group_type", None))
+                    if node_group_type is not None:
+                        break
+                    current = p.tree.get_node(current.parent_id) if current.parent_id else None
+            if node_group_type != parent_group_type:
+                return False
+            current = parent
+            while current is not None and current.kind == "folder":
+                if current.id == node.id:
+                    return False
+                current = p.tree.get_node(current.parent_id) if current.parent_id else None
+            node.parent_id = new_parent_id
+            node.order = new_order
+            p.is_modified = True
+            return True
         if node.kind == "data_file" and parent_group_type not in _GROUP_TYPE_ALIASES["datasets"]:
             return False
         if node.kind == "image_work" and parent_group_type not in _GROUP_TYPE_ALIASES["images"]:
             return False
-        if node.kind in {"pipeline", "figure_template", "report_template", "ai_prompt", "ai_skill", "ai_agent", "ai_tool"}:
-            if parent_group_type not in _GROUP_TYPE_ALIASES["tools"]:
+        if node.kind in _TOOL_NODE_PARENT_GROUP:
+            required_group = _TOOL_NODE_PARENT_GROUP[node.kind]
+            if parent_group_type not in _GROUP_TYPE_ALIASES[required_group]:
+                return False
+        if node.kind == "ai_tool":
+            required_group = {
+                "prompt": "prompt_group",
+                "skill": "skill_group",
+                "agent": "agent_group",
+            }.get(getattr(node, "tool_type", "prompt"), "prompt_group")
+            if parent_group_type not in _GROUP_TYPE_ALIASES[required_group]:
                 return False
         node.parent_id = new_parent_id
         node.order = new_order
@@ -964,6 +1082,7 @@ class ProjectManager:
         p = self.current_project
         if p is None or p.tree is None:
             return None
+        group_type = self._canonical_group_type(group_type) or group_type
         candidates = _GROUP_TYPE_ALIASES.get(group_type, {group_type})
         for node in p.tree.nodes:
             if (node.kind == "folder"
@@ -971,6 +1090,135 @@ class ProjectManager:
                     and (parent_id is None or node.parent_id == parent_id)):
                 return node
         return None
+
+    def _canonical_group_type(self, group_type: Optional[str]) -> Optional[str]:
+        if group_type is None:
+            return None
+        canonical_map = {
+            "dataset_set": "datasets",
+            "image_set": "images",
+            "tool_set": "tools",
+            "template_group": "figure_template_group",
+            "figure_template_group": "figure_template_group",
+        }
+        if group_type in canonical_map:
+            return canonical_map[group_type]
+        for canonical, aliases in _GROUP_TYPE_ALIASES.items():
+            if group_type == canonical or group_type in aliases:
+                return canonical
+        return group_type
+
+    def _ensure_group_folder(
+        self,
+        project: Project,
+        group_type: str,
+        parent_id: Optional[str],
+        order: int,
+    ) -> tuple[FolderNode, bool]:
+        if project.tree is None:
+            raise ValueError("project tree is not initialized")
+
+        previous_project_id = self._current_project_id
+        self._current_project_id = project.id
+        try:
+            folder = self._find_folder_by_group_type(group_type, parent_id)
+        finally:
+            self._current_project_id = previous_project_id
+
+        canonical = self._canonical_group_type(group_type) or group_type
+        changed = False
+        if folder is None:
+            folder = FolderNode(
+                name=_GROUP_DISPLAY_NAMES[canonical],
+                parent_id=parent_id,
+                order=order,
+                group_type=canonical,  # type: ignore[arg-type]
+            )
+            project.tree.nodes.append(folder)
+            changed = True
+
+        if folder.name != _GROUP_DISPLAY_NAMES[canonical]:
+            folder.name = _GROUP_DISPLAY_NAMES[canonical]
+            changed = True
+        if folder.parent_id != parent_id:
+            folder.parent_id = parent_id
+            changed = True
+        if folder.order != order:
+            folder.order = order
+            changed = True
+        if folder.group_type != canonical:
+            folder.group_type = canonical  # type: ignore[assignment]
+            changed = True
+        return folder, changed
+
+    def _merge_duplicate_group_folders(self, project: Project, primary_id: str) -> bool:
+        if project.tree is None:
+            return False
+        primary = project.tree.get_node(primary_id)
+        if primary is None or primary.kind != "folder":
+            return False
+
+        canonical = self._canonical_group_type(getattr(primary, "group_type", None))
+        if canonical is None:
+            return False
+
+        duplicate_ids = []
+        next_order = project.tree.get_siblings_max_order(primary.id) + 1
+        for node in list(project.tree.nodes):
+            if node.kind != "folder" or node.id == primary.id:
+                continue
+            if self._canonical_group_type(getattr(node, "group_type", None)) != canonical:
+                continue
+            if node.parent_id != primary.parent_id:
+                continue
+            for child in project.tree.get_children(node.id):
+                child.parent_id = primary.id
+                child.order = next_order
+                next_order += 1
+            duplicate_ids.append(node.id)
+
+        if duplicate_ids:
+            project.tree.nodes = [node for node in project.tree.nodes if node.id not in duplicate_ids]
+            return True
+        return False
+
+    def _ensure_project_tree_groups(self, project: Optional[Project] = None) -> bool:
+        p = project or self.current_project
+        if p is None or p.tree is None:
+            return False
+
+        changed = False
+        ds_folder, ds_changed = self._ensure_group_folder(p, "datasets", None, 0)
+        img_folder, img_changed = self._ensure_group_folder(p, "images", None, 1)
+        analysis_folder, analysis_changed = self._ensure_group_folder(p, "analysis_result_group", None, 2)
+        changed = changed or ds_changed or img_changed
+        changed = changed or analysis_changed
+        changed = self._migrate_project_assets_to_global(p) or changed
+
+        for folder in (ds_folder, img_folder, analysis_folder):
+            if folder is None:
+                continue
+            changed = self._merge_duplicate_group_folders(p, folder.id) or changed
+
+        for node in p.tree.nodes:
+            desired_parent_id = None
+            if node.kind == "data_file" and node.parent_id is None:
+                desired_parent_id = ds_folder.id
+            elif node.kind == "image_work" and node.parent_id is None:
+                desired_parent_id = img_folder.id
+
+            if desired_parent_id is not None and node.parent_id != desired_parent_id:
+                node.parent_id = desired_parent_id
+                node.order = p.tree.get_siblings_max_order(desired_parent_id) + 1
+                changed = True
+            elif node.kind == "analysis_result" and node.parent_id != analysis_folder.id:
+                node.parent_id = analysis_folder.id
+                node.order = p.tree.get_siblings_max_order(analysis_folder.id) + 1
+                changed = True
+
+        if changed:
+            p.is_modified = True
+        return changed
 
     # ─────────────────────────────────────────────
     # v0.2 DataFile CRUD
@@ -1017,29 +1265,16 @@ class ProjectManager:
     def add_saved_pipeline(
         self, name: str, ops: List[dict], description: str = "", parent_id: Optional[str] = None
     ) -> Optional[SavedPipeline]:
-        p = self.current_project
-        if p is None:
+        if self.current_project is None:
             return None
-        if p.tree is None:
-            self.migrate_to_v2(p)
-        sp = SavedPipeline(name=name, ops=ops, description=description)
-        p.saved_pipelines.append(sp)
-        # 默认挂在工具集/Pipelines 文件夹
-        if parent_id is None:
-            tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
-            parent_id = tools_folder.id if tools_folder else None
-        order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
-        node = PipelineNode(name=name, parent_id=parent_id, pipeline_id=sp.id, order=order)
-        p.tree.nodes.append(node)  # type: ignore
-        p.is_modified = True
-        return sp
+        del parent_id
+        pipeline = SavedPipeline(name=name, ops=ops, description=description)
+        global_assets.add_saved_pipeline(pipeline)
+        return pipeline
 
     def load_pipeline(self, pipeline_id: str) -> List[dict]:
         """返回 ops 列表；未找到时返回空列表。"""
-        p = self.current_project
-        if p is None:
-            return []
-        sp = p.find_saved_pipeline(pipeline_id)
+        sp = global_assets.get_saved_pipeline(pipeline_id)
         return list(sp.ops) if sp else []
 
     def update_saved_pipeline(
@@ -1050,86 +1285,24 @@ class ProjectManager:
         ops: Optional[List[dict]] = None,
         description: Optional[str] = None,
     ) -> bool:
-        p = self.current_project
-        if p is None:
-            return False
-        sp = p.find_saved_pipeline(pipeline_id)
-        if sp is None:
-            return False
-        if name is not None:
-            sp.name = name
-        if ops is not None:
-            sp.ops = list(ops)
-        if description is not None:
-            sp.description = description
-        if name is not None and p.tree is not None:
-            for node in p.tree.nodes:
-                if node.kind == "pipeline" and node.pipeline_id == pipeline_id:
-                    node.name = name
-                    break
-        p.is_modified = True
-        return True
+        return global_assets.update_saved_pipeline(pipeline_id, name=name, ops=ops, description=description)
 
     def delete_saved_pipeline(self, pipeline_id: str) -> bool:
-        p = self.current_project
-        if p is None:
-            return False
-        before = len(p.saved_pipelines)
-        p.saved_pipelines = [sp for sp in p.saved_pipelines if sp.id != pipeline_id]
-        if len(p.saved_pipelines) < before:
-            # 删除对应树节点
-            if p.tree:
-                p.tree.nodes = [
-                    n for n in p.tree.nodes
-                    if not (n.kind == "pipeline" and n.pipeline_id == pipeline_id)
-                ]
-            p.is_modified = True
-            return True
-        return False
+        return global_assets.delete_saved_pipeline(pipeline_id)
 
     # ─────────────────────────────────────────────
     # v0.2 FigureTemplate CRUD
     # ─────────────────────────────────────────────
 
-    def add_figure_template(self, config: FigureConfig, parent_id: Optional[str] = None) -> Optional[FigureTemplateNode]:
-        p = self.current_project
-        if p is None:
+    def add_figure_template(self, config: FigureConfig, parent_id: Optional[str] = None) -> Optional[FigureConfig]:
+        if self.current_project is None:
             return None
-        if p.tree is None:
-            self.migrate_to_v2(p)
-        # 保存 FigureConfig（复用现有 save_figure_config）
-        self.save_figure_config(config)
-        if parent_id is None:
-            tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
-            parent_id = tools_folder.id if tools_folder else None
-        order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
-        node = FigureTemplateNode(name=config.name, parent_id=parent_id, figure_id=config.id, order=order)
-        p.tree.nodes.append(node)  # type: ignore
-        p.is_modified = True
-        return node
+        del parent_id
+        global_assets.add_figure_template(config)
+        return config
 
     def delete_figure_template(self, figure_id: str) -> bool:
-        """删除 FigureConfig 及对应树节点。"""
-        p = self.current_project
-        if p is None:
-            return False
-        before = len(p.figures)
-        p.figures = [f for f in p.figures if f.id != figure_id]
-        if len(p.figures) < before:
-            if p.tree:
-                p.tree.nodes = [
-                    n for n in p.tree.nodes
-                    if not (n.kind == "figure_template" and n.figure_id == figure_id)
-                ]
-            p.is_modified = True
-            return True
-        return False
-
-    def _report_template_parent_id(self) -> Optional[str]:
-        folder = self._find_folder_by_group_type("report_template_group")
-        if folder is None:
-            folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
-        return folder.id if folder else None
+        return global_assets.delete_figure_template(figure_id)
 
     # ─────────────────────────────────────────────
     # v0.3 ReportTemplate CRUD
@@ -1142,212 +1315,66 @@ class ProjectManager:
         is_builtin: bool = False,
         parent_id: Optional[str] = None,
     ) -> Optional[ReportTemplate]:
-        p = self.current_project
-        if p is None:
+        if self.current_project is None:
             return None
-        if p.tree is None:
-            self.migrate_to_v2(p)
+        del parent_id
         tmpl = ReportTemplate(name=name, content=content, is_builtin=is_builtin)
-        p.report_templates.append(tmpl)
-        if parent_id is None:
-            parent_id = self._report_template_parent_id()
-            if parent_id is None:
-                tools_folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
-                parent_id = tools_folder.id if tools_folder else None
-        order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore[union-attr]
-        p.tree.nodes.append(ReportTemplateNode(  # type: ignore[union-attr]
-            name=name,
-            parent_id=parent_id,
-            template_id=tmpl.id,
-            order=order,
-        ))
-        p.is_modified = True
+        global_assets.add_report_template(tmpl)
         return tmpl
 
     def get_report_template(self, template_id: str) -> Optional[ReportTemplate]:
-        p = self.current_project
-        if p is None:
-            return None
-        return p.find_report_template(template_id)
+        return global_assets.get_report_template(template_id)
 
     def update_report_template(self, template_id: str, name: Optional[str] = None, content: Optional[str] = None) -> bool:
-        p = self.current_project
-        if p is None:
-            return False
-        tmpl = p.find_report_template(template_id)
-        if tmpl is None:
-            return False
-        if name is not None:
-            tmpl.name = name
-            if p.tree is not None:
-                for node in p.tree.nodes:
-                    if node.kind == "report_template" and node.template_id == template_id:
-                        node.name = name
-                        break
-        if content is not None:
-            tmpl.content = content
-        p.is_modified = True
-        return True
+        return global_assets.update_report_template(template_id, name=name, content=content)
 
     def delete_report_template(self, template_id: str) -> bool:
-        p = self.current_project
-        if p is None:
-            return False
-        tmpl = p.find_report_template(template_id)
-        if tmpl is None or tmpl.is_builtin:
-            return False
-        p.report_templates = [t for t in p.report_templates if t.id != template_id]
-        if p.tree is not None:
-            p.tree.nodes = [
-                n for n in p.tree.nodes
-                if not (n.kind == "report_template" and n.template_id == template_id)
-            ]
-        p.is_modified = True
-        return True
+        return global_assets.delete_report_template(template_id)
 
     # ─────────────────────────────────────────────
     # v0.3 AI 工具 CRUD
     # ─────────────────────────────────────────────
 
-    def _ai_group_parent_id(self) -> Optional[str]:
-        folder = self._find_folder_by_group_type("ai_group")
-        if folder is None:
-            folder = self._find_folder_by_group_type("tools") or self._find_folder_by_name("工具集")
-        return folder.id if folder else None
-
     def add_ai_prompt(self, name: str, content: str = "", description: str = "") -> Optional[AIPrompt]:
-        p = self.current_project
-        if p is None:
+        if self.current_project is None:
             return None
-        prompt = AIPrompt(name=name, content=content, description=description)
-        p.ai_prompts.append(prompt)
-        if p.tree is not None:
-            parent_id = self._ai_group_parent_id()
-            order = p.tree.get_siblings_max_order(parent_id) + 1
-            p.tree.nodes.append(AIPromptNode(
-                name=name, parent_id=parent_id, prompt_id=prompt.id, order=order
-            ))
-        p.is_modified = True
-        return prompt
+        return global_assets.add_ai_prompt(name, content, description)
 
     def get_ai_prompt(self, prompt_id: str) -> Optional[AIPrompt]:
-        p = self.current_project
-        if p is None:
-            return None
-        for prompt in p.ai_prompts:
-            if prompt.id == prompt_id:
-                return prompt
-        return None
+        return global_assets.get_ai_prompt(prompt_id)
 
     def update_ai_prompt(self, prompt_id: str, name: Optional[str] = None, content: Optional[str] = None, description: Optional[str] = None) -> bool:
-        prompt = self.get_ai_prompt(prompt_id)
-        if prompt is None:
-            return False
-        if name is not None:
-            prompt.name = name
-        if content is not None:
-            prompt.content = content
-        if description is not None:
-            prompt.description = description
-        if self.current_project:
-            self.current_project.is_modified = True
-        return True
+        return global_assets.update_ai_prompt(
+            prompt_id,
+            name=name,
+            content=content,
+            description=description,
+        )
 
     def delete_ai_prompt(self, prompt_id: str) -> bool:
-        p = self.current_project
-        if p is None:
-            return False
-        before = len(p.ai_prompts)
-        p.ai_prompts = [x for x in p.ai_prompts if x.id != prompt_id]
-        if len(p.ai_prompts) < before:
-            if p.tree:
-                p.tree.nodes = [
-                    n for n in p.tree.nodes
-                    if not (n.kind == "ai_prompt" and n.prompt_id == prompt_id)
-                ]
-            p.is_modified = True
-            return True
-        return False
+        return global_assets.delete_ai_prompt(prompt_id)
 
     def add_ai_skill(self, name: str, code: str = "", description: str = "") -> Optional[AISkill]:
-        p = self.current_project
-        if p is None:
+        if self.current_project is None:
             return None
-        skill = AISkill(name=name, code=code, description=description)
-        p.ai_skills.append(skill)
-        if p.tree is not None:
-            parent_id = self._ai_group_parent_id()
-            order = p.tree.get_siblings_max_order(parent_id) + 1
-            p.tree.nodes.append(AISkillNode(
-                name=name, parent_id=parent_id, skill_id=skill.id, order=order
-            ))
-        p.is_modified = True
-        return skill
+        return global_assets.add_ai_skill(name, code, description)
 
     def get_ai_skill(self, skill_id: str) -> Optional[AISkill]:
-        p = self.current_project
-        if p is None:
-            return None
-        for skill in p.ai_skills:
-            if skill.id == skill_id:
-                return skill
-        return None
+        return global_assets.get_ai_skill(skill_id)
 
     def delete_ai_skill(self, skill_id: str) -> bool:
-        p = self.current_project
-        if p is None:
-            return False
-        before = len(p.ai_skills)
-        p.ai_skills = [x for x in p.ai_skills if x.id != skill_id]
-        if len(p.ai_skills) < before:
-            if p.tree:
-                p.tree.nodes = [
-                    n for n in p.tree.nodes
-                    if not (n.kind == "ai_skill" and n.skill_id == skill_id)
-                ]
-            p.is_modified = True
-            return True
-        return False
+        return global_assets.delete_ai_skill(skill_id)
 
     def add_ai_agent(self, name: str, system_prompt: str = "", description: str = "") -> Optional[AIAgent]:
-        p = self.current_project
-        if p is None:
+        if self.current_project is None:
             return None
-        agent = AIAgent(name=name, system_prompt=system_prompt, description=description)
-        p.ai_agents.append(agent)
-        if p.tree is not None:
-            parent_id = self._ai_group_parent_id()
-            order = p.tree.get_siblings_max_order(parent_id) + 1
-            p.tree.nodes.append(AIAgentNode(
-                name=name, parent_id=parent_id, agent_id=agent.id, order=order
-            ))
-        p.is_modified = True
-        return agent
+        return global_assets.add_ai_agent(name, system_prompt, description)
 
     def get_ai_agent(self, agent_id: str) -> Optional[AIAgent]:
-        p = self.current_project
-        if p is None:
-            return None
-        for agent in p.ai_agents:
-            if agent.id == agent_id:
-                return agent
-        return None
+        return global_assets.get_ai_agent(agent_id)
 
     def delete_ai_agent(self, agent_id: str) -> bool:
-        p = self.current_project
-        if p is None:
-            return False
-        before = len(p.ai_agents)
-        p.ai_agents = [x for x in p.ai_agents if x.id != agent_id]
-        if len(p.ai_agents) < before:
-            if p.tree:
-                p.tree.nodes = [
-                    n for n in p.tree.nodes
-                    if not (n.kind == "ai_agent" and n.agent_id == agent_id)
-                ]
-            p.is_modified = True
-            return True
-        return False
+        return global_assets.delete_ai_agent(agent_id)
 
     # ─────────────────────────────────────────────
     # v0.3 数据系列路由

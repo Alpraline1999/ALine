@@ -9,16 +9,25 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Set
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFileDialog, QHBoxLayout, QListWidgetItem, QSplitter, QVBoxLayout, QWidget,
+    QApplication, QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QListWidgetItem, QSplitter,
+    QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
     BodyLabel, ComboBox, FluentIcon as FIF,
     InfoBar, InfoBarPosition, LineEdit,
-    ListWidget, PlainTextEdit, PrimaryPushButton, PushButton, TabCloseButtonDisplayMode, TabWidget, ToolButton,
+    ListWidget, PlainTextEdit, PrimaryPushButton, PushButton, TableWidget,
+    TabCloseButtonDisplayMode, TabWidget, ToolButton,
 )
 
-from ui.theme import make_section_label, make_hsep
+from ui.matplotlib_fonts import configure_matplotlib_cjk
+from ui.dialogs.fluent_dialogs import TextInputDialog
+from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.theme import make_hint_label, make_section_label, make_hsep
+from core.analysis_engine import run_analysis
+from core.extension_api import build_extension_entry, extension_registry
+from core.global_assets import global_assets
 from core.project_manager import project_manager
 
 try:
@@ -27,6 +36,7 @@ try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
     from qfluentwidgets import isDarkTheme
+    configure_matplotlib_cjk(matplotlib)
     _HAS_MPL = True
 except Exception:
     _HAS_MPL = False
@@ -36,6 +46,7 @@ _ANALYSIS_TYPES = [
     ("峰值检测",   "peak_detect"),
     ("统计分析",   "statistics"),
     ("相关性分析", "correlation"),
+    ("误差比较",   "error_compare"),
 ]
 _TYPE_LABELS = [t[0] for t in _ANALYSIS_TYPES]
 _TYPE_IDS    = [t[1] for t in _ANALYSIS_TYPES]
@@ -45,6 +56,44 @@ _FIT_MODEL_LABELS = ["线性 (ax+b)", "幂函数 (a·x^b)", "指数 (a·e^(bx))"
 _FIT_MODEL_IDS    = ["linear", "power", "exponential", "gaussian", "poly2", "poly3"]
 
 
+class _SelectableResultTable(TableWidget):
+    def keyPressEvent(self, event) -> None:
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy_selection_to_clipboard()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def copy_selection_to_clipboard(self) -> None:
+        ranges = self.selectedRanges()
+        if not ranges:
+            return
+        selected_range = ranges[0]
+        rows: List[str] = []
+        for row in range(selected_range.topRow(), selected_range.bottomRow() + 1):
+            cells: List[str] = []
+            for column in range(selected_range.leftColumn(), selected_range.rightColumn() + 1):
+                item = self.item(row, column)
+                cells.append("" if item is None else item.text())
+            rows.append("\t".join(cells))
+        QApplication.clipboard().setText("\n".join(rows))
+
+
+class _SelectableResultList(ListWidget):
+    def keyPressEvent(self, event) -> None:
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy_selection_to_clipboard()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def copy_selection_to_clipboard(self) -> None:
+        items = self.selectedItems()
+        if not items:
+            return
+        QApplication.clipboard().setText("\n".join(item.text() for item in items))
+
+
 class AnalysisPage(QWidget):
     """数据分析页 — 通过共享项目树选择分析数据。"""
 
@@ -52,16 +101,26 @@ class AnalysisPage(QWidget):
 
     # 由 main_window 框架路由的节点类型
     tree_filter_kinds: List[str] = [
-        "folder", "data_file", "image_work", "report_template", "series", "curve",
+        "folder", "data_file", "image_work", "global_report_template", "series", "curve",
     ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._extension_panel_visible = True
         self._result: Optional[Dict[str, Any]] = None
+        self._analysis_type_labels: List[str] = list(_TYPE_LABELS)
+        self._analysis_type_ids: List[str] = list(_TYPE_IDS)
+        self._analysis_label_map: Dict[str, str] = {type_id: label for label, type_id in _ANALYSIS_TYPES}
+        self._analysis_extension_options: Dict[str, Dict[str, Any]] = {}
         # 已选分析数据列表：List[{"kind": str, "node_id": str, "label": str}]
         self._selected_inputs: List[dict] = []
         self._current_report_template_id: Optional[str] = None
         self._current_report_template_name: str = "默认模板"
+        self._report_template_ids: List[Optional[str]] = [None]
+        self._analysis_tab_views: Dict[str, Dict[str, Any]] = {}
+        self._analysis_tab_keys: List[str] = []
+        self._report_result_selectors: Dict[str, ComboBox] = {}
+        self._report_result_selector_keys: Dict[str, List[Optional[str]]] = {}
         self._setup_ui()
 
     # ─────────────────────────────────────────────────────────
@@ -74,10 +133,27 @@ class AnalysisPage(QWidget):
         root.setSpacing(8)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(4)
-        root.addWidget(splitter)
+        root.addWidget(splitter, 1)
         splitter.addWidget(self._build_left())
         splitter.addWidget(self._build_right())
         splitter.setSizes([320, 660])
+
+        self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self)
+        self._extension_panel.set_context("数据分析", "未选择输入")
+        self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
+        root.addWidget(self._extension_panel)
+        self._refresh_analysis_type_choices()
+
+    def supports_extension_panel_toggle(self) -> bool:
+        return True
+
+    def is_extension_panel_visible(self) -> bool:
+        return bool(self._extension_panel_visible)
+
+    def set_extension_panel_visible(self, visible: bool) -> None:
+        self._extension_panel_visible = bool(visible)
+        if hasattr(self, "_extension_panel"):
+            self._extension_panel.setVisible(self._extension_panel_visible)
 
     def _build_left(self) -> QWidget:
         panel = QWidget()
@@ -89,26 +165,39 @@ class AnalysisPage(QWidget):
 
         lv.addWidget(make_section_label("分析类型"))
         self._type_combo = ComboBox(self)
-        self._type_combo.addItems(_TYPE_LABELS)
+        self._type_combo.addItems(self._analysis_type_labels)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         lv.addWidget(self._type_combo)
 
         lv.addWidget(make_hsep())
-        lv.addWidget(make_section_label("已选分析数据（从项目树中双击添加）"))
+        lv.addWidget(make_section_label("分析输入（从项目树中双击添加）"))
 
-        self._input_list = ListWidget(self)
-        self._input_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self._input_hint_label = make_hint_label("双击一条数据作为当前分析输入")
+        lv.addWidget(self._input_hint_label)
+
+        self._primary_input_label = BodyLabel("主输入: 未选择")
+        self._primary_input_label.setWordWrap(True)
+        self._primary_input_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._primary_input_label.hide()
+
+        self._secondary_input_label = BodyLabel("对比输入: 未使用")
+        self._secondary_input_label.setWordWrap(True)
+        self._secondary_input_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._secondary_input_label.hide()
+
+        self._input_list = _SelectableResultList(self)
+        self._input_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         lv.addWidget(self._input_list)
 
         clear_row = QHBoxLayout()
-        btn_clear = PushButton(FIF.DELETE, "清除", self)
-        btn_clear.setFixedHeight(28)
-        btn_clear.clicked.connect(self._clear_inputs)
-        clear_row.addWidget(btn_clear)
-        btn_remove = PushButton(FIF.REMOVE, "移除选中", self)
-        btn_remove.setFixedHeight(28)
-        btn_remove.clicked.connect(self._remove_selected_inputs)
-        clear_row.addWidget(btn_remove)
+        self._btn_clear_inputs = PushButton(FIF.DELETE, "清除", self)
+        self._btn_clear_inputs.setFixedHeight(32)
+        self._btn_clear_inputs.clicked.connect(self._clear_inputs)
+        clear_row.addWidget(self._btn_clear_inputs)
+        self._btn_remove_selected_inputs = PushButton(FIF.REMOVE, "移除选中", self)
+        self._btn_remove_selected_inputs.setFixedHeight(32)
+        self._btn_remove_selected_inputs.clicked.connect(self._remove_selected_inputs)
+        clear_row.addWidget(self._btn_remove_selected_inputs)
         lv.addLayout(clear_row)
 
         lv.addWidget(make_hsep())
@@ -123,7 +212,10 @@ class AnalysisPage(QWidget):
         self._peak_height_label = BodyLabel("最小高度（留空自动）:")
         self._peak_height_edit = LineEdit(self)
         self._peak_height_edit.setPlaceholderText("自动")
-        self._peak_dist_label = BodyLabel("最小间距（采样点数）:")
+        self._peak_dist_mode_label = BodyLabel("最小间距方式:")
+        self._peak_dist_mode_combo = ComboBox(self)
+        self._peak_dist_mode_combo.addItems(["采样点数", "X 值间距"])
+        self._peak_dist_label = BodyLabel("最小间距:")
         self._peak_dist_edit = LineEdit(self)
         self._peak_dist_edit.setText("1")
         self._peak_prom_label = BodyLabel("最小突出度（留空不限）:")
@@ -131,6 +223,8 @@ class AnalysisPage(QWidget):
         self._peak_prom_edit.setPlaceholderText("不限")
         lv.addWidget(self._peak_height_label)
         lv.addWidget(self._peak_height_edit)
+        lv.addWidget(self._peak_dist_mode_label)
+        lv.addWidget(self._peak_dist_mode_combo)
         lv.addWidget(self._peak_dist_label)
         lv.addWidget(self._peak_dist_edit)
         lv.addWidget(self._peak_prom_label)
@@ -153,12 +247,22 @@ class AnalysisPage(QWidget):
         save_btn.clicked.connect(self._save_result)
         lv.addWidget(save_btn)
 
+        self._export_peaks_btn = PushButton("导出波峰曲线")
+        self._export_peaks_btn.clicked.connect(lambda: self._export_extrema_series("peaks", "peaks"))
+        lv.addWidget(self._export_peaks_btn)
+
+        self._export_valleys_btn = PushButton("导出波谷曲线")
+        self._export_valleys_btn.clicked.connect(lambda: self._export_extrema_series("valleys", "valleys"))
+        lv.addWidget(self._export_valleys_btn)
+
         report_btn = PushButton(FIF.DOCUMENT, "生成报告")
         report_btn.clicked.connect(self._on_generate_report)
         lv.addWidget(report_btn)
 
         self._report_template_label = BodyLabel("当前报告模板: 默认模板")
         self._report_template_label.setWordWrap(True)
+        self._report_template_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._report_template_label.hide()
         lv.addWidget(self._report_template_label)
 
         self._on_type_changed(0)
@@ -179,29 +283,52 @@ class AnalysisPage(QWidget):
         result_layout.setSpacing(6)
         result_layout.addWidget(make_section_label("分析结果"))
 
-        if _HAS_MPL:
-            self._figure = Figure(figsize=(6, 4), tight_layout=True)
-            self._canvas = FigureCanvas(self._figure)
-            self._canvas.setMinimumHeight(300)
-            result_layout.addWidget(self._canvas, stretch=2)
-        else:
-            self._figure = None
-            self._canvas = None
-            result_layout.addWidget(BodyLabel("需要 matplotlib"), stretch=2)
-
-        result_layout.addWidget(make_hsep())
-        result_layout.addWidget(make_section_label("摘要"))
-        self._summary_label = BodyLabel("（运行分析后显示结果）")
-        self._summary_label.setWordWrap(True)
-        self._summary_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
-        result_layout.addWidget(self._summary_label, stretch=1)
+        self._analysis_tabs = TabWidget(result_tab)
+        self._analysis_tabs.tabBar.setAddButtonVisible(False)
+        self._analysis_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.ON_HOVER)
+        self._analysis_tabs.currentChanged.connect(self._on_analysis_tab_changed)
+        self._analysis_tabs.tabCloseRequested.connect(self._on_analysis_tab_close_requested)
+        current_view = self._create_analysis_result_view(result_tab)
+        self._figure = current_view["figure"]
+        self._canvas = current_view["canvas"]
+        self._summary_table = current_view["summary_table"]
+        self._analysis_tab_views = {"current": current_view}
+        self._analysis_tab_keys = ["current"]
+        self._analysis_tabs.addTab(current_view["widget"], "当前结果")
+        result_layout.addWidget(self._analysis_tabs, stretch=1)
 
         report_tab = QWidget(panel)
         report_layout = QVBoxLayout(report_tab)
         report_layout.setContentsMargins(0, 0, 0, 0)
         report_layout.setSpacing(6)
         report_layout.addWidget(make_section_label("报告模板"))
+
+        template_row = QHBoxLayout()
+        self._report_template_combo = ComboBox(panel)
+        template_row.addWidget(self._report_template_combo, 1)
+        self._btn_load_report_template = ToolButton(FIF.FOLDER, panel)
+        self._btn_load_report_template.setToolTip("加载选中的报告模板")
+        self._btn_load_report_template.clicked.connect(self._load_selected_report_template)
+        template_row.addWidget(self._btn_load_report_template)
+        self._btn_update_report_template = ToolButton(FIF.SAVE, panel)
+        self._btn_update_report_template.setToolTip("覆盖当前报告模板")
+        self._btn_update_report_template.clicked.connect(self._save_current_report_template)
+        template_row.addWidget(self._btn_update_report_template)
+        self._btn_save_report_template_as = ToolButton(FIF.ADD, panel)
+        self._btn_save_report_template_as.setToolTip("另存为新的报告模板")
+        self._btn_save_report_template_as.clicked.connect(self._save_report_template_as)
+        template_row.addWidget(self._btn_save_report_template_as)
+        report_layout.addLayout(template_row)
+
+        report_layout.addWidget(make_hsep())
+        report_layout.addWidget(make_section_label("结果选择"))
+        self._report_result_selector_panel = QWidget(report_tab)
+        self._report_result_selector_layout = QVBoxLayout(self._report_result_selector_panel)
+        self._report_result_selector_layout.setContentsMargins(0, 0, 0, 0)
+        self._report_result_selector_layout.setSpacing(4)
+        self._report_result_selector_hint = make_hint_label("存在多个分析结果时，可按分析类型选择要渲染的结果。")
+        self._report_result_selector_layout.addWidget(self._report_result_selector_hint)
+        report_layout.addWidget(self._report_result_selector_panel)
 
         top_row = QHBoxLayout()
         self._report_editor_title = BodyLabel("当前模板内容")
@@ -210,12 +337,6 @@ class AnalysisPage(QWidget):
         btn_render = PushButton(FIF.PLAY, "渲染", panel)
         btn_render.clicked.connect(self._render_report_preview)
         top_row.addWidget(btn_render)
-        btn_save = PushButton(FIF.SAVE, "保存模板", panel)
-        btn_save.clicked.connect(self._save_current_report_template)
-        top_row.addWidget(btn_save)
-        btn_save_as = PushButton(FIF.ADD, "另存为模板", panel)
-        btn_save_as.clicked.connect(self._save_report_template_as)
-        top_row.addWidget(btn_save_as)
         btn_export = PushButton(FIF.SHARE, "导出 Markdown", panel)
         btn_export.clicked.connect(self._export_report)
         top_row.addWidget(btn_export)
@@ -234,8 +355,347 @@ class AnalysisPage(QWidget):
         self._result_tabs.addTab(result_tab, "分析结果")
         self._result_tabs.addTab(report_tab, "报告模板")
         rv.addWidget(self._result_tabs, stretch=1)
+        self._refresh_report_template_combo()
         self._sync_report_editor_from_template()
+        self._refresh_report_result_selectors()
         return panel
+
+    def _create_analysis_result_view(self, parent: QWidget) -> Dict[str, Any]:
+        widget = QWidget(parent)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        figure = None
+        canvas = None
+        if _HAS_MPL:
+            figure = Figure(figsize=(6, 4))
+            canvas = FigureCanvas(figure)
+            canvas.setMinimumHeight(300)
+            layout.addWidget(canvas, stretch=2)
+        else:
+            layout.addWidget(BodyLabel("需要 matplotlib"), stretch=2)
+
+        layout.addWidget(make_hsep())
+        layout.addWidget(make_section_label("摘要"))
+        summary_stack = QStackedWidget(widget)
+        summary_table = _SelectableResultTable(widget)
+        self._configure_result_table(summary_table, ["数据类型", "结果"])
+        summary_stack.addWidget(summary_table)
+
+        peak_summary_widget = QWidget(summary_stack)
+        peak_summary_layout = QHBoxLayout(peak_summary_widget)
+        peak_summary_layout.setContentsMargins(0, 0, 0, 0)
+        peak_summary_layout.setSpacing(6)
+        peak_meta_panel = QWidget(peak_summary_widget)
+        peak_meta_layout = QVBoxLayout(peak_meta_panel)
+        peak_meta_layout.setContentsMargins(0, 0, 0, 0)
+        peak_meta_layout.setSpacing(6)
+        peak_meta_layout.addWidget(make_section_label("摘要信息", peak_meta_panel))
+        peak_meta_table = _SelectableResultTable(peak_meta_panel)
+        self._configure_result_table(peak_meta_table, ["项目", "结果"])
+        peak_meta_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        peak_meta_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        peak_meta_layout.addWidget(peak_meta_table)
+        peak_summary_layout.addWidget(peak_meta_panel, stretch=2)
+
+        peak_points_panel = QWidget(peak_summary_widget)
+        peak_points_layout = QVBoxLayout(peak_points_panel)
+        peak_points_layout.setContentsMargins(0, 0, 0, 0)
+        peak_points_layout.setSpacing(6)
+        peak_points_layout.addWidget(make_section_label("峰谷明细", peak_points_panel))
+        peak_points_table = _SelectableResultTable(peak_points_panel)
+        self._configure_result_table(peak_points_table, ["波峰序号", "波峰 X", "波峰 Y", "波谷序号", "波谷 X", "波谷 Y"])
+        peak_points_header = peak_points_table.horizontalHeader()
+        peak_points_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        peak_points_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        peak_points_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        peak_points_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        peak_points_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        peak_points_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        peak_points_layout.addWidget(peak_points_table, stretch=1)
+        peak_summary_layout.addWidget(peak_points_panel, stretch=5)
+        summary_stack.addWidget(peak_summary_widget)
+        layout.addWidget(summary_stack, stretch=1)
+
+        view = {
+            "widget": widget,
+            "figure": figure,
+            "canvas": canvas,
+            "summary_stack": summary_stack,
+            "summary_table": summary_table,
+            "peak_summary_widget": peak_summary_widget,
+            "peak_meta_panel": peak_meta_panel,
+            "peak_meta_table": peak_meta_table,
+            "peak_points_panel": peak_points_panel,
+            "peak_points_table": peak_points_table,
+            "result": None,
+            "analysis_type": None,
+            "selected": [],
+            "inputs": [],
+            "params": {},
+            "analysis_name": "当前结果",
+        }
+        self._set_summary_rows(summary_table, [("状态", "（运行分析后显示结果）")])
+        self._set_summary_rows(peak_meta_table, [("状态", "（运行峰谷检测后显示结果）")])
+        self._set_peak_points_rows(peak_points_table, [], [])
+        return view
+
+    @staticmethod
+    def _configure_result_table(table: TableWidget, headers: List[str]) -> None:
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        table.setAlternatingRowColors(True)
+        table.setWordWrap(True)
+        table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        table.verticalHeader().setDefaultSectionSize(32)
+
+    def _set_summary_rows(self, table: TableWidget, rows: List[tuple[str, str]]) -> None:
+        table.setRowCount(len(rows))
+        for row_idx, (label, value) in enumerate(rows):
+            table.setItem(row_idx, 0, QTableWidgetItem(label))
+            table.setItem(row_idx, 1, QTableWidgetItem(value))
+
+    @staticmethod
+    def _format_summary_value(value: Any) -> str:
+        if value in (None, ""):
+            return ""
+        if isinstance(value, float):
+            return f"{value:.6g}"
+        return str(value)
+
+    def _peak_summary_rows(self, r: dict) -> List[tuple[str, str]]:
+        distance_mode = "X 值间距" if r.get("distance_mode") == "x_distance" else "采样点数"
+        distance_value = r.get("distance_value")
+        rows = [
+            ("波峰数量", str(r.get("count", 0))),
+            ("波谷数量", str(r.get("valley_count", 0))),
+            ("数据源", str(r.get("source_name", "-"))),
+        ]
+        if distance_value not in (None, ""):
+            rows.append(("最小间距", f"{distance_value}（{distance_mode}）"))
+        return rows
+
+    def _set_peak_points_rows(self, table: TableWidget, peaks: List[dict], valleys: List[dict]) -> None:
+        row_count = max(len(peaks), len(valleys))
+        table.setRowCount(row_count)
+        for row_idx in range(row_count):
+            peak = peaks[row_idx] if row_idx < len(peaks) else None
+            valley = valleys[row_idx] if row_idx < len(valleys) else None
+            values = [
+                self._format_summary_value(None if peak is None else row_idx + 1),
+                self._format_summary_value(None if peak is None else peak.get("x")),
+                self._format_summary_value(None if peak is None else peak.get("y")),
+                self._format_summary_value(None if valley is None else row_idx + 1),
+                self._format_summary_value(None if valley is None else valley.get("x")),
+                self._format_summary_value(None if valley is None else valley.get("y")),
+            ]
+            for col_idx, value in enumerate(values):
+                table.setItem(row_idx, col_idx, QTableWidgetItem(value))
+
+    def _analysis_type_label(self, analysis_type: str) -> str:
+        return self._analysis_label_map.get(analysis_type, analysis_type or "分析结果")
+
+    def _analysis_extension_entries(self) -> List[dict]:
+        return [build_extension_entry(extension) for extension in extension_registry.list_analysis()]
+
+    def _refresh_analysis_type_choices(self) -> None:
+        current_type = self._current_analysis_type() if hasattr(self, "_type_combo") else None
+        self._analysis_type_labels = list(_TYPE_LABELS)
+        self._analysis_type_ids = list(_TYPE_IDS)
+        self._analysis_label_map = {type_id: label for label, type_id in _ANALYSIS_TYPES}
+        for extension in extension_registry.list_analysis():
+            self._analysis_type_labels.append(extension.name)
+            self._analysis_type_ids.append(extension.type)
+            self._analysis_label_map[extension.type] = extension.name
+        self._type_combo.blockSignals(True)
+        self._type_combo.clear()
+        self._type_combo.addItems(self._analysis_type_labels)
+        if current_type in self._analysis_type_ids:
+            self._type_combo.setCurrentIndex(self._analysis_type_ids.index(current_type))
+        else:
+            self._type_combo.setCurrentIndex(0)
+        self._type_combo.blockSignals(False)
+        self._extension_panel.set_entries(
+            self._analysis_extension_entries(),
+            saved_options=self._analysis_extension_options,
+            current_type=current_type if extension_registry.get_analysis(current_type or "") else None,
+        )
+        self._on_type_changed(self._type_combo.currentIndex())
+
+    def _on_analysis_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
+        self._analysis_extension_options[type_id] = dict(options)
+        if type_id in self._analysis_type_ids:
+            self._type_combo.setCurrentIndex(self._analysis_type_ids.index(type_id))
+        InfoBar.success("已应用", f"当前分析类型已切换为 {self._analysis_type_label(type_id)}", parent=self, position=InfoBarPosition.TOP)
+
+    def _report_result_candidates_by_type(self) -> Dict[str, List[Dict[str, Any]]]:
+        candidates: Dict[str, List[Dict[str, Any]]] = {}
+        for key in self._analysis_tab_keys:
+            view = self._analysis_tab_views.get(key)
+            if view is None:
+                continue
+            result = view.get("result")
+            if not isinstance(result, dict) or not result:
+                continue
+            analysis_type = str(view.get("analysis_type") or result.get("analysis_type") or "")
+            if not analysis_type:
+                continue
+            candidates.setdefault(analysis_type, []).append({
+                "key": key,
+                "title": view.get("analysis_name") or ("当前结果" if key == "current" else "分析结果"),
+                "result": dict(result),
+            })
+        return candidates
+
+    def _clear_report_result_selectors(self) -> None:
+        if not hasattr(self, "_report_result_selector_layout"):
+            return
+        while self._report_result_selector_layout.count() > 1:
+            item = self._report_result_selector_layout.takeAt(1)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._report_result_selectors.clear()
+        self._report_result_selector_keys.clear()
+
+    def _refresh_report_result_selectors(self) -> None:
+        if not hasattr(self, "_report_result_selector_layout"):
+            return
+        candidates = self._report_result_candidates_by_type()
+        total_results = sum(len(items) for items in candidates.values())
+        self._clear_report_result_selectors()
+        self._report_result_selector_panel.setVisible(total_results > 1)
+        if total_results <= 1:
+            return
+        for analysis_type in self._analysis_type_ids:
+            items = candidates.get(analysis_type, [])
+            if not items:
+                continue
+            row = QWidget(self._report_result_selector_panel)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            row_layout.addWidget(BodyLabel(f"{self._analysis_type_label(analysis_type)}:"), 0)
+            combo = ComboBox(row)
+            combo.addItem("不包含")
+            keys: List[Optional[str]] = [None]
+            for item in items:
+                combo.addItem(item["title"])
+                keys.append(item["key"])
+            previous_keys = self._report_result_selector_keys.get(analysis_type, [])
+            previous_combo = self._report_result_selectors.get(analysis_type)
+            previous_key = None
+            if previous_combo is not None and previous_keys:
+                previous_index = previous_combo.currentIndex()
+                if 0 <= previous_index < len(previous_keys):
+                    previous_key = previous_keys[previous_index]
+            combo_index = keys.index(previous_key) if previous_key in keys else (1 if len(keys) > 1 else 0)
+            combo.setCurrentIndex(combo_index)
+            combo.currentIndexChanged.connect(self._render_report_preview)
+            row_layout.addWidget(combo, 1)
+            self._report_result_selector_layout.addWidget(row)
+            self._report_result_selectors[analysis_type] = combo
+            self._report_result_selector_keys[analysis_type] = keys
+
+    def _selected_report_results(self) -> List[Dict[str, Any]]:
+        candidates = self._report_result_candidates_by_type()
+        total_results = sum(len(items) for items in candidates.values())
+        if total_results <= 1:
+            for analysis_type in self._analysis_type_ids:
+                items = candidates.get(analysis_type, [])
+                if items:
+                    return items[:1]
+            return []
+
+        selected_items: List[Dict[str, Any]] = []
+        for analysis_type in self._analysis_type_ids:
+            items = candidates.get(analysis_type, [])
+            if not items:
+                continue
+            combo = self._report_result_selectors.get(analysis_type)
+            keys = self._report_result_selector_keys.get(analysis_type, [])
+            selected_key = None
+            if combo is not None and 0 <= combo.currentIndex() < len(keys):
+                selected_key = keys[combo.currentIndex()]
+            if selected_key is None:
+                continue
+            selected_item = next((item for item in items if item["key"] == selected_key), None)
+            if selected_item is not None:
+                selected_items.append(selected_item)
+        return selected_items
+
+    def _render_summary_view(self, view: Dict[str, Any], t: str, r: dict) -> None:
+        summary_stack = view.get("summary_stack")
+        if summary_stack is None:
+            self._set_summary_rows(view["summary_table"], self._summary_rows(t, r))
+            return
+        if t == "peak_detect":
+            summary_stack.setCurrentWidget(view["peak_summary_widget"])
+            self._set_summary_rows(view["peak_meta_table"], self._peak_summary_rows(r))
+            self._set_peak_points_rows(view["peak_points_table"], list(r.get("peaks", []) or []), list(r.get("valleys", []) or []))
+            return
+        summary_stack.setCurrentWidget(view["summary_table"])
+        self._set_summary_rows(view["summary_table"], self._summary_rows(t, r))
+
+    def _analysis_tab_key_for_index(self, index: int) -> Optional[str]:
+        if 0 <= index < len(self._analysis_tab_keys):
+            return self._analysis_tab_keys[index]
+        return None
+
+    def _analysis_view_for_key(self, key: str) -> Optional[Dict[str, Any]]:
+        return self._analysis_tab_views.get(key)
+
+    def _sync_state_from_analysis_view(self, view: Dict[str, Any]) -> None:
+        result = view.get("result")
+        if result is None:
+            return
+        self._figure = view.get("figure")
+        self._canvas = view.get("canvas")
+        self._summary_table = view.get("summary_table")
+        analysis_type = view.get("analysis_type") or result.get("analysis_type", "curve_fit")
+        if analysis_type in self._analysis_type_ids:
+            self._type_combo.setCurrentIndex(self._analysis_type_ids.index(analysis_type))
+        self._restore_analysis_params(view.get("params") or {})
+        self._selected_inputs = [dict(item) for item in view.get("inputs") or []]
+        self._rebuild_input_list()
+        self._result = dict(result)
+        self._update_peak_export_buttons()
+        self._render_report_preview()
+
+    def _on_analysis_tab_changed(self, index: int) -> None:
+        key = self._analysis_tab_key_for_index(index)
+        if not key:
+            return
+        view = self._analysis_view_for_key(key)
+        if view is None:
+            return
+        self._sync_state_from_analysis_view(view)
+
+    def _on_analysis_tab_close_requested(self, index: int) -> None:
+        if index <= 0:
+            return
+        tab_key = self._analysis_tab_key_for_index(index)
+        if not tab_key or tab_key == "current":
+            return
+        was_current = self._analysis_tabs.currentIndex() == index
+        view = self._analysis_tab_views.pop(tab_key, None)
+        self._analysis_tab_keys.pop(index)
+        self._analysis_tabs.removeTab(index)
+        if view is not None and view.get("widget") is not None:
+            view["widget"].deleteLater()
+        if was_current:
+            new_index = self._analysis_tabs.currentIndex()
+            new_key = self._analysis_tab_key_for_index(new_index)
+            new_view = self._analysis_view_for_key(new_key) if new_key else None
+            if new_view is not None:
+                self._sync_state_from_analysis_view(new_view)
+        self._refresh_report_result_selectors()
 
     # ─────────────────────────────────────────────────────────
     # 共享树接口
@@ -249,20 +709,16 @@ class AnalysisPage(QWidget):
         """双击树节点 → 加入分析输入列表。"""
         if kind.endswith("_to_analysis"):
             kind = kind[:-12]
-        if kind == "report_template":
+        if kind == "global_report_template":
             self.load_report_template(node_id)
             return
         if kind not in ("series", "curve", "data_file", "image_work"):
             return
-        # 获取节点 label
         label = self._get_node_label(kind, node_id)
-        # 去重
         if any(inp["node_id"] == node_id for inp in self._selected_inputs):
+            self._sync_related_analysis_tabs()
             return
-        self._selected_inputs.append({"kind": kind, "node_id": node_id, "label": label})
-        item = QListWidgetItem(label)
-        item.setData(Qt.ItemDataRole.UserRole, {"kind": kind, "node_id": node_id})
-        self._input_list.addItem(item)
+        self._assign_input_for_current_mode({"kind": kind, "node_id": node_id, "label": label})
 
     def _get_node_label(self, kind: str, node_id: str) -> str:
         p = project_manager.current_project
@@ -291,7 +747,8 @@ class AnalysisPage(QWidget):
 
     def _clear_inputs(self):
         self._selected_inputs.clear()
-        self._input_list.clear()
+        self._rebuild_input_list()
+        self._sync_related_analysis_tabs()
 
     def _remove_selected_inputs(self):
         to_remove: Set[str] = set()
@@ -301,38 +758,90 @@ class AnalysisPage(QWidget):
                 to_remove.add(d["node_id"])
         self._selected_inputs = [x for x in self._selected_inputs
                                   if x["node_id"] not in to_remove]
-        for i in range(self._input_list.count() - 1, -1, -1):
-            item = self._input_list.item(i)
-            data = item.data(Qt.ItemDataRole.UserRole)
-            if data and data["node_id"] in to_remove:
-                self._input_list.takeItem(i)
+        self._rebuild_input_list()
+        self._sync_related_analysis_tabs()
+
+    def _assign_input_for_current_mode(self, payload: dict) -> None:
+        if self._requires_pair_input():
+            if len(self._selected_inputs) < 2:
+                self._selected_inputs.append(payload)
+            else:
+                self._selected_inputs[1] = payload
+        else:
+            self._selected_inputs = [payload]
+        self._rebuild_input_list()
+        self._sync_related_analysis_tabs()
+
+    def _rebuild_input_list(self) -> None:
+        self._input_list.clear()
+        for payload in self._selected_inputs:
+            item = QListWidgetItem(payload["label"])
+            item.setData(Qt.ItemDataRole.UserRole, {"kind": payload["kind"], "node_id": payload["node_id"]})
+            item.setToolTip(payload["label"])
+            self._input_list.addItem(item)
+        self._sync_input_role_labels()
+
+    def _sync_input_role_labels(self) -> None:
+        primary = self._selected_inputs[0]["label"] if self._selected_inputs else "未选择"
+        secondary = self._selected_inputs[1]["label"] if len(self._selected_inputs) > 1 else "未使用"
+        self._primary_input_label.setText(f"主输入: {primary}")
+        self._secondary_input_label.setText(f"对比输入: {secondary}")
+        if hasattr(self, "_extension_panel"):
+            target = primary if self._selected_inputs else "未选择输入"
+            self._extension_panel.set_context("数据分析", target)
+
+    def _current_analysis_type(self) -> str:
+        idx = self._type_combo.currentIndex()
+        return self._analysis_type_ids[idx] if 0 <= idx < len(self._analysis_type_ids) else "curve_fit"
+
+    def _requires_pair_input(self) -> bool:
+        return self._current_analysis_type() in {"correlation", "error_compare"}
 
     # ─────────────────────────────────────────────────────────
     # 类型切换
     # ─────────────────────────────────────────────────────────
 
     def _on_type_changed(self, idx: int):
-        t = _TYPE_IDS[idx] if idx < len(_TYPE_IDS) else "curve_fit"
+        t = self._analysis_type_ids[idx] if idx < len(self._analysis_type_ids) else "curve_fit"
         is_fit  = t == "curve_fit"
         is_peak = t == "peak_detect"
         is_corr = t == "correlation"
         for w in [self._fit_model_label, self._fit_model_combo]:
             w.setVisible(is_fit)
         for w in [self._peak_height_label, self._peak_height_edit,
+                  self._peak_dist_mode_label, self._peak_dist_mode_combo,
                   self._peak_dist_label, self._peak_dist_edit,
                   self._peak_prom_label, self._peak_prom_edit]:
             w.setVisible(is_peak)
         for w in [self._corr_method_label, self._corr_method_combo]:
             w.setVisible(is_corr)
+        if self._requires_pair_input():
+            self._input_hint_label.setText("按顺序双击两条数据加入分析输入列表")
+        else:
+            if len(self._selected_inputs) > 1:
+                self._selected_inputs = self._selected_inputs[:1]
+                self._rebuild_input_list()
+            self._input_hint_label.setText("双击一条数据作为当前分析输入")
+        self._sync_input_role_labels()
+        self._update_peak_export_buttons()
+        if hasattr(self, "_extension_panel"):
+            self._extension_panel.set_entries(
+                self._analysis_extension_entries(),
+                saved_options=self._analysis_extension_options,
+                current_type=t if extension_registry.get_analysis(t) else None,
+            )
 
     # ─────────────────────────────────────────────────────────
     # 获取分析数据
     # ─────────────────────────────────────────────────────────
 
     def _get_selected_data(self) -> List[tuple]:
+        return self._get_data_for_inputs(self._selected_inputs)
+
+    def _get_data_for_inputs(self, inputs: List[dict]) -> List[tuple]:
         """返回 (xs, ys, name) 列表。"""
         result = []
-        for inp in self._selected_inputs:
+        for inp in inputs:
             kind = inp["kind"]
             node_id = inp["node_id"]
             series = project_manager.get_series_from_node(kind, node_id)
@@ -350,7 +859,7 @@ class AnalysisPage(QWidget):
             InfoBar.warning("提示", "请先从项目树双击选择数据", parent=self,
                             position=InfoBarPosition.TOP)
             return
-        t = _TYPE_IDS[self._type_combo.currentIndex()]
+        t = self._current_analysis_type()
         try:
             if t == "curve_fit":
                 self._result = self._do_fit(selected[0])
@@ -364,10 +873,19 @@ class AnalysisPage(QWidget):
                                     position=InfoBarPosition.TOP)
                     return
                 self._result = self._do_correlation(selected[0], selected[1])
+            elif t == "error_compare":
+                if len(selected) < 2:
+                    InfoBar.warning("提示", "误差比较需要选择主序列和对比序列", parent=self,
+                                    position=InfoBarPosition.TOP)
+                    return
+                self._result = self._do_error_compare(selected[0], selected[1])
+            else:
+                inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
+                self._result = run_analysis(t, inputs, self._analysis_extension_options.get(t, {}))
             self._show_result(t, selected)
         except Exception as e:
             InfoBar.error("分析失败", str(e), parent=self, position=InfoBarPosition.TOP)
-            self._summary_label.setText(f"错误: {e}")
+            self._set_summary_rows(self._summary_table, [("错误", str(e))])
 
     def _do_fit(self, src: tuple) -> dict:
         from core.analysis_engine import fit_curve
@@ -379,7 +897,7 @@ class AnalysisPage(QWidget):
         return r
 
     def _do_peaks(self, src: tuple) -> dict:
-        from core.analysis_engine import detect_peaks
+        from core.analysis_engine import detect_peaks, detect_valleys
         xs, ys, name = src
         def _f(e, default):
             try: return float(e.text())
@@ -387,13 +905,23 @@ class AnalysisPage(QWidget):
         def _i(e, default):
             try: return max(1, int(e.text()))
             except: return default
-        r = detect_peaks(xs, ys,
-                         min_height=_f(self._peak_height_edit, None),
-                         min_distance=_i(self._peak_dist_edit, 1),
-                         prominence=_f(self._peak_prom_edit, None))
-        r["source_name"] = name
-        r["analysis_type"] = "peak_detect"
-        return r
+        min_h = _f(self._peak_height_edit, None)
+        dist_mode = "x_distance" if self._peak_dist_mode_combo.currentIndex() == 1 else "points"
+        min_d = _i(self._peak_dist_edit, 1) if dist_mode == "points" else None
+        min_d_x = _f(self._peak_dist_edit, 1.0) if dist_mode == "x_distance" else None
+        prom = _f(self._peak_prom_edit, None)
+        r_peaks = detect_peaks(xs, ys, min_height=min_h, min_distance=min_d, min_distance_x=min_d_x, prominence=prom)
+        r_valleys = detect_valleys(xs, ys, min_distance=min_d, min_distance_x=min_d_x, prominence=prom)
+        return {
+            "peaks": r_peaks.get("peaks", []),
+            "count": r_peaks.get("count", 0),
+            "valleys": r_valleys.get("valleys", []),
+            "valley_count": r_valleys.get("count", 0),
+            "source_name": name,
+            "distance_mode": dist_mode,
+            "distance_value": min_d_x if dist_mode == "x_distance" else min_d,
+            "analysis_type": "peak_detect",
+        }
 
     def _do_stats(self, src: tuple) -> dict:
         from core.analysis_engine import compute_statistics
@@ -414,6 +942,16 @@ class AnalysisPage(QWidget):
         r["analysis_type"] = "correlation"
         return r
 
+    def _do_error_compare(self, src1: tuple, src2: tuple) -> dict:
+        from core.analysis_engine import compute_error_metrics
+
+        xs1, ys1, name1 = src1
+        xs2, ys2, name2 = src2
+        result = compute_error_metrics(xs1, ys1, xs2, ys2)
+        result["name1"] = name1
+        result["name2"] = name2
+        return result
+
     # ─────────────────────────────────────────────────────────
     # 结果显示
     # ─────────────────────────────────────────────────────────
@@ -421,20 +959,40 @@ class AnalysisPage(QWidget):
     def _show_result(self, t: str, selected: list):
         r = self._result
         if r is None:
+            self._update_peak_export_buttons()
             return
-        self._draw_result(t, selected, r)
-        self._write_summary(t, r)
+        view = self._analysis_tab_views.get("current")
+        if view is not None:
+            view["result"] = dict(r)
+            view["analysis_type"] = t
+            view["selected"] = list(selected)
+            view["inputs"] = [dict(item) for item in self._selected_inputs]
+            view["params"] = self._current_analysis_params()
+            view["analysis_name"] = "当前结果"
+            self._render_result_view(view, t, selected, r)
+            self._analysis_tabs.setCurrentIndex(0)
+        else:
+            self._draw_result(t, selected, r)
+            self._write_summary(t, r)
+        self._update_peak_export_buttons()
 
-    def _draw_result(self, t: str, selected: list, r: dict):
-        if not _HAS_MPL or self._figure is None:
+    def _render_result_view(self, view: Dict[str, Any], t: str, selected: list, r: dict) -> None:
+        self._draw_result(t, selected, r, figure=view.get("figure"), canvas=view.get("canvas"))
+        self._render_summary_view(view, t, r)
+        self._refresh_report_result_selectors()
+
+    def _draw_result(self, t: str, selected: list, r: dict, figure=None, canvas=None):
+        figure = self._figure if figure is None else figure
+        canvas = self._canvas if canvas is None else canvas
+        if not _HAS_MPL or figure is None or canvas is None:
             return
-        self._figure.clear()
-        ax = self._figure.add_subplot(111)
+        figure.clear()
+        ax = figure.add_subplot(111)
         dark = isDarkTheme()
         bg = "#1e1e1e" if dark else "#ffffff"
         fg = "#cccccc" if dark else "#222222"
         gc = "#444444" if dark else "#dddddd"
-        self._figure.patch.set_facecolor(bg)
+        figure.patch.set_facecolor(bg)
         ax.set_facecolor(bg)
         ax.tick_params(colors=fg, labelcolor=fg)
         for sp in ax.spines.values():
@@ -457,7 +1015,13 @@ class AnalysisPage(QWidget):
                 px = [p["x"] for p in peaks]
                 py = [p["y"] for p in peaks]
                 ax.scatter(px, py, color="#D13438", s=50, zorder=5,
-                           marker="^", label=f"峰值 ({len(peaks)}个)")
+                           marker="^", label=f"波峰 ({len(peaks)}个)")
+            valleys = r.get("valleys", [])
+            if valleys:
+                vx = [v["x"] for v in valleys]
+                vy = [v["y"] for v in valleys]
+                ax.scatter(vx, vy, color="#107C10", s=50, zorder=5,
+                           marker="v", label=f"波谷 ({len(valleys)}个)")
             ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
 
         elif t == "correlation" and len(selected) >= 2:
@@ -469,6 +1033,15 @@ class AnalysisPage(QWidget):
             ax.set_ylabel(n2, color=fg)
             ax.set_title(f"r = {r.get('r', 0):.4f}", color=fg)
 
+        elif t == "error_compare" and len(selected) >= 2:
+            ex = r.get("error_x", [])
+            ey = r.get("error_y", [])
+            ax.axhline(0.0, color="#888888", linestyle="--", linewidth=1.0)
+            ax.plot(ex, ey, color="#D13438", linewidth=1.5, label="误差")
+            ax.set_xlabel(selected[0][2], color=fg)
+            ax.set_ylabel("误差", color=fg)
+            ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
+
         elif t == "statistics" and selected:
             xs, ys, name = selected[0]
             ax.plot(xs, ys, color="#0078D4", linewidth=1.4, label=name)
@@ -477,45 +1050,75 @@ class AnalysisPage(QWidget):
                        label=f"均值={mean:.4g}")
             ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
 
-        self._canvas.draw()
+        canvas.draw()
 
-    def _write_summary(self, t: str, r: dict):
+    def _summary_rows(self, t: str, r: dict) -> List[tuple[str, str]]:
         if t == "curve_fit":
             params = r.get("params", [])
             names = r.get("param_names", [])
             param_str = "  ".join(f"{n}={v:.4g}" for n, v in zip(names, params))
-            text = (f"模型: {r.get('model', '')}\n"
-                    f"方程: {r.get('equation', '')}\n"
-                    f"参数: {param_str}\n"
-                    f"R² = {r.get('r2', float('nan')):.6f}")
+            return [
+                ("模型", str(r.get("model", ""))),
+                ("方程", str(r.get("equation", ""))),
+                ("参数", param_str or "-"),
+                ("R²", f"{r.get('r2', float('nan')):.6f}"),
+            ]
         elif t == "peak_detect":
-            peaks = r.get("peaks", [])
-            n = r.get("count", 0)
-            peak_str = "\n".join(f"  峰{i+1}: x={p['x']:.4g}  y={p['y']:.4g}"
-                                 for i, p in enumerate(peaks[:10]))
-            extra = "\n  （仅显示前10个）" if n > 10 else ""
-            text = f"共检测到 {n} 个峰值\n{peak_str}{extra}"
+            return self._peak_summary_rows(r)
         elif t == "statistics":
-            text = (f"N = {r.get('n', 0)}\n"
-                    f"X: 均值={r.get('x_mean', 0):.4g}  σ={r.get('x_std', 0):.4g}"
-                    f"  范围=[{r.get('x_min', 0):.4g}, {r.get('x_max', 0):.4g}]\n"
-                    f"Y: 均值={r.get('y_mean', 0):.4g}  σ={r.get('y_std', 0):.4g}"
-                    f"  范围=[{r.get('y_min', 0):.4g}, {r.get('y_max', 0):.4g}]\n"
-                    f"Y 中位数={r.get('y_median', 0):.4g}"
-                    f"  Q1={r.get('y_p25', 0):.4g}  Q3={r.get('y_p75', 0):.4g}")
+            return [
+                ("样本数 N", str(r.get("n", 0))),
+                ("X 均值", f"{r.get('x_mean', 0):.4g}"),
+                ("X 标准差", f"{r.get('x_std', 0):.4g}"),
+                ("X 范围", f"[{r.get('x_min', 0):.4g}, {r.get('x_max', 0):.4g}]"),
+                ("Y 均值", f"{r.get('y_mean', 0):.4g}"),
+                ("Y 标准差", f"{r.get('y_std', 0):.4g}"),
+                ("Y 范围", f"[{r.get('y_min', 0):.4g}, {r.get('y_max', 0):.4g}]"),
+                ("Y 中位数", f"{r.get('y_median', 0):.4g}"),
+                ("Y 四分位", f"Q1={r.get('y_p25', 0):.4g}, Q3={r.get('y_p75', 0):.4g}"),
+            ]
         elif t == "correlation":
             p = r.get("p_value")
-            p_str = f"  p={p:.4g}" if p is not None else ""
-            text = (f"方法: {r.get('method', '')}\n"
-                    f"相关系数 r = {r.get('r', 0):.6f}{p_str}\n"
-                    f"数据: {r.get('name1', '')} vs {r.get('name2', '')}")
+            rows = [
+                ("方法", str(r.get("method", ""))),
+                ("相关系数 r", f"{r.get('r', 0):.6f}"),
+                ("数据", f"{r.get('name1', '')} vs {r.get('name2', '')}"),
+            ]
+            if p is not None:
+                rows.append(("p 值", f"{p:.4g}"))
+            return rows
+        elif t == "error_compare":
+            rel = r.get("relative_mae")
+            rows = [
+                ("数据", f"{r.get('name1', '')} vs {r.get('name2', '')}"),
+                ("MAE", f"{r.get('mae', 0):.6f}"),
+                ("RMSE", f"{r.get('rmse', 0):.6f}"),
+                ("平均误差", f"{r.get('mean_error', 0):.6f}"),
+                ("最大绝对误差", f"{r.get('max_abs_error', 0):.6f}"),
+            ]
+            if rel is not None:
+                rows.append(("相对平均误差", f"{rel:.6f}"))
+            return rows
         else:
-            text = str(r)
-        self._summary_label.setText(text)
+            return [("结果", str(r))]
+
+    def _write_summary(self, t: str, r: dict):
+        current_view = self._analysis_tab_views.get("current")
+        if current_view is not None:
+            self._render_summary_view(current_view, t, r)
+            return
+        self._set_summary_rows(self._summary_table, self._summary_rows(t, r))
 
     # ─────────────────────────────────────────────────────────
     # 保存分析结果
     # ─────────────────────────────────────────────────────────
+
+    def _default_analysis_result_name(self) -> str:
+        type_label = self._analysis_type_label(self._current_analysis_type())
+        source_name = str((self._result or {}).get("source_name") or "").strip()
+        if source_name:
+            return f"{source_name}_{type_label}"
+        return f"{type_label}结果"
 
     def _save_result(self):
         if self._result is None:
@@ -525,13 +1128,26 @@ class AnalysisPage(QWidget):
         p = project_manager.current_project
         if p is None:
             return
-        from models.schemas import AnalysisResult, DataSeries
+        from models.schemas import AnalysisResult, DataFile, DataSeries
+
+        default_name = self._default_analysis_result_name()
+        result_name, ok = TextInputDialog.get_text(self, "保存分析结果", "结果名称:", text=default_name)
+        clean_name = result_name.strip()
+        if not ok or not clean_name:
+            return
+
         t = self._result.get("analysis_type", "analysis")
+        input_series_ids = []
+        for item in self._selected_inputs:
+            series = project_manager.get_series_from_node(item["kind"], item["node_id"])
+            if series is not None:
+                input_series_ids.append(series.id)
         ar = AnalysisResult(
-            name=f"{_TYPE_LABELS[self._type_combo.currentIndex()]}结果",
+            name=clean_name,
             analysis_type=t,
-            summary={k: v for k, v in self._result.items()
-                     if k not in ("fit_x", "fit_y", "peaks")},
+            input_series_ids=input_series_ids,
+            params=self._current_analysis_params(),
+            summary=dict(self._result),
         )
         if t == "curve_fit" and "fit_x" in self._result:
             s = DataSeries(
@@ -540,11 +1156,20 @@ class AnalysisPage(QWidget):
                 y=self._result["fit_y"],
                 source="computed",
             )
-            if not p.datasets:
-                project_manager.add_dataset("分析结果")
-            project_manager.add_series_to_dataset(p.datasets[-1].id, s)
+            project_manager.add_data_file(DataFile(name=f"{s.name}.analysis", series=[s]))
+            ar.result_series_id = s.id
+        elif t == "error_compare" and "error_x" in self._result:
+            s = DataSeries(
+                name=f"error_{self._result.get('name1', 'a')}_vs_{self._result.get('name2', 'b')}",
+                x=list(self._result["error_x"]),
+                y=list(self._result["error_y"]),
+                source="computed",
+            )
+            project_manager.add_data_file(DataFile(name=f"{s.name}.analysis", series=[s]))
             ar.result_series_id = s.id
         project_manager.add_analysis(ar)
+        self._sync_related_analysis_tabs()
+        self.project_modified.emit()
         InfoBar.success("已保存", "分析结果已保存至项目", parent=self,
                         position=InfoBarPosition.TOP)
 
@@ -565,35 +1190,118 @@ class AnalysisPage(QWidget):
                 return template.content
         return _DEFAULT_REPORT_TEMPLATE
 
-    def _sync_report_editor_from_template(self) -> None:
-        self._report_editor.setPlainText(self._current_report_template_content())
+    def _report_template_choices(self) -> List[tuple[str, Optional[str]]]:
+        choices: List[tuple[str, Optional[str]]] = [("默认模板", None)]
+        for template in global_assets.list_report_templates():
+            choices.append((template.name or "未命名模板", template.id))
+        return choices
+
+    def _refresh_report_template_combo(self, select_template_id: Optional[str] = None) -> None:
+        choices = self._report_template_choices()
+        target_template_id = select_template_id if select_template_id is not None else self._current_report_template_id
+        self._report_template_combo.blockSignals(True)
+        self._report_template_combo.clear()
+        self._report_template_ids = []
+        selected_index = 0
+        for index, (label, template_id) in enumerate(choices):
+            self._report_template_combo.addItem(label)
+            self._report_template_ids.append(template_id)
+            if template_id == target_template_id:
+                selected_index = index
+        self._report_template_combo.setCurrentIndex(selected_index)
+        self._report_template_combo.blockSignals(False)
+        self._btn_update_report_template.setEnabled(bool(self._current_report_template_id))
+
+    def _selected_report_template_id(self) -> Optional[str]:
+        idx = self._report_template_combo.currentIndex()
+        if idx < 0 or idx >= len(self._report_template_ids):
+            return None
+        return self._report_template_ids[idx]
+
+    def _load_selected_report_template(self) -> None:
+        self._load_report_template_by_id(self._selected_report_template_id(), announce=True)
+
+    def _load_report_template_by_id(self, template_id: Optional[str], announce: bool = False) -> bool:
+        from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
+
+        content = _DEFAULT_REPORT_TEMPLATE
+        template_name = "默认模板"
+        current_template_id = None
+        if template_id:
+            template = project_manager.get_report_template(template_id)
+            if template is None:
+                return False
+            content = template.content
+            template_name = template.name or "默认模板"
+            current_template_id = template.id
+        self._current_report_template_id = current_template_id
+        self._current_report_template_name = template_name
+        self._report_template_label.setText(f"当前报告模板: {self._current_report_template_name}")
+        self._refresh_report_template_combo(current_template_id)
+        self._report_editor.setPlainText(content)
         self._render_report_preview()
+        if announce:
+            InfoBar.success(
+                "已应用模板",
+                f"当前报告模板已切换为 {self._current_report_template_name}",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=2500,
+            )
+        return True
+
+    def _sync_report_editor_from_template(self) -> None:
+        self._load_report_template_by_id(self._current_report_template_id)
 
     def _render_report_preview(self) -> None:
         from core.analysis_engine import render_report
 
         content = self._report_editor.toPlainText()
-        rendered = render_report(content, self._result)
+        selected_results = self._selected_report_results()
+        if len(selected_results) <= 1:
+            rendered = render_report(content, selected_results[0]["result"] if selected_results else self._result)
+        else:
+            sections = []
+            for item in selected_results:
+                section_title = item.get("title") or self._analysis_type_label(item["result"].get("analysis_type", ""))
+                sections.append(f"## {section_title}\n\n{render_report(content, item['result'])}")
+            rendered = "\n\n".join(section for section in sections if section)
         self._report_preview.setPlainText(rendered)
+
+    def _find_report_template_by_name(self, name: str) -> Optional[str]:
+        clean_name = name.strip()
+        if not clean_name:
+            return None
+        for template in global_assets.list_report_templates():
+            if (template.name or "").strip() == clean_name:
+                return template.id
+        return None
 
     def _save_report_template_as_named(self, name: str) -> bool:
         clean_name = name.strip()
         if not clean_name:
             return False
         content = self._report_editor.toPlainText()
-        template = project_manager.add_report_template(clean_name, content)
-        if template is None:
-            return False
+        template_id = self._find_report_template_by_name(clean_name)
+        if template_id is not None:
+            if not project_manager.update_report_template(template_id, name=clean_name, content=content):
+                return False
+            template = project_manager.get_report_template(template_id)
+            if template is None:
+                return False
+        else:
+            template = project_manager.add_report_template(clean_name, content)
+            if template is None:
+                return False
         self._current_report_template_id = template.id
         self._current_report_template_name = template.name
         self._report_template_label.setText(f"当前报告模板: {self._current_report_template_name}")
+        self._refresh_report_template_combo(template.id)
         self.project_modified.emit()
         return True
 
     def _save_report_template_as(self) -> None:
-        from PySide6.QtWidgets import QInputDialog
-
-        name, ok = QInputDialog.getText(self, "另存为报告模板", "模板名称:")
+        name, ok = TextInputDialog.get_text(self, "另存为报告模板", "模板名称:", placeholder="输入模板名称")
         if not ok or not name.strip():
             return
         if self._save_report_template_as_named(name):
@@ -603,6 +1311,7 @@ class AnalysisPage(QWidget):
         content = self._report_editor.toPlainText()
         if self._current_report_template_id:
             if project_manager.update_report_template(self._current_report_template_id, content=content):
+                self._refresh_report_template_combo(self._current_report_template_id)
                 self.project_modified.emit()
                 InfoBar.success("已保存", "当前报告模板已更新", parent=self, position=InfoBarPosition.TOP)
                 return
@@ -632,32 +1341,234 @@ class AnalysisPage(QWidget):
             InfoBar.success("导出成功", path, parent=self, position=InfoBarPosition.TOP)
 
     def load_report_template(self, template_node_id: str) -> None:
-        node = project_manager.get_node_by_id(template_node_id)
-        if node is None or node.kind != "report_template":
+        self._load_report_template_by_id(template_node_id, announce=True)
+
+    def _current_analysis_params(self) -> Dict[str, Any]:
+        analysis_type = self._current_analysis_type()
+        params: Dict[str, Any] = {
+            "analysis_type": analysis_type,
+            "input_refs": [dict(item) for item in self._selected_inputs],
+        }
+        if analysis_type == "curve_fit":
+            params["fit_model"] = _FIT_MODEL_IDS[self._fit_model_combo.currentIndex()]
+        elif analysis_type == "peak_detect":
+            params.update({
+                "min_height": self._peak_height_edit.text().strip(),
+                "min_distance_mode": "x_distance" if self._peak_dist_mode_combo.currentIndex() == 1 else "points",
+                "min_distance": self._peak_dist_edit.text().strip(),
+                "prominence": self._peak_prom_edit.text().strip(),
+            })
+        elif analysis_type == "correlation":
+            params["corr_method"] = self._corr_method_combo.currentText().strip().lower()
+        elif analysis_type not in _TYPE_IDS:
+            params["extension_options"] = dict(self._analysis_extension_options.get(analysis_type, {}))
+        return params
+
+    def _restore_analysis_params(self, params: Dict[str, Any]) -> None:
+        fit_model = params.get("fit_model")
+        if fit_model in _FIT_MODEL_IDS:
+            self._fit_model_combo.setCurrentIndex(_FIT_MODEL_IDS.index(fit_model))
+        self._peak_height_edit.setText(str(params.get("min_height", "")))
+        self._peak_dist_mode_combo.setCurrentIndex(1 if params.get("min_distance_mode") == "x_distance" else 0)
+        self._peak_dist_edit.setText(str(params.get("min_distance", "1")))
+        self._peak_prom_edit.setText(str(params.get("prominence", "")))
+        corr_method = str(params.get("corr_method", "pearson")).capitalize()
+        corr_idx = self._corr_method_combo.findText(corr_method)
+        if corr_idx >= 0:
+            self._corr_method_combo.setCurrentIndex(corr_idx)
+        analysis_type = str(params.get("analysis_type", "") or "")
+        extension_options = params.get("extension_options")
+        if analysis_type and analysis_type not in _TYPE_IDS and isinstance(extension_options, dict):
+            self._analysis_extension_options[analysis_type] = dict(extension_options)
+            if hasattr(self, "_extension_panel"):
+                self._extension_panel.set_entries(
+                    self._analysis_extension_entries(),
+                    saved_options=self._analysis_extension_options,
+                    current_type=analysis_type,
+                )
+
+    def _update_peak_export_buttons(self) -> None:
+        is_peak_mode = self._current_analysis_type() == "peak_detect"
+        has_peak_result = bool(self._result and self._result.get("analysis_type") == "peak_detect")
+        peak_count = len(self._result.get("peaks", [])) if has_peak_result else 0
+        valley_count = len(self._result.get("valleys", [])) if has_peak_result else 0
+        self._export_peaks_btn.setVisible(is_peak_mode)
+        self._export_valleys_btn.setVisible(is_peak_mode)
+        self._export_peaks_btn.setEnabled(has_peak_result and peak_count > 0)
+        self._export_valleys_btn.setEnabled(has_peak_result and valley_count > 0)
+
+    def _export_extrema_series(self, result_key: str, suffix: str) -> None:
+        if not self._result or self._result.get("analysis_type") != "peak_detect":
+            InfoBar.warning("提示", "请先运行峰值检测", parent=self, position=InfoBarPosition.TOP)
             return
-        template = project_manager.get_report_template(node.template_id)
-        if template is None:
+        points = list(self._result.get(result_key, []) or [])
+        if not points:
+            InfoBar.warning("提示", "当前结果中没有可导出的点", parent=self, position=InfoBarPosition.TOP)
             return
-        self._current_report_template_id = template.id
-        self._current_report_template_name = template.name or "默认模板"
-        self._report_template_label.setText(f"当前报告模板: {self._current_report_template_name}")
-        self._sync_report_editor_from_template()
-        InfoBar.success(
-            "已应用模板",
-            f"当前报告模板已切换为 {self._current_report_template_name}",
-            parent=self,
-            position=InfoBarPosition.TOP,
-            duration=2500,
+        project = project_manager.current_project
+        if project is None:
+            InfoBar.warning("提示", "没有打开的项目", parent=self, position=InfoBarPosition.TOP)
+            return
+
+        from models.schemas import DataFile, DataSeries
+
+        source_name = self._result.get("source_name", "series")
+        series = DataSeries(
+            name=f"{suffix}_{source_name}",
+            x=[float(point["x"]) for point in points],
+            y=[float(point["y"]) for point in points],
+            source="computed",
         )
+        project_manager.add_data_file(DataFile(name=f"{series.name}.analysis", series=[series]))
+        self.project_modified.emit()
+        InfoBar.success("已导出", f"{series.name} 已保存为新曲线", parent=self, position=InfoBarPosition.TOP)
+
+    def _analysis_inputs_payloads(self, analysis) -> List[dict]:
+        payloads: List[dict] = []
+        raw_input_refs = analysis.params.get("input_refs", []) if isinstance(analysis.params, dict) else []
+        for item in raw_input_refs:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("kind")
+            node_id = item.get("node_id")
+            if not kind or not node_id:
+                continue
+            series = project_manager.get_series_from_node(kind, node_id)
+            if series is None:
+                continue
+            payloads.append({
+                "kind": kind,
+                "node_id": node_id,
+                "label": item.get("label") or series.name,
+            })
+        if not payloads:
+            project = project_manager.current_project
+            for series_id in analysis.input_series_ids:
+                if project is not None and project.find_series(series_id) is not None:
+                    series = project.find_series(series_id)
+                    payloads.append({"kind": "series", "node_id": series_id, "label": series.name})
+                    continue
+                curve = project_manager.get_curve(series_id)
+                if curve is not None:
+                    payloads.append({"kind": "curve", "node_id": series_id, "label": curve.name})
+        return payloads
+
+    def _restore_analysis_inputs(self, analysis) -> None:
+        payloads = self._analysis_inputs_payloads(analysis)
+        self._selected_inputs = payloads
+        self._rebuild_input_list()
+
+    def _rehydrate_saved_result_payload(self, analysis) -> Dict[str, Any]:
+        result = dict(analysis.summary or {})
+        result.setdefault("analysis_type", analysis.analysis_type)
+        if analysis.result_series_id is None:
+            return result
+        project = project_manager.current_project
+        if project is None:
+            return result
+        series = project.find_series(analysis.result_series_id)
+        if series is None:
+            return result
+        if analysis.analysis_type == "curve_fit":
+            result.setdefault("fit_x", list(series.x))
+            result.setdefault("fit_y", list(series.y))
+        elif analysis.analysis_type == "error_compare":
+            result.setdefault("error_x", list(series.x))
+            result.setdefault("error_y", list(series.y))
+        return result
+
+    def _rehydrate_saved_result(self, analysis) -> None:
+        self._result = self._rehydrate_saved_result_payload(analysis)
+
+    def _clear_loaded_analysis_tabs(self) -> None:
+        for index in range(self._analysis_tabs.count() - 1, 0, -1):
+            tab_key = self._analysis_tab_key_for_index(index)
+            view = self._analysis_tab_views.get(tab_key) if tab_key else None
+            self._analysis_tabs.removeTab(index)
+            if view is not None and view.get("widget") is not None:
+                view["widget"].deleteLater()
+        current_view = self._analysis_tab_views.get("current")
+        self._analysis_tab_views = {"current": current_view} if current_view is not None else {}
+        self._analysis_tab_keys = ["current"] if current_view is not None else []
+        self._refresh_report_result_selectors()
+
+    def _ensure_analysis_result_tab(self, tab_key: str, title: str) -> Dict[str, Any]:
+        view = self._analysis_tab_views.get(tab_key)
+        if view is None:
+            view = self._create_analysis_result_view(self._analysis_tabs)
+            self._analysis_tab_views[tab_key] = view
+            self._analysis_tab_keys.append(tab_key)
+            self._analysis_tabs.addTab(view["widget"], title)
+        index = self._analysis_tab_keys.index(tab_key)
+        self._analysis_tabs.setTabText(index, title)
+        view["analysis_name"] = title
+        return view
+
+    def _open_analysis_result_tab(self, analysis, announce: bool = False, set_active: bool = True) -> None:
+        analysis_type = analysis.analysis_type or "curve_fit"
+        view = self._ensure_analysis_result_tab(analysis.id, analysis.name or "分析结果")
+        inputs = self._analysis_inputs_payloads(analysis)
+        result = self._rehydrate_saved_result_payload(analysis)
+        selected = self._get_data_for_inputs(inputs)
+        view["result"] = dict(result)
+        view["analysis_type"] = analysis_type
+        view["selected"] = list(selected)
+        view["inputs"] = [dict(item) for item in inputs]
+        view["params"] = dict(analysis.params or {})
+        self._render_result_view(view, analysis_type, selected, result)
+        tab_index = self._analysis_tab_keys.index(analysis.id)
+        if set_active:
+            self._analysis_tabs.setCurrentIndex(tab_index)
+            self._sync_state_from_analysis_view(view)
+        if announce:
+            InfoBar.success(
+                "已加载分析结果",
+                analysis.name or "分析结果",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=2500,
+            )
+
+    def _sync_related_analysis_tabs(self) -> None:
+        self._clear_loaded_analysis_tabs()
+        if self._requires_pair_input() or not self._selected_inputs:
+            return
+        project = project_manager.current_project
+        if project is None:
+            return
+        primary = self._selected_inputs[0]
+        series = project_manager.get_series_from_node(primary["kind"], primary["node_id"])
+        if series is None:
+            return
+        for analysis in project.analyses:
+            if series.id in list(analysis.input_series_ids or []):
+                self._open_analysis_result_tab(analysis, announce=False, set_active=False)
+
+    def load_analysis_result(self, analysis_node_id: str) -> None:
+        project = project_manager.current_project
+        if project is None:
+            return
+        node = project_manager.get_node_by_id(analysis_node_id)
+        if node is None or node.kind != "analysis_result":
+            return
+        analysis = project.find_analysis(node.analysis_id)
+        if analysis is None:
+            return
+        self._result_tabs.setCurrentIndex(0)
+        self._open_analysis_result_tab(analysis, announce=True, set_active=True)
 
     # ─────────────────────────────────────────────────────────
     # 外部接口
     # ─────────────────────────────────────────────────────────
 
     def update_theme(self):
-        if self._result:
-            self._draw_result(
-                self._result.get("analysis_type", ""),
-                self._get_selected_data(),
-                self._result,
+        for view in self._analysis_tab_views.values():
+            result = view.get("result")
+            if not result:
+                continue
+            self._render_result_view(
+                view,
+                view.get("analysis_type") or result.get("analysis_type", ""),
+                view.get("selected") or [],
+                result,
             )

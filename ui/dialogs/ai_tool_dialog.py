@@ -14,7 +14,7 @@ from qfluentwidgets import (
     SubtitleLabel, LineEdit,
 )
 
-from core.project_manager import project_manager
+from core.global_assets import global_assets
 
 _TOOL_TYPES = ["prompt", "skill", "agent"]
 _TOOL_LABELS = ["Prompt（提示词）", "Skill（代码技能）", "Agent（自定义代理）"]
@@ -145,21 +145,26 @@ class AIToolDialog(QDialog):
     # ─────────────────────────────────────────────────────────────
 
     def _load_existing(self):
-        p = project_manager.current_project
-        if p is None or self._tool_id is None:
+        if self._tool_id is None:
             return
         if self._tool_type == "prompt":
-            obj = next((x for x in p.ai_prompts if x.id == self._tool_id), None)
+            obj = global_assets.get_ai_prompt(self._tool_id)
+            if obj:
+                self._name_edit.setText(obj.name)
+                self._desc_edit.setText(getattr(obj, "description", ""))
+                self._content_edit.setPlainText(obj.content)
         elif self._tool_type == "skill":
-            obj = next((x for x in p.ai_skills if x.id == self._tool_id), None)
+            obj = global_assets.get_ai_skill(self._tool_id)
+            if obj:
+                self._name_edit.setText(obj.name)
+                self._desc_edit.setText(getattr(obj, "description", ""))
+                self._content_edit.setPlainText(obj.code)
         elif self._tool_type == "agent":
-            obj = next((x for x in p.ai_agents if x.id == self._tool_id), None)
-        else:
-            obj = None
-        if obj:
-            self._name_edit.setText(obj.name)
-            self._desc_edit.setText(getattr(obj, "description", ""))
-            self._content_edit.setPlainText(obj.content)
+            obj = global_assets.get_ai_agent(self._tool_id)
+            if obj:
+                self._name_edit.setText(obj.name)
+                self._desc_edit.setText(getattr(obj, "description", ""))
+                self._content_edit.setPlainText(obj.system_prompt)
 
     # ─────────────────────────────────────────────────────────────
     # 保存
@@ -182,35 +187,28 @@ class AIToolDialog(QDialog):
 
     def _do_create(self, t, name, content, desc):
         if t == "prompt":
-            obj = project_manager.add_ai_prompt(name, content, desc)
+            obj = global_assets.add_ai_prompt(name, content, desc)
         elif t == "skill":
-            obj = project_manager.add_ai_skill(name, content, desc)
+            obj = global_assets.add_ai_skill(name, content, desc)
         else:
-            obj = project_manager.add_ai_agent(name, content, desc)
+            obj = global_assets.add_ai_agent(name, content, desc)
         if obj is None:
             InfoBar.error("失败", "保存失败", parent=self, position=InfoBarPosition.TOP)
             return
         self.accept()
 
     def _do_update(self, t, name, content, desc):
-        p = project_manager.current_project
-        if p is None or self._tool_id is None:
+        if self._tool_id is None:
             return
         if t == "prompt":
-            objs = p.ai_prompts
+            ok = global_assets.update_ai_prompt(self._tool_id, name=name, content=content, description=desc)
         elif t == "skill":
-            objs = p.ai_skills
+            ok = global_assets.update_ai_skill(self._tool_id, name=name, code=content, description=desc)
         else:
-            objs = p.ai_agents
-        obj = next((x for x in objs if x.id == self._tool_id), None)
-        if obj is None:
+            ok = global_assets.update_ai_agent(self._tool_id, name=name, system_prompt=content, description=desc)
+        if not ok:
             InfoBar.error("失败", "找不到原始工具", parent=self, position=InfoBarPosition.TOP)
             return
-        obj.name = name
-        obj.content = content
-        if hasattr(obj, "description"):
-            obj.description = desc
-        p.is_modified = True
         self.accept()
 
     # ─────────────────────────────────────────────────────────────

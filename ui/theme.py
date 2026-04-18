@@ -56,6 +56,16 @@ def make_section_label(text: str, parent=None):
     return lbl
 
 
+def make_hint_label(text: str = "", parent=None):
+    """创建统一的说明/提示标签。"""
+    from qfluentwidgets import BodyLabel
+
+    lbl = BodyLabel(text, parent)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+    return lbl
+
+
 def make_hsep(parent=None):
     """创建水平分隔线"""
     from PySide6.QtWidgets import QFrame

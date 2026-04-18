@@ -17,9 +17,29 @@ import math
 import os
 import sys
 import tempfile
+import textwrap
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _patch_global_assets():
+    from core.global_assets import GlobalAssets, global_assets
+
+    temp_dir = tempfile.TemporaryDirectory()
+    old_path = global_assets._asset_path
+    old_cache = global_assets._cache
+    global_assets._asset_path = Path(temp_dir.name) / "global_assets.json"
+    global_assets._cache = GlobalAssets()
+    global_assets.save()
+
+    def restore():
+        global_assets._asset_path = old_path
+        global_assets._cache = old_cache
+        temp_dir.cleanup()
+
+    return restore
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -168,7 +188,11 @@ class TestProjectManager(unittest.TestCase):
     def setUp(self):
         # 每次测试前重置全局单例状态
         from core.project_manager import ProjectManager
+        self._restore_assets = _patch_global_assets()
         self.pm = ProjectManager()
+
+    def tearDown(self):
+        self._restore_assets()
 
     def test_create_new_project(self):
         p = self.pm.create_new("test_proj")
@@ -196,6 +220,43 @@ class TestProjectManager(unittest.TestCase):
         kinds = [n.kind for n in p.tree.nodes]
         # At minimum, folder nodes should be created
         self.assertIn("folder", kinds)
+
+    def test_new_project_tree_contains_only_business_root_groups(self):
+        p = self.pm.create_new("grouped_tree")
+        self.pm.migrate_to_v3(p)
+        folder_map = {
+            (node.name, getattr(node, "group_type", None), node.parent_id)
+            for node in p.tree.nodes
+            if node.kind == "folder"
+        }
+        self.assertIn(("数据集", "datasets", None), folder_map)
+        self.assertIn(("图片集", "images", None), folder_map)
+        self.assertIn(("分析结果", "analysis_result_group", None), folder_map)
+        self.assertEqual(len(folder_map), 3)
+
+    def test_migrate_to_v3_removes_legacy_tools_folder(self):
+        from models.schemas import FolderNode, ProjectTree
+
+        p = self.pm.create_new("legacy_tools")
+        ds = FolderNode(name="数据集", group_type="datasets", order=0)
+        imgs = FolderNode(name="图片集", group_type="images", order=1)
+        tools = FolderNode(name="工具集", group_type="tools", order=2)
+        pipelines = FolderNode(name="Pipelines", group_type="pipeline_group", parent_id=tools.id, order=0)
+        reports = FolderNode(name="报告模板组", group_type="report_template_group", parent_id=tools.id, order=1)
+        ai_group = FolderNode(name="AI 工具", group_type="ai_group", parent_id=tools.id, order=2)
+        p.tree = ProjectTree(nodes=[ds, imgs, tools, pipelines, reports, ai_group])
+
+        self.pm.migrate_to_v3(p)
+
+        root_map = {
+            (node.name, getattr(node, "group_type", None), node.parent_id)
+            for node in p.tree.nodes
+            if node.kind == "folder"
+        }
+        self.assertNotIn(("工具集", "tools", None), root_map)
+        self.assertNotIn(("Pipelines", "pipeline_group", None), root_map)
+        self.assertNotIn(("报告模板组", "report_template_group", None), root_map)
+        self.assertNotIn(("AI 工具", "ai_group", None), root_map)
 
     def test_add_folder(self):
         self.pm.create_new("test")
@@ -227,15 +288,13 @@ class TestProjectManager(unittest.TestCase):
 
     def test_rename_figure_template_updates_figure_name(self):
         from models.schemas import FigureConfig
+        from core.global_assets import global_assets
 
-        p = self.pm.create_new("test")
-        self.pm.migrate_to_v2(p)
-        node = self.pm.add_figure_template(FigureConfig(name="old_template"))
-        self.assertIsNotNone(node)
-        result = self.pm.rename_node(node.id, "renamed_template")
-        self.assertTrue(result)
-        fig = p.find_figure(node.figure_id)
+        self.pm.create_new("test")
+        fig = self.pm.add_figure_template(FigureConfig(name="old_template"))
         self.assertIsNotNone(fig)
+        self.assertTrue(global_assets.update_figure_template(fig.id, name="renamed_template"))
+        fig = global_assets.get_figure_template(fig.id)
         self.assertEqual(fig.name, "renamed_template")
 
     def test_delete_node_with_cascade(self):
@@ -256,23 +315,36 @@ class TestProjectManager(unittest.TestCase):
         self.assertNotIn(df, p.data_files)
 
     def test_add_and_load_pipeline(self):
-        p = self.pm.create_new("test")
-        self.pm.migrate_to_v2(p)
+        from core.global_assets import global_assets
+
+        self.pm.create_new("test")
         ops = [{"type": "smooth", "params": {"window": 5}},
                {"type": "normalize", "params": {"mode": "minmax"}}]
         sp = self.pm.add_saved_pipeline("my_pipe", ops)
         self.assertIsNotNone(sp)
         loaded = self.pm.load_pipeline(sp.id)
         self.assertEqual(loaded, ops)
+        self.assertEqual(global_assets.get_saved_pipeline(sp.id).name, "my_pipe")
+
+    def test_move_node_rejects_folder_move(self):
+        p = self.pm.create_new("move_guard")
+        self.pm.migrate_to_v3(p)
+        folder = self.pm.add_folder("user_folder")
+        datasets_folder = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(folder)
+        self.assertIsNotNone(datasets_folder)
+        moved = self.pm.move_node(folder.id, datasets_folder.id, 0)
+        self.assertFalse(moved)
 
     def test_delete_pipeline(self):
-        p = self.pm.create_new("test")
-        self.pm.migrate_to_v2(p)
+        from core.global_assets import global_assets
+
+        self.pm.create_new("test")
         sp = self.pm.add_saved_pipeline("pipe1", [])
         self.assertIsNotNone(sp)
         result = self.pm.delete_saved_pipeline(sp.id)
         self.assertTrue(result)
-        self.assertNotIn(sp, p.saved_pipelines)
+        self.assertIsNone(global_assets.get_saved_pipeline(sp.id))
 
     def test_save_and_reload(self):
         from models.schemas import DataFile, DataSeries
@@ -418,6 +490,16 @@ class TestDataEngine(unittest.TestCase):
         self.assertEqual(len(nx), 100)
         self.assertEqual(len(ny), 100)
 
+    def test_op_resample_by_spacing(self):
+        from processing.data_engine import apply_operation
+
+        xs = [0.0, 1.0, 2.0, 3.0, 4.0]
+        ys = [0.0, 1.0, 2.0, 3.0, 4.0]
+        nx, ny = apply_operation(xs, ys, {"type": "resample", "params": {"mode": "spacing", "step": 0.5}})
+
+        self.assertEqual(nx, [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
+        self.assertEqual(ny, nx)
+
     def test_op_derivative(self):
         from processing.data_engine import apply_operation
         # y = x² → dy/dx = 2x
@@ -467,6 +549,34 @@ class TestDataEngine(unittest.TestCase):
         self.assertEqual(len(nx), len(xs))
         self.assertEqual(len(ny), len(ys))
 
+    def test_op_fft_supports_sampling_rate_override(self):
+        from processing.data_engine import apply_operation
+        import math as m
+
+        sample_rate = 100.0
+        xs = [index / sample_rate for index in range(100)]
+        ys = [m.sin(2 * m.pi * 5 * x) for x in xs]
+
+        freq, amp = apply_operation(xs, ys, {"type": "fft", "params": {"sampling_rate": sample_rate}})
+
+        peak_index = max(range(1, len(amp)), key=lambda index: amp[index])
+        self.assertAlmostEqual(freq[peak_index], 5.0, delta=0.25)
+
+    def test_op_filter_supports_actual_cutoff_frequency(self):
+        from processing.data_engine import apply_operation
+        import math as m
+
+        sample_rate = 100.0
+        xs = [index / sample_rate for index in range(200)]
+        ys = [m.sin(2 * m.pi * 2 * x) + 0.4 * m.sin(2 * m.pi * 20 * x) for x in xs]
+
+        _, normalized = apply_operation(xs, ys, {"type": "filter", "params": {"cutoff": 0.1, "order": 4, "mode": "low"}})
+        _, actual = apply_operation(xs, ys, {"type": "filter", "params": {"cutoff": 5.0, "cutoff_mode": "actual", "sampling_rate": sample_rate, "order": 4, "mode": "low"}})
+
+        self.assertEqual(len(normalized), len(actual))
+        for norm_value, actual_value in zip(normalized, actual):
+            self.assertAlmostEqual(norm_value, actual_value, delta=1e-6)
+
     def test_pipeline_chain(self):
         from processing.data_engine import apply_pipeline
         xs, ys = self._make_wave(50)
@@ -487,6 +597,24 @@ class TestDataEngine(unittest.TestCase):
         nx, ny = apply_operation(xs, ys, {"type": "unknown_op", "params": {}})
         self.assertEqual(nx, xs)
         self.assertEqual(ny, ys)
+
+    def test_custom_processing_extension_executes(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+        from processing.data_engine import apply_operation
+
+        def _scale(xs, ys, params):
+            factor = float(params.get("factor", 1.0))
+            return list(xs), [value * factor for value in ys]
+
+        extension_registry.register_processing(
+            ProcessingExtension(type="test_scale", name="测试缩放", handler=_scale)
+        )
+        try:
+            nx, ny = apply_operation([0.0, 1.0], [2.0, 3.0], {"type": "test_scale", "params": {"factor": 4}})
+            self.assertEqual(nx, [0.0, 1.0])
+            self.assertEqual(ny, [8.0, 12.0])
+        finally:
+            extension_registry.unregister_processing("test_scale")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -569,6 +697,16 @@ class TestAnalysisEngine(unittest.TestCase):
         for peak in r["peaks"]:
             self.assertGreater(peak["y"], 0.9)
 
+    def test_detect_peaks_with_x_distance_filter(self):
+        from core.analysis_engine import detect_peaks
+
+        xs = [0.0, 0.2, 0.4, 0.6, 1.0, 1.2, 1.4, 1.6]
+        ys = [0.0, 1.0, 0.0, 0.9, 0.0, 0.0, 0.8, 0.0]
+        r = detect_peaks(xs, ys, min_distance=None, min_distance_x=0.7)
+
+        self.assertEqual(r["count"], 2)
+        self.assertEqual([round(peak["x"], 1) for peak in r["peaks"]], [0.2, 1.4])
+
     def test_detect_peaks_empty(self):
         from core.analysis_engine import detect_peaks
         xs = [float(i) for i in range(10)]
@@ -615,12 +753,122 @@ class TestAnalysisEngine(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_correlation([1, 2], [1, 2], "pearson")
 
+    def test_compute_error_metrics(self):
+        from core.analysis_engine import compute_error_metrics
+
+        xs = [0.0, 1.0, 2.0]
+        y1 = [1.0, 2.0, 3.0]
+        y2 = [0.5, 2.5, 2.0]
+        result = compute_error_metrics(xs, y1, xs, y2)
+        self.assertEqual(result["analysis_type"], "error_compare")
+        self.assertEqual(result["n"], 3)
+        self.assertEqual(result["error_y"], [0.5, -0.5, 1.0])
+        self.assertAlmostEqual(result["mae"], (0.5 + 0.5 + 1.0) / 3)
+
     def test_fit_equation_format(self):
         from core.analysis_engine import fit_curve
         xs, ys = self._linear_data()
         r = fit_curve(xs, ys, "linear")
         self.assertIn("equation", r)
         self.assertIn("=", r["equation"])
+
+    def test_custom_analysis_extension_executes(self):
+        from core.analysis_engine import run_analysis
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        def _span(inputs, params):
+            values = list(inputs[0].get("y", []))
+            return {
+                "analysis_type": "test_span",
+                "source_name": inputs[0].get("name", ""),
+                "span": (max(values) - min(values)) if values else 0.0,
+                "scale": params.get("scale", 1),
+            }
+
+        extension_registry.register_analysis(
+            AnalysisExtension(type="test_span", name="测试跨度", handler=_span)
+        )
+        try:
+            result = run_analysis(
+                "test_span",
+                [{"x": [0.0, 1.0], "y": [2.0, 6.0], "name": "s1"}],
+                {"scale": 3},
+            )
+            self.assertEqual(result["analysis_type"], "test_span")
+            self.assertEqual(result["span"], 4.0)
+            self.assertEqual(result["scale"], 3)
+        finally:
+            extension_registry.unregister_analysis("test_span")
+
+    def test_extension_registry_loads_directory_module(self):
+        from core.analysis_engine import run_analysis
+        from core.extension_api import extension_registry
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "demo_extension.py"
+            path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import AnalysisExtension, ProcessingExtension
+
+                def _scale(xs, ys, params):
+                    factor = float(params.get('factor', 1.0))
+                    return list(xs), [value * factor for value in ys]
+
+                def _span(inputs, params):
+                    values = list(inputs[0].get('y', []))
+                    return {
+                        'analysis_type': 'dir_span',
+                        'source_name': inputs[0].get('name', ''),
+                        'span': (max(values) - min(values)) if values else 0.0,
+                    }
+
+                def register_extensions(registry):
+                    registry.register_processing(ProcessingExtension(type='dir_scale', name='目录缩放', handler=_scale))
+                    registry.register_analysis(AnalysisExtension(type='dir_span', name='目录跨度', handler=_span))
+                """
+            ), encoding="utf-8")
+
+            report = extension_registry.load_from_directory(temp_dir)
+            try:
+                self.assertEqual(report["errors"], [])
+                self.assertEqual(len(report["loaded"]), 1)
+                result = run_analysis(
+                    "dir_span",
+                    [{"x": [0.0, 1.0], "y": [1.0, 5.0], "name": "demo"}],
+                    {},
+                )
+                self.assertEqual(result["span"], 4.0)
+            finally:
+                extension_registry.unregister_processing("dir_scale")
+                extension_registry.unregister_analysis("dir_span")
+
+    def test_load_builtin_extensions_helper_uses_target_directory(self):
+        from core.extension_api import extension_registry, load_builtin_extensions
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "helper_extension.py"
+            path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import ProcessingExtension
+
+                def _shift(xs, ys, params):
+                    offset = float(params.get('offset', 0.0))
+                    return list(xs), [value + offset for value in ys]
+
+                def register_extensions(registry):
+                    registry.register_processing(
+                        ProcessingExtension(type='helper_shift', name='目录平移', handler=_shift)
+                    )
+                """
+            ), encoding="utf-8")
+
+            report = load_builtin_extensions(temp_dir)
+            try:
+                self.assertEqual(report["errors"], [])
+                self.assertEqual(len(report["loaded"]), 1)
+                self.assertIsNotNone(extension_registry.get_processing("helper_shift"))
+            finally:
+                extension_registry.unregister_processing("helper_shift")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -758,6 +1006,7 @@ class TestCommandLayer(unittest.TestCase):
 
     def setUp(self):
         from core.project_manager import ProjectManager
+        self._restore_assets = _patch_global_assets()
         self.pm = ProjectManager()
         self.p = self.pm.create_new("ai_test")
         self.pm.migrate_to_v2(self.p)
@@ -782,6 +1031,7 @@ class TestCommandLayer(unittest.TestCase):
         import ai.command_layer as cl_module
         pm_module.project_manager = self._orig_pm
         cl_module.project_manager = self._orig_cl_pm
+        self._restore_assets()
 
     def test_get_project_summary(self):
         from ai.command_layer import cmd_get_project_summary
@@ -831,6 +1081,25 @@ class TestCommandLayer(unittest.TestCase):
         from ai.command_layer import cmd_detect_peaks
         r = cmd_detect_peaks({"series_id": self.series_id, "min_distance": 2})
         self.assertTrue(r.success)
+
+    def test_detect_peaks_command_accepts_series_name(self):
+        from ai.command_layer import cmd_detect_peaks
+
+        self.pm.current_project.data_files[0].series[0].name = "eta2_crop_resample_fft"
+        r = cmd_detect_peaks({"series_id": "eta2_crop_resample_fft", "min_distance": 2})
+
+        self.assertTrue(r.success)
+
+    def test_detect_peaks_command_supports_x_distance(self):
+        from ai.command_layer import cmd_detect_peaks
+
+        series = self.pm.current_project.data_files[0].series[0]
+        series.x = [0.0, 0.2, 0.4, 0.6, 1.0, 1.2, 1.4, 1.6]
+        series.y = [0.0, 1.0, 0.0, 0.9, 0.0, 0.0, 0.8, 0.0]
+        r = cmd_detect_peaks({"series_id": self.series_id, "min_distance_x": 0.7})
+
+        self.assertTrue(r.success)
+        self.assertEqual(r.data["count"], 2)
 
     def test_compute_statistics_command(self):
         from ai.command_layer import cmd_compute_statistics
@@ -895,11 +1164,21 @@ class TestAIClient(unittest.TestCase):
         self.assertEqual(cfg.provider, "openai_compatible")
         self.assertEqual(cfg.model, "gpt-4o-mini")
         self.assertEqual(cfg.timeout, 60)
+        self.assertAlmostEqual(cfg.top_p, 1.0)
+        self.assertEqual(cfg.system_prompt, "")
 
     def test_config_save_load(self):
         from core.ai_client import AIConfig
         import unittest.mock as mock
-        cfg = AIConfig(model="test-model", api_key="sk-test", timeout=30)
+        cfg = AIConfig(
+            model="test-model",
+            api_key="sk-test",
+            timeout=30,
+            top_p=0.8,
+            system_prompt="请使用中文回答",
+            ollama_keep_alive="10m",
+            ollama_num_ctx=8192,
+        )
         path = tempfile.mktemp(suffix=".json")
         try:
             with mock.patch("core.ai_client._CONFIG_PATH", __import__("pathlib").Path(path)):
@@ -908,6 +1187,10 @@ class TestAIClient(unittest.TestCase):
             self.assertEqual(cfg2.model, "test-model")
             self.assertEqual(cfg2.api_key, "sk-test")
             self.assertEqual(cfg2.timeout, 30)
+            self.assertAlmostEqual(cfg2.top_p, 0.8)
+            self.assertEqual(cfg2.system_prompt, "请使用中文回答")
+            self.assertEqual(cfg2.ollama_keep_alive, "10m")
+            self.assertEqual(cfg2.ollama_num_ctx, 8192)
         finally:
             if os.path.exists(path):
                 os.unlink(path)
@@ -953,24 +1236,137 @@ class TestAIClient(unittest.TestCase):
 
     def test_config_temperature_custom(self):
         from core.ai_client import AIConfig
-        cfg = AIConfig(temperature=0.2, max_tokens=512)
+        cfg = AIConfig(temperature=0.2, top_p=0.6, max_tokens=512)
         self.assertAlmostEqual(cfg.temperature, 0.2)
+        self.assertAlmostEqual(cfg.top_p, 0.6)
         self.assertEqual(cfg.max_tokens, 512)
 
     def test_config_save_load_temperature(self):
         from core.ai_client import AIConfig
         import unittest.mock as mock
-        cfg = AIConfig(temperature=0.1, max_tokens=1024)
+        cfg = AIConfig(temperature=0.1, top_p=0.5, max_tokens=1024)
         path = tempfile.mktemp(suffix=".json")
         try:
             with mock.patch("core.ai_client._CONFIG_PATH", __import__("pathlib").Path(path)):
                 cfg.save()
                 cfg2 = AIConfig.load()
             self.assertAlmostEqual(cfg2.temperature, 0.1)
+            self.assertAlmostEqual(cfg2.top_p, 0.5)
             self.assertEqual(cfg2.max_tokens, 1024)
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+    def test_provider_presets_expose_models(self):
+        from core.ai.providers import get_provider_preset, list_builtin_models
+
+        preset = get_provider_preset("ollama")
+        self.assertTrue(preset["supports_model_discovery"])
+        self.assertFalse(preset["api_key_required"])
+        self.assertIn("llama3.1:8b", list_builtin_models("ollama"))
+
+    def test_ai_client_injects_system_prompt(self):
+        from core.ai_client import AIClient, AIConfig
+
+        client = AIClient(AIConfig(system_prompt="请使用中文回答"))
+        messages = client._with_global_system_prompt([
+            {"role": "system", "content": "保持回答精炼"},
+            {"role": "user", "content": "ping"},
+        ])
+
+        self.assertTrue(messages[0]["content"].startswith("请使用中文回答"))
+        self.assertIn("保持回答精炼", messages[0]["content"])
+
+    def test_list_available_models_sync_reads_ollama_tags(self):
+        from core.ai_client import AIClient, AIConfig
+        import unittest.mock as mock
+
+        class _FakeResponse:
+            def __init__(self, payload: bytes):
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        payload = json.dumps({
+            "models": [
+                {"name": "qwen2.5:7b"},
+                {"model": "llama3.1:8b"},
+            ]
+        }).encode("utf-8")
+        client = AIClient(AIConfig(provider="ollama", base_url="http://localhost:11434/v1"))
+
+        with mock.patch("core.ai_client.urlopen", return_value=_FakeResponse(payload)) as mocked:
+            models = client.list_available_models_sync()
+
+        self.assertEqual(models, ["qwen2.5:7b", "llama3.1:8b"])
+        request = mocked.call_args.args[0]
+        self.assertIn("/api/tags", request.full_url)
+
+    def test_list_available_models_sync_passes_ollama_api_key(self):
+        from core.ai_client import AIClient, AIConfig
+        import unittest.mock as mock
+
+        class _FakeResponse:
+            def read(self) -> bytes:
+                return json.dumps({"models": []}).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        client = AIClient(AIConfig(provider="ollama", base_url="http://localhost:11434/v1", api_key="sk-ollama"))
+
+        with mock.patch("core.ai_client.urlopen", return_value=_FakeResponse()) as mocked:
+            client.list_available_models_sync()
+
+        request = mocked.call_args.args[0]
+        self.assertEqual(request.headers.get("Authorization"), "Bearer sk-ollama")
+
+    def test_ollama_chat_payload_uses_openai_v1_shape(self):
+        from core.ai_client import AIClient, AIConfig
+
+        client = AIClient(AIConfig(provider="ollama", base_url="http://localhost:11434/v1"))
+        payload = client._build_chat_payload([{"role": "user", "content": "ping"}], tools=[])
+
+        self.assertNotIn("options", payload)
+        self.assertNotIn("keep_alive", payload)
+        self.assertEqual(payload["model"], client.config.model)
+
+
+class TestMainEntry(unittest.TestCase):
+
+    def test_infer_linux_input_method_from_xmodifiers(self):
+        from main import _infer_linux_input_method
+
+        env = {"XMODIFIERS": "@im=fcitx"}
+        self.assertEqual(_infer_linux_input_method(env), "fcitx")
+
+    def test_configure_linux_environment_sets_qt_im_module(self):
+        from main import _configure_linux_environment
+        import unittest.mock as mock
+
+        env = {"GTK_IM_MODULE": "ibus"}
+        with mock.patch("main.sys.platform", "linux"):
+            _configure_linux_environment(env)
+        self.assertEqual(env.get("QT_IM_MODULE"), "ibus")
+
+    def test_configure_linux_environment_preserves_existing_qt_im_module(self):
+        from main import _configure_linux_environment
+        import unittest.mock as mock
+
+        env = {"QT_IM_MODULE": "fcitx", "GTK_IM_MODULE": "ibus"}
+        with mock.patch("main.sys.platform", "linux"):
+            _configure_linux_environment(env)
+        self.assertEqual(env.get("QT_IM_MODULE"), "fcitx")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1068,8 +1464,12 @@ class TestProjectManagerV3(unittest.TestCase):
 
     def setUp(self):
         from core.project_manager import ProjectManager
+        self._restore_assets = _patch_global_assets()
         self.pm = ProjectManager()
         self.p = self.pm.create_new("v3_test")
+
+    def tearDown(self):
+        self._restore_assets()
 
     def test_new_project_has_tree(self):
         """v0.3 新建项目应立即有树（不需要 migrate）"""
@@ -1095,73 +1495,76 @@ class TestProjectManagerV3(unittest.TestCase):
         self.assertGreater(len(group_types), 0)
 
     def test_add_ai_prompt(self):
+        from core.global_assets import global_assets
+
         obj = self.pm.add_ai_prompt("test_prompt", "System: you are a helper", "Test prompt")
         self.assertIsNotNone(obj)
         self.assertEqual(obj.name, "test_prompt")
-        self.assertIn(obj, self.p.ai_prompts)
+        self.assertEqual(global_assets.get_ai_prompt(obj.id).name, "test_prompt")
 
     def test_delete_ai_prompt(self):
+        from core.global_assets import global_assets
+
         obj = self.pm.add_ai_prompt("to_delete", "content", "")
-        self.assertIn(obj, self.p.ai_prompts)
+        self.assertIsNotNone(global_assets.get_ai_prompt(obj.id))
         result = self.pm.delete_ai_prompt(obj.id)
         self.assertTrue(result)
-        self.assertNotIn(obj, self.p.ai_prompts)
+        self.assertIsNone(global_assets.get_ai_prompt(obj.id))
 
     def test_add_ai_skill(self):
+        from core.global_assets import global_assets
+
         obj = self.pm.add_ai_skill("my_skill", "result = 42", "A skill")
         self.assertIsNotNone(obj)
         self.assertEqual(obj.name, "my_skill")
-        self.assertIn(obj, self.p.ai_skills)
+        self.assertEqual(global_assets.get_ai_skill(obj.id).name, "my_skill")
 
     def test_delete_ai_skill(self):
+        from core.global_assets import global_assets
+
         obj = self.pm.add_ai_skill("to_del_skill", "result = 1", "")
         result = self.pm.delete_ai_skill(obj.id)
         self.assertTrue(result)
-        self.assertNotIn(obj, self.p.ai_skills)
+        self.assertIsNone(global_assets.get_ai_skill(obj.id))
 
     def test_add_ai_agent(self):
+        from core.global_assets import global_assets
+
         obj = self.pm.add_ai_agent("data_agent", "You analyze data.", "Data agent")
         self.assertIsNotNone(obj)
-        self.assertIn(obj, self.p.ai_agents)
+        self.assertEqual(global_assets.get_ai_agent(obj.id).name, "data_agent")
 
     def test_delete_ai_agent(self):
+        from core.global_assets import global_assets
+
         obj = self.pm.add_ai_agent("to_del_agent", "content", "")
         result = self.pm.delete_ai_agent(obj.id)
         self.assertTrue(result)
-        self.assertNotIn(obj, self.p.ai_agents)
+        self.assertIsNone(global_assets.get_ai_agent(obj.id))
 
     def test_add_report_template(self):
+        from core.global_assets import global_assets
+
         tmpl = self.pm.add_report_template("my_tmpl", "# Report\n{{date}}")
         self.assertIsNotNone(tmpl)
         self.assertEqual(tmpl.name, "my_tmpl")
-        self.assertIn(tmpl, self.p.report_templates)
-        self.assertTrue(any(
-            n.kind == "report_template" and n.template_id == tmpl.id
-            for n in self.p.tree.nodes
-        ))
+        self.assertEqual(global_assets.get_report_template(tmpl.id).name, "my_tmpl")
 
     def test_delete_report_template(self):
+        from core.global_assets import global_assets
+
         tmpl = self.pm.add_report_template("del_tmpl", "content")
         result = self.pm.delete_report_template(tmpl.id)
         self.assertTrue(result)
-        self.assertNotIn(tmpl, self.p.report_templates)
-        self.assertFalse(any(
-            n.kind == "report_template" and n.template_id == tmpl.id
-            for n in self.p.tree.nodes
-        ))
+        self.assertIsNone(global_assets.get_report_template(tmpl.id))
 
     def test_new_project_has_only_root_system_groups(self):
-        groups = [
+        root_groups = [
             getattr(n, "group_type", None)
             for n in self.p.tree.nodes
-            if n.kind == "folder"
+            if n.kind == "folder" and getattr(n, "parent_id", None) is None
         ]
-        self.assertIn("datasets", groups)
-        self.assertIn("images", groups)
-        self.assertIn("tools", groups)
-        self.assertNotIn("report_template_group", groups)
-        self.assertNotIn("pipeline_group", groups)
-        self.assertNotIn("template_group", groups)
+        self.assertEqual(root_groups, ["datasets", "images", "analysis_result_group"])
 
     def test_rename_series(self):
         from models.schemas import DataFile, DataSeries
@@ -1251,16 +1654,15 @@ class TestProjectManagerV3(unittest.TestCase):
         self.assertEqual(node.parent_id, datasets_folder.id)
 
     def test_update_saved_pipeline_updates_tree_node_name(self):
+        from core.global_assets import global_assets
+
         sp = self.pm.add_saved_pipeline("旧流程", [{"type": "smooth", "params": {}}])
         self.assertIsNotNone(sp)
         updated = self.pm.update_saved_pipeline(sp.id, name="新流程", ops=[{"type": "normalize", "params": {"mode": "minmax"}}])
         self.assertTrue(updated)
-        saved = self.p.find_saved_pipeline(sp.id)
+        saved = global_assets.get_saved_pipeline(sp.id)
         self.assertEqual(saved.name, "新流程")
         self.assertEqual(saved.ops[0]["type"], "normalize")
-        node = next((n for n in self.p.tree.nodes if n.kind == "pipeline" and n.pipeline_id == sp.id), None)
-        self.assertIsNotNone(node)
-        self.assertEqual(node.name, "新流程")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1347,6 +1749,7 @@ class TestCommandLayerV3(unittest.TestCase):
 
     def setUp(self):
         from core.project_manager import ProjectManager
+        self._restore_assets = _patch_global_assets()
         self.pm = ProjectManager()
         self.p = self.pm.create_new("cmd_v3")
         from models.schemas import DataFile, DataSeries
@@ -1368,6 +1771,7 @@ class TestCommandLayerV3(unittest.TestCase):
         import ai.command_layer as cl_module
         pm_module.project_manager = self._orig_pm
         cl_module.project_manager = self._orig_cl
+        self._restore_assets()
 
     def test_list_image_works_empty(self):
         from ai.command_layer import cmd_list_image_works
@@ -1442,6 +1846,33 @@ class TestCommandLayerV3(unittest.TestCase):
             "name": "x",
         })
         self.assertFalse(r.success)
+
+    def test_dispatcher_includes_global_ai_tools(self):
+        from ai.command_layer import CommandDispatcher, COMMANDS
+
+        prompt = self.pm.add_ai_prompt("prompt_tool", "hello", "desc")
+        skill = self.pm.add_ai_skill("skill_tool", "result = {'ok': True}", "desc")
+        agent = self.pm.add_ai_agent("agent_tool", "你是一个测试 agent。", "desc")
+
+        dispatcher = CommandDispatcher(runtime_context={"context_text": "ctx"})
+        tools = dispatcher.get_tools_schema()
+        names = [tool["function"]["name"] for tool in tools]
+
+        self.assertEqual(len(tools), len(COMMANDS) + 3)
+        self.assertIn(dispatcher._global_tool_name("global_prompt", prompt.id), names)
+        self.assertIn(dispatcher._global_tool_name("global_skill", skill.id), names)
+        self.assertIn(dispatcher._global_tool_name("global_agent", agent.id), names)
+
+    def test_dispatcher_executes_global_prompt_tool(self):
+        from ai.command_layer import CommandDispatcher
+
+        prompt = self.pm.add_ai_prompt("prompt_tool", "hello", "desc")
+        dispatcher = CommandDispatcher()
+        action = dispatcher._global_tool_name("global_prompt", prompt.id)
+        result = dispatcher.execute({"action": action, "params": {}})
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["content"], "hello")
 
     def test_generate_report_default_template(self):
         from ai.command_layer import cmd_generate_report

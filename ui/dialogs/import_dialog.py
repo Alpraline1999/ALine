@@ -8,15 +8,16 @@ from typing import List, Optional
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QHBoxLayout, QHeaderView,
-    QLabel, QSizePolicy, QStackedWidget, QTableWidget,
+    QAbstractItemView, QButtonGroup, QDialog, QFileDialog, QHBoxLayout, QHeaderView,
+    QLabel, QSizePolicy, QStackedWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
-    BodyLabel, ComboBox, InfoBar, InfoBarPosition,
-    LineEdit, PrimaryPushButton, PushButton, SubtitleLabel,
+    BodyLabel, CaptionLabel, ComboBox, InfoBar, InfoBarPosition,
+    LineEdit, PrimaryPushButton, PushButton, RadioButton, SubtitleLabel, TableWidget,
 )
 
+from core.project_manager import project_manager
 from models.schemas import DataSeries
 
 _ROLES = ["X 轴", "Y 轴", "Y 误差棒", "X 误差棒", "跳过"]
@@ -28,7 +29,7 @@ class ImportDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("导入数据文件")
-        self.setMinimumSize(600, 480)
+        self.setMinimumSize(760, 540)
         self.imported_series: List[DataSeries] = []
         self._import_completed = False
 
@@ -129,63 +130,162 @@ class ImportDialog(QDialog):
         lv.setSpacing(8)
 
         lv.addWidget(SubtitleLabel("分配列角色", w))
-        lv.addWidget(BodyLabel("为每一列选择导入角色（X轴/Y轴/误差棒/跳过）", w))
+        lv.addWidget(BodyLabel("第一列可编辑变量名，第 2-6 列使用单选框指定导入角色。", w))
 
-        self._col_table = QTableWidget(w)
-        self._col_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._col_table = TableWidget(w)
+        self._col_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self._col_table.verticalHeader().setVisible(False)
-        self._col_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._col_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._col_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in range(1, 1 + len(_ROLES)):
+            self._col_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         lv.addWidget(self._col_table, 1)
 
         name_row = QHBoxLayout()
-        name_row.addWidget(BodyLabel("系列名称前缀:", w))
-        self._series_prefix = LineEdit(w)
-        self._series_prefix.setPlaceholderText("留空则使用文件名")
-        name_row.addWidget(self._series_prefix, 1)
+        name_row.addWidget(BodyLabel("单系列命名:", w))
+        self._series_name_combo = ComboBox(w)
+        self._series_name_keys: List[str] = []
+        self._series_name_combo.currentIndexChanged.connect(self._on_series_name_choice_changed)
+        name_row.addWidget(self._series_name_combo, 1)
+        self._series_name_edit = LineEdit(w)
+        self._series_name_edit.setPlaceholderText("输入新的系列名")
+        self._series_name_edit.setEnabled(False)
+        name_row.addWidget(self._series_name_edit, 1)
         lv.addLayout(name_row)
+
+        self._series_name_hint = CaptionLabel("单个 Y 变量时可复用现有系列名或输入新系列名。", w)
+        self._series_name_hint.setWordWrap(True)
+        lv.addWidget(self._series_name_hint)
+
+        self._refresh_series_name_choices()
         return w
 
     def _populate_col_table(self):
-        """用当前文件数据填充列角色选择表格。"""
+        """用当前文件数据填充变量角色表格。"""
         if not self._raw_headers:
             return
         n_cols = len(self._raw_headers)
-        preview_rows = self._raw_rows[:8]  # 显示前8行
+        self._col_table.clear()
+        self._col_table.setColumnCount(1 + len(_ROLES))
+        self._col_table.setHorizontalHeaderLabels(["变量名", *_ROLES])
+        self._col_table.setRowCount(n_cols)
 
-        # 行数 = 1(角色选择) + 1(列名) + len(preview_rows)
-        self._col_table.setRowCount(2 + len(preview_rows))
-        self._col_table.setColumnCount(n_cols)
+        self._name_edits: List[LineEdit] = []
+        self._role_buttons: List[dict[str, RadioButton]] = []
+        self._role_groups: List[QButtonGroup] = []
 
-        # 第0行：角色下拉框
-        self._role_combos: List[ComboBox] = []
-        for c in range(n_cols):
-            combo = ComboBox(self)
-            combo.addItems(_ROLES)
-            # 默认：第0列 → X轴，其余 → Y轴
-            default_idx = 0 if c == 0 else 1
-            combo.setCurrentIndex(default_idx)
-            self._col_table.setCellWidget(0, c, combo)
-            self._role_combos.append(combo)
+        for row in range(n_cols):
+            self._col_table.setRowHeight(row, 42)
 
-        # 第1行：列名
-        for c, name in enumerate(self._raw_headers):
-            item = QTableWidgetItem(name)
-            item.setTextAlignment(Qt.AlignCenter)
-            font = item.font()
-            font.setBold(True)
-            item.setFont(font)
-            self._col_table.setItem(1, c, item)
+            name_edit = LineEdit(self._col_table)
+            name_edit.setText(self._default_variable_name(row))
+            self._col_table.setCellWidget(row, 0, name_edit)
+            self._name_edits.append(name_edit)
 
-        # 数据预览行
-        for r, row in enumerate(preview_rows):
-            for c, val in enumerate(row):
-                txt = f"{val:.6g}"
-                it = QTableWidgetItem(txt)
-                it.setTextAlignment(Qt.AlignCenter)
-                self._col_table.setItem(2 + r, c, it)
+            group = QButtonGroup(self._col_table)
+            group.setExclusive(True)
+            role_map: dict[str, RadioButton] = {}
 
-        # 行高
-        self._col_table.setRowHeight(0, 36)
+            for column, role in enumerate(_ROLES, start=1):
+                button = RadioButton("", self._col_table)
+                button.toggled.connect(self._update_series_name_controls)
+                container = QWidget(self._col_table)
+                container_layout = QHBoxLayout(container)
+                container_layout.setContentsMargins(0, 0, 0, 0)
+                container_layout.addStretch()
+                container_layout.addWidget(button)
+                container_layout.addStretch()
+                self._col_table.setCellWidget(row, column, container)
+                group.addButton(button)
+                role_map[role] = button
+
+            self._role_groups.append(group)
+            self._role_buttons.append(role_map)
+
+            default_role = "X 轴" if row == 0 else "Y 轴" if row == 1 else "跳过"
+            role_map[default_role].setChecked(True)
+
+        self._update_series_name_controls()
+
+    def _default_variable_name(self, index: int) -> str:
+        if index < len(self._raw_headers):
+            header = str(self._raw_headers[index] or "").strip()
+            if header and not re.fullmatch(r"col_\d+", header, flags=re.IGNORECASE):
+                return header
+        return f"变量{index + 1}"
+
+    def _selected_roles(self) -> List[str]:
+        roles: List[str] = []
+        for role_map in getattr(self, "_role_buttons", []):
+            role = next((name for name, button in role_map.items() if button.isChecked()), "跳过")
+            roles.append(role)
+        return roles
+
+    def _variable_names(self) -> List[str]:
+        names: List[str] = []
+        for index, edit in enumerate(getattr(self, "_name_edits", [])):
+            name = edit.text().strip()
+            names.append(name or self._default_variable_name(index))
+        return names
+
+    def _existing_series_names(self) -> List[str]:
+        project = project_manager.current_project
+        if project is None:
+            return []
+        names: List[str] = []
+        for data_file in getattr(project, "data_files", []):
+            for series in data_file.series:
+                if series.name and series.name not in names:
+                    names.append(series.name)
+        for dataset in getattr(project, "datasets", []):
+            for series in dataset.series:
+                if series.name and series.name not in names:
+                    names.append(series.name)
+        return names
+
+    def _refresh_series_name_choices(self) -> None:
+        self._series_name_combo.blockSignals(True)
+        self._series_name_combo.clear()
+        self._series_name_keys = ["__by_variable__", "__new__"]
+        self._series_name_combo.addItem("使用变量名")
+        self._series_name_combo.addItem("新建系列")
+        for name in self._existing_series_names():
+            self._series_name_keys.append(name)
+            self._series_name_combo.addItem(f"复用现有: {name}")
+        self._series_name_combo.setCurrentIndex(0)
+        self._series_name_combo.blockSignals(False)
+        self._on_series_name_choice_changed(0)
+
+    def _current_series_name_key(self) -> str:
+        index = self._series_name_combo.currentIndex()
+        if 0 <= index < len(self._series_name_keys):
+            return self._series_name_keys[index]
+        return "__by_variable__"
+
+    def _on_series_name_choice_changed(self, _index: int) -> None:
+        allow_custom = self._current_series_name_key() == "__new__"
+        self._series_name_edit.setEnabled(allow_custom and self._selected_roles().count("Y 轴") == 1)
+        self._update_series_name_controls()
+
+    def _update_series_name_controls(self) -> None:
+        y_count = self._selected_roles().count("Y 轴")
+        single_y = y_count == 1
+        self._series_name_combo.setEnabled(single_y)
+        self._series_name_edit.setEnabled(single_y and self._current_series_name_key() == "__new__")
+        if y_count <= 0:
+            self._series_name_hint.setText("请至少选择一列 Y 变量后再导入。")
+        elif single_y:
+            self._series_name_hint.setText("单个 Y 变量时可使用变量名、复用现有系列名，或输入新的系列名。")
+        else:
+            self._series_name_hint.setText("检测到多个 Y 变量，导入后会直接使用变量名作为各系列名称。")
+
+    def _resolve_single_series_name(self, fallback_name: str) -> str:
+        key = self._current_series_name_key()
+        if key == "__new__":
+            return self._series_name_edit.text().strip() or fallback_name
+        if key == "__by_variable__":
+            return fallback_name
+        return key or fallback_name
 
     # ── Step 3 ──────────────────────────────────────────────────────────
 
@@ -254,8 +354,8 @@ class ImportDialog(QDialog):
         if not self._raw_rows or not self._raw_headers:
             raise ValueError("没有可用的数据")
 
-        roles = [combo.currentText() for combo in self._role_combos]
-        prefix = self._series_prefix.text().strip() or Path(self._file_path).stem
+        roles = self._selected_roles()
+        variable_names = self._variable_names()
 
         x_cols = [i for i, r in enumerate(roles) if r == "X 轴"]
         y_cols = [i for i, r in enumerate(roles) if r == "Y 轴"]
@@ -272,10 +372,11 @@ class ImportDialog(QDialog):
         x_data = arr[:, x_idx].tolist()
 
         series_list: List[DataSeries] = []
+        single_y = len(y_cols) == 1
         for y_idx in y_cols:
             y_data = arr[:, y_idx].tolist()
-            col_name = self._raw_headers[y_idx] if y_idx < len(self._raw_headers) else f"col_{y_idx}"
-            s_name = f"{prefix} / {col_name}" if prefix else col_name
+            col_name = variable_names[y_idx] if y_idx < len(variable_names) else self._default_variable_name(y_idx)
+            s_name = self._resolve_single_series_name(col_name) if single_y else col_name
 
             # 匹配 Y 误差棒（按照 y_cols 顺序对应 ye_cols）
             y_pos = y_cols.index(y_idx)
@@ -288,7 +389,7 @@ class ImportDialog(QDialog):
                 x=x_data,
                 y=y_data,
                 y_err=y_err,
-                x_label=self._raw_headers[x_idx] if x_idx < len(self._raw_headers) else "x",
+                x_label=variable_names[x_idx] if x_idx < len(variable_names) else "x",
                 y_label=col_name,
                 source="imported_file",
             ))

@@ -6,19 +6,21 @@
 """
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QInputDialog, QMenu, QVBoxLayout, QWidget,
+    QAbstractItemView, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
-    FluentIcon as FIF, MessageBox, TreeWidget,
+    Action, FluentIcon as FIF, MessageBox, RoundMenu, TreeWidget,
 )
 from PySide6.QtWidgets import QTreeWidgetItem
 
+from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
 from core.project_manager import project_manager
+from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 
 
 def _series_color_icon(color_str: str) -> QPixmap:
@@ -36,10 +38,19 @@ _KIND_CONFIG = {
     "pipeline":        (FIF.DEVELOPER_TOOLS, "#0078D4"),
     "figure_template": (FIF.PIE_SINGLE,      "#107C10"),
     "report_template": (FIF.DOCUMENT,        "#8C6C00"),
+    "analysis_result": (FIF.SEARCH,          "#D83B01"),
     "ai_tool":         (FIF.CHAT,            "#881798"),   # v0.2 compat
     "ai_prompt":       (FIF.CHAT,            "#881798"),
     "ai_skill":        (FIF.DEVELOPER_TOOLS, "#881798"),
     "ai_agent":        (FIF.ROBOT,           "#881798"),
+    "global_pipeline": (FIF.DEVELOPER_TOOLS, "#0078D4"),
+    "global_report_template": (FIF.DOCUMENT, "#8C6C00"),
+    "global_curve_style_template": (FIF.PENCIL_INK, "#107C10"),
+    "global_plot_style": (FIF.PIE_SINGLE,    "#8C6C00"),
+    "global_plot_theme": (FIF.PIE_SINGLE,    "#8C6C00"),
+    "global_ai_prompt": (FIF.CHAT,           "#881798"),
+    "global_ai_skill": (FIF.DEVELOPER_TOOLS, "#881798"),
+    "global_ai_agent": (FIF.ROBOT,           "#881798"),
 }
 
 # group_type → FluentIcon（系统文件夹专用图标）
@@ -50,11 +61,15 @@ _GROUP_ICON = {
     "image_set":      FIF.PHOTO,
     "tools":          FIF.DEVELOPER_TOOLS,
     "tool_set":       FIF.DEVELOPER_TOOLS,
+    "analysis_result_group": FIF.SEARCH,
     "pipeline_group": FIF.DEVELOPER_TOOLS,
     "template_group": FIF.PIE_SINGLE,
     "figure_template_group": FIF.PIE_SINGLE,
     "report_template_group": FIF.DOCUMENT,
     "ai_group":       FIF.ROBOT,
+    "prompt_group":   FIF.CHAT,
+    "skill_group":    FIF.DEVELOPER_TOOLS,
+    "agent_group":    FIF.ROBOT,
 }
 
 # 系统文件夹不可重命名/删除
@@ -62,6 +77,7 @@ _PROTECTED_GROUP_TYPES = frozenset({
     "datasets", "dataset_set",
     "images", "image_set",
     "tools", "tool_set",
+    "analysis_result_group",
     "pipeline_group", "template_group", "figure_template_group",
     "report_template_group", "ai_group",
 })
@@ -72,8 +88,41 @@ _ROOT_GROUP_TYPES = frozenset({
     "tools", "tool_set",
 })
 
+_MANAGED_FOLDER_GROUP_TYPES = frozenset({
+    "datasets",
+    "images",
+    "analysis_result_group",
+})
+
 # QTreeWidgetItem UserRole 存储 (kind, id)
 _ROLE = Qt.ItemDataRole.UserRole
+_PROJECT_ROLE = Qt.ItemDataRole.UserRole + 1
+_SYNTHETIC_GLOBAL_KINDS = frozenset({
+    "global_root", "global_group", "global_pipeline",
+    "global_report_template", "global_curve_style_template", "global_plot_style", "global_plot_theme",
+    "global_ai_prompt", "global_ai_skill", "global_ai_agent",
+})
+
+
+class _ProjectTreeView(TreeWidget):
+    def __init__(self, owner: "ProjectTreeWidget", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._owner = owner
+
+    def startDrag(self, supportedActions) -> None:
+        self._owner._remember_drag_source_item(self.currentItem())
+        super().startDrag(supportedActions)
+
+    def dropEvent(self, event) -> None:
+        source_item = self._owner._drag_source_item_for_drop(self.currentItem())
+        target_item = self.itemAt(event.position().toPoint())
+        try:
+            if self._owner._perform_drop_move(source_item, target_item):
+                event.acceptProposedAction()
+                return
+            event.ignore()
+        finally:
+            self._owner._clear_drag_source_item()
 
 
 class ProjectTreeWidget(QWidget):
@@ -97,43 +146,83 @@ class ProjectTreeWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._tree = TreeWidget(self)
+        self._tree = _ProjectTreeView(self, self)
         self._tree.setHeaderHidden(True)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
+        self._tree.setWordWrap(True)
+        self._tree.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self._tree.setUniformRowHeights(False)
+        self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._tree.header().setStretchLastSection(True)
+        self._tree.setDragEnabled(True)
+        self._tree.setAcceptDrops(True)
+        self._tree.viewport().setAcceptDrops(True)
+        self._tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._tree.setDropIndicatorShown(True)
 
         self._tree.itemClicked.connect(self._on_item_clicked)
         self._tree.itemActivated.connect(self._on_item_activated)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.itemChanged.connect(self._on_item_changed)
+        self._tree.viewport().installEventFilter(self)
 
         layout.addWidget(self._tree)
 
         self._renaming = False  # 防止 itemChanged 循环
+        self._branch_toggle_item_key: Optional[str] = None
+        self._drag_source_item_key: Optional[str] = None
 
     # ─────────────────────────────────────────────────────────
     # 公开接口
     # ─────────────────────────────────────────────────────────
 
     def refresh(self) -> None:
-        """从 project_manager.current_project 完整重建树。"""
+        """从 project_manager.projects 完整重建树。"""
+        expansion_state = self._capture_expansion_state()
+        selected_key = self._current_item_key()
         self._tree.blockSignals(True)
         self._tree.clear()
-        p = project_manager.current_project
-        if p is None or p.tree is None:
+        if not project_manager.projects:
+            self._build_global_assets_root()
+            self._restore_expansion_state(expansion_state)
+            self._restore_selection(selected_key)
             self._tree.blockSignals(False)
             return
 
-        self._build_children(None, None)
+        for project in project_manager.projects:
+            if project.tree is None:
+                continue
+            project_item = QTreeWidgetItem([project.name])
+            project_item.setData(0, _ROLE, ("project", project.id))
+            project_item.setData(0, _PROJECT_ROLE, project.id)
+            project_item.setIcon(0, FIF.FOLDER.icon())
+            project_item.setToolTip(0, project.name)
+            if project.id == project_manager.current_project_id:
+                font = project_item.font(0)
+                font.setBold(True)
+                project_item.setFont(0, font)
+            self._tree.addTopLevelItem(project_item)
+            self._build_children(project, None, project_item)
+            project_item.setExpanded(True)
+        self._build_global_assets_root()
+        self._restore_expansion_state(expansion_state)
+        self._restore_selection(selected_key)
+        self._update_wrapped_item_size_hints()
         self._tree.blockSignals(False)
+        self._tree.viewport().update()
+        self._tree.updateGeometry()
 
     def select_node(self, node_id: str) -> None:
         """程序化选中节点（不触发 node_selected 信号）。"""
         item = self._find_item(node_id)
         if item:
             self._tree.blockSignals(True)
+            self._expand_item_ancestors(item)
             self._tree.setCurrentItem(item)
+            self._tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
             self._tree.blockSignals(False)
 
     def set_filter_kinds(self, kinds: List[str]) -> None:
@@ -156,47 +245,44 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _build_children(
-        self, parent_id: Optional[str], parent_item: Optional[QTreeWidgetItem]
+        self, project, parent_id: Optional[str], parent_item: Optional[QTreeWidgetItem]
     ) -> None:
-        p = project_manager.current_project
-        if p is None or p.tree is None:
+        if project is None or project.tree is None:
             return
-        children = p.tree.get_children(parent_id)
+        children = project.tree.get_children(parent_id)
         for node in children:
             kind = node.kind
             if self._filter_kinds and kind not in self._filter_kinds:
                 if kind != "folder":
                     continue
-            item = self._make_item(node)
-            if parent_item is None:
-                self._tree.addTopLevelItem(item)
-            else:
-                parent_item.addChild(item)
+            item = self._make_item(node, project.id)
+            parent_item.addChild(item)
 
             # 递归子节点
-            self._build_children(node.id, item)
+            self._build_children(project, node.id, item)
 
             # 为 DataFileNode 追加虚拟 DataSeries 叶节点
             if kind == "data_file":
                 if not self._filter_kinds or "series" in self._filter_kinds or "data_file" in self._filter_kinds:
-                    df = p.find_data_file(node.data_file_id)
+                    df = project.find_data_file(node.data_file_id)
                     if df:
                         for series in df.series:
-                            child = self._make_virtual_series_item(series)
+                            child = self._make_virtual_series_item(series, project.id)
                             item.addChild(child)
 
             # 为 ImageWorkNode 追加虚拟 Curve 叶节点
             elif kind == "image_work":
                 if not self._filter_kinds or "curve" in self._filter_kinds or "image_work" in self._filter_kinds:
-                    img = project_manager.get_image(node.image_work_id)
+                    img = next((image for image in project.images if image.id == node.image_work_id), None)
                     if img:
                         for curve in img.curves:
-                            child = self._make_virtual_curve_item(curve)
+                            child = self._make_virtual_curve_item(curve, project.id)
                             item.addChild(child)
 
-            # 过滤：文件夹下无可见子节点则隐藏
+            # 过滤：文件夹下无可见子节点则隐藏（但受保护的系统文件夹始终保留）
             is_root_folder = kind == "folder" and parent_id is None and getattr(node, "group_type", None) in _ROOT_GROUP_TYPES
-            if kind == "folder" and self._filter_kinds and item.childCount() == 0 and not is_root_folder:
+            is_protected_folder = self._is_protected_folder(node)
+            if kind == "folder" and self._filter_kinds and item.childCount() == 0 and not is_root_folder and not is_protected_folder:
                 if parent_item is None:
                     idx = self._tree.indexOfTopLevelItem(item)
                     self._tree.takeTopLevelItem(idx)
@@ -206,16 +292,72 @@ class ProjectTreeWidget(QWidget):
 
             item.setExpanded(True)
 
-    def _make_item(self, node) -> QTreeWidgetItem:
+    def _make_synthetic_item(self, label: str, kind: str, node_id: str, icon_fif) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([label])
+        item.setData(0, _ROLE, (kind, node_id))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        item.setIcon(0, icon_fif.icon())
+        item.setToolTip(0, label)
+        return item
+
+    def _build_global_assets_root(self) -> None:
+        root = self._make_synthetic_item("全局资源", "global_root", "__global_root__", FIF.FOLDER)
+
+        pipelines = self._make_synthetic_item("Pipelines", "global_group", "__global_pipelines__", FIF.DEVELOPER_TOOLS)
+        for item in global_assets.list_saved_pipelines():
+            pipelines.addChild(self._make_synthetic_item(item.name, "global_pipeline", item.id, FIF.DEVELOPER_TOOLS))
+        root.addChild(pipelines)
+
+        curve_styles = self._make_synthetic_item("曲线样式", "global_group", "__global_curve_styles__", FIF.PENCIL_INK)
+        for item in global_assets.list_curve_style_templates():
+            curve_styles.addChild(self._make_synthetic_item(item.name, "global_curve_style_template", item.id, FIF.PENCIL_INK))
+        root.addChild(curve_styles)
+
+        plot_themes = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
+        for item in global_assets.list_plot_themes(include_builtin=True):
+            plot_themes.addChild(self._make_synthetic_item(
+                item.name,
+                "global_plot_style",
+                make_plot_style_asset_key("theme", item.id or item.name),
+                FIF.PIE_SINGLE,
+            ))
+        for item in global_assets.list_figure_templates():
+            plot_themes.addChild(self._make_synthetic_item(
+                item.name or item.id[:8],
+                "global_plot_style",
+                make_plot_style_asset_key("template", item.id),
+                FIF.PIE_SINGLE,
+            ))
+        root.addChild(plot_themes)
+
+        reports = self._make_synthetic_item("报告模板", "global_group", "__global_reports__", FIF.DOCUMENT)
+        for item in global_assets.list_report_templates():
+            reports.addChild(self._make_synthetic_item(item.name, "global_report_template", item.id, FIF.DOCUMENT))
+        root.addChild(reports)
+
+        root.setExpanded(True)
+        for index in range(root.childCount()):
+            root.child(index).setExpanded(True)
+        self._tree.addTopLevelItem(root)
+
+    def _make_item(self, node, project_id: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([node.name])
         item.setData(0, _ROLE, (node.kind, node.id))
+        item.setData(0, _PROJECT_ROLE, project_id)
+        item.setToolTip(0, node.name)
 
         # 系统文件夹不可内联编辑
-        group_type = getattr(node, "group_type", None)
-        is_protected = group_type in _PROTECTED_GROUP_TYPES
+        group_type = self._canonical_group_type(getattr(node, "group_type", None))
+        is_protected = self._is_protected_folder(node)
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if not is_protected:
-            flags |= Qt.ItemFlag.ItemIsEditable
+        if node.kind == "folder":
+            flags |= Qt.ItemFlag.ItemIsDropEnabled
+            if not is_protected:
+                flags |= Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled
+        else:
+            flags |= Qt.ItemFlag.ItemIsDragEnabled
+            if node.kind in {"data_file", "image_work"}:
+                flags |= Qt.ItemFlag.ItemIsDropEnabled
         item.setFlags(flags)
 
         # 图标选择
@@ -231,49 +373,96 @@ class ProjectTreeWidget(QWidget):
                 item.setForeground(0, QColor(color_hint))
         return item
 
-    def _make_virtual_series_item(self, series) -> QTreeWidgetItem:
+    def _make_virtual_series_item(self, series, project_id: str) -> QTreeWidgetItem:
         """创建 DataSeries 虚拟叶节点（不存储在 project.tree 中）。"""
-        item = QTreeWidgetItem([series.name or series.id[:8]])
+        label = series.name or series.id[:8]
+        item = QTreeWidgetItem([label])
         item.setData(0, _ROLE, ("series", series.id))
-        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        item.setData(0, _PROJECT_ROLE, project_id)
+        item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled |
+            Qt.ItemFlag.ItemIsSelectable |
+            Qt.ItemFlag.ItemIsDragEnabled
+        )
         item.setIcon(0, _series_color_icon(series.color or "#0078D4"))
+        item.setToolTip(0, label)
         return item
 
-    def _make_virtual_curve_item(self, curve) -> QTreeWidgetItem:
+    def _make_virtual_curve_item(self, curve, project_id: str) -> QTreeWidgetItem:
         """创建 Curve 虚拟叶节点。"""
-        item = QTreeWidgetItem([curve.name or curve.id[:8]])
+        label = curve.name or curve.id[:8]
+        item = QTreeWidgetItem([label])
         item.setData(0, _ROLE, ("curve", curve.id))
-        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        item.setData(0, _PROJECT_ROLE, project_id)
+        item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled |
+            Qt.ItemFlag.ItemIsSelectable |
+            Qt.ItemFlag.ItemIsDragEnabled
+        )
         item.setIcon(0, FIF.PENCIL_INK.icon())
         item.setForeground(0, QColor(curve.color or "#0078D4"))
+        item.setToolTip(0, label)
         return item
+
+    def _activate_item_project(self, item: Optional[QTreeWidgetItem]) -> None:
+        if item is None:
+            return
+        try:
+            project_id = item.data(0, _PROJECT_ROLE)
+        except RuntimeError:
+            return
+        if project_id and project_id != project_manager.current_project_id:
+            project_manager.set_current_project(project_id)
 
     # ─────────────────────────────────────────────────────────
     # 信号处理
     # ─────────────────────────────────────────────────────────
 
     def _on_item_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
-        d = item.data(0, _ROLE)
+        if self._consume_branch_toggle_click(item):
+            return
+        self._activate_item_project(item)
+        d = self._item_role_data(item)
         if d:
             self.node_selected.emit(d[0], d[1])
 
     def _on_item_activated(self, item: QTreeWidgetItem, _col: int) -> None:
-        d = item.data(0, _ROLE)
+        if self._consume_branch_toggle_click(item):
+            return
+        self._activate_item_project(item)
+        d = self._item_role_data(item)
         if d:
             self.node_activated.emit(d[0], d[1])
+
+    def eventFilter(self, watched, event):
+        if watched is self._tree.viewport():
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                item = self._tree.itemAt(event.position().toPoint())
+                self._branch_toggle_item_key = self._project_branch_toggle_key(item, event.position().x())
+                self._remember_drag_source_item(item)
+            elif event.type() in {
+                QEvent.Type.MouseButtonDblClick,
+                QEvent.Type.Leave,
+            }:
+                self._branch_toggle_item_key = None
+            elif event.type() == QEvent.Type.Resize:
+                self._update_wrapped_item_size_hints()
+        return super().eventFilter(watched, event)
 
     def _on_item_changed(self, item: QTreeWidgetItem, _col: int) -> None:
         if self._renaming:
             return
-        d = item.data(0, _ROLE)
+        self._activate_item_project(item)
+        d = self._item_role_data(item)
         if not d:
             return
         kind, node_id = d
-        if kind in ("series", "curve"):
+        if kind in ("series", "curve") or kind in _SYNTHETIC_GLOBAL_KINDS:
             return  # 虚拟节点，不可重命名
         new_name = item.text(0).strip()
         if not new_name:
             return
+        item.setToolTip(0, new_name)
         self._renaming = True
         project_manager.rename_node(node_id, new_name)
         self._renaming = False
@@ -285,118 +474,127 @@ class ProjectTreeWidget(QWidget):
 
     def _on_context_menu(self, pos) -> None:
         item = self._tree.itemAt(pos)
-        menu = QMenu(self)
-
         if item is None:
             return
+
+        self._tree.setCurrentItem(item)
+        self._activate_item_project(item)
+        menu = RoundMenu(parent=self)
 
         d = item.data(0, _ROLE)
         if not d:
             return
         kind, node_id = d
 
+        if kind == "project":
+            return
+
+        if kind in _SYNTHETIC_GLOBAL_KINDS:
+            if kind == "global_pipeline":
+                self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit(kind, node_id))
+            elif kind == "global_report_template":
+                self._add_menu_action(menu, FIF.DOCUMENT, "应用到分析页", lambda: self.node_activated.emit(kind, node_id))
+            elif kind == "global_curve_style_template":
+                self._add_menu_action(menu, FIF.PENCIL_INK, "应用到可视化", lambda: self.node_activated.emit(kind, node_id))
+            elif kind in ("global_plot_style", "global_plot_theme"):
+                self._add_menu_action(menu, FIF.PIE_SINGLE, "应用到可视化", lambda: self.node_activated.emit(kind, node_id))
+            elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
+                self._add_menu_action(menu, FIF.EDIT, "在设置中查看", lambda: self.node_activated.emit(kind, node_id))
+            if self._can_edit_global_asset(kind, node_id):
+                menu.addSeparator()
+                self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._cmd_rename_global(kind, node_id, item.text(0)))
+                self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete_global(kind, node_id, item.text(0)))
+            if menu.actions():
+                menu.exec(self._tree.viewport().mapToGlobal(pos))
+            return
+
         if kind == "folder":
             node = project_manager.get_node_by_id(node_id)
-            group_type = getattr(node, "group_type", None) if node else None
-            is_protected = group_type in _PROTECTED_GROUP_TYPES
+            is_protected = self._is_protected_folder(node)
+            managed_group_type = self._folder_collection_group(node_id)
+            if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
+                self._add_menu_action(menu, FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id))
+                if not is_protected:
+                    menu.addSeparator()
             if not is_protected:
-                menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                    lambda: self._tree.editItem(item, 0))
-                menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                    lambda: self._cmd_delete(node_id, item.text(0)))
+                self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+                self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
 
         elif kind == "data_file":
-            menu.addAction(FIF.PIE_SINGLE.icon(), "发送到可视化").triggered.connect(
-                lambda: self.node_activated.emit("data_file_to_chart", node_id))
-            menu.addAction(FIF.DEVELOPER_TOOLS.icon(), "发送到处理").triggered.connect(
-                lambda: self.node_activated.emit("data_file_to_process", node_id))
-            menu.addAction(FIF.SEARCH.icon(), "发送到分析").triggered.connect(
-                lambda: self.node_activated.emit("data_file_to_analysis", node_id))
+            move_choices = self._move_target_choices(kind, node_id)
+            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("data_file_to_chart", node_id))
+            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("data_file_to_process", node_id))
+            self._add_menu_action(menu, FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("data_file_to_analysis", node_id))
             menu.addSeparator()
-            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                lambda: self._tree.editItem(item, 0))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete(node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            if move_choices:
+                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
 
         elif kind == "series":
-            menu.addAction(FIF.PIE_SINGLE.icon(), "发送到可视化").triggered.connect(
-                lambda: self.node_activated.emit("series_to_chart", node_id))
-            menu.addAction(FIF.DEVELOPER_TOOLS.icon(), "发送到处理").triggered.connect(
-                lambda: self.node_activated.emit("series_to_process", node_id))
-            menu.addAction(FIF.SEARCH.icon(), "发送到分析").triggered.connect(
-                lambda: self.node_activated.emit("series_to_analysis", node_id))
+            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("series_to_chart", node_id))
+            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("series_to_process", node_id))
+            self._add_menu_action(menu, FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("series_to_analysis", node_id))
             move_choices = self._move_target_choices(kind, node_id)
             menu.addSeparator()
-            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                lambda: self._cmd_rename_virtual(kind, node_id, item.text(0)))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete_virtual(kind, node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0)))
             if move_choices:
-                menu.addAction(FIF.SWITCH.icon(), "移动到...").triggered.connect(
-                    lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
 
         elif kind == "image_work":
-            menu.addAction(FIF.EDIT.icon(), "打开取点").triggered.connect(
-                lambda: self.node_activated.emit("image_work", node_id))
-            menu.addAction(FIF.PIE_SINGLE.icon(), "发送到可视化").triggered.connect(
-                lambda: self.node_activated.emit("image_work_to_chart", node_id))
+            move_choices = self._move_target_choices(kind, node_id)
+            self._add_menu_action(menu, FIF.EDIT, "打开取点", lambda: self.node_activated.emit("image_work", node_id))
+            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id))
             menu.addSeparator()
-            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                lambda: self._tree.editItem(item, 0))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete(node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            if move_choices:
+                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
 
         elif kind == "curve":
-            menu.addAction(FIF.PIE_SINGLE.icon(), "发送到可视化").triggered.connect(
-                lambda: self.node_activated.emit("curve_to_chart", node_id))
-            menu.addAction(FIF.DEVELOPER_TOOLS.icon(), "发送到处理").triggered.connect(
-                lambda: self.node_activated.emit("curve_to_process", node_id))
-            menu.addAction(FIF.SEARCH.icon(), "发送到分析").triggered.connect(
-                lambda: self.node_activated.emit("curve_to_analysis", node_id))
+            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("curve_to_chart", node_id))
+            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("curve_to_process", node_id))
+            self._add_menu_action(menu, FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("curve_to_analysis", node_id))
             move_choices = self._move_target_choices(kind, node_id)
             menu.addSeparator()
-            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                lambda: self._cmd_rename_virtual(kind, node_id, item.text(0)))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete_virtual(kind, node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0)))
             if move_choices:
-                menu.addAction(FIF.SWITCH.icon(), "移动到...").triggered.connect(
-                    lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
 
         elif kind == "pipeline":
-            menu.addAction(FIF.DEVELOPER_TOOLS.icon(), "加载到处理页").triggered.connect(
-                lambda: self.node_activated.emit("pipeline", node_id))
+            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit("pipeline", node_id))
             menu.addSeparator()
-            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                lambda: self._tree.editItem(item, 0))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete(node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
 
         elif kind == "figure_template":
-            menu.addAction(FIF.PIE_SINGLE.icon(), "加载到可视化").triggered.connect(
-                lambda: self.node_activated.emit("figure_template", node_id))
+            self._add_menu_action(menu, FIF.PIE_SINGLE, "加载到可视化", lambda: self.node_activated.emit("figure_template", node_id))
             menu.addSeparator()
-            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                lambda: self._tree.editItem(item, 0))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete(node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
 
         elif kind == "report_template":
-            menu.addAction(FIF.SEARCH.icon(), "加载到分析页").triggered.connect(
-                lambda: self.node_activated.emit("report_template", node_id))
+            self._add_menu_action(menu, FIF.SEARCH, "加载到分析页", lambda: self.node_activated.emit("report_template", node_id))
             menu.addSeparator()
-            menu.addAction(FIF.EDIT.icon(), "重命名").triggered.connect(
-                lambda: self._tree.editItem(item, 0))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete(node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+
+        elif kind == "analysis_result":
+            move_choices = self._move_target_choices(kind, node_id)
+            self._add_menu_action(menu, FIF.SEARCH, "发送到分析页", lambda: self.node_activated.emit("analysis_result", node_id))
+            menu.addSeparator()
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            if move_choices:
+                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
 
         elif kind in ("ai_prompt", "ai_skill", "ai_agent", "ai_tool"):
-            menu.addAction(FIF.EDIT.icon(), "编辑").triggered.connect(
-                lambda: self.node_activated.emit(kind, node_id))
-            menu.addAction(FIF.DELETE.icon(), "删除").triggered.connect(
-                lambda: self._cmd_delete(node_id, item.text(0)))
+            self._add_menu_action(menu, FIF.EDIT, "编辑", lambda: self.node_activated.emit(kind, node_id))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
 
-        if not menu.isEmpty():
+        if menu.actions():
             menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     # ─────────────────────────────────────────────────────────
@@ -410,9 +608,20 @@ class ProjectTreeWidget(QWidget):
             self.refresh()
             self.project_modified.emit()
 
+    def _cmd_add_child_folder(self, parent_id: str) -> None:
+        name, ok = TextInputDialog.get_text(self, "新建子文件夹", "文件夹名称:", placeholder="输入子文件夹名称")
+        if not ok:
+            return
+        folder = self._create_child_folder(parent_id, name)
+        if folder is None:
+            return
+        self.refresh()
+        self.select_node(folder.id)
+        self.project_modified.emit()
+
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
         title = "重命名数据列" if kind == "series" else "重命名曲线"
-        new_name, ok = QInputDialog.getText(self, title, "名称:", text=current_name)
+        new_name, ok = TextInputDialog.get_text(self, title, "名称:", text=current_name)
         if not ok or not new_name.strip():
             return
         if kind == "series":
@@ -432,6 +641,88 @@ class ProjectTreeWidget(QWidget):
         else:
             changed = project_manager.delete_curve(node_id)
         if changed:
+            self.refresh()
+            self.project_modified.emit()
+
+    def _can_edit_global_asset(self, kind: str, node_id: str) -> bool:
+        if kind == "global_report_template":
+            item = global_assets.get_report_template(node_id)
+            return bool(item is not None and not item.is_builtin)
+        if kind == "global_curve_style_template":
+            item = global_assets.get_curve_style_template(node_id)
+            return bool(item is not None and not item.is_builtin)
+        if kind in ("global_plot_style", "global_plot_theme"):
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                return global_assets.get_figure_template(asset_id) is not None
+            item = global_assets.get_plot_theme(asset_id)
+            return bool(item is not None and not item.is_builtin)
+        return kind in {
+            "global_pipeline",
+            "global_ai_prompt",
+            "global_ai_skill",
+            "global_ai_agent",
+        }
+
+    def _rename_global_asset(self, kind: str, node_id: str, new_name: str) -> bool:
+        clean_name = new_name.strip()
+        if not clean_name or not self._can_edit_global_asset(kind, node_id):
+            return False
+        if kind == "global_pipeline":
+            return global_assets.update_saved_pipeline(node_id, name=clean_name)
+        if kind == "global_report_template":
+            return global_assets.update_report_template(node_id, name=clean_name)
+        if kind == "global_curve_style_template":
+            return global_assets.update_curve_style_template(node_id, name=clean_name)
+        if kind in ("global_plot_style", "global_plot_theme"):
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                return global_assets.update_figure_template(asset_id, name=clean_name)
+            return global_assets.update_plot_theme(asset_id, name=clean_name)
+        if kind == "global_ai_prompt":
+            return global_assets.update_ai_prompt(node_id, name=clean_name)
+        if kind == "global_ai_skill":
+            return global_assets.update_ai_skill(node_id, name=clean_name)
+        if kind == "global_ai_agent":
+            return global_assets.update_ai_agent(node_id, name=clean_name)
+        return False
+
+    def _delete_global_asset(self, kind: str, node_id: str) -> bool:
+        if not self._can_edit_global_asset(kind, node_id):
+            return False
+        if kind == "global_pipeline":
+            return global_assets.delete_saved_pipeline(node_id)
+        if kind == "global_report_template":
+            return global_assets.delete_report_template(node_id)
+        if kind == "global_curve_style_template":
+            return global_assets.delete_curve_style_template(node_id)
+        if kind in ("global_plot_style", "global_plot_theme"):
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                return global_assets.delete_figure_template(asset_id)
+            return global_assets.delete_plot_theme(asset_id)
+        if kind == "global_ai_prompt":
+            return global_assets.delete_ai_prompt(node_id)
+        if kind == "global_ai_skill":
+            return global_assets.delete_ai_skill(node_id)
+        if kind == "global_ai_agent":
+            return global_assets.delete_ai_agent(node_id)
+        return False
+
+    def _cmd_rename_global(self, kind: str, node_id: str, current_name: str) -> None:
+        title = "重命名全局资源"
+        new_name, ok = TextInputDialog.get_text(self, title, "名称:", text=current_name)
+        if not ok:
+            return
+        if self._rename_global_asset(kind, node_id, new_name):
+            self.refresh()
+            self.project_modified.emit()
+
+    def _cmd_delete_global(self, kind: str, node_id: str, node_name: str) -> None:
+        box = MessageBox("确认删除", f'确定要删除全局资源「{node_name}」吗？', self)
+        if not box.exec():
+            return
+        if self._delete_global_asset(kind, node_id):
             self.refresh()
             self.project_modified.emit()
 
@@ -458,6 +749,24 @@ class ProjectTreeWidget(QWidget):
             for img in p.images:
                 if img.id != current_parent_id:
                     choices.append((img.name, img.id))
+        elif kind in {"data_file", "image_work", "analysis_result"} and p.tree is not None:
+            node = p.tree.get_node(node_id)
+            if node is None:
+                return []
+            required_group = {
+                "data_file": "datasets",
+                "image_work": "images",
+                "analysis_result": "analysis_result_group",
+            }[kind]
+            for folder in p.tree.nodes:
+                if folder.kind != "folder":
+                    continue
+                if folder.id == node.parent_id:
+                    continue
+                if self._folder_collection_group(folder.id) != required_group:
+                    continue
+                choices.append((self._folder_path_label(folder.id), folder.id))
+            choices.sort(key=lambda item: item[0])
         return choices
 
     def _move_node_to_target(self, kind: str, node_id: str, target_id: str) -> bool:
@@ -473,7 +782,7 @@ class ProjectTreeWidget(QWidget):
 
     def _cmd_move_virtual(self, kind: str, node_id: str, choices: List[Tuple[str, str]]) -> None:
         labels = [label for label, _ in choices]
-        selected, ok = QInputDialog.getItem(self, "移动到", "目标父级:", labels, 0, False)
+        selected, ok = SelectionDialog.get_item(self, "移动到", "目标父级:", labels)
         if not ok or not selected:
             return
         target_id = next((target_id for label, target_id in choices if label == selected), None)
@@ -500,3 +809,269 @@ class ProjectTreeWidget(QWidget):
                     return found
             return None
         return _search(None)
+
+    def _item_key(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
+        data = self._item_role_data(item)
+        if not data:
+            return None
+        return f"{data[0]}:{data[1]}"
+
+    def _item_role_data(self, item: Optional[QTreeWidgetItem]) -> Optional[Tuple[str, str]]:
+        if item is None:
+            return None
+        try:
+            data = item.data(0, _ROLE)
+        except RuntimeError:
+            return None
+        if not data:
+            return None
+        return data
+
+    def _item_project_id(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
+        if item is None:
+            return None
+        try:
+            return item.data(0, _PROJECT_ROLE)
+        except RuntimeError:
+            return None
+
+    def _is_protected_folder(self, node) -> bool:
+        if node is None or getattr(node, "kind", None) != "folder":
+            return False
+        group_type = self._canonical_group_type(getattr(node, "group_type", None))
+        if group_type in _MANAGED_FOLDER_GROUP_TYPES:
+            return getattr(node, "parent_id", None) is None
+        return group_type in _PROTECTED_GROUP_TYPES
+
+    def _add_menu_action(self, menu: RoundMenu, icon, text: str, callback) -> Action:
+        action = Action(icon, text)
+        action.triggered.connect(lambda checked=False: callback())
+        menu.addAction(action)
+        return action
+
+    @staticmethod
+    def _canonical_group_type(group_type: Optional[str]) -> Optional[str]:
+        if group_type in {"dataset_set", "datasets"}:
+            return "datasets"
+        if group_type in {"image_set", "images"}:
+            return "images"
+        return group_type
+
+    def _folder_collection_group(self, node_id: Optional[str]) -> Optional[str]:
+        current = project_manager.get_node_by_id(node_id) if node_id else None
+        while current is not None and getattr(current, "kind", None) == "folder":
+            group_type = self._canonical_group_type(getattr(current, "group_type", None))
+            if group_type in _MANAGED_FOLDER_GROUP_TYPES:
+                return group_type
+            parent_id = getattr(current, "parent_id", None)
+            current = project_manager.get_node_by_id(parent_id) if parent_id else None
+        return None
+
+    def _create_child_folder(self, parent_id: str, name: str):
+        clean_name = name.strip()
+        if not clean_name:
+            return None
+        group_type = self._folder_collection_group(parent_id)
+        if group_type not in _MANAGED_FOLDER_GROUP_TYPES:
+            return None
+        return project_manager.add_folder(clean_name, parent_id=parent_id, group_type=group_type)
+
+    def _resolve_drop_target_id(
+        self,
+        source_kind: str,
+        source_id: str,
+        target_item: Optional[QTreeWidgetItem],
+    ) -> Optional[str]:
+        target_data = self._item_role_data(target_item)
+        if not target_data:
+            return None
+        target_kind, target_id = target_data
+        if source_kind == "series":
+            if target_kind == "data_file" and target_id != source_id:
+                return target_id
+            if target_kind == "series":
+                parent_data = self._item_role_data(target_item.parent())
+                if parent_data and parent_data[0] == "data_file":
+                    return parent_data[1]
+            return None
+        if source_kind == "curve":
+            if target_kind == "image_work" and target_id != source_id:
+                return target_id
+            if target_kind == "curve":
+                parent_data = self._item_role_data(target_item.parent())
+                if parent_data and parent_data[0] == "image_work":
+                    return parent_data[1]
+            return None
+        if target_kind == "folder" and target_id != source_id:
+            return target_id
+        parent_data = self._item_role_data(target_item.parent())
+        if parent_data and parent_data[0] == "folder":
+            return parent_data[1]
+        return None
+
+    def _perform_drop_move(
+        self,
+        source_item: Optional[QTreeWidgetItem],
+        target_item: Optional[QTreeWidgetItem],
+    ) -> bool:
+        source_item = self._drag_source_item_for_drop(source_item)
+        source_data = self._item_role_data(source_item)
+        if not source_data:
+            return False
+        source_kind, source_id = source_data
+        if source_kind in {"project", "global_root", "global_group"} or source_kind in _SYNTHETIC_GLOBAL_KINDS:
+            return False
+        source_project_id = self._item_project_id(source_item)
+        target_project_id = self._item_project_id(target_item)
+        if not source_project_id or source_project_id != target_project_id:
+            return False
+        project_manager.set_current_project(source_project_id)
+        target_id = self._resolve_drop_target_id(source_kind, source_id, target_item)
+        if not target_id or not self._move_node_to_target(source_kind, source_id, target_id):
+            return False
+        self.refresh()
+        self.select_node(source_id)
+        self.project_modified.emit()
+        return True
+
+    def _remember_drag_source_item(self, item: Optional[QTreeWidgetItem]) -> None:
+        self._drag_source_item_key = self._item_key(item)
+
+    def _drag_source_item_for_drop(self, fallback_item: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
+        remembered = self._find_item_by_key(self._drag_source_item_key)
+        return remembered or fallback_item
+
+    def _clear_drag_source_item(self) -> None:
+        self._drag_source_item_key = None
+
+    def _folder_path_label(self, folder_id: str) -> str:
+        parts: List[str] = []
+        current = project_manager.get_node_by_id(folder_id)
+        while current is not None and getattr(current, "kind", None) == "folder":
+            parts.append(current.name)
+            parent_id = getattr(current, "parent_id", None)
+            current = project_manager.get_node_by_id(parent_id) if parent_id else None
+        return " / ".join(reversed(parts)) if parts else folder_id
+
+    def _current_item_key(self) -> Optional[str]:
+        return self._item_key(self._tree.currentItem())
+
+    def _capture_expansion_state(self) -> Dict[str, bool]:
+        state: Dict[str, bool] = {}
+
+        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+            if item is None:
+                return
+            key = self._item_key(item)
+            if key is not None:
+                state[key] = item.isExpanded()
+            for index in range(item.childCount()):
+                _walk(item.child(index))
+
+        for index in range(self._tree.topLevelItemCount()):
+            _walk(self._tree.topLevelItem(index))
+        return state
+
+    def _restore_expansion_state(self, state: Dict[str, bool]) -> None:
+        if not state:
+            return
+
+        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+            if item is None:
+                return
+            key = self._item_key(item)
+            if key in state:
+                item.setExpanded(state[key])
+            for index in range(item.childCount()):
+                _walk(item.child(index))
+
+        for index in range(self._tree.topLevelItemCount()):
+            _walk(self._tree.topLevelItem(index))
+
+    def _find_item_by_key(self, item_key: Optional[str]) -> Optional[QTreeWidgetItem]:
+        if not item_key:
+            return None
+
+        def _search(parent: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
+            count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
+            for index in range(count):
+                item = self._tree.topLevelItem(index) if parent is None else parent.child(index)
+                if self._item_key(item) == item_key:
+                    return item
+                found = _search(item)
+                if found is not None:
+                    return found
+            return None
+
+        return _search(None)
+
+    def _restore_selection(self, item_key: Optional[str]) -> None:
+        item = self._find_item_by_key(item_key)
+        if item is not None:
+            self._expand_item_ancestors(item)
+            self._tree.setCurrentItem(item)
+
+    @staticmethod
+    def _expand_item_ancestors(item: Optional[QTreeWidgetItem]) -> None:
+        current = item
+        while current is not None:
+            current.setExpanded(True)
+            current = current.parent()
+
+    def _update_wrapped_item_size_hints(self) -> None:
+        viewport_width = max(180, self._tree.viewport().width())
+
+        def _walk(item: Optional[QTreeWidgetItem], depth: int) -> None:
+            if item is None:
+                return
+            self._apply_wrapped_item_size_hint(item, viewport_width, depth)
+            for index in range(item.childCount()):
+                _walk(item.child(index), depth + 1)
+
+        for index in range(self._tree.topLevelItemCount()):
+            _walk(self._tree.topLevelItem(index), 0)
+
+    def _apply_wrapped_item_size_hint(self, item: QTreeWidgetItem, viewport_width: int, depth: int) -> None:
+        text = item.text(0).strip()
+        if not text:
+            return
+
+        font_metrics = QFontMetrics(item.font(0))
+        indentation = max(0, depth) * max(12, self._tree.indentation())
+        icon_size = self._tree.iconSize()
+        icon_width = icon_size.width() if icon_size.isValid() else 16
+        icon_height = icon_size.height() if icon_size.isValid() else 16
+        available_width = max(120, viewport_width - indentation - icon_width - 44)
+        text_rect = font_metrics.boundingRect(
+            0,
+            0,
+            available_width,
+            4096,
+            int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignVCenter),
+            text,
+        )
+        content_height = max(font_metrics.lineSpacing(), icon_height, text_rect.height())
+        item.setSizeHint(0, QSize(max(available_width, text_rect.width()), content_height + 10))
+
+    def _project_branch_toggle_key(self, item: Optional[QTreeWidgetItem], x_pos: float) -> Optional[str]:
+        data = self._item_role_data(item)
+        if not data or data[0] != "project":
+            return None
+        try:
+            if item.childCount() == 0:
+                return None
+            rect = self._tree.visualItemRect(item)
+        except RuntimeError:
+            return None
+        if not rect.isValid():
+            return None
+        if x_pos <= rect.left() + 20:
+            return self._item_key(item)
+        return None
+
+    def _consume_branch_toggle_click(self, item: Optional[QTreeWidgetItem]) -> bool:
+        item_key = self._item_key(item)
+        if item_key is not None and item_key == self._branch_toggle_item_key:
+            self._branch_toggle_item_key = None
+            return True
+        return False

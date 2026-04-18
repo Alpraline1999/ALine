@@ -1,8 +1,13 @@
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+import asyncio
+import json
+
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QSplitter, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon as FIF, FluentWindow, NavigationItemPosition,
-    setTheme, Theme, MessageBox, SubtitleLabel, ToolButton,
+    NavigationToolButton,
+    setTheme, Theme, MessageBox, ToggleToolButton, ToolButton,
+    InfoBar, InfoBarPosition, ToolTipFilter, ToolTipPosition,
 )
 
 from .pages.home_page import HomePage
@@ -12,8 +17,11 @@ from .pages.data_page import DataPage
 from .pages.process_page import ProcessPage
 from .pages.analysis_page import AnalysisPage
 from .pages.settings_page import SettingsPage
+from .dialogs.fluent_dialogs import TextInputDialog
 from .widgets.project_tree import ProjectTreeWidget
 from .widgets.ai_assistant_panel import AIAssistantPanel
+from ai.agent import ALineAgent
+from ai.command_layer import CommandDispatcher
 from core.project_manager import project_manager
 from core.ai_client import AIConfig
 from core.ai.tool_executor import execute_tool
@@ -22,8 +30,9 @@ from core.ai.tool_registry import TOOLS
 # 页面 2-6 默认显示完整共享树，主页和设置页不显示。
 _BUSINESS_TREE_KINDS = [
     "folder", "data_file", "image_work",
-    "pipeline", "figure_template", "report_template",
-    "ai_prompt", "ai_skill", "ai_agent",
+    "pipeline", "figure_template", "report_template", "analysis_result",
+    "global_pipeline", "global_report_template",
+    "global_curve_style_template", "global_plot_style", "global_plot_theme",
     "series", "curve",
 ]
 
@@ -38,41 +47,86 @@ _PAGE_TREE_KINDS = {
     "settingsPage":  [],
 }
 
+_TREE_PANEL_MIN_WIDTH = 260
+_TREE_PANEL_MAX_WIDTH = 420
+_TREE_PANEL_DEFAULT_WIDTH = 300
+_EXTENSION_PANEL_SHOW_ICON = getattr(FIF, "VIEW", FIF.SEARCH)
+_EXTENSION_PANEL_HIDE_ICON = getattr(FIF, "HIDE", FIF.CANCEL)
+
 
 class _SharedTreePanel(QWidget):
-    """固定260px宽的项目树侧边面板。"""
+    """可拉伸、带宽度边界的项目树侧边面板。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(260)
+        self.setMinimumWidth(_TREE_PANEL_MIN_WIDTH)
+        self.setMaximumWidth(_TREE_PANEL_MAX_WIDTH)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
+        # ── 单排工具栏：项目操作（左） | 分隔线 | 数据操作（右） | AI助手开关（最右）──
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
-        toolbar.setSpacing(4)
-        self._data_actions_label = SubtitleLabel("数据操作", self)
-        toolbar.addWidget(self._data_actions_label)
+        toolbar.setSpacing(2)
+
+        self.new_project_btn = ToolButton(FIF.ADD, self)
+        self.new_project_btn.setToolTip("新建项目")
+        toolbar.addWidget(self.new_project_btn)
+
+        self.open_project_btn = ToolButton(FIF.FOLDER, self)
+        self.open_project_btn.setToolTip("打开项目")
+        toolbar.addWidget(self.open_project_btn)
+
+        self.save_project_btn = ToolButton(FIF.SAVE, self)
+        self.save_project_btn.setToolTip("保存当前项目")
+        toolbar.addWidget(self.save_project_btn)
+
+        self.close_project_btn = ToolButton(FIF.CLOSE, self)
+        self.close_project_btn.setToolTip("关闭当前项目")
+        toolbar.addWidget(self.close_project_btn)
+
+        # 中间分隔线
+        sep = QFrame(self)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFixedWidth(1)
+        toolbar.addWidget(sep)
+
         toolbar.addStretch()
 
-        self.add_dataset_btn = ToolButton(FIF.ADD, self)
+        self.add_dataset_btn = ToolButton(FIF.FOLDER_ADD, self)
         self.add_dataset_btn.setToolTip("新建数据集")
         toolbar.addWidget(self.add_dataset_btn)
 
         self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
         self.import_file_btn.setToolTip("导入文件")
         toolbar.addWidget(self.import_file_btn)
+
+        self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
+        self.extension_toggle_btn.setToolTip("隐藏扩展面板")
+        self.extension_toggle_btn.hide()
+        toolbar.addWidget(self.extension_toggle_btn)
+
+        # AI 助手入口已暂停，保留隐藏按钮以兼容旧属性访问。
+        self.ai_toggle_btn = ToggleToolButton(FIF.CHAT, self)
+        self.ai_toggle_btn.setToolTip("显示/隐藏 AI 助手")
+        self.ai_toggle_btn.hide()
+
         layout.addLayout(toolbar)
 
         self.tree = ProjectTreeWidget(self)
         layout.addWidget(self.tree)
-        self.set_data_actions_visible(False)
+
+        # 安装 Fluent 风格 Tooltip
+        for btn in [self.new_project_btn, self.open_project_btn, self.save_project_btn,
+                self.close_project_btn, self.add_dataset_btn, self.import_file_btn,
+                self.extension_toggle_btn,
+                    self.ai_toggle_btn]:
+            btn.installEventFilter(ToolTipFilter(btn, 500, ToolTipPosition.BOTTOM))
 
     def set_data_actions_visible(self, visible: bool) -> None:
-        self._data_actions_label.setVisible(visible)
-        self.add_dataset_btn.setVisible(visible)
-        self.import_file_btn.setVisible(visible)
+        """保持兼容接口 — 数据操作按钮在所有业务页都始终可见，此方法保留但不作任何更改。"""
+        pass
 
 
 class MainWindow(FluentWindow):
@@ -80,6 +134,8 @@ class MainWindow(FluentWindow):
 
     def __init__(self):
         super().__init__()
+        self._tree_panel_user_hidden = False
+        self._tree_panel_width = _TREE_PANEL_DEFAULT_WIDTH
         self._setup_ui()
         self._setup_theme_watcher()
         self._setup_project_signals()
@@ -119,6 +175,16 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.digitize_page, FIF.EDIT,            "图片取点", NavigationItemPosition.TOP)
         self.addSubInterface(self.settings_page, FIF.SETTING,         "设置",    NavigationItemPosition.BOTTOM)
 
+        self._tree_toggle_nav_btn = NavigationToolButton(FIF.MENU, self)
+        self.navigationInterface.insertWidget(
+            0,
+            routeKey="toggleProjectTree",
+            widget=self._tree_toggle_nav_btn,
+            onClick=self._toggle_tree_panel,
+            position=NavigationItemPosition.TOP,
+            tooltip="隐藏项目树",
+        )
+
         # 永久 COMPACT（图标）模式
         self.navigationInterface.panel.setMenuButtonVisible(False)
         self.navigationInterface.panel.setMinimumExpandWidth(99999)
@@ -126,23 +192,38 @@ class MainWindow(FluentWindow):
         # ── 注入共享树面板 ─────────────────────────────────────
         self._tree_panel = _SharedTreePanel(self)
         self._tree_panel.hide()
-        # widgetLayout 是 FluentWindow 里包含 stackedWidget 的 QHBoxLayout
-        self.widgetLayout.insertWidget(0, self._tree_panel)
+        self.widgetLayout.removeWidget(self.stackedWidget)
+        self._tree_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._tree_splitter.setHandleWidth(6)
+        self._tree_splitter.addWidget(self._tree_panel)
+        self._tree_splitter.addWidget(self.stackedWidget)
+        self._tree_splitter.setCollapsible(0, True)
+        self._tree_splitter.setCollapsible(1, False)
+        self._tree_splitter.setStretchFactor(0, 0)
+        self._tree_splitter.setStretchFactor(1, 1)
+        self._tree_splitter.splitterMoved.connect(self._remember_tree_panel_width)
+        self.widgetLayout.insertWidget(0, self._tree_splitter)
+        self._apply_tree_panel_width(True)
+        self._tree_panel.new_project_btn.clicked.connect(self._create_project_from_panel)
+        self._tree_panel.open_project_btn.clicked.connect(self._open_project_from_panel)
+        self._tree_panel.save_project_btn.clicked.connect(self._save_current_project_from_panel)
+        self._tree_panel.close_project_btn.clicked.connect(self._close_current_project_from_panel)
         self._tree_panel.add_dataset_btn.clicked.connect(self.data_page._add_dataset)
         self._tree_panel.import_file_btn.clicked.connect(self.data_page._import_file)
+        self._tree_panel.extension_toggle_btn.clicked.connect(self._toggle_current_page_extension_panel)
 
-        self._ai_panel = AIAssistantPanel(self)
-        self._ai_panel.hide()
-        self.widgetLayout.addWidget(self._ai_panel)
+        self._ai_panel = None
+        self._update_tree_panel_visibility(self.home_page)
 
     def _setup_theme_watcher(self):
         self.settings_page.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         self.settings_page.shortcuts_changed.connect(self.digitize_page.apply_shortcuts)
-        self.settings_page.ai_panel_visibility_changed.connect(self._on_ai_panel_visibility_changed)
 
     def _setup_project_signals(self):
         self.home_page.project_created.connect(self._on_project_created)
         self.home_page.project_opened.connect(self._on_project_opened)
+        self.settings_page.project_modified.connect(self._on_project_modified)
+        self.settings_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.digitize_page.project_modified.connect(self._on_project_modified)
         self.digitize_page.project_saved.connect(self._update_window_title)
 
@@ -158,8 +239,10 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree.project_modified.connect(self._tree_panel.tree.refresh)
 
         # 页面修改后刷新树
-        for page in [self.digitize_page, self.data_page, self.process_page, self.analysis_page]:
+        for page in [self.digitize_page, self.data_page, self.process_page, self.analysis_page, self.settings_page]:
             page.project_modified.connect(self._tree_panel.tree.refresh)
+        self.chart_page.assets_modified.connect(self._tree_panel.tree.refresh)
+        self.process_page.assets_modified.connect(self._tree_panel.tree.refresh)
 
     # ─────────────────────────────────────────────────────────
     # FluentWindow.switchTo 覆盖
@@ -167,15 +250,71 @@ class MainWindow(FluentWindow):
 
     def switchTo(self, interface, isAutoScroll: bool = False) -> None:
         super().switchTo(interface)
+        self._update_tree_panel_visibility(interface)
+
+    def _tree_available_for_interface(self, interface) -> bool:
+        obj_name = getattr(interface, "objectName", lambda: "")()
+        return bool(_PAGE_TREE_KINDS.get(obj_name, []))
+
+    def _page_supports_extension_panel(self, interface) -> bool:
+        if interface is None or not hasattr(interface, "supports_extension_panel_toggle"):
+            return False
+        return bool(interface.supports_extension_panel_toggle())
+
+    def _update_extension_panel_toggle_button(self, interface) -> None:
+        button = self._tree_panel.extension_toggle_btn
+        supported = self._page_supports_extension_panel(interface)
+        button.setVisible(supported)
+        button.setEnabled(supported)
+        if not supported:
+            return
+        visible = bool(interface.is_extension_panel_visible())
+        button.setIcon((_EXTENSION_PANEL_HIDE_ICON if visible else _EXTENSION_PANEL_SHOW_ICON).icon())
+        button.setToolTip("隐藏扩展面板" if visible else "显示扩展面板")
+
+    def _update_tree_panel_visibility(self, interface) -> None:
         obj_name = getattr(interface, "objectName", lambda: "")()
         kinds = _PAGE_TREE_KINDS.get(obj_name, [])
         show = bool(kinds)
-        self._tree_panel.setVisible(show)
-        self._tree_panel.set_data_actions_visible(interface is self.data_page)
-        self._ai_panel.setVisible(show and AIConfig.load().show_assistant)
+        tree_visible = show and not self._tree_panel_user_hidden
+        self._tree_panel.setVisible(tree_visible)
+        self._apply_tree_panel_width(tree_visible)
+        self._tree_toggle_nav_btn.setEnabled(show)
+        self._tree_toggle_nav_btn.setToolTip("显示项目树" if self._tree_panel_user_hidden else "隐藏项目树")
+        self._update_extension_panel_toggle_button(interface)
         if show:
             self._tree_panel.tree.set_filter_kinds(kinds)
-        self._update_ai_panel_context(page=interface)
+
+    def _toggle_tree_panel(self) -> None:
+        current_page = self.stackedWidget.currentWidget()
+        if not self._tree_available_for_interface(current_page):
+            return
+        self._tree_panel_user_hidden = not self._tree_panel_user_hidden
+        self._update_tree_panel_visibility(current_page)
+
+    def _toggle_current_page_extension_panel(self) -> None:
+        current_page = self.stackedWidget.currentWidget()
+        if not self._page_supports_extension_panel(current_page):
+            return
+        current_page.set_extension_panel_visible(not current_page.is_extension_panel_visible())
+        self._update_extension_panel_toggle_button(current_page)
+
+    def _remember_tree_panel_width(self, *_args) -> None:
+        if not self._tree_panel.isVisible():
+            return
+        width = self._tree_panel.width()
+        if width <= 0:
+            return
+        self._tree_panel_width = max(_TREE_PANEL_MIN_WIDTH, min(_TREE_PANEL_MAX_WIDTH, width))
+
+    def _apply_tree_panel_width(self, visible: bool) -> None:
+        total_width = max(self.width(), self._tree_panel_width + 1)
+        if visible:
+            panel_width = max(_TREE_PANEL_MIN_WIDTH, min(_TREE_PANEL_MAX_WIDTH, self._tree_panel_width))
+            self._tree_splitter.setSizes([panel_width, max(1, total_width - panel_width)])
+            return
+        self._remember_tree_panel_width()
+        self._tree_splitter.setSizes([0, total_width])
 
     # ─────────────────────────────────────────────────────────
     # 项目生命周期
@@ -210,6 +349,93 @@ class MainWindow(FluentWindow):
             project_manager.current_project.is_modified = True
         self._update_window_title()
 
+    def _create_project_from_panel(self) -> None:
+        name, ok = TextInputDialog.get_text(self, "新建项目", placeholder="请输入项目名称")
+        if not ok:
+            return
+        clean_name = name.strip()
+        if not clean_name:
+            return
+        base_dir = QFileDialog.getExistingDirectory(self, "选择项目保存目录", "")
+        if not base_dir:
+            return
+        try:
+            project_manager.create_new(clean_name, parent_dir=base_dir, create_structure=True)
+        except Exception as exc:
+            InfoBar.error("错误", f"创建项目失败:\n{exc}", parent=self, position=InfoBarPosition.TOP)
+            return
+        self._on_project_created(clean_name)
+
+    def _open_project_from_panel(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "打开项目",
+            "",
+            "PyLine 项目 (*.pyline);;所有文件 (*)",
+        )
+        if not file_path:
+            return
+        try:
+            project_manager.open(file_path)
+        except Exception as exc:
+            InfoBar.error("错误", f"无法打开项目:\n{exc}", parent=self, position=InfoBarPosition.TOP)
+            return
+        self._on_project_opened(file_path)
+
+    def _save_current_project_from_panel(self) -> bool:
+        project = project_manager.current_project
+        if project is None:
+            InfoBar.warning("提示", "请先打开项目", parent=self, position=InfoBarPosition.TOP)
+            return False
+
+        file_path = project.file_path
+        if file_path is None:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "保存项目",
+                f"{project.name}.pyline",
+                "PyLine 项目 (*.pyline)",
+            )
+        if not file_path:
+            return False
+
+        try:
+            project_manager.save(file_path)
+        except Exception as exc:
+            InfoBar.error("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return False
+
+        self.data_page.refresh()
+        self.digitize_page._refresh_project_tree()
+        self._tree_panel.tree.refresh()
+        self.settings_page.refresh_templates()
+        self._update_window_title()
+        InfoBar.success("已保存", file_path, parent=self, position=InfoBarPosition.TOP, duration=2500)
+        return True
+
+    def _close_current_project_from_panel(self) -> None:
+        project = project_manager.current_project
+        if project is None:
+            InfoBar.warning("提示", "请先打开项目", parent=self, position=InfoBarPosition.TOP)
+            return
+
+        if project.is_modified:
+            dlg = MessageBox("项目已修改", "当前项目有未保存的更改，是否保存？", self)
+            dlg.yesButton.setText("保存")
+            dlg.cancelButton.setText("不保存")
+            if dlg.exec() and not self._save_current_project_from_panel():
+                return
+
+        project_manager.close_current_project()
+        self.data_page.refresh()
+        self.digitize_page._image_viewer.clear_image()
+        self.digitize_page._refresh_project_tree()
+        self._tree_panel.tree.refresh()
+        self.settings_page.refresh_templates()
+        self._update_window_title()
+        if project_manager.current_project is None:
+            self.switchTo(self.home_page)
+
     def _update_window_title(self):
         if project_manager.current_project:
             name = project_manager.current_project.name
@@ -227,22 +453,24 @@ class MainWindow(FluentWindow):
         if page is self.digitize_page and kind == "image_work":
             if hasattr(self.digitize_page, 'load_image_by_id'):
                 self.digitize_page.load_image_by_id(node_id)
-                self._update_ai_panel_context(page=page, selected_kind=kind, node_id=node_id)
                 return True
             return False
 
         if hasattr(page, 'on_tree_node_activated'):
             page.on_tree_node_activated(kind, node_id)
-            self._update_ai_panel_context(page=page, selected_kind=kind, node_id=node_id)
             return True
         if hasattr(page, 'on_tree_node_selected'):
             page.on_tree_node_selected(kind, node_id)
-            self._update_ai_panel_context(page=page, selected_kind=kind, node_id=node_id)
             return True
         return False
 
     def _on_tree_node_activated(self, kind: str, node_id: str) -> None:
         """双击节点 → 在当前页面执行主动作；显式发送动作才跨页。"""
+        self._update_window_title()
+        if kind == "project":
+            self._tree_panel.tree.refresh()
+            self.settings_page.refresh_templates()
+            return
         if kind in ("data_file", "series", "curve", "image_work"):
             if self._dispatch_activation_to_current_page(kind, node_id):
                 return
@@ -254,14 +482,38 @@ class MainWindow(FluentWindow):
             if hasattr(self.process_page, 'load_pipeline'):
                 self.process_page.load_pipeline(node_id)
             self.switchTo(self.process_page)
+        elif kind == "global_pipeline":
+            if hasattr(self.process_page, 'load_pipeline'):
+                self.process_page.load_pipeline(node_id)
+            self.switchTo(self.process_page)
+        elif kind == "global_figure_template":
+            if hasattr(self.chart_page, 'load_template'):
+                self.chart_page.load_template(node_id)
+            self.switchTo(self.chart_page)
         elif kind in ("figure_template",):
             if hasattr(self.chart_page, 'load_template'):
                 self.chart_page.load_template(node_id)
             self.switchTo(self.chart_page)
+        elif kind == "global_curve_style_template":
+            self.switchTo(self.chart_page)
+            if hasattr(self.chart_page, 'load_curve_style_template'):
+                self.chart_page.load_curve_style_template(node_id)
+        elif kind in ("global_plot_style", "global_plot_theme"):
+            self.switchTo(self.chart_page)
+            if hasattr(self.chart_page, 'load_plot_style'):
+                self.chart_page.load_plot_style(node_id)
+        elif kind == "global_report_template":
+            self.switchTo(self.analysis_page)
+            if hasattr(self.analysis_page, 'load_report_template'):
+                self.analysis_page.load_report_template(node_id)
         elif kind == "report_template":
             self.switchTo(self.analysis_page)
             if hasattr(self.analysis_page, 'load_report_template'):
                 self.analysis_page.load_report_template(node_id)
+        elif kind == "analysis_result":
+            self.switchTo(self.analysis_page)
+            if hasattr(self.analysis_page, 'load_analysis_result'):
+                self.analysis_page.load_analysis_result(node_id)
         elif kind in ("data_file_to_chart", "image_work_to_chart",
                        "series_to_chart", "curve_to_chart"):
             self.switchTo(self.chart_page)
@@ -277,16 +529,23 @@ class MainWindow(FluentWindow):
                 self.analysis_page.on_tree_node_activated(kind, node_id)
 
     def _on_tree_node_selected(self, kind: str, node_id: str) -> None:
-        """单击节点 → 通知当前页面并同步 AI 助手上下文。"""
+        """单击节点 → 通知当前页面。"""
+        self._update_window_title()
+        if kind == "project":
+            self._tree_panel.tree.refresh()
+            self.settings_page.refresh_templates()
+            return
         page = self.stackedWidget.currentWidget()
         if hasattr(page, 'on_tree_node_selected'):
             page.on_tree_node_selected(kind, node_id)
-        self._update_ai_panel_context(page=page, selected_kind=kind, node_id=node_id)
+
+    def _on_ai_toggle_btn_toggled(self, checked: bool) -> None:
+        del checked
+        if self._ai_panel is not None:
+            self._ai_panel.hide()
 
     def _on_ai_panel_visibility_changed(self, visible: bool) -> None:
-        current_page = self.stackedWidget.currentWidget()
-        obj_name = getattr(current_page, "objectName", lambda: "")()
-        self._ai_panel.setVisible(bool(_PAGE_TREE_KINDS.get(obj_name, [])) and visible)
+        del visible
 
     def _describe_node_for_ai(self, kind: str, node_id: str) -> str:
         if not node_id:
@@ -329,28 +588,49 @@ class MainWindow(FluentWindow):
 
     def _tool_context_for_current_page(self, page) -> dict:
         return {
+            "selected_kind": getattr(self, "_last_ai_selected_kind", None),
             "selected_node_id": getattr(self, "_last_ai_node_id", None),
+            "current_page_label": self._page_label_for_ai(page),
+            "current_node_label": getattr(self._ai_panel, "_current_node", "未选择节点"),
+            "context_text": self._build_ai_context_text(page),
+            "project_manager": project_manager,
             "chart_page": self.chart_page if page is self.chart_page else None,
             "process_page": self.process_page if page is self.process_page else None,
             "analysis_page": self.analysis_page if page is self.analysis_page else None,
             "digitize_page": self.digitize_page if page is self.digitize_page else None,
         }
 
-    def _available_tools_for_page(self, page) -> list[str]:
-        tools = ["list_tree_nodes", "get_node_detail", "list_data_files"]
-        if page is self.chart_page:
-            tools.append("read_chart_config")
-        if page is self.process_page:
-            tools.append("save_pipeline_template")
-        if page is self.analysis_page:
-            tools.append("render_report_template")
-        if page is self.digitize_page:
-            tools.append("export_curve_to_data_file")
-        return [tool for tool in tools if tool in TOOLS]
+    def _available_tools_for_page(self, page) -> list[dict]:
+        del page
+        return []
+
+    def _default_ai_tool_params(self, tool_name: str, context: dict) -> dict:
+        selected_kind = context.get("selected_kind")
+        selected_node_id = context.get("selected_node_id")
+        params: dict = {}
+        if selected_kind and selected_node_id:
+            series_list = project_manager.get_all_series_from_node(selected_kind, selected_node_id)
+            if series_list:
+                first_series = series_list[0]
+                if tool_name in {"apply_pipeline", "fit_curve", "detect_peaks", "compute_statistics", "export_series"}:
+                    params["series_id"] = first_series.id
+                if tool_name == "compute_correlation" and len(series_list) > 1:
+                    params["series_id1"] = series_list[0].id
+                    params["series_id2"] = series_list[1].id
+        if tool_name.startswith("global_skill_"):
+            params.setdefault("task", "请基于当前 ALine 页面上下文执行该 Skill。")
+            params.setdefault("payload", {"context_text": context.get("context_text", "")})
+        if tool_name.startswith("global_agent_"):
+            params.setdefault("task", context.get("context_text", "请基于当前上下文执行该 Agent。"))
+        return params
 
     def _run_ai_tool(self, tool_name: str) -> str:
-        page = self.stackedWidget.currentWidget()
-        return execute_tool(tool_name, self._tool_context_for_current_page(page))
+        del tool_name
+        return json.dumps({"status": "disabled", "message": "AI 功能已暂停"}, ensure_ascii=False)
+
+    def _run_ai_request(self, prompt: str) -> str:
+        del prompt
+        return "AI 功能已暂停"
 
     def _page_label_for_ai(self, page) -> str:
         if page is self.data_page:
@@ -368,9 +648,12 @@ class MainWindow(FluentWindow):
         return "主页"
 
     def _update_ai_panel_context(self, page=None, selected_kind: str | None = None, node_id: str | None = None) -> None:
+        if self._ai_panel is None:
+            return
         page = page or self.stackedWidget.currentWidget()
         self._ai_panel.set_current_page(self._page_label_for_ai(page))
         if selected_kind and node_id:
+            self._last_ai_selected_kind = selected_kind
             self._last_ai_node_id = node_id
             self._ai_panel.set_selected_node(self._describe_node_for_ai(selected_kind, node_id))
         self._ai_panel.set_context_text(self._build_ai_context_text(page))
@@ -384,13 +667,11 @@ class MainWindow(FluentWindow):
         self.switchTo(self.chart_page)
         if hasattr(self.chart_page, 'receive_data'):
             self.chart_page.receive_data(data_type, obj_id)
-        self._update_ai_panel_context(page=self.chart_page, selected_kind=data_type, node_id=obj_id)
 
     def _on_send_to_process(self, data_type: str, obj_id: str):
         self.switchTo(self.process_page)
         if hasattr(self.process_page, 'receive_data'):
             self.process_page.receive_data(data_type, obj_id)
-        self._update_ai_panel_context(page=self.process_page, selected_kind=data_type, node_id=obj_id)
 
     # ─────────────────────────────────────────────────────────
     # 关闭 / 主题

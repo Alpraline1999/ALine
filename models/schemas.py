@@ -208,6 +208,47 @@ class FigureState(BaseModel):
     marker_size: float = 5.0
 
 
+class CurveStyle(BaseModel):
+    """单条曲线的可复用样式定义。"""
+    model_config = ConfigDict(extra="ignore")
+
+    color: Optional[str] = None
+    linestyle: str = "-"
+    marker: str = ""
+    linewidth: float = 1.4
+    marker_size: float = 5.0
+    alpha: float = 1.0
+    markevery: int = 1
+    dash_scale: float = 1.0
+    visible: bool = True
+
+
+class CurveStyleTemplate(BaseModel):
+    """曲线样式模板。"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    description: str = ""
+    style: CurveStyle = Field(default_factory=CurveStyle)
+    is_builtin: bool = False
+
+
+class PlotTheme(BaseModel):
+    """绘图样式主题。"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    description: str = ""
+    canvas_mode: Literal["app", "light", "dark"] = "app"
+    grid_color: str = ""
+    foreground_color: str = ""
+    background_color: str = ""
+    state: FigureState = Field(default_factory=FigureState)
+    is_builtin: bool = False
+
+
 # ─────────────────────────────────────────────────────────────
 # Project 根节点（同时兼容 .pyline 格式）
 # ─────────────────────────────────────────────────────────────
@@ -345,6 +386,7 @@ class _NodeBase(BaseModel):
 #   "template_group"         = 旧版绘图模板组（兼容）
 #   "figure_template_group"  = 绘图模板组
 #   "report_template_group"  = 报告模板组
+#   "analysis_result_group"  = 分析结果组
 #   "ai_group"               = AI 工具总分组
 #   "prompt_group"           = Prompts 子分组
 #   "skill_group"            = Skills 子分组
@@ -354,7 +396,7 @@ _GROUP_TYPE = Literal[
     "datasets", "images", "tools",
     "dataset_set", "image_set", "tool_set",
     "pipeline_group",
-    "template_group", "figure_template_group", "report_template_group",
+    "template_group", "figure_template_group", "report_template_group", "analysis_result_group",
     "ai_group", "prompt_group", "skill_group", "agent_group"
 ]
 
@@ -389,6 +431,11 @@ class ReportTemplateNode(_NodeBase):
     template_id: str = ""
 
 
+class AnalysisResultNode(_NodeBase):
+    kind: Literal["analysis_result"] = "analysis_result"
+    analysis_id: str = ""
+
+
 # v0.3 新增：AI 工具节点拆分
 class AIPromptNode(_NodeBase):
     kind: Literal["ai_prompt"] = "ai_prompt"
@@ -415,7 +462,7 @@ class AIToolNode(_NodeBase):
 TreeNodeUnion = Annotated[
     Union[
         FolderNode, DataFileNode, ImageWorkNode,
-        PipelineNode, FigureTemplateNode, ReportTemplateNode,
+        PipelineNode, FigureTemplateNode, ReportTemplateNode, AnalysisResultNode,
         AIPromptNode, AISkillNode, AIAgentNode,
         AIToolNode,   # 保留用于读取 v0.2 旧文件
     ],

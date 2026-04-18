@@ -2,29 +2,12 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QF
 from PySide6.QtCore import Qt, Signal
 from qfluentwidgets import (PrimaryPushButton, PushButton, FluentIcon as FIF,
     BodyLabel, LargeTitleLabel, SubtitleLabel, SmoothScrollArea,
-    InfoBar, MessageBox, MessageBoxBase, LineEdit)
+    InfoBar, MessageBox)
 
 from ui.theme import text_color, secondary_color, placeholder_color
+from ui.dialogs.fluent_dialogs import TextInputDialog
 from core.project_manager import project_manager
 from core.recent_projects import load_recent, remove_recent
-
-
-
-class _InputDialog(MessageBoxBase):
-    """输入对话框"""
-    def __init__(self, title: str, placeholder: str = '', text: str = '', parent=None):
-        super().__init__(parent)
-        self._title_lbl = SubtitleLabel(title, self.widget)
-        self._edit = LineEdit(self.widget)
-        self._edit.setText(text)
-        self._edit.setPlaceholderText(placeholder)
-        self._edit.setClearButtonEnabled(True)
-        self.viewLayout.addWidget(self._title_lbl)
-        self.viewLayout.addWidget(self._edit)
-        self.widget.setMinimumWidth(350)
-
-    def value(self) -> str:
-        return self._edit.text()
 
 
 class HomePage(QWidget):
@@ -229,10 +212,10 @@ class HomePage(QWidget):
 
     def on_new_project(self):
         """新建项目"""
-        dlg = _InputDialog("新建项目", "请输入项目名称:", parent=self)
-        if not dlg.exec():
+        name, ok = TextInputDialog.get_text(self, "新建项目", placeholder="请输入项目名称")
+        if not ok:
             return
-        name = dlg.value().strip()
+        name = name.strip()
         if name:
             base_dir = QFileDialog.getExistingDirectory(self, "选择项目保存目录", "")
             if not base_dir:

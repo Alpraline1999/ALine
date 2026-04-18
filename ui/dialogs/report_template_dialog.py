@@ -18,8 +18,10 @@ try:
 except ImportError:
     _HAS_WEB = False
 
-from core.project_manager import project_manager
+from core.global_assets import global_assets
 from core.analysis_engine import render_report, _DEFAULT_REPORT_TEMPLATE
+from models.schemas import ReportTemplate
+from ui.dialogs.fluent_dialogs import TextInputDialog
 
 
 class ReportTemplateDialog(QDialog):
@@ -36,6 +38,7 @@ class ReportTemplateDialog(QDialog):
         self.setMinimumSize(800, 560)
         self._result = result or {}
         self._template_id = template_id
+        self._template_ids: list[Optional[str]] = [None]
         self._setup_ui()
         self._load_template_list()
         self._on_preview()
@@ -103,27 +106,36 @@ class ReportTemplateDialog(QDialog):
         self._tmpl_combo.blockSignals(True)
         self._tmpl_combo.clear()
         self._tmpl_combo.addItem("默认模板")
-        p = project_manager.current_project
+        self._template_ids = [None]
         selected_index = 0
-        if p:
-            for idx, tmpl in enumerate(p.report_templates, start=1):
-                self._tmpl_combo.addItem(tmpl.name)
-                if self._template_id and tmpl.id == self._template_id:
-                    selected_index = idx
+        for idx, tmpl in enumerate(global_assets.list_report_templates(), start=1):
+            self._tmpl_combo.addItem(tmpl.name)
+            self._template_ids.append(tmpl.id)
+            if self._template_id and tmpl.id == self._template_id:
+                selected_index = idx
         self._tmpl_combo.blockSignals(False)
         self._tmpl_combo.setCurrentIndex(selected_index)
         if selected_index == 0:
+            self._template_id = None
             self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
         else:
             self._on_template_selected(selected_index)
 
     def _on_template_selected(self, idx: int):
         if idx == 0:
+            self._template_id = None
             self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
             return
-        p = project_manager.current_project
-        if p and idx - 1 < len(p.report_templates):
-            self._editor.setPlainText(p.report_templates[idx - 1].content)
+        if idx >= len(self._template_ids):
+            return
+        template_id = self._template_ids[idx]
+        template = global_assets.get_report_template(template_id) if template_id else None
+        if template is None:
+            self._template_id = None
+            self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
+            return
+        self._template_id = template.id
+        self._editor.setPlainText(template.content)
 
     def _on_preview(self):
         content = self._editor.toPlainText()
@@ -154,22 +166,32 @@ class ReportTemplateDialog(QDialog):
             self._preview.setPlainText(rendered)
 
     def _on_save_template(self):
-        from PySide6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "保存报告模板", "模板名称:")
+        current_name = ""
+        current_template = global_assets.get_report_template(self._template_id) if self._template_id else None
+        if current_template is not None:
+            current_name = current_template.name
+        name, ok = TextInputDialog.get_text(
+            self,
+            "保存报告模板",
+            "模板名称:",
+            placeholder="输入模板名称",
+            text=current_name,
+        )
         if not ok or not name.strip():
             return
-        p = project_manager.current_project
-        if p is None:
-            return
+        clean_name = name.strip()
         content = self._editor.toPlainText()
-        existing = next((t for t in p.report_templates if t.name == name.strip()), None)
-        if existing:
-            existing.content = content
-            p.is_modified = True
+        target = current_template
+        if target is None:
+            target = next((item for item in global_assets.list_report_templates() if item.name == clean_name), None)
+        if target is not None:
+            global_assets.update_report_template(target.id, name=clean_name, content=content)
+            self._template_id = target.id
         else:
-            project_manager.add_report_template(name.strip(), content)
+            saved = global_assets.add_report_template(ReportTemplate(name=clean_name, content=content))
+            self._template_id = saved.id
         self._load_template_list()
-        InfoBar.success("已保存", f"模板「{name}」已保存", parent=self,
+        InfoBar.success("已保存", f"模板「{clean_name}」已保存", parent=self,
                         position=InfoBarPosition.TOP, duration=2500)
 
     def _on_export(self):

@@ -20,8 +20,9 @@ class AIAssistantPanel(QWidget):
         self._current_page = "未选择页面"
         self._current_node = "未选择节点"
         self._current_context = "暂无上下文"
-        self._tool_names: list[str] = []
+        self._tool_entries: list[dict] = []
         self._tool_runner = None
+        self._request_runner = None
         self._setup_ui()
         self.response_ready.connect(self._on_response_ready)
         self.request_state_changed.connect(self._set_busy)
@@ -101,12 +102,20 @@ class AIAssistantPanel(QWidget):
         self._current_context = context_text or "暂无上下文"
         self._context_view.setPlainText(self._current_context)
 
-    def set_tool_runner(self, runner, tool_names: list[str]) -> None:
+    def set_request_runner(self, runner) -> None:
+        self._request_runner = runner
+
+    def set_tool_runner(self, runner, tool_names: list[dict] | list[str]) -> None:
         self._tool_runner = runner
-        self._tool_names = list(tool_names)
+        self._tool_entries = []
         self._tool_combo.clear()
-        for name in self._tool_names:
-            self._tool_combo.addItem(name)
+        for item in tool_names:
+            if isinstance(item, dict):
+                entry = dict(item)
+            else:
+                entry = {"name": str(item), "label": str(item)}
+            self._tool_entries.append(entry)
+            self._tool_combo.addItem(entry.get("label", entry["name"]))
 
     def _compose_system_prompt(self) -> str:
         return (
@@ -131,25 +140,28 @@ class AIAssistantPanel(QWidget):
         if self._tool_runner is None:
             return
         idx = self._tool_combo.currentIndex()
-        if idx < 0 or idx >= len(self._tool_names):
+        if idx < 0 or idx >= len(self._tool_entries):
             return
-        tool_name = self._tool_names[idx]
+        tool_name = self._tool_entries[idx]["name"]
         result = self._tool_runner(tool_name)
         self._conversation_view.appendPlainText(f"工具 {tool_name}:\n{result}\n")
 
     def _run_request(self, prompt: str) -> None:
-        from core.ai_client import AIClient
-
-        messages = [
-            {"role": "system", "content": self._compose_system_prompt()},
-            {"role": "user", "content": prompt},
-        ]
         try:
-            response = asyncio.run(AIClient().chat(messages))
-            if response.error:
-                text = f"请求失败: {response.error}"
+            if self._request_runner is not None:
+                text = self._request_runner(prompt)
             else:
-                text = response.content or "（模型未返回文本内容）"
+                from core.ai_client import AIClient
+
+                messages = [
+                    {"role": "system", "content": self._compose_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ]
+                response = asyncio.run(AIClient().chat(messages))
+                if response.error:
+                    text = f"请求失败: {response.error}"
+                else:
+                    text = response.content or "（模型未返回文本内容）"
         except Exception as exc:
             text = f"请求失败: {exc}"
         self.response_ready.emit(text)

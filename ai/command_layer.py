@@ -6,10 +6,14 @@ CommandDispatcher.get_tools_schema() 返回 OpenAI function calling 格式。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from core.global_assets import global_assets
+from ai.skill_runner import skill_runner
+from core.ai_client import AIClient
 from core.project_manager import project_manager
 
 
@@ -32,6 +36,65 @@ class CommandDef:
     params_schema: Dict[str, Any] = field(default_factory=dict)
 
 
+def _normalize_series_key(value: str) -> str:
+    return "".join(ch for ch in value.strip().lower() if not ch.isspace())
+
+
+def _iter_project_series(project):
+    seen_ids = set()
+    for dataset in getattr(project, "datasets", []):
+        for series in dataset.series:
+            if series.id in seen_ids:
+                continue
+            seen_ids.add(series.id)
+            yield series, dataset.name
+    for data_file in getattr(project, "data_files", []):
+        for series in data_file.series:
+            if series.id in seen_ids:
+                continue
+            seen_ids.add(series.id)
+            yield series, data_file.name
+
+
+def _resolve_series(project, series_key: str):
+    clean_key = str(series_key or "").strip()
+    if not clean_key:
+        return None, "缺少系列标识"
+
+    series = project.find_series(clean_key)
+    if series is not None:
+        return series, None
+
+    exact_matches = []
+    normalized_matches = []
+    normalized_key = _normalize_series_key(clean_key)
+    for item, owner_name in _iter_project_series(project):
+        scoped_name = f"{owner_name} / {item.name}" if owner_name else item.name
+        if item.name == clean_key or scoped_name == clean_key:
+            exact_matches.append(item)
+            continue
+        item_name_key = _normalize_series_key(item.name)
+        scoped_name_key = _normalize_series_key(scoped_name)
+        if normalized_key in {item_name_key, scoped_name_key}:
+            normalized_matches.append(item)
+
+    matches = exact_matches or normalized_matches
+    unique_matches = []
+    seen_ids = set()
+    for item in matches:
+        if item.id in seen_ids:
+            continue
+        seen_ids.add(item.id)
+        unique_matches.append(item)
+
+    if len(unique_matches) == 1:
+        return unique_matches[0], None
+    if len(unique_matches) > 1:
+        names = "、".join(item.name for item in unique_matches[:5])
+        return None, f"系列标识不唯一: {clean_key}，匹配到 {names}"
+    return None, f"找不到系列: {clean_key}"
+
+
 # ─────────────────────────────────────────────────────────────
 # Command handlers
 # ─────────────────────────────────────────────────────────────
@@ -46,7 +109,7 @@ def cmd_get_project_summary(params: dict) -> CommandResult:
         "datasets": len(p.datasets),
         "data_files": len(p.data_files),
         "analyses": len(p.analyses),
-        "saved_pipelines": len(p.saved_pipelines),
+        "saved_pipelines": len(global_assets.list_saved_pipelines()),
         "aline_version": p.aline_version,
     }
     return CommandResult(data=summary)
@@ -82,16 +145,9 @@ def cmd_apply_pipeline(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series = p.find_series(series_id)
+    series, error = _resolve_series(p, series_id)
     if series is None:
-        # 搜索 data_files
-        for df in p.data_files:
-            s = df.find_series(series_id)
-            if s:
-                series = s
-                break
-    if series is None:
-        return CommandResult(success=False, error=f"找不到系列: {series_id}")
+        return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     from processing.data_engine import apply_pipeline
     xs, ys = apply_pipeline(list(series.x), list(series.y), ops)
     return CommandResult(data={"xs": xs[:10], "ys": ys[:10], "n": len(xs)})
@@ -113,9 +169,9 @@ def cmd_fit_curve(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series = p.find_series(series_id)
+    series, error = _resolve_series(p, series_id)
     if series is None:
-        return CommandResult(success=False, error=f"找不到系列: {series_id}")
+        return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     try:
         from core.analysis_engine import fit_curve
         r = fit_curve(list(series.x), list(series.y), model)
@@ -134,16 +190,24 @@ def cmd_detect_peaks(params: dict) -> CommandResult:
     series_id = params.get("series_id", "")
     min_height = params.get("min_height")
     min_distance = params.get("min_distance", 1)
+    min_distance_x = params.get("min_distance_x")
     prominence = params.get("prominence")
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series = p.find_series(series_id)
+    series, error = _resolve_series(p, series_id)
     if series is None:
-        return CommandResult(success=False, error=f"找不到系列: {series_id}")
+        return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     try:
         from core.analysis_engine import detect_peaks
-        r = detect_peaks(list(series.x), list(series.y), min_height, min_distance, prominence)
+        r = detect_peaks(
+            list(series.x),
+            list(series.y),
+            min_height=min_height,
+            min_distance=min_distance,
+            min_distance_x=min_distance_x,
+            prominence=prominence,
+        )
         return CommandResult(data=r)
     except Exception as e:
         return CommandResult(success=False, error=str(e))
@@ -154,9 +218,9 @@ def cmd_compute_statistics(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series = p.find_series(series_id)
+    series, error = _resolve_series(p, series_id)
     if series is None:
-        return CommandResult(success=False, error=f"找不到系列: {series_id}")
+        return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     from core.analysis_engine import compute_statistics
     r = compute_statistics(list(series.x), list(series.y))
     return CommandResult(data=r)
@@ -169,10 +233,10 @@ def cmd_compute_correlation(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    s1 = p.find_series(series_id1)
-    s2 = p.find_series(series_id2)
+    s1, error1 = _resolve_series(p, series_id1)
+    s2, error2 = _resolve_series(p, series_id2)
     if s1 is None or s2 is None:
-        return CommandResult(success=False, error="找不到指定系列")
+        return CommandResult(success=False, error=error1 or error2 or "找不到指定系列")
     try:
         from core.analysis_engine import compute_correlation
         r = compute_correlation(list(s1.y), list(s2.y), method)
@@ -187,7 +251,7 @@ def cmd_list_saved_pipelines(params: dict) -> CommandResult:
         return CommandResult(success=False, error="没有打开的项目")
     return CommandResult(data=[
         {"id": sp.id, "name": sp.name, "description": sp.description, "ops_count": len(sp.ops)}
-        for sp in p.saved_pipelines
+        for sp in global_assets.list_saved_pipelines()
     ])
 
 
@@ -229,9 +293,9 @@ def cmd_export_series(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series = p.find_series(series_id)
+    series, error = _resolve_series(p, series_id)
     if series is None:
-        return CommandResult(success=False, error=f"找不到系列: {series_id}")
+        return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     try:
         import csv
         with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -252,9 +316,9 @@ def cmd_apply_pipeline_persist(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series = p.find_series(series_id)
+    series, error = _resolve_series(p, series_id)
     if series is None:
-        return CommandResult(success=False, error=f"找不到系列: {series_id}")
+        return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     ops = project_manager.load_pipeline(pipeline_id)
     if not ops:
         return CommandResult(success=False, error=f"找不到 Pipeline: {pipeline_id}")
@@ -286,7 +350,7 @@ def cmd_generate_report(params: dict) -> CommandResult:
         return CommandResult(success=False, error="没有打开的项目")
     # 获取模板内容
     if template_id:
-        tmpl = p.find_report_template(template_id)
+        tmpl = project_manager.get_report_template(template_id)
         template_content = tmpl.content if tmpl else ""
     else:
         from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
@@ -321,7 +385,7 @@ def cmd_list_report_templates(params: dict) -> CommandResult:
         return CommandResult(success=False, error="没有打开的项目")
     return CommandResult(data=[
         {"id": t.id, "name": t.name, "is_builtin": t.is_builtin}
-        for t in p.report_templates
+        for t in global_assets.list_report_templates()
     ])
 
 
@@ -338,10 +402,10 @@ def cmd_save_figure_template(params: dict) -> CommandResult:
             y_label=params.get("y_label", "Y"),
         ),
     )
-    node = project_manager.add_figure_template(config)
-    if node is None:
+    template = project_manager.add_figure_template(config)
+    if template is None:
         return CommandResult(success=False, error="保存失败")
-    return CommandResult(data={"figure_id": config.id, "node_id": node.id, "name": name})
+    return CommandResult(data={"figure_id": template.id, "name": template.name})
 
 
 def cmd_manage_ai_tool(params: dict) -> CommandResult:
@@ -440,6 +504,7 @@ COMMANDS: Dict[str, CommandDef] = {
             "series_id": {"type": "string", "description": "DataSeries 的 ID"},
             "min_height": {"type": "number", "description": "最小峰高（可选）"},
             "min_distance": {"type": "integer", "description": "最小峰间距（采样点数）"},
+            "min_distance_x": {"type": "number", "description": "最小峰间距（按 x 值）"},
             "prominence": {"type": "number", "description": "最小突出度（可选）"},
         },
     ),
@@ -530,21 +595,18 @@ COMMANDS: Dict[str, CommandDef] = {
 class CommandDispatcher:
     """执行已注册命令，并提供 OpenAI function calling 格式的 tools schema。"""
 
-    def execute(self, command: dict) -> CommandResult:
-        """command = {"action": "cmd_name", "params": {...}}"""
-        action = command.get("action", "")
-        params = command.get("params", {})
-        cmd_def = COMMANDS.get(action)
-        if cmd_def is None:
-            return CommandResult(success=False, error=f"未知命令: {action}")
-        try:
-            return cmd_def.handler(params)
-        except Exception as e:
-            return CommandResult(success=False, error=str(e))
+    def __init__(self, runtime_context: Optional[dict] = None):
+        self._runtime_context = dict(runtime_context or {})
 
-    def get_tools_schema(self) -> List[dict]:
-        """返回 OpenAI function calling 格式的 tools 列表。"""
-        tools = []
+    def set_runtime_context(self, runtime_context: Optional[dict]) -> None:
+        self._runtime_context = dict(runtime_context or {})
+
+    @staticmethod
+    def _global_tool_name(prefix: str, item_id: str) -> str:
+        return f"{prefix}_{item_id.replace('-', '_')}"
+
+    def _builtin_catalog(self) -> List[dict]:
+        catalog: List[dict] = []
         for name, cmd in COMMANDS.items():
             props = {}
             required = []
@@ -555,16 +617,155 @@ class CommandDispatcher:
                 }
                 if "default" not in param_info:
                     required.append(param_name)
+            catalog.append({
+                "name": name,
+                "label": f"内置 · {name}",
+                "description": cmd.desc,
+                "parameters": {
+                    "type": "object",
+                    "properties": props,
+                    "required": required,
+                },
+                "kind": "builtin",
+                "item_id": None,
+            })
+        return catalog
+
+    def _dynamic_ai_catalog(self) -> List[dict]:
+        catalog: List[dict] = []
+        for prompt in global_assets.list_ai_prompts():
+            catalog.append({
+                "name": self._global_tool_name("global_prompt", prompt.id),
+                "label": f"Prompt · {prompt.name}",
+                "description": prompt.description or f"读取全局 Prompt「{prompt.name}」的内容。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                "kind": "prompt",
+                "item_id": prompt.id,
+            })
+        for skill in global_assets.list_ai_skills():
+            catalog.append({
+                "name": self._global_tool_name("global_skill", skill.id),
+                "label": f"Skill · {skill.name}",
+                "description": skill.description or f"在 ALine 沙箱中执行全局 Skill「{skill.name}」。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "给 Skill 的任务说明，可选。"},
+                        "payload": {"type": "object", "description": "传给 Skill 的结构化输入，可选。"},
+                    },
+                    "required": [],
+                },
+                "kind": "skill",
+                "item_id": skill.id,
+            })
+        for agent in global_assets.list_ai_agents():
+            catalog.append({
+                "name": self._global_tool_name("global_agent", agent.id),
+                "label": f"Agent · {agent.name}",
+                "description": agent.description or f"调用全局 Agent「{agent.name}」处理子任务。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "交给该 Agent 的子任务说明。"},
+                    },
+                    "required": ["task"],
+                },
+                "kind": "agent",
+                "item_id": agent.id,
+            })
+        return catalog
+
+    def list_tool_catalog(self) -> List[dict]:
+        return self._builtin_catalog() + self._dynamic_ai_catalog()
+
+    def _dynamic_tool_entry(self, action: str) -> Optional[dict]:
+        return next((item for item in self._dynamic_ai_catalog() if item["name"] == action), None)
+
+    def _execute_dynamic_tool(self, entry: dict, params: dict) -> CommandResult:
+        kind = entry["kind"]
+        item_id = entry["item_id"]
+        if kind == "prompt":
+            prompt = global_assets.get_ai_prompt(item_id)
+            if prompt is None:
+                return CommandResult(success=False, error="找不到指定 Prompt")
+            return CommandResult(data={
+                "type": "prompt",
+                "name": prompt.name,
+                "description": prompt.description,
+                "content": prompt.content,
+            })
+
+        if kind == "skill":
+            skill = global_assets.get_ai_skill(item_id)
+            if skill is None:
+                return CommandResult(success=False, error="找不到指定 Skill")
+            result = skill_runner.run(skill.code, extra_vars={
+                "task": params.get("task", ""),
+                "payload": params.get("payload"),
+                "context": dict(self._runtime_context),
+            })
+            return CommandResult(data={
+                "type": "skill",
+                "name": skill.name,
+                **result.to_dict(),
+            })
+
+        if kind == "agent":
+            agent = global_assets.get_ai_agent(item_id)
+            if agent is None:
+                return CommandResult(success=False, error="找不到指定 Agent")
+            task = str(params.get("task") or "").strip()
+            if not task:
+                return CommandResult(success=False, error="缺少 task 参数")
+            context_text = str(self._runtime_context.get("context_text") or "暂无上下文")
+            try:
+                response = asyncio.run(AIClient().chat([
+                    {"role": "system", "content": agent.system_prompt},
+                    {"role": "user", "content": f"ALine 当前上下文:\n{context_text}\n\n子任务:\n{task}"},
+                ]))
+            except Exception as exc:
+                return CommandResult(success=False, error=str(exc))
+            if response.error:
+                return CommandResult(success=False, error=response.error)
+            return CommandResult(data={
+                "type": "agent",
+                "name": agent.name,
+                "content": response.content or "",
+            })
+
+        return CommandResult(success=False, error=f"未知 AI 工具类型: {kind}")
+
+    def execute(self, command: dict) -> CommandResult:
+        """command = {"action": "cmd_name", "params": {...}}"""
+        action = command.get("action", "")
+        params = command.get("params", {})
+        cmd_def = COMMANDS.get(action)
+        if cmd_def is not None:
+            try:
+                return cmd_def.handler(params)
+            except Exception as e:
+                return CommandResult(success=False, error=str(e))
+
+        dynamic_tool = self._dynamic_tool_entry(action)
+        if dynamic_tool is not None:
+            return self._execute_dynamic_tool(dynamic_tool, params)
+
+        return CommandResult(success=False, error=f"未知命令: {action}")
+
+    def get_tools_schema(self) -> List[dict]:
+        """返回 OpenAI function calling 格式的 tools 列表。"""
+        tools = []
+        for entry in self.list_tool_catalog():
             tools.append({
                 "type": "function",
                 "function": {
-                    "name": name,
-                    "description": cmd.desc,
-                    "parameters": {
-                        "type": "object",
-                        "properties": props,
-                        "required": required,
-                    },
+                    "name": entry["name"],
+                    "description": entry["description"],
+                    "parameters": entry["parameters"],
                 },
             })
         return tools
