@@ -480,6 +480,31 @@ class ProjectManager:
             return node.id
         return pictures_root.id
 
+    def get_analysis_result_target_folder_id(self, node_id: Optional[str] = None) -> Optional[str]:
+        p = self.current_project
+        if p is None or p.tree is None:
+            return None
+        analysis_root = self._find_folder_by_group_type("analysis_result_group")
+        if analysis_root is None:
+            return None
+        if not node_id:
+            return analysis_root.id
+        node = p.tree.get_node(node_id)
+        if node is None:
+            return analysis_root.id
+        if node.kind == "analysis_result":
+            return node.parent_id or analysis_root.id
+        if node.kind != "folder":
+            return analysis_root.id
+
+        current = node
+        while current is not None:
+            if current.id == analysis_root.id:
+                return node.id
+            parent_id = getattr(current, "parent_id", None)
+            current = p.tree.get_node(parent_id) if parent_id else None
+        return analysis_root.id
+
     def resolve_picture_folder_path(self, node_id: Optional[str] = None, create: bool = False) -> str:
         p = self.current_project
         if p is None or p.tree is None or not p.file_path:
@@ -778,7 +803,7 @@ class ProjectManager:
     # ALine 分析管理（新增）
     # ─────────────────────────────────────────────
 
-    def add_analysis(self, result: AnalysisResult) -> bool:
+    def add_analysis(self, result: AnalysisResult, parent_id: Optional[str] = None) -> bool:
         if self.current_project is None:
             return False
         if self.current_project.tree is None:
@@ -786,12 +811,14 @@ class ProjectManager:
         self.current_project.analyses.append(result)
         self._ensure_project_tree_groups(self.current_project)
         folder = self._find_folder_by_group_type("analysis_result_group")
-        parent_id = folder.id if folder is not None else None
-        order = self.current_project.tree.get_siblings_max_order(parent_id) + 1  # type: ignore[union-attr]
+        target_parent_id = self.get_analysis_result_target_folder_id(parent_id)
+        if target_parent_id is None:
+            target_parent_id = folder.id if folder is not None else None
+        order = self.current_project.tree.get_siblings_max_order(target_parent_id) + 1  # type: ignore[union-attr]
         self.current_project.tree.nodes.append(  # type: ignore[union-attr]
             AnalysisResultNode(
                 name=result.name or result.analysis_type or "分析结果",
-                parent_id=parent_id,
+                parent_id=target_parent_id,
                 analysis_id=result.id,
                 order=order,
             )

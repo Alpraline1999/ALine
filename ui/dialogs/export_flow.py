@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
+
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, CaptionLabel, ComboBox, LineEdit, PrimaryPushButton, PushButton
 
 from core.project_manager import project_manager
-from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 
 
 @dataclass(frozen=True)
@@ -17,9 +19,405 @@ class DataExportPlan:
 
 
 @dataclass(frozen=True)
+class DataCreateTargetOption:
+    label: str
+    parent_id: Optional[str] = None
+    ensure_parent_id: Optional[Callable[[], Optional[str]]] = None
+
+
+@dataclass(frozen=True)
 class PictureExportPlan:
     export_name: str
     target_folder_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class AnalysisResultSavePlan:
+    result_name: str
+    target_parent_id: Optional[str]
+
+
+class _DataExportDialog(QDialog):
+    def __init__(
+        self,
+        parent,
+        *,
+        title: str,
+        entries: List[dict],
+        default_export_name: str,
+        default_file_name: str,
+        file_suffix: str,
+        current_text: Optional[str],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(460)
+        self._entries = list(entries)
+        self._file_suffix = file_suffix
+        self._accepted_plan: Optional[DataExportPlan] = None
+        self._last_auto_file_name = _ensure_suffix(default_file_name, file_suffix)
+        self._file_name_manually_edited = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(BodyLabel("名称:", self))
+        self._export_name_edit = LineEdit(self)
+        self._export_name_edit.setText((default_export_name or "").strip())
+        self._export_name_edit.setPlaceholderText("输入导出名称")
+        self._export_name_edit.textChanged.connect(self._on_export_name_changed)
+        name_row.addWidget(self._export_name_edit, 1)
+        layout.addLayout(name_row)
+
+        target_row = QHBoxLayout()
+        target_row.addWidget(BodyLabel("目标:", self))
+        self._target_combo = ComboBox(self)
+        for entry in self._entries:
+            self._target_combo.addItem(entry["label"])
+        initial_index = next((index for index, entry in enumerate(self._entries) if entry["label"] == current_text), 0)
+        self._target_combo.setCurrentIndex(initial_index)
+        self._target_combo.currentIndexChanged.connect(self._on_target_changed)
+        target_row.addWidget(self._target_combo, 1)
+        layout.addLayout(target_row)
+
+        self._target_hint = CaptionLabel("", self)
+        self._target_hint.setWordWrap(True)
+        layout.addWidget(self._target_hint)
+
+        self._file_name_container = QWidget(self)
+        file_name_row = QHBoxLayout(self._file_name_container)
+        file_name_row.setContentsMargins(0, 0, 0, 0)
+        file_name_row.setSpacing(8)
+        file_name_row.addWidget(BodyLabel("数据文件名称:", self._file_name_container))
+        self._data_file_name_edit = LineEdit(self._file_name_container)
+        self._data_file_name_edit.setText(self._last_auto_file_name)
+        self._data_file_name_edit.setPlaceholderText(f"输入数据文件名称（默认 {file_suffix}）")
+        self._data_file_name_edit.textEdited.connect(self._on_file_name_edited)
+        file_name_row.addWidget(self._data_file_name_edit, 1)
+        layout.addWidget(self._file_name_container)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel_btn = PushButton("取消", self)
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        confirm_btn = PrimaryPushButton("确定", self)
+        confirm_btn.clicked.connect(self._on_accept)
+        button_row.addWidget(confirm_btn)
+        layout.addLayout(button_row)
+
+        self._on_target_changed(initial_index)
+
+    def _selected_entry(self) -> Optional[dict]:
+        index = self._target_combo.currentIndex()
+        if 0 <= index < len(self._entries):
+            return self._entries[index]
+        return None
+
+    def _on_export_name_changed(self, text: str) -> None:
+        if self._file_name_manually_edited:
+            return
+        auto_name = _ensure_suffix(text.strip(), self._file_suffix)
+        self._last_auto_file_name = auto_name
+        self._data_file_name_edit.setText(auto_name)
+
+    def _on_file_name_edited(self, _text: str) -> None:
+        self._file_name_manually_edited = True
+
+    def _on_target_changed(self, _index: int) -> None:
+        entry = self._selected_entry()
+        create_new = bool(entry and entry.get("mode") == "create_file")
+        self._file_name_container.setVisible(create_new)
+        self._target_hint.setText(
+            "将数据列追加到已有数据文件。" if not create_new else "将创建一个新的数据文件，并写入当前导出数据列。"
+        )
+
+    def _on_accept(self) -> None:
+        export_name = self._export_name_edit.text().strip()
+        if not export_name:
+            self._export_name_edit.setFocus()
+            return
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        if entry.get("mode") == "append":
+            self._accepted_plan = DataExportPlan(export_name=export_name, target_data_file_id=entry["data_file_id"])
+            self.accept()
+            return
+        file_name = _ensure_suffix(self._data_file_name_edit.text().strip(), self._file_suffix)
+        if not file_name:
+            self._data_file_name_edit.setFocus()
+            return
+        parent_id = entry.get("node_id")
+        resolver = entry.get("resolver")
+        if parent_id is None and callable(resolver):
+            parent_id = resolver()
+        if not parent_id:
+            return
+        self._accepted_plan = DataExportPlan(
+            export_name=export_name,
+            new_parent_id=parent_id,
+            new_data_file_name=file_name,
+        )
+        self.accept()
+
+    @property
+    def accepted_plan(self) -> Optional[DataExportPlan]:
+        return self._accepted_plan
+
+
+class _PictureExportDialog(QDialog):
+    def __init__(
+        self,
+        parent,
+        *,
+        title: str,
+        folder_entries: List[dict],
+        default_export_name: str,
+        current_text: Optional[str],
+        file_suffix: str,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(460)
+        self._folder_entries = list(folder_entries)
+        self._choice_entries = list(folder_entries) + [{"label": "新建图片子文件夹...", "mode": "create_folder", "node_id": None}]
+        self._file_suffix = file_suffix
+        self._accepted_plan: Optional[PictureExportPlan] = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(BodyLabel("图片名称:", self))
+        self._export_name_edit = LineEdit(self)
+        self._export_name_edit.setText(_ensure_suffix(default_export_name, file_suffix))
+        self._export_name_edit.setPlaceholderText(f"输入图片名称（默认 {file_suffix}）")
+        name_row.addWidget(self._export_name_edit, 1)
+        layout.addLayout(name_row)
+
+        target_row = QHBoxLayout()
+        target_row.addWidget(BodyLabel("图片文件夹:", self))
+        self._target_combo = ComboBox(self)
+        for entry in self._choice_entries:
+            self._target_combo.addItem(entry["label"])
+        initial_index = next((index for index, entry in enumerate(self._choice_entries) if entry["label"] == current_text), 0)
+        self._target_combo.setCurrentIndex(initial_index)
+        self._target_combo.currentIndexChanged.connect(self._on_target_changed)
+        target_row.addWidget(self._target_combo, 1)
+        layout.addLayout(target_row)
+
+        self._folder_hint = CaptionLabel("", self)
+        self._folder_hint.setWordWrap(True)
+        layout.addWidget(self._folder_hint)
+
+        self._new_folder_container = QWidget(self)
+        new_folder_layout = QVBoxLayout(self._new_folder_container)
+        new_folder_layout.setContentsMargins(0, 0, 0, 0)
+        new_folder_layout.setSpacing(8)
+
+        parent_row = QHBoxLayout()
+        parent_row.addWidget(BodyLabel("父文件夹:", self._new_folder_container))
+        self._parent_combo = ComboBox(self._new_folder_container)
+        for entry in self._folder_entries:
+            self._parent_combo.addItem(entry["label"])
+        parent_row.addWidget(self._parent_combo, 1)
+        new_folder_layout.addLayout(parent_row)
+
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(BodyLabel("新文件夹名称:", self._new_folder_container))
+        self._folder_name_edit = LineEdit(self._new_folder_container)
+        self._folder_name_edit.setPlaceholderText("输入子文件夹名称")
+        folder_row.addWidget(self._folder_name_edit, 1)
+        new_folder_layout.addLayout(folder_row)
+        layout.addWidget(self._new_folder_container)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel_btn = PushButton("取消", self)
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        confirm_btn = PrimaryPushButton("确定", self)
+        confirm_btn.clicked.connect(self._on_accept)
+        button_row.addWidget(confirm_btn)
+        layout.addLayout(button_row)
+
+        if current_text:
+            parent_index = next((index for index, entry in enumerate(self._folder_entries) if entry["label"] == current_text), 0)
+            self._parent_combo.setCurrentIndex(parent_index)
+        self._on_target_changed(initial_index)
+
+    def _selected_entry(self) -> Optional[dict]:
+        index = self._target_combo.currentIndex()
+        if 0 <= index < len(self._choice_entries):
+            return self._choice_entries[index]
+        return None
+
+    def _on_target_changed(self, _index: int) -> None:
+        entry = self._selected_entry()
+        creating_folder = bool(entry and entry.get("mode") == "create_folder")
+        self._new_folder_container.setVisible(creating_folder)
+        self._folder_hint.setText(
+            "导出到已有图片文件夹。" if not creating_folder else "在选定父文件夹下创建新的图片子文件夹后导出。"
+        )
+
+    def _on_accept(self) -> None:
+        export_name = _ensure_suffix(self._export_name_edit.text().strip(), self._file_suffix)
+        if not export_name:
+            self._export_name_edit.setFocus()
+            return
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        if entry.get("mode") == "folder":
+            self._accepted_plan = PictureExportPlan(export_name=export_name, target_folder_id=entry["node_id"])
+            self.accept()
+            return
+        parent_index = self._parent_combo.currentIndex()
+        if not (0 <= parent_index < len(self._folder_entries)):
+            return
+        folder_name = self._folder_name_edit.text().strip()
+        if not folder_name:
+            self._folder_name_edit.setFocus()
+            return
+        parent_entry = self._folder_entries[parent_index]
+        folder = project_manager.add_folder(folder_name, parent_id=parent_entry["node_id"], group_type="pictures")
+        if folder is None:
+            return
+        self._accepted_plan = PictureExportPlan(export_name=export_name, target_folder_id=folder.id)
+        self.accept()
+
+    @property
+    def accepted_plan(self) -> Optional[PictureExportPlan]:
+        return self._accepted_plan
+
+
+class _AnalysisResultSaveDialog(QDialog):
+    def __init__(
+        self,
+        parent,
+        *,
+        title: str,
+        folder_entries: List[dict],
+        default_result_name: str,
+        current_text: Optional[str],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(460)
+        self._folder_entries = list(folder_entries)
+        self._choice_entries = list(folder_entries) + [{"label": "新建分析结果子文件夹...", "mode": "create_folder", "node_id": None}]
+        self._accepted_plan: Optional[AnalysisResultSavePlan] = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(BodyLabel("结果名称:", self))
+        self._result_name_edit = LineEdit(self)
+        self._result_name_edit.setText((default_result_name or "").strip())
+        self._result_name_edit.setPlaceholderText("输入分析结果名称")
+        name_row.addWidget(self._result_name_edit, 1)
+        layout.addLayout(name_row)
+
+        target_row = QHBoxLayout()
+        target_row.addWidget(BodyLabel("保存位置:", self))
+        self._target_combo = ComboBox(self)
+        for entry in self._choice_entries:
+            self._target_combo.addItem(entry["label"])
+        initial_index = next((index for index, entry in enumerate(self._choice_entries) if entry["label"] == current_text), 0)
+        self._target_combo.setCurrentIndex(initial_index)
+        self._target_combo.currentIndexChanged.connect(self._on_target_changed)
+        target_row.addWidget(self._target_combo, 1)
+        layout.addLayout(target_row)
+
+        self._target_hint = CaptionLabel("", self)
+        self._target_hint.setWordWrap(True)
+        layout.addWidget(self._target_hint)
+
+        self._new_folder_container = QWidget(self)
+        new_folder_layout = QVBoxLayout(self._new_folder_container)
+        new_folder_layout.setContentsMargins(0, 0, 0, 0)
+        new_folder_layout.setSpacing(8)
+
+        parent_row = QHBoxLayout()
+        parent_row.addWidget(BodyLabel("父文件夹:", self._new_folder_container))
+        self._parent_combo = ComboBox(self._new_folder_container)
+        for entry in self._folder_entries:
+            self._parent_combo.addItem(entry["label"])
+        parent_row.addWidget(self._parent_combo, 1)
+        new_folder_layout.addLayout(parent_row)
+
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(BodyLabel("新文件夹名称:", self._new_folder_container))
+        self._folder_name_edit = LineEdit(self._new_folder_container)
+        self._folder_name_edit.setPlaceholderText("输入分析结果子文件夹名称")
+        folder_row.addWidget(self._folder_name_edit, 1)
+        new_folder_layout.addLayout(folder_row)
+        layout.addWidget(self._new_folder_container)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel_btn = PushButton("取消", self)
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        confirm_btn = PrimaryPushButton("确定", self)
+        confirm_btn.clicked.connect(self._on_accept)
+        button_row.addWidget(confirm_btn)
+        layout.addLayout(button_row)
+
+        if current_text:
+            parent_index = next((index for index, entry in enumerate(self._folder_entries) if entry["label"] == current_text), 0)
+            self._parent_combo.setCurrentIndex(parent_index)
+        self._on_target_changed(initial_index)
+
+    def _selected_entry(self) -> Optional[dict]:
+        index = self._target_combo.currentIndex()
+        if 0 <= index < len(self._choice_entries):
+            return self._choice_entries[index]
+        return None
+
+    def _on_target_changed(self, _index: int) -> None:
+        entry = self._selected_entry()
+        creating_folder = bool(entry and entry.get("mode") == "create_folder")
+        self._new_folder_container.setVisible(creating_folder)
+        self._target_hint.setText(
+            "保存到已有分析结果文件夹。" if not creating_folder else "在选定父文件夹下创建新的分析结果子文件夹后保存。"
+        )
+
+    def _on_accept(self) -> None:
+        result_name = self._result_name_edit.text().strip()
+        if not result_name:
+            self._result_name_edit.setFocus()
+            return
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        if entry.get("mode") == "folder":
+            self._accepted_plan = AnalysisResultSavePlan(result_name=result_name, target_parent_id=entry["node_id"])
+            self.accept()
+            return
+        parent_index = self._parent_combo.currentIndex()
+        if not (0 <= parent_index < len(self._folder_entries)):
+            return
+        folder_name = self._folder_name_edit.text().strip()
+        if not folder_name:
+            self._folder_name_edit.setFocus()
+            return
+        parent_entry = self._folder_entries[parent_index]
+        folder = project_manager.add_folder(folder_name, parent_id=parent_entry["node_id"], group_type="analysis_result_group")
+        if folder is None:
+            return
+        self._accepted_plan = AnalysisResultSavePlan(result_name=result_name, target_parent_id=folder.id)
+        self.accept()
+
+    @property
+    def accepted_plan(self) -> Optional[AnalysisResultSavePlan]:
+        return self._accepted_plan
 
 
 def choose_data_export_plan(
@@ -30,56 +428,28 @@ def choose_data_export_plan(
     default_file_name: str,
     preferred_target_node_id: Optional[str] = None,
     file_suffix: str = ".data",
+    create_target_options: Optional[List[DataCreateTargetOption]] = None,
 ) -> Optional[DataExportPlan]:
     project = project_manager.current_project
     if project is None or project.tree is None:
         return None
 
-    export_name, ok = TextInputDialog.get_text(
-        parent,
-        title,
-        "名称:",
-        text=(default_export_name or "").strip(),
-        placeholder="输入导出名称",
-    )
-    export_name = export_name.strip()
-    if not ok or not export_name:
-        return None
-
-    entries = _build_data_target_entries()
+    entries = _build_data_target_entries(create_target_options=create_target_options)
     if not entries:
         return None
     current_text = _preferred_target_label(entries, preferred_target_node_id)
-    selected_label, ok = SelectionDialog.get_item(
+    dialog = _DataExportDialog(
         parent,
-        title,
-        "目标:",
-        [entry["label"] for entry in entries],
+        title=title,
+        entries=entries,
+        default_export_name=default_export_name,
+        default_file_name=default_file_name,
+        file_suffix=file_suffix,
         current_text=current_text,
     )
-    if not ok or not selected_label:
+    if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
-    selected_entry = next((entry for entry in entries if entry["label"] == selected_label), None)
-    if selected_entry is None:
-        return None
-    if selected_entry["mode"] == "append":
-        return DataExportPlan(export_name=export_name, target_data_file_id=selected_entry["data_file_id"])
-
-    file_name, ok = TextInputDialog.get_text(
-        parent,
-        "新建数据文件",
-        "数据文件名称:",
-        text=_ensure_suffix(default_file_name, file_suffix),
-        placeholder=f"输入数据文件名称（默认 {file_suffix}）",
-    )
-    file_name = _ensure_suffix(file_name.strip(), file_suffix)
-    if not ok or not file_name:
-        return None
-    return DataExportPlan(
-        export_name=export_name,
-        new_parent_id=selected_entry["node_id"],
-        new_data_file_name=file_name,
-    )
+    return dialog.accepted_plan
 
 
 def choose_picture_export_plan(
@@ -94,66 +464,56 @@ def choose_picture_export_plan(
     if project is None or project.tree is None:
         return None
 
-    export_name, ok = TextInputDialog.get_text(
-        parent,
-        title,
-        "图片名称:",
-        text=_ensure_suffix(default_export_name, file_suffix),
-        placeholder=f"输入图片名称（默认 {file_suffix}）",
-    )
-    export_name = _ensure_suffix(export_name.strip(), file_suffix)
-    if not ok or not export_name:
-        return None
-
     folder_entries = _build_picture_folder_entries()
     if not folder_entries:
         return None
-    choice_entries = list(folder_entries)
-    choice_entries.append({"label": "新建图片子文件夹...", "mode": "create_folder", "node_id": None})
-    current_text = _preferred_target_label(choice_entries, project_manager.get_picture_target_folder_id(preferred_target_node_id))
-    selected_label, ok = SelectionDialog.get_item(
+    current_text = _preferred_target_label(folder_entries, project_manager.get_picture_target_folder_id(preferred_target_node_id))
+    dialog = _PictureExportDialog(
         parent,
-        title,
-        "图片文件夹:",
-        [entry["label"] for entry in choice_entries],
+        title=title,
+        folder_entries=folder_entries,
+        default_export_name=default_export_name,
+        current_text=current_text,
+        file_suffix=file_suffix,
+    )
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dialog.accepted_plan
+
+
+def choose_analysis_result_save_plan(
+    parent,
+    *,
+    title: str,
+    default_result_name: str,
+    preferred_target_node_id: Optional[str] = None,
+) -> Optional[AnalysisResultSavePlan]:
+    project = project_manager.current_project
+    if project is None or project.tree is None:
+        return None
+
+    folder_entries = _build_analysis_result_folder_entries()
+    if not folder_entries:
+        return None
+    current_text = _preferred_target_label(
+        folder_entries,
+        project_manager.get_analysis_result_target_folder_id(preferred_target_node_id),
+    )
+    dialog = _AnalysisResultSaveDialog(
+        parent,
+        title=title,
+        folder_entries=folder_entries,
+        default_result_name=default_result_name,
         current_text=current_text,
     )
-    if not ok or not selected_label:
+    if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
-    selected_entry = next((entry for entry in choice_entries if entry["label"] == selected_label), None)
-    if selected_entry is None:
-        return None
-    if selected_entry["mode"] == "folder":
-        return PictureExportPlan(export_name=export_name, target_folder_id=selected_entry["node_id"])
-
-    parent_label, ok = SelectionDialog.get_item(
-        parent,
-        "新建图片子文件夹",
-        "父文件夹:",
-        [entry["label"] for entry in folder_entries],
-        current_text=current_text if current_text in [entry["label"] for entry in folder_entries] else None,
-    )
-    if not ok or not parent_label:
-        return None
-    parent_entry = next((entry for entry in folder_entries if entry["label"] == parent_label), None)
-    if parent_entry is None:
-        return None
-    folder_name, ok = TextInputDialog.get_text(
-        parent,
-        "新建图片子文件夹",
-        "文件夹名称:",
-        placeholder="输入子文件夹名称",
-    )
-    folder_name = folder_name.strip()
-    if not ok or not folder_name:
-        return None
-    folder = project_manager.add_folder(folder_name, parent_id=parent_entry["node_id"], group_type="pictures")
-    if folder is None:
-        return None
-    return PictureExportPlan(export_name=export_name, target_folder_id=folder.id)
+    return dialog.accepted_plan
 
 
-def _build_data_target_entries() -> List[dict]:
+def _build_data_target_entries(
+    create_target_options: Optional[List[DataCreateTargetOption]] = None,
+) -> List[dict]:
     project = project_manager.current_project
     if project is None or project.tree is None:
         return []
@@ -173,6 +533,13 @@ def _build_data_target_entries() -> List[dict]:
                 "mode": "create_file",
                 "node_id": node.id,
             })
+    for option in create_target_options or []:
+        entries.append({
+            "label": option.label,
+            "mode": "create_file",
+            "node_id": option.parent_id,
+            "resolver": option.ensure_parent_id,
+        })
     return entries
 
 
@@ -183,6 +550,21 @@ def _build_picture_folder_entries() -> List[dict]:
     entries: List[dict] = []
     for node in project.tree.nodes:
         if node.kind == "folder" and _node_belongs_to_group(node.id, "pictures"):
+            entries.append({
+                "label": _node_path_label(node.id),
+                "mode": "folder",
+                "node_id": node.id,
+            })
+    return entries
+
+
+def _build_analysis_result_folder_entries() -> List[dict]:
+    project = project_manager.current_project
+    if project is None or project.tree is None:
+        return []
+    entries: List[dict] = []
+    for node in project.tree.nodes:
+        if node.kind == "folder" and _node_belongs_to_group(node.id, "analysis_result_group"):
             entries.append({
                 "label": _node_path_label(node.id),
                 "mode": "folder",

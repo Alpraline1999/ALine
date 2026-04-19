@@ -1,3 +1,5 @@
+from typing import Optional
+
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QFormLayout, QTableWidgetItem, QHeaderView
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QFont, QColor
@@ -11,7 +13,7 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
 from ui.theme import text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
-from ui.dialogs.export_flow import choose_data_export_plan
+from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_plan
 from core.project_manager import project_manager
 from models.schemas import CalibrationData, DataFile, DataSeries
 
@@ -90,16 +92,17 @@ class DigitizePage(QWidget):
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
-        main_layout.setSpacing(0)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(12, 12, 12, 12)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setHandleWidth(6)
 
         center_panel = CardWidget(self)
         # center_panel.setFrameShape(QFrame.Shape.StyledPanel)
         center_layout = QVBoxLayout(center_panel)
-        center_layout.setContentsMargins(5, 5, 5, 0)
-        center_layout.setSpacing(0)
+        center_layout.setContentsMargins(12, 12, 12, 10)
+        center_layout.setSpacing(8)
 
         # 图片查看器上方工具栏（橡皮/清空/撤销/重做，靠右）
         self._top_viewer_toolbar = self._create_top_viewer_toolbar(center_panel)
@@ -270,12 +273,29 @@ class DigitizePage(QWidget):
         panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         # 标题
         title_label = make_section_label("曲线数据", panel)
         layout.addWidget(title_label)
+
+        actions_row = QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(6)
+        self._add_image_btn = FPushButton("新增图片", panel)
+        self._add_image_btn.setIcon(FIF.IMAGE_EXPORT)
+        self._add_image_btn.setToolTip("添加图片到当前项目")
+        self._add_image_btn.clicked.connect(self._on_add_image)
+        actions_row.addWidget(self._add_image_btn)
+
+        self._add_curve_btn = FPushButton("新增曲线", panel)
+        self._add_curve_btn.setIcon(FIF.ADD_TO)
+        self._add_curve_btn.setToolTip("添加新曲线到当前图片")
+        self._add_curve_btn.clicked.connect(self._on_add_curve)
+        actions_row.addWidget(self._add_curve_btn)
+        actions_row.addStretch()
+        layout.addLayout(actions_row)
 
         # 曲线数据表格（带可点击排序表头）
         self._curve_table = TableWidget(panel)
@@ -326,21 +346,6 @@ class DigitizePage(QWidget):
         bar_layout.setContentsMargins(4, 2, 4, 2)
         bar_layout.setSpacing(2)
 
-        self._add_image_btn = ToolButton(FIF.IMAGE_EXPORT, bar)
-        self._add_image_btn.setToolTip("添加图片到当前项目")
-        self._add_image_btn.setFixedSize(32, 32)
-        self._add_image_btn.clicked.connect(self._on_add_image)
-        bar_layout.addWidget(self._add_image_btn)
-
-        self._add_curve_btn = ToolButton(FIF.ADD_TO, bar)
-        self._add_curve_btn.setToolTip("添加新曲线到当前图片")
-        self._add_curve_btn.setFixedSize(32, 32)
-        self._add_curve_btn.clicked.connect(self._on_add_curve)
-        bar_layout.addWidget(self._add_curve_btn)
-
-        bar_layout.addWidget(make_vsep(bar))
-        bar_layout.addStretch()  # 推到右侧
-
         # 橡皮擦
         self._eraser_btn = ToggleToolButton(FIF.ERASE_TOOL, bar)
         self._eraser_btn.setToolTip("橡皮擦 (E)")
@@ -370,6 +375,8 @@ class DigitizePage(QWidget):
         self._redo_btn.setFixedSize(32, 32)
         self._redo_btn.clicked.connect(self._redo)
         bar_layout.addWidget(self._redo_btn)
+
+        bar_layout.addStretch()
 
         return bar
 
@@ -1845,7 +1852,7 @@ class DigitizePage(QWidget):
             return
 
         default_name = self._sanitize_export_name(self._export_name_edit.text().strip() or self._suggest_export_name())
-        preferred_target_node_id = self._export_target_id or self._ensure_digitize_result_folder()
+        preferred_target_node_id = self._export_target_id or getattr(project_manager._find_folder_by_group_type("datasets"), "id", None)
         export_plan = choose_data_export_plan(
             self,
             title="导出为数据列",
@@ -1853,6 +1860,12 @@ class DigitizePage(QWidget):
             default_file_name=f"{default_name}.digitize",
             preferred_target_node_id=preferred_target_node_id,
             file_suffix=".digitize",
+            create_target_options=[
+                DataCreateTargetOption(
+                    label="新建数据文件 / 数据集 / 数字化结果（若不存在则创建）",
+                    ensure_parent_id=self._ensure_digitize_result_folder,
+                )
+            ],
         )
         if export_plan is None:
             return
@@ -2563,6 +2576,9 @@ class DigitizePage(QWidget):
         if kind == "image_work":
             self.load_image_by_id(node_id)
             return
+        if kind == "curve":
+            self.load_curve_by_id(node_id)
+            return
         if kind == "data_file":
             self._export_target_kind = kind
             self._export_target_id = node_id
@@ -2572,6 +2588,38 @@ class DigitizePage(QWidget):
             self._export_target_kind = kind
             self._export_target_id = node_id
             self._update_export_target_label()
+
+    def on_tree_node_activated(self, kind: str, node_id: str) -> None:
+        """共享树节点激活时，同步到当前图片 / 曲线或导出目标。"""
+        self.on_tree_node_selected(kind, node_id)
+
+    def _find_image_id_for_curve(self, curve_id: str) -> Optional[str]:
+        curve = project_manager.get_curve(curve_id)
+        if curve is not None and getattr(curve, "source_image_id", None):
+            return curve.source_image_id
+        project = project_manager.current_project
+        if project is None:
+            return None
+        for image in project.images:
+            if any(existing_curve.id == curve_id for existing_curve in image.curves):
+                return image.id
+        return None
+
+    def load_curve_by_id(self, curve_id: str) -> None:
+        """通过 Curve.id 加载所属图片并切换当前曲线。"""
+        curve = project_manager.get_curve(curve_id)
+        if curve is None:
+            return
+        image_id = self._find_image_id_for_curve(curve_id)
+        if image_id is not None:
+            self.load_image_by_id(image_id)
+        self._current_curve_id = curve_id
+        if image_id is not None:
+            self._current_image_id = image_id
+        self._refresh_export_name_suggestion(force=True)
+        self._display_current_curve_on_image()
+        self._update_curve_table()
+        self._refresh_project_tree(show_indicator=True)
 
     def load_image_by_id(self, image_work_id: str) -> None:
         """通过 ImageWork.id 加载图像到查看器（供共享树双击激活调用）。"""

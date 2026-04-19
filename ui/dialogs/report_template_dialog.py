@@ -19,7 +19,7 @@ except ImportError:
     _HAS_WEB = False
 
 from core.global_assets import global_assets
-from core.analysis_engine import render_report, _DEFAULT_REPORT_TEMPLATE
+from core.analysis_engine import render_report, _DEFAULT_REPORT_TEMPLATE, list_report_template_placeholders
 from models.schemas import ReportTemplate
 from ui.dialogs.fluent_dialogs import TextInputDialog
 
@@ -39,6 +39,7 @@ class ReportTemplateDialog(QDialog):
         self._result = result or {}
         self._template_id = template_id
         self._template_ids: list[Optional[str]] = [None]
+        self._placeholder_entries = list_report_template_placeholders()
         self._setup_ui()
         self._load_template_list()
         self._on_preview()
@@ -58,6 +59,23 @@ class ReportTemplateDialog(QDialog):
         btn_save_tmpl.clicked.connect(self._on_save_template)
         top_row.addWidget(btn_save_tmpl)
         root.addLayout(top_row)
+
+        placeholder_row = QHBoxLayout()
+        placeholder_row.addWidget(BodyLabel("占位符:", self))
+        self._placeholder_combo = ComboBox(self)
+        for entry in self._placeholder_entries:
+            self._placeholder_combo.addItem(f"{entry['label']} · {entry['token']}")
+        self._placeholder_combo.currentIndexChanged.connect(self._on_placeholder_changed)
+        placeholder_row.addWidget(self._placeholder_combo, 1)
+        self._insert_placeholder_btn = PushButton(FIF.ADD, "插入占位符", self)
+        self._insert_placeholder_btn.clicked.connect(self._insert_selected_placeholder)
+        placeholder_row.addWidget(self._insert_placeholder_btn)
+        root.addLayout(placeholder_row)
+
+        self._placeholder_hint = BodyLabel("", self)
+        self._placeholder_hint.setWordWrap(True)
+        self._placeholder_hint.setStyleSheet("color: #666; font-size: 12px;")
+        root.addWidget(self._placeholder_hint)
 
         # 主区域：左编辑器 | 右预览
         splitter = QSplitter(Qt.Horizontal, self)
@@ -102,13 +120,15 @@ class ReportTemplateDialog(QDialog):
         btn_row.addWidget(btn_close)
         root.addLayout(btn_row)
 
+        self._on_placeholder_changed(self._placeholder_combo.currentIndex())
+
     def _load_template_list(self):
         self._tmpl_combo.blockSignals(True)
         self._tmpl_combo.clear()
         self._tmpl_combo.addItem("默认模板")
         self._template_ids = [None]
         selected_index = 0
-        for idx, tmpl in enumerate(global_assets.list_report_templates(), start=1):
+        for idx, tmpl in enumerate(global_assets.list_report_templates(include_builtin=False), start=1):
             self._tmpl_combo.addItem(tmpl.name)
             self._template_ids.append(tmpl.id)
             if self._template_id and tmpl.id == self._template_id:
@@ -136,6 +156,26 @@ class ReportTemplateDialog(QDialog):
             return
         self._template_id = template.id
         self._editor.setPlainText(template.content)
+
+    def _selected_placeholder_entry(self) -> Optional[Dict[str, str]]:
+        index = self._placeholder_combo.currentIndex()
+        if 0 <= index < len(self._placeholder_entries):
+            return self._placeholder_entries[index]
+        return None
+
+    def _on_placeholder_changed(self, _idx: int) -> None:
+        entry = self._selected_placeholder_entry()
+        if entry is None:
+            self._placeholder_hint.setText("")
+            return
+        self._placeholder_hint.setText(f"{entry['token']}：{entry['description']}")
+
+    def _insert_selected_placeholder(self) -> None:
+        entry = self._selected_placeholder_entry()
+        if entry is None:
+            return
+        self._editor.insertPlainText(entry["token"])
+        self._editor.setFocus()
 
     def _on_preview(self):
         content = self._editor.toPlainText()
@@ -180,10 +220,14 @@ class ReportTemplateDialog(QDialog):
         if not ok or not name.strip():
             return
         clean_name = name.strip()
+        if clean_name == "默认模板":
+            InfoBar.warning("提示", "默认模板为内置模板，请使用其他名称保存副本", parent=self,
+                            position=InfoBarPosition.TOP, duration=2500)
+            return
         content = self._editor.toPlainText()
         target = current_template
         if target is None:
-            target = next((item for item in global_assets.list_report_templates() if item.name == clean_name), None)
+            target = next((item for item in global_assets.list_report_templates(include_builtin=False) if item.name == clean_name), None)
         if target is not None:
             global_assets.update_report_template(target.id, name=clean_name, content=content)
             self._template_id = target.id

@@ -146,8 +146,8 @@ class ChartPage(QWidget):
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(12)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
 
         content_row = QHBoxLayout()
         content_row.setContentsMargins(0, 0, 0, 0)
@@ -158,8 +158,8 @@ class ChartPage(QWidget):
 
         left_card = CardWidget(self)
         left_layout = QVBoxLayout(left_card)
-        left_layout.setContentsMargins(12, 12, 12, 12)
-        left_layout.setSpacing(8)
+        left_layout.setContentsMargins(14, 14, 14, 14)
+        left_layout.setSpacing(10)
 
         left_layout.addWidget(make_section_label("已绘图曲线", left_card))
         self._chart_list = ListWidget(left_card)
@@ -216,7 +216,9 @@ class ChartPage(QWidget):
 
         right_card = CardWidget(self)
         right_layout = QVBoxLayout(right_card)
-        right_layout.setContentsMargins(8, 8, 8, 8)
+        right_layout.setContentsMargins(14, 14, 14, 14)
+        right_layout.setSpacing(10)
+        right_layout.addWidget(make_section_label("绘图预览", right_card))
         self._canvas_host = QScrollArea(right_card)
         self._canvas_host.setFrameShape(QScrollArea.Shape.NoFrame)
         self._canvas_host.setWidgetResizable(True)
@@ -707,8 +709,12 @@ class ChartPage(QWidget):
         if self._style_tabs.currentIndex() == 0:
             selected_curve = self._selected_curve()
             target = selected_curve["name"] if selected_curve is not None else "未选中曲线"
+            available_types = {entry["type"] for entry in self._curve_style_extension_entries()}
+            panel_current_type = self._extension_panel.current_type() if hasattr(self, "_extension_panel") else None
             current_type = None
-            if self._active_curve_style_ref and self._active_curve_style_ref.startswith("curve_extension:"):
+            if panel_current_type in available_types:
+                current_type = panel_current_type
+            elif self._active_curve_style_ref and self._active_curve_style_ref.startswith("curve_extension:"):
                 current_type = parse_plot_style_asset_key(self._active_curve_style_ref)[1]
             self._extension_panel.set_panel_title("曲线样式扩展")
             self._extension_panel.set_action_text("应用曲线扩展")
@@ -719,8 +725,14 @@ class ChartPage(QWidget):
                 current_type=current_type,
             )
             return
+        plot_style_entries = self._plot_style_extension_entries()
+        plot_entries = self._plot_extension_entries()
+        available_types = {entry["type"] for entry in plot_style_entries + plot_entries}
+        panel_current_type = self._extension_panel.current_type() if hasattr(self, "_extension_panel") else None
         current_type = None
-        if self._applied_plot_style_ref and self._applied_plot_style_ref.startswith("extension:"):
+        if panel_current_type in available_types:
+            current_type = panel_current_type
+        elif self._applied_plot_style_ref and self._applied_plot_style_ref.startswith("extension:"):
             current_type = parse_plot_style_asset_key(self._applied_plot_style_ref)[1]
         elif self._plot_extension_options:
             current_type = next(iter(self._plot_extension_options))
@@ -728,7 +740,7 @@ class ChartPage(QWidget):
         self._extension_panel.set_action_text("应用绘图扩展")
         self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
         self._extension_panel.set_entries(
-            self._plot_style_extension_entries() + self._plot_extension_entries(),
+            plot_style_entries + plot_entries,
             saved_options={**self._plot_style_extension_options, **self._plot_extension_options},
             current_type=current_type,
         )

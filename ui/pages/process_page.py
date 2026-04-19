@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel, ComboBox, FluentIcon as FIF,
+    CardWidget,
     InfoBar, InfoBarPosition, LineEdit,
     PlainTextEdit, PrimaryPushButton, ToolButton,
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
@@ -126,7 +127,7 @@ class ProcessPage(QWidget):
     def _setup_ui(self):
         root = QHBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setSpacing(10)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(4)
         root.addWidget(splitter, 1)
@@ -178,12 +179,12 @@ class ProcessPage(QWidget):
         return panel
 
     def _build_middle(self) -> QWidget:
-        panel = QWidget()
+        panel = CardWidget(self)
         panel.setMinimumWidth(260)
         panel.setMaximumWidth(380)
         mv = QVBoxLayout(panel)
-        mv.setContentsMargins(0, 0, 0, 0)
-        mv.setSpacing(6)
+        mv.setContentsMargins(14, 14, 14, 14)
+        mv.setSpacing(8)
         mv.addWidget(make_section_label("操作链"))
 
         self._current_input_label = BodyLabel("当前输入: 未选择")
@@ -269,10 +270,10 @@ class ProcessPage(QWidget):
         return panel
 
     def _build_right(self) -> QWidget:
-        panel = QWidget()
+        panel = CardWidget(self)
         rv = QVBoxLayout(panel)
-        rv.setContentsMargins(0, 0, 0, 0)
-        rv.setSpacing(6)
+        rv.setContentsMargins(14, 14, 14, 14)
+        rv.setSpacing(8)
         rv.addWidget(make_section_label("处理预览"))
         if _HAS_MPL:
             self._figure = Figure(figsize=(5, 4))

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -27,7 +27,7 @@ class ExtensionConfigPanel(QWidget):
 
     def __init__(self, title: str = "自定义扩展", action_text: str = "应用扩展", parent=None):
         super().__init__(parent)
-        self.setFixedWidth(340)
+        self.setFixedWidth(360)
         self._entries: List[dict] = []
         self._saved_options: Dict[str, Dict[str, Any]] = {}
         self._action_text = action_text
@@ -35,24 +35,13 @@ class ExtensionConfigPanel(QWidget):
 
     def _setup_ui(self, title: str) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(4)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        scroll = SmoothScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        root.addWidget(scroll)
-
-        container = QWidget(scroll)
-        scroll.setWidget(container)
-        outer = QVBoxLayout(container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        card = CardWidget(container)
+        card = CardWidget(self)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
 
         self._title_label = BodyLabel(title, card)
         self._title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
@@ -62,9 +51,6 @@ class ExtensionConfigPanel(QWidget):
         self._selector = ComboBox(card)
         self._selector.currentIndexChanged.connect(self._on_selection_changed)
         selector_row.addWidget(self._selector, 1)
-        self._reset_btn = PushButton("重置配置", card)
-        self._reset_btn.clicked.connect(self._reset_current)
-        selector_row.addWidget(self._reset_btn)
         self._reload_btn = ToolButton(getattr(FIF, "SYNC", FIF.UPDATE), card)
         self._reload_btn.setToolTip("重载扩展")
         self._reload_btn.clicked.connect(lambda checked=False: self.reload_requested.emit())
@@ -87,26 +73,41 @@ class ExtensionConfigPanel(QWidget):
         self._usage_hint_label.setWordWrap(True)
         layout.addWidget(self._usage_hint_label)
 
-        self._config_help_label = CaptionLabel("保持 {} 可使用默认配置。", card)
+        self._config_help_area = SmoothScrollArea(card)
+        self._config_help_area.setWidgetResizable(True)
+        self._config_help_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._config_help_area.setMinimumHeight(124)
+        self._config_help_area.setMaximumHeight(188)
+        self._config_help_area.setStyleSheet("background: transparent; border: none;")
+        self._config_help_container = QWidget(self._config_help_area)
+        help_layout = QVBoxLayout(self._config_help_container)
+        help_layout.setContentsMargins(0, 0, 0, 0)
+        help_layout.setSpacing(0)
+        self._config_help_label = CaptionLabel("保持 {} 可使用默认配置。", self._config_help_container)
         self._config_help_label.setWordWrap(True)
-        layout.addWidget(self._config_help_label)
+        help_layout.addWidget(self._config_help_label)
+        help_layout.addStretch()
+        self._config_help_area.setWidget(self._config_help_container)
+        layout.addWidget(self._config_help_area)
 
         self._editor = PlainTextEdit(card)
         self._editor.setPlaceholderText('{\n  "option": "value"\n}')
-        self._editor.setMinimumHeight(220)
-        layout.addWidget(self._editor)
+        self._editor.setMinimumHeight(240)
+        layout.addWidget(self._editor, 1)
 
         btn_row = QHBoxLayout()
         self._apply_btn = PrimaryPushButton(self._action_text, card)
         self._apply_btn.clicked.connect(self._apply_current)
         btn_row.addWidget(self._apply_btn)
+        self._reset_btn = PushButton("重置配置", card)
+        self._reset_btn.clicked.connect(self._reset_current)
+        btn_row.addWidget(self._reset_btn)
         clear_btn = PushButton("清空配置", card)
         clear_btn.clicked.connect(lambda: self._editor.setPlainText("{}"))
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
 
-        outer.addWidget(card)
-        outer.addStretch()
+        root.addWidget(card, 1)
         self._set_empty_state()
 
     def set_panel_title(self, title: str) -> None:

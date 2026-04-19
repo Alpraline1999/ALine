@@ -457,11 +457,51 @@ def run_analysis(
 # 报告渲染（v0.3）
 # ─────────────────────────────────────────────────────────────
 
+_REPORT_TEMPLATE_PLACEHOLDERS: List[Dict[str, str]] = [
+    {"token": "{{date}}", "label": "日期", "description": "当前日期时间"},
+    {"token": "{{result_count}}", "label": "结果数量", "description": "当前报告上下文中的结果数量"},
+    {"token": "{{result_names}}", "label": "结果名称", "description": "当前结果名称列表"},
+    {"token": "{{analysis_type}}", "label": "分析类型", "description": "分析类型名称"},
+    {"token": "{{source_name}}", "label": "数据来源", "description": "结果对应的数据来源名称"},
+    {"token": "{{name1}}", "label": "主数据名称", "description": "主输入数据名称"},
+    {"token": "{{name2}}", "label": "对比数据名称", "description": "双输入分析中的对比数据名称"},
+    {"token": "{{model}}", "label": "拟合模型", "description": "拟合分析使用的模型名"},
+    {"token": "{{equation}}", "label": "拟合方程", "description": "拟合结果方程"},
+    {"token": "{{r2}}", "label": "R²", "description": "拟合优度，默认保留 4 位小数"},
+    {"token": "{{r2:.4f}}", "label": "R² 自定义精度", "description": "示例格式，支持按需修改小数位数"},
+    {"token": "{{n}}", "label": "样本数", "description": "统计分析中的数据点数量"},
+    {"token": "{{y_mean}}", "label": "Y 均值", "description": "Y 值均值"},
+    {"token": "{{y_std}}", "label": "Y 标准差", "description": "Y 值标准差"},
+    {"token": "{{x_min}}", "label": "X 最小值", "description": "X 范围下界"},
+    {"token": "{{x_max}}", "label": "X 最大值", "description": "X 范围上界"},
+    {"token": "{{y_min}}", "label": "Y 最小值", "description": "Y 范围下界"},
+    {"token": "{{y_max}}", "label": "Y 最大值", "description": "Y 范围上界"},
+    {"token": "{{r}}", "label": "相关系数", "description": "相关性分析中的 r 值"},
+    {"token": "{{mae}}", "label": "MAE", "description": "误差分析中的平均绝对误差"},
+    {"token": "{{rmse}}", "label": "RMSE", "description": "误差分析中的均方根误差"},
+    {"token": "{{mean_error}}", "label": "平均误差", "description": "误差分析中的平均误差"},
+    {"token": "{{max_abs_error}}", "label": "最大绝对误差", "description": "误差分析中的最大绝对误差"},
+    {"token": "{{relative_mae}}", "label": "相对平均误差", "description": "误差分析中的相对平均误差"},
+    {"token": "{{peak_count}}", "label": "峰值个数", "description": "峰值检测结果中的峰值数量"},
+    {"token": "{{valley_count}}", "label": "波谷个数", "description": "峰值检测结果中的波谷数量"},
+    {"token": "{{table:analysis_results}}", "label": "结果概览表", "description": "多结果概览 Markdown 表格"},
+    {"token": "{{multi_result_sections}}", "label": "多结果详情", "description": "多结果模式下的分节摘要"},
+    {"token": "{{table:params}}", "label": "拟合参数表", "description": "拟合参数 Markdown 表格"},
+    {"token": "{{table:peaks}}", "label": "峰值表", "description": "峰值列表 Markdown 表格"},
+    {"token": "{{table:valleys}}", "label": "波谷表", "description": "波谷列表 Markdown 表格"},
+]
+
+
+def list_report_template_placeholders() -> List[Dict[str, str]]:
+    return [dict(item) for item in _REPORT_TEMPLATE_PLACEHOLDERS]
+
 def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> str:
     """将 Markdown 报告模板中的占位符替换为实际分析结果。
 
     支持占位符（均用 {{key}} 形式）：
     - {{date}}              当前日期
+    - {{result_count}}      结果数量
+    - {{result_names}}      结果名称列表
     - {{analysis_type}}     分析类型名称
     - {{model}}             拟合模型名（curve_fit）
     - {{equation}}          拟合方程（curve_fit）
@@ -482,6 +522,8 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     - {{mean_error}}        平均误差
     - {{max_abs_error}}     最大绝对误差
     - {{relative_mae}}      相对平均误差
+    - {{table:analysis_results}} 结果概览表
+    - {{multi_result_sections}}  多结果详情摘要
     - {{table:params}}      参数表格（Markdown 格式）
     - {{table:peaks}}       峰值列表
     - {{table:valleys}}     波谷列表
@@ -491,7 +533,8 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
 
     if not template_content:
         return ""
-    r = result or {}
+    context = result or {}
+    r = context.get("_primary_result", context) if isinstance(context, dict) else {}
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # 基本替换字典
@@ -503,6 +546,8 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     }
     subs = {
         "date": now,
+        "result_count": str(context.get("result_count", 1 if r else 0)),
+        "result_names": str(context.get("result_names", context.get("name1", ""))),
         "analysis_type": _type_names.get(r.get("analysis_type", ""), r.get("analysis_type", "")),
         "model": r.get("model", ""),
         "equation": r.get("equation", ""),
@@ -527,6 +572,7 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
         "mean_error": f"{r.get('mean_error', 0):.6f}",
         "max_abs_error": f"{r.get('max_abs_error', 0):.6f}",
         "relative_mae": f"{r.get('relative_mae', 0):.6f}" if r.get("relative_mae") is not None else "",
+        "multi_result_sections": str(context.get("multi_result_sections", "")),
     }
 
     # 处理 {{r2:.Nf}} 自定义精度
@@ -541,6 +587,11 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     # 简单 {{key}} 替换
     for k, v in subs.items():
         content = content.replace("{{" + k + "}}", v)
+
+    content = content.replace(
+        "{{table:analysis_results}}",
+        str(context.get("_analysis_results_table", "_（无分析结果）_")),
+    )
 
     # {{table:params}} — 拟合参数表格
     params = r.get("params", [])
@@ -579,54 +630,32 @@ _DEFAULT_REPORT_TEMPLATE = """\
 
 **日期：** {{date}}
 
+**结果数量：** {{result_count}}
+
+**结果名称：** {{result_names}}
+
 **分析类型：** {{analysis_type}}
 
 **数据来源：** {{source_name}}
 
-**主数据：** {{name1}}
+---
 
-**对比数据：** {{name2}}
+## 结果概览
+
+{{table:analysis_results}}
+
+## 结果详情
+
+{{multi_result_sections}}
 
 ---
 
-## 可用占位符
+## 常用占位符
 
-- 基础信息: {{date}}, {{analysis_type}}, {{source_name}}, {{name1}}, {{name2}}
+- 基础信息: {{date}}, {{result_count}}, {{result_names}}, {{analysis_type}}, {{source_name}}, {{name1}}, {{name2}}
 - 拟合结果: {{model}}, {{equation}}, {{r2}}, {{table:params}}
 - 峰谷检测: {{peak_count}}, {{valley_count}}, {{table:peaks}}, {{table:valleys}}
 - 统计结果: {{n}}, {{x_mean}}, {{x_std}}, {{x_min}}, {{x_max}}, {{y_mean}}, {{y_std}}, {{y_min}}, {{y_max}}
 - 相关性/误差: {{r}}, {{mae}}, {{rmse}}, {{mean_error}}, {{max_abs_error}}, {{relative_mae}}
-
-## 结果摘要
-
-{{table:params}}
-
-{{table:peaks}}
-
-{{table:valleys}}
-
-- **R²：** {{r2}}
-- **相关系数 r：** {{r}}
-- **峰值个数：** {{peak_count}}
-- **波谷个数：** {{valley_count}}
-- **MAE：** {{mae}}
-- **RMSE：** {{rmse}}
-- **平均误差：** {{mean_error}}
-- **最大绝对误差：** {{max_abs_error}}
-- **相对平均误差：** {{relative_mae}}
-
----
-
-## 统计摘要
-
-| 指标 | 值 |
-|------|-----|
-| N   | {{n}} |
-| X 均值 | {{x_mean}} |
-| X 标准差 | {{x_std}} |
-| X 范围 | [{{x_min}}, {{x_max}}] |
-| Y 均值 | {{y_mean}} |
-| Y 标准差 | {{y_std}} |
-| Y 范围 | [{{y_min}}, {{y_max}}] |
 """
 

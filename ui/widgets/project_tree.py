@@ -9,11 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from math import ceil
+
 from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPixmap
-from PySide6.QtWidgets import (
-    QAbstractItemView, QVBoxLayout, QWidget,
-)
+from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPainter, QPen, QPixmap, QTextDocument, QTextOption
+from PySide6.QtWidgets import QAbstractItemView, QVBoxLayout, QWidget
 from qfluentwidgets import (
     Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip, TreeWidget,
 )
@@ -26,10 +26,33 @@ from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 
 
 def _series_color_icon(color_str: str) -> QPixmap:
-    """生成 16×16 纯色方块图标（用于 DataSeries / Curve 叶节点）。"""
+    """生成 16×16 折线图风格图标（用于 DataSeries 叶节点）。"""
     px = QPixmap(16, 16)
-    px.fill(QColor(color_str if color_str else "#0078D4"))
+    px.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(px)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    color = QColor(color_str if color_str else "#0078D4")
+    painter.setPen(QPen(color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    points = [QPoint(2, 11), QPoint(6, 8), QPoint(9, 10), QPoint(13, 4)]
+    for left, right in zip(points, points[1:]):
+        painter.drawLine(left, right)
+    painter.setBrush(color)
+    painter.setPen(Qt.PenStyle.NoPen)
+    for point in points:
+        painter.drawEllipse(point, 1.8, 1.8)
+    painter.end()
     return px
+
+
+def _wrap_text_height(font, text: str, width: int) -> int:
+    document = QTextDocument()
+    document.setDefaultFont(font)
+    option = QTextOption()
+    option.setWrapMode(QTextOption.WrapMode.WrapAnywhere)
+    document.setDefaultTextOption(option)
+    document.setPlainText(text)
+    document.setTextWidth(max(1, width))
+    return ceil(document.size().height())
 
 
 _PROJECT_ICON = getattr(FIF, "HOME", FIF.FOLDER)
@@ -231,6 +254,8 @@ class ProjectTreeWidget(QWidget):
         self._tree.blockSignals(False)
         self._tree.viewport().update()
         self._tree.updateGeometry()
+        if self._name_display_mode == "wrap":
+            QTimer.singleShot(0, self._update_wrapped_item_size_hints)
 
     def expand_all_items(self) -> None:
         self._expand_all_items()
@@ -359,7 +384,7 @@ class ProjectTreeWidget(QWidget):
         root.addChild(plot_themes)
 
         reports = self._make_synthetic_item("报告模板", "global_group", "__global_reports__", FIF.DOCUMENT)
-        for item in global_assets.list_report_templates():
+        for item in global_assets.list_report_templates(include_builtin=True):
             reports.addChild(self._make_synthetic_item(item.name, "global_report_template", item.id, FIF.DOCUMENT))
         root.addChild(reports)
 
@@ -394,11 +419,9 @@ class ProjectTreeWidget(QWidget):
             item.setIcon(0, icon_fif.icon())
         else:
             cfg = _KIND_CONFIG.get(node.kind, (FIF.DOCUMENT, None))
-            icon_fif, color_hint = cfg
+            icon_fif, _color_hint = cfg
             if icon_fif is not None:
                 item.setIcon(0, icon_fif.icon())
-            if color_hint:
-                item.setForeground(0, QColor(color_hint))
         return item
 
     def _make_virtual_series_item(self, series, project_id: str) -> QTreeWidgetItem:
@@ -412,8 +435,7 @@ class ProjectTreeWidget(QWidget):
             Qt.ItemFlag.ItemIsSelectable |
             Qt.ItemFlag.ItemIsDragEnabled
         )
-        item.setIcon(0, _DATA_ICON.icon())
-        item.setForeground(0, QColor(series.color or "#0078D4"))
+        item.setIcon(0, _series_color_icon(series.color or "#0078D4"))
         item.setToolTip(0, label)
         return item
 
@@ -429,7 +451,6 @@ class ProjectTreeWidget(QWidget):
             Qt.ItemFlag.ItemIsDragEnabled
         )
         item.setIcon(0, FIF.PENCIL_INK.icon())
-        item.setForeground(0, QColor(curve.color or "#0078D4"))
         item.setToolTip(0, label)
         return item
 
@@ -519,8 +540,7 @@ class ProjectTreeWidget(QWidget):
         item = self._tree.itemAt(pos)
         if item is None:
             menu = RoundMenu(parent=self._dialog_parent())
-            self._add_menu_action(menu, FIF.ZOOM_IN, "全部展开", self._expand_all_items)
-            self._add_menu_action(menu, FIF.ZOOM_OUT, "全部折叠", self._collapse_all_items)
+            self._append_tree_scope_actions(menu)
             menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
@@ -534,6 +554,8 @@ class ProjectTreeWidget(QWidget):
         kind, node_id = d
 
         if kind == "project":
+            self._append_tree_scope_actions(menu)
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
         if kind in _SYNTHETIC_GLOBAL_KINDS:
@@ -552,6 +574,7 @@ class ProjectTreeWidget(QWidget):
                 self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._cmd_rename_global(kind, node_id, item.text(0)))
                 self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete_global(kind, node_id, item.text(0)))
             if menu.actions():
+                self._append_tree_scope_actions(menu, separated=True)
                 menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
@@ -653,6 +676,7 @@ class ProjectTreeWidget(QWidget):
             self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
 
         if menu.actions():
+            self._append_tree_scope_actions(menu, separated=True)
             menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     # ─────────────────────────────────────────────────────────
@@ -948,6 +972,12 @@ class ProjectTreeWidget(QWidget):
     def _hide_fluent_tooltip(self) -> None:
         if self._fluent_tooltip is not None:
             self._fluent_tooltip.hide()
+
+    def _append_tree_scope_actions(self, menu: RoundMenu, separated: bool = False) -> None:
+        if separated and menu.actions():
+            menu.addSeparator()
+        self._add_menu_action(menu, FIF.ZOOM_IN, "全部展开", self._expand_all_items)
+        self._add_menu_action(menu, FIF.ZOOM_OUT, "全部折叠", self._collapse_all_items)
 
     def _expand_all_items(self) -> None:
         self._tree.expandAll()
@@ -1270,16 +1300,9 @@ class ProjectTreeWidget(QWidget):
             icon_width = icon_size.width() if icon_size.isValid() else 16
             icon_height = icon_size.height() if icon_size.isValid() else 16
             available_width = max(120, viewport_width - indentation - icon_width - 44)
-            text_rect = font_metrics.boundingRect(
-                0,
-                0,
-                available_width,
-                4096,
-                int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignVCenter),
-                text,
-            )
-            content_height = max(font_metrics.lineSpacing(), icon_height, text_rect.height())
-            item.setSizeHint(0, QSize(max(available_width, text_rect.width()), content_height + 10))
+            text_height = _wrap_text_height(item.font(0), text, available_width)
+            content_height = max(font_metrics.lineSpacing(), icon_height, text_height)
+            item.setSizeHint(0, QSize(max(available_width, font_metrics.horizontalAdvance(text)), content_height + 10))
         except RuntimeError:
             return
 

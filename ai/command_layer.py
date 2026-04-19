@@ -385,7 +385,7 @@ def cmd_list_report_templates(params: dict) -> CommandResult:
         return CommandResult(success=False, error="没有打开的项目")
     return CommandResult(data=[
         {"id": t.id, "name": t.name, "is_builtin": t.is_builtin}
-        for t in global_assets.list_report_templates()
+        for t in global_assets.list_report_templates(include_builtin=True)
     ])
 
 

@@ -114,6 +114,22 @@ def _patch_global_assets():
     return restore
 
 
+def _analysis_result_save_plans(pm, *result_names, parent_id=None):
+    from ui.dialogs.export_flow import AnalysisResultSavePlan
+
+    target_parent_id = parent_id
+    if target_parent_id is None:
+        analysis_root = pm._find_folder_by_group_type("analysis_result_group")
+        if analysis_root is None:
+            raise AssertionError("analysis_result_group root not found")
+        target_parent_id = analysis_root.id
+
+    return [
+        AnalysisResultSavePlan(result_name=result_name, target_parent_id=target_parent_id)
+        for result_name in result_names
+    ]
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. ProjectTreeWidget
 # ═══════════════════════════════════════════════════════════════════════════
@@ -182,10 +198,21 @@ class TestProjectTreeWidget(unittest.TestCase):
             if global_root.child(i).text(0) == "绘图样式"
         )
         self.assertEqual([pipeline_group.child(i).text(0) for i in range(pipeline_group.childCount())], ["p1"])
-        self.assertEqual([report_group.child(i).text(0) for i in range(report_group.childCount())], ["tmpl_a"])
+        self.assertEqual([report_group.child(i).text(0) for i in range(report_group.childCount())], ["默认模板", "tmpl_a"])
         style_items = [style_group.child(i).text(0) for i in range(style_group.childCount())]
         self.assertIn("默认", style_items)
         self.assertIn("样式A", style_items)
+
+    def test_builtin_report_template_cannot_be_renamed_or_deleted(self):
+        restore_assets = _patch_global_assets()
+        try:
+            from core.global_assets import global_assets
+
+            builtin_template = next(item for item in global_assets.list_report_templates(include_builtin=True) if item.is_builtin)
+            self.assertFalse(self.widget._rename_global_asset("global_report_template", builtin_template.id, "重命名默认模板"))
+            self.assertFalse(self.widget._delete_global_asset("global_report_template", builtin_template.id))
+        finally:
+            restore_assets()
 
     def test_global_resource_items_can_be_renamed_and_deleted(self):
         restore_assets = _patch_global_assets()
@@ -227,6 +254,15 @@ class TestProjectTreeWidget(unittest.TestCase):
 
     def test_tree_config_enables_wrapped_labels(self):
         self.assertEqual(self.widget._tree.textElideMode(), Qt.TextElideMode.ElideNone)
+
+    def test_tree_uses_default_delegate_and_no_custom_foreground_role(self):
+        self.pm.add_saved_pipeline("流程A", [{"type": "smooth", "params": {}}])
+        self.widget.refresh()
+
+        self.assertNotEqual(type(self.widget._tree.itemDelegate()).__name__, "_ProjectTreeItemDelegate")
+        series_item = self.widget._find_item(self.s.id)
+        self.assertIsNotNone(series_item)
+        self.assertIsNone(series_item.data(0, Qt.ItemDataRole.ForegroundRole))
         self.assertFalse(self.widget._tree.uniformRowHeights())
 
     def test_set_name_display_mode_elides_long_labels(self):
@@ -569,6 +605,30 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertEqual(self.widget._tree.dragDropMode(), QAbstractItemView.DragDropMode.DragDrop)
         self.assertTrue(self.widget._tree.showDropIndicator())
 
+    def test_context_menu_appends_expand_and_collapse_actions(self):
+        self.widget.refresh()
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        item = self.widget._find_item(datasets_root.id)
+        self.assertIsNotNone(item)
+        pos = self.widget._tree.visualItemRect(item).center()
+        captured = {}
+
+        def _fake_exec(menu, *_args):
+            captured["actions"] = list(menu.actions())
+            captured["separator_marks"] = [
+                menu.view.item(index).data(Qt.ItemDataRole.DecorationRole)
+                for index in range(menu.view.count())
+            ]
+
+        with mock.patch("ui.widgets.project_tree.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+            self.widget._on_context_menu(pos)
+
+        actions = captured["actions"]
+        visible_texts = [action.text() for action in actions if not action.isSeparator()]
+        self.assertIn("seperator", captured["separator_marks"])
+        self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. SettingsPage — AI 配置
@@ -722,6 +782,27 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertIsInstance(panel._reload_btn, ToolButton)
         panel.deleteLater()
 
+    def test_config_help_section_uses_scroll_area(self):
+        from qfluentwidgets import SmoothScrollArea
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+
+        self.assertIsInstance(panel._config_help_area, SmoothScrollArea)
+        self.assertIs(panel._config_help_area.widget(), panel._config_help_container)
+        panel.deleteLater()
+
+    def test_panel_layout_matches_page_card_spacing_baseline(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+
+        margins = panel.layout().contentsMargins()
+        self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (0, 0, 0, 0))
+        self.assertGreaterEqual(panel._config_help_area.minimumHeight(), 124)
+        self.assertGreaterEqual(panel.width(), 360)
+        panel.deleteLater()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. DataPage — on_tree_node_selected
@@ -772,6 +853,54 @@ class TestDataPage(unittest.TestCase):
         node = next((n for n in self.p.tree.nodes if n.kind == "folder"), None)
         if node:
             self.page.on_tree_node_selected("folder", node.id)
+
+    def test_on_tree_node_selected_folder_shows_summary_preview(self):
+        node = next((n for n in self.p.tree.nodes if n.kind == "folder" and getattr(n, "group_type", None) == "datasets"), None)
+        self.assertIsNotNone(node)
+
+        self.page.on_tree_node_selected("folder", node.id)
+
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+        self.assertIn("文件夹:", self.page._text_preview.toPlainText())
+
+    def test_on_tree_node_selected_image_work_shows_image_preview(self):
+        from PySide6.QtGui import QImage
+
+        temp_path = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
+        try:
+            image = QImage(24, 18, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(temp_path)))
+
+            created = self.pm.add_image(str(temp_path), name="sample-image")
+            node = next((n for n in self.p.tree.nodes if n.kind == "image_work" and n.image_work_id == created.id), None)
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("image_work", node.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._image_preview_label)
+            self.assertIn("图像名称: sample-image", self.page._stats_label.text())
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    def test_on_tree_node_selected_analysis_result_shows_text_preview(self):
+        from models.schemas import AnalysisResult
+
+        result = AnalysisResult(
+            name="拟合结果A",
+            analysis_type="curve_fit",
+            summary={"analysis_type": "curve_fit", "source_name": "series-A", "model": "linear", "r2": 0.98},
+        )
+        self.assertTrue(self.pm.add_analysis(result))
+        node = next((n for n in self.p.tree.nodes if n.kind == "analysis_result" and n.analysis_id == result.id), None)
+        self.assertIsNotNone(node)
+
+        self.page.on_tree_node_selected("analysis_result", node.id)
+
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+        preview_text = self.page._text_preview.toPlainText()
+        self.assertIn("名称: 拟合结果A", preview_text)
+        self.assertIn("R²: 0.98", preview_text)
 
     def test_on_tree_node_selected_unknown_kind(self):
         self.page.on_tree_node_selected("unknown", "fake-id")
@@ -936,6 +1065,12 @@ class TestChartPage(unittest.TestCase):
 
     def test_on_tree_node_selected_image_work(self):
         self.page.on_tree_node_selected("image_work", "fake-image-id")
+
+    def test_on_tree_node_selected_curve_updates_selection_state(self):
+        self.page.on_tree_node_selected("curve", "curve-1")
+
+        self.assertEqual(self.page._selected_tree_kind, "curve")
+        self.assertEqual(self.page._selected_tree_id, "curve-1")
 
     def test_on_tree_node_selected_folder(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "folder"), None)
@@ -1698,6 +1833,8 @@ class TestProcessPage(unittest.TestCase):
         )
         try:
             self.page._refresh_processing_extensions()
+            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
+            self.page._extension_panel._selector.setCurrentIndex(selector_items.index("UI 配置说明"))
             help_text = self.page._extension_panel._config_help_label.text()
             self.assertIn("倍率", help_text)
             self.assertIn("factor", help_text)
@@ -1724,6 +1861,17 @@ class TestAnalysisPage(unittest.TestCase):
         self._restore()
         self._restore_assets()
         self.page.deleteLater()
+
+    def _analysis_export_plan(self, name: str):
+        from ui.dialogs.export_flow import DataExportPlan
+
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        return DataExportPlan(
+            export_name=name,
+            new_parent_id=datasets_root.id,
+            new_data_file_name=f"{name}.analysis",
+        )
 
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
@@ -1843,14 +1991,57 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIn("分析类型", self.page._report_preview.toPlainText())
 
     def test_save_result_prompts_for_name_before_persisting(self):
+        from ui.dialogs.export_flow import AnalysisResultSavePlan
+
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
+        before = len(self.p.data_files)
+        analysis_root = self.pm._find_folder_by_group_type("analysis_result_group")
+        self.assertIsNotNone(analysis_root)
 
-        with mock.patch("ui.pages.analysis_page.TextInputDialog.get_text", return_value=("拟合结果A", True)):
+        with mock.patch(
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            return_value=AnalysisResultSavePlan(result_name="拟合结果A", target_parent_id=analysis_root.id),
+        ):
             self.page._save_result()
 
         saved = next((item for item in self.p.analyses if item.name == "拟合结果A"), None)
         self.assertIsNotNone(saved)
+        self.assertEqual(len(self.p.data_files), before)
+
+    def test_save_result_can_create_and_use_analysis_subfolder(self):
+        from ui.dialogs.export_flow import AnalysisResultSavePlan
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+        analysis_root = self.pm._find_folder_by_group_type("analysis_result_group")
+        self.assertIsNotNone(analysis_root)
+        target_folder = self.pm.add_folder("拟合结果组", parent_id=analysis_root.id, group_type="analysis_result_group")
+        self.assertIsNotNone(target_folder)
+
+        with mock.patch(
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            return_value=AnalysisResultSavePlan(result_name="拟合结果B", target_parent_id=target_folder.id),
+        ):
+            self.page._save_result()
+
+        node = next((n for n in self.p.tree.nodes if n.kind == "analysis_result" and n.name == "拟合结果B"), None)
+        self.assertIsNotNone(node)
+        self.assertEqual(node.parent_id, target_folder.id)
+
+    def test_curve_fit_result_can_export_series_with_export_plan(self):
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+
+        with mock.patch(
+            "ui.pages.analysis_page.choose_data_export_plan",
+            return_value=self._analysis_export_plan("拟合曲线A"),
+        ):
+            self.page._export_result_series()
+
+        data_file = next((item for item in self.p.data_files if item.name == "拟合曲线A.analysis"), None)
+        self.assertIsNotNone(data_file)
+        self.assertEqual(data_file.series[0].name, "拟合曲线A")
 
     def test_save_report_template_as_named(self):
         from core.global_assets import global_assets
@@ -1886,6 +2077,19 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._report_editor.setPlainText("# Updated Report")
         self.page._save_current_report_template()
         self.assertEqual(self.pm.get_report_template(tmpl.id).content, "# Updated Report")
+
+    def test_report_editor_can_insert_placeholder_from_selector(self):
+        target_text = "{{analysis_type}}"
+        index = next(
+            i for i in range(self.page._report_placeholder_combo.count())
+            if target_text in self.page._report_placeholder_combo.itemText(i)
+        )
+        self.page._report_editor.setPlainText("报告开始\n")
+        self.page._report_placeholder_combo.setCurrentIndex(index)
+
+        self.page._insert_selected_report_placeholder()
+
+        self.assertIn(target_text, self.page._report_editor.toPlainText())
 
     def test_analysis_extension_appears_in_type_selector_and_panel(self):
         from core.extension_api import AnalysisExtension, extension_registry
@@ -1988,7 +2192,14 @@ class TestAnalysisPage(unittest.TestCase):
     def test_load_saved_analysis_result_from_tree(self):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
-        with mock.patch("ui.pages.analysis_page.TextInputDialog.get_text", return_value=("拟合结果A", True)):
+        from ui.dialogs.export_flow import AnalysisResultSavePlan
+
+        analysis_root = self.pm._find_folder_by_group_type("analysis_result_group")
+        self.assertIsNotNone(analysis_root)
+        with mock.patch(
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            return_value=AnalysisResultSavePlan(result_name="拟合结果A", target_parent_id=analysis_root.id),
+        ):
             self.page._save_result()
         node = next((n for n in self.p.tree.nodes if n.kind == "analysis_result"), None)
         self.assertIsNotNone(node)
@@ -2004,8 +2215,8 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._run_analysis()
 
         with mock.patch(
-            "ui.pages.analysis_page.TextInputDialog.get_text",
-            side_effect=[("拟合结果A", True), ("拟合结果B", True)],
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "拟合结果B"),
         ):
             self.page._save_result()
             self.page._save_result()
@@ -2024,8 +2235,8 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._run_analysis()
 
         with mock.patch(
-            "ui.pages.analysis_page.TextInputDialog.get_text",
-            side_effect=[("拟合结果A", True), ("拟合结果B", True)],
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "拟合结果B"),
         ):
             self.page._save_result()
             self.page._save_result()
@@ -2094,8 +2305,8 @@ class TestAnalysisPage(unittest.TestCase):
 
     def test_report_preview_allows_selecting_one_result_per_analysis_type(self):
         with mock.patch(
-            "ui.pages.analysis_page.TextInputDialog.get_text",
-            side_effect=[("拟合结果A", True), ("拟合结果B", True), ("统计结果A", True)],
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "拟合结果B", "统计结果A"),
         ):
             self.page.on_tree_node_activated("series", self.s.id)
             self.page._type_combo.setCurrentIndex(0)
@@ -2125,8 +2336,8 @@ class TestAnalysisPage(unittest.TestCase):
 
     def test_report_preview_preserves_blank_lines_for_multi_result_sections(self):
         with mock.patch(
-            "ui.pages.analysis_page.TextInputDialog.get_text",
-            side_effect=[("拟合结果A", True), ("统计结果A", True)],
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "统计结果A"),
         ):
             self.page.on_tree_node_activated("series", self.s.id)
             self.page._type_combo.setCurrentIndex(0)
@@ -2155,8 +2366,11 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._render_report_preview()
 
         preview = self.page._report_preview.toPlainText()
-        self.assertIn("## 拟合结果A\n\n\n前言\n\n正文\n", preview)
-        self.assertIn("## 统计结果A\n\n\n前言\n\n正文\n", preview)
+        self.assertTrue(preview.startswith("\n前言\n\n正文\n"))
+        self.assertEqual(preview.count("前言"), 1)
+        self.assertEqual(preview.count("正文"), 1)
+        self.assertIn("### 拟合结果A", preview)
+        self.assertIn("### 统计结果A", preview)
 
     def test_peak_detect_supports_x_distance_mode(self):
         from models.schemas import DataSeries
@@ -2180,6 +2394,7 @@ class TestAnalysisPage(unittest.TestCase):
 
     def test_peak_detect_can_export_peaks_and_valleys_as_series(self):
         from models.schemas import DataSeries
+        from ui.dialogs.export_flow import DataExportPlan
 
         target = DataSeries(
             name="oscillation",
@@ -2189,15 +2404,25 @@ class TestAnalysisPage(unittest.TestCase):
         self.df.series.append(target)
 
         before = len(self.p.data_files)
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
         self.page._type_combo.setCurrentIndex(1)
         self.page.on_tree_node_activated("series", target.id)
         self.page._run_analysis()
-        self.page._export_extrema_series("peaks", "peaks")
-        self.page._export_extrema_series("valleys", "valleys")
+
+        with mock.patch(
+            "ui.pages.analysis_page.choose_data_export_plan",
+            side_effect=[
+                DataExportPlan(export_name="波峰A", new_parent_id=datasets_root.id, new_data_file_name="波峰A.analysis"),
+                DataExportPlan(export_name="波谷A", new_parent_id=datasets_root.id, new_data_file_name="波谷A.analysis"),
+            ],
+        ):
+            self.page._export_extrema_series("peaks", "peaks")
+            self.page._export_extrema_series("valleys", "valleys")
 
         self.assertEqual(len(self.p.data_files), before + 2)
         names = [data_file.name for data_file in self.p.data_files[-2:]]
-        self.assertEqual(names, ["peaks_oscillation.analysis", "valleys_oscillation.analysis"])
+        self.assertEqual(names, ["波峰A.analysis", "波谷A.analysis"])
 
     def test_single_input_mode_replaces_previous_input(self):
         from models.schemas import DataSeries
@@ -2277,35 +2502,33 @@ class TestDigitizePage(unittest.TestCase):
         self.assertIn("SEM", self.page._export_name_edit.text())
         self.assertIn("曲线1", self.page._export_name_edit.text())
 
-    def test_export_to_data_file_creates_digitize_result_folder_by_default(self):
+    def test_export_to_data_file_does_not_create_digitize_result_folder_by_default(self):
         from ui.dialogs.export_flow import DataExportPlan
 
         self._add_digitize_curve()
         received = []
         self.page.project_modified.connect(lambda: received.append(True))
 
-        derived_folder_id = self.page._ensure_digitize_result_folder()
-        self.assertIsNotNone(derived_folder_id)
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
 
         with mock.patch(
             "ui.pages.digitize_page.choose_data_export_plan",
             return_value=DataExportPlan(
                 export_name="SEM_曲线1",
-                new_parent_id=derived_folder_id,
+                new_parent_id=datasets_root.id,
                 new_data_file_name="SEM_曲线1.digitize",
             ),
         ):
             self.page._on_export_to_data_file()
 
-        datasets_root = self.pm._find_folder_by_group_type("datasets")
-        self.assertIsNotNone(datasets_root)
         derived_folder = next(
             (node for node in self.p.tree.nodes if node.kind == "folder" and node.parent_id == datasets_root.id and node.name == "数字化结果"),
             None,
         )
-        self.assertIsNotNone(derived_folder)
+        self.assertIsNone(derived_folder)
         data_node = next(
-            (node for node in self.p.tree.nodes if node.kind == "data_file" and node.parent_id == derived_folder.id),
+            (node for node in self.p.tree.nodes if node.kind == "data_file" and node.parent_id == datasets_root.id and node.name == "SEM_曲线1.digitize"),
             None,
         )
         self.assertIsNotNone(data_node)
@@ -2373,9 +2596,9 @@ class TestMainWindow(unittest.TestCase):
         self.assertIsNotNone(self.win._tree_panel.close_project_btn)
         self.assertIsNotNone(self.win._tree_panel.extension_toggle_btn)
 
-    def test_tree_panel_has_expand_and_collapse_buttons(self):
-        self.assertIsNotNone(self.win._tree_panel.tree_expand_btn)
-        self.assertIsNotNone(self.win._tree_panel.tree_collapse_btn)
+    def test_tree_panel_does_not_expose_expand_and_collapse_buttons(self):
+        self.assertFalse(hasattr(self.win._tree_panel, "tree_expand_btn"))
+        self.assertFalse(hasattr(self.win._tree_panel, "tree_collapse_btn"))
 
     def test_navigation_has_tree_toggle_button(self):
         self.assertIsNotNone(self.win._tree_toggle_nav_btn)
@@ -2552,7 +2775,10 @@ class TestMainWindow(unittest.TestCase):
     def test_tree_node_activated_analysis_result_loads_analysis_page(self):
         self.win.analysis_page.on_tree_node_activated("series", self.s.id)
         self.win.analysis_page._run_analysis()
-        with mock.patch("ui.pages.analysis_page.TextInputDialog.get_text", return_value=("拟合结果A", True)):
+        with mock.patch(
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            return_value=_analysis_result_save_plans(self.pm, "拟合结果A")[0],
+        ):
             self.win.analysis_page._save_result()
         node = next((n for n in self.p.tree.nodes if n.kind == "analysis_result"), None)
         self.assertIsNotNone(node)
@@ -3183,6 +3409,7 @@ class TestReportTemplateDialog(unittest.TestCase):
 
     def test_load_template_list_uses_global_assets(self):
         items = [self.dialog._tmpl_combo.itemText(i) for i in range(self.dialog._tmpl_combo.count())]
+        self.assertIn("默认模板", items)
         self.assertIn("报告模板A", items)
 
     def test_save_template_updates_existing_template_without_duplication(self):
@@ -3196,6 +3423,19 @@ class TestReportTemplateDialog(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].id, self.template.id)
         self.assertEqual(matches[0].content, "# Updated Report")
+
+    def test_editor_can_insert_placeholder_from_selector(self):
+        target_text = "{{table:params}}"
+        index = next(
+            i for i in range(self.dialog._placeholder_combo.count())
+            if target_text in self.dialog._placeholder_combo.itemText(i)
+        )
+        self.dialog._editor.setPlainText("# 模板\n")
+        self.dialog._placeholder_combo.setCurrentIndex(index)
+
+        self.dialog._insert_selected_placeholder()
+
+        self.assertIn(target_text, self.dialog._editor.toPlainText())
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ from qfluentwidgets import (
     FluentIcon as FIF, FluentWindow, NavigationItemPosition,
     NavigationToolButton,
     setTheme, Theme, MessageBox, ToggleToolButton, ToolButton,
-    PushButton,
     InfoBar, InfoBarPosition, ToolTipFilter, ToolTipPosition,
 )
 
@@ -50,7 +49,7 @@ _PAGE_TREE_KINDS = {
 
 _TREE_PANEL_MIN_WIDTH = 260
 _TREE_PANEL_MAX_WIDTH = 420
-_TREE_PANEL_DEFAULT_WIDTH = 300
+_TREE_PANEL_DEFAULT_WIDTH = 260
 _EXTENSION_PANEL_SHOW_ICON = getattr(FIF, "VIEW", FIF.SEARCH)
 _EXTENSION_PANEL_HIDE_ICON = getattr(FIF, "HIDE", FIF.CANCEL)
 
@@ -115,30 +114,13 @@ class _SharedTreePanel(QWidget):
 
         layout.addLayout(toolbar)
 
-        tree_toolbar = QHBoxLayout()
-        tree_toolbar.setContentsMargins(0, 0, 0, 0)
-        tree_toolbar.setSpacing(6)
-        tree_toolbar.addStretch()
-
-        self.tree_collapse_btn = PushButton("全部折叠", self)
-        self.tree_collapse_btn.setToolTip("折叠项目树中的全部节点")
-        tree_toolbar.addWidget(self.tree_collapse_btn)
-
-        self.tree_expand_btn = PushButton("全部展开", self)
-        self.tree_expand_btn.setToolTip("展开项目树中的全部节点")
-        tree_toolbar.addWidget(self.tree_expand_btn)
-
-        layout.addLayout(tree_toolbar)
-
         self.tree = ProjectTreeWidget(self)
-        self.tree_collapse_btn.clicked.connect(self.tree.collapse_all_items)
-        self.tree_expand_btn.clicked.connect(self.tree.expand_all_items)
         layout.addWidget(self.tree)
 
         # 安装 Fluent 风格 Tooltip
         for btn in [self.new_project_btn, self.open_project_btn, self.save_project_btn,
                 self.close_project_btn, self.add_dataset_btn, self.import_file_btn,
-            self.extension_toggle_btn, self.tree_collapse_btn, self.tree_expand_btn,
+            self.extension_toggle_btn,
                     self.ai_toggle_btn]:
             btn.installEventFilter(ToolTipFilter(btn, 500, ToolTipPosition.BOTTOM))
 
@@ -205,6 +187,7 @@ class MainWindow(FluentWindow):
 
         # 永久 COMPACT（图标）模式
         self.navigationInterface.panel.setMenuButtonVisible(False)
+        self.navigationInterface.panel.setReturnButtonVisible(False)
         self.navigationInterface.panel.setMinimumExpandWidth(99999)
 
         # ── 注入共享树面板 ─────────────────────────────────────

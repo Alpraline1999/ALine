@@ -9,16 +9,16 @@ import math
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTreeWidgetItem, QAbstractItemView,
-    QFileDialog, QFrame, QSizePolicy,
+    QFileDialog, QFrame, QLabel, QSizePolicy, QStackedWidget,
 )
 from qfluentwidgets import (
     ComboBox,
     CardWidget, ToolButton, PushButton, PrimaryPushButton,
-    TreeWidget, BodyLabel, CaptionLabel,
+    TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit,
 )
@@ -61,7 +61,7 @@ class DataPage(QWidget):
     send_to_visualize = Signal(str, str)   # (type: "curve"|"series", id)
     send_to_process   = Signal(str, str)   # (type, id)
     project_modified  = Signal()
-    tree_filter_kinds = ["folder", "data_file", "image_work", "series", "curve"]
+    tree_filter_kinds = ["folder", "data_file", "image_work", "series", "curve", "analysis_result"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,7 +83,7 @@ class DataPage(QWidget):
     def _setup_ui(self):
         root = QHBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setSpacing(10)
         root.addWidget(self._build_right_panel())
 
     # ── 左侧面板 ─────────────────────────────────────────────
@@ -154,7 +154,7 @@ class DataPage(QWidget):
         preview_card = CardWidget(panel)
         preview_layout = QVBoxLayout(preview_card)
         preview_layout.setContentsMargins(14, 14, 14, 14)
-        preview_layout.setSpacing(8)
+        preview_layout.setSpacing(10)
 
         preview_header = QHBoxLayout()
         preview_header.addWidget(make_section_label("数据预览"))
@@ -166,10 +166,18 @@ class DataPage(QWidget):
         preview_header.addWidget(self._preview_type_combo)
         preview_layout.addLayout(preview_header)
 
+        self._preview_stack = QStackedWidget(preview_card)
+        preview_layout.addWidget(self._preview_stack, stretch=3)
+
+        self._plot_preview_panel = QWidget(preview_card)
+        plot_preview_layout = QVBoxLayout(self._plot_preview_panel)
+        plot_preview_layout.setContentsMargins(0, 0, 0, 0)
+        plot_preview_layout.setSpacing(0)
+
         if HAS_MATPLOTLIB:
             self._preview_figure = Figure(figsize=(5.6, 3.4), dpi=100)
             self._preview_canvas = FigureCanvas(self._preview_figure)
-            preview_layout.addWidget(self._preview_canvas, stretch=3)
+            plot_preview_layout.addWidget(self._preview_canvas, stretch=1)
         else:
             self._preview_figure = None
             self._preview_canvas = None
@@ -179,7 +187,20 @@ class DataPage(QWidget):
             )
             self._preview_canvas_label.setWordWrap(True)
             self._preview_canvas_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            preview_layout.addWidget(self._preview_canvas_label, stretch=3)
+            plot_preview_layout.addWidget(self._preview_canvas_label, stretch=1)
+
+        self._preview_stack.addWidget(self._plot_preview_panel)
+
+        self._image_preview_label = QLabel(preview_card)
+        self._image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._image_preview_label.setMinimumHeight(240)
+        self._image_preview_label.setWordWrap(True)
+        self._preview_stack.addWidget(self._image_preview_label)
+
+        self._text_preview = PlainTextEdit(preview_card)
+        self._text_preview.setReadOnly(True)
+        self._text_preview.setMinimumHeight(240)
+        self._preview_stack.addWidget(self._text_preview)
 
         preview_layout.addWidget(make_hsep())
 
@@ -194,7 +215,7 @@ class DataPage(QWidget):
         manage_card = CardWidget(panel)
         manage_layout = QVBoxLayout(manage_card)
         manage_layout.setContentsMargins(14, 14, 14, 14)
-        manage_layout.setSpacing(8)
+        manage_layout.setSpacing(10)
 
         manage_layout.addWidget(make_section_label("节点管理"))
         self._shared_tree_hint = CaptionLabel("从左侧共享项目树选择数据节点后，可在这里直接重命名、复制或删除。", manage_card)
@@ -283,7 +304,11 @@ class DataPage(QWidget):
         self._preview_name = ""
         self._preview_x_label = "X"
         self._preview_y_label = "Y"
+        self._preview_stack.setCurrentWidget(self._plot_preview_panel)
         self._draw_preview()
+        self._text_preview.clear()
+        self._image_preview_label.clear()
+        self._image_preview_label.setText("选择节点后显示预览")
         self._stats_label.setText("（选择数据后显示统计信息）")
         self._set_actions_enabled(False)
 
@@ -394,6 +419,7 @@ class DataPage(QWidget):
             "series": "数据系列",
             "image_work": "图像",
             "curve": "图像曲线",
+            "analysis_result": "分析结果",
         }
         return mapping.get(kind or "", "-")
 
@@ -496,6 +522,7 @@ class DataPage(QWidget):
     def _draw_preview(self, *_args) -> None:
         if self._preview_figure is None or self._preview_canvas is None:
             return
+        self._preview_stack.setCurrentWidget(self._plot_preview_panel)
         self._preview_figure.clear()
         axis = self._preview_figure.add_subplot(111)
         if not self._preview_xs or not self._preview_ys:
@@ -544,6 +571,129 @@ class DataPage(QWidget):
                 f"N = {n}    X: [{x_min:.4g}, {x_max:.4g}]    Y: [{y_min:.4g}, {y_max:.4g}]\n"
                 f"均值 = {y_mean:.4g}    标准差 = {y_std:.4g}"
             )
+
+    def _show_text_preview(self, title: str, content: str, stats_text: str) -> None:
+        self._preview_xs = []
+        self._preview_ys = []
+        self._preview_name = title
+        self._preview_x_label = "X"
+        self._preview_y_label = "Y"
+        self._text_preview.setPlainText(content.strip())
+        self._preview_stack.setCurrentWidget(self._text_preview)
+        self._stats_label.setText(stats_text)
+
+    def _show_image_preview(self, image_id: str, image_name: str) -> bool:
+        image = project_manager.get_image(image_id)
+        if image is None:
+            return False
+        image_path = project_manager.get_image_path(image_id)
+        pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            self._image_preview_label.setPixmap(QPixmap())
+            self._image_preview_label.setText(f"无法加载图片预览\n\n{image_path or '未找到图片路径'}")
+            stats_text = f"图像名称: {image_name}\n曲线数量: {len(image.curves)}"
+        else:
+            target_width = max(320, self.width() - 220)
+            target_height = 320
+            scaled = pixmap.scaled(
+                target_width,
+                target_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._image_preview_label.setPixmap(scaled)
+            self._image_preview_label.setText("")
+            stats_text = (
+                f"图像名称: {image_name}\n"
+                f"尺寸: {pixmap.width()} × {pixmap.height()} px\n"
+                f"曲线数量: {len(image.curves)}"
+            )
+        self._preview_stack.setCurrentWidget(self._image_preview_label)
+        self._preview_name = image_name
+        self._preview_xs = []
+        self._preview_ys = []
+        self._stats_label.setText(stats_text)
+        return True
+
+    def _show_folder_preview(self, node) -> None:
+        project = project_manager.current_project
+        if project is None or project.tree is None or node is None:
+            self._clear_preview()
+            return
+
+        child_nodes = project_manager.get_children(node.id)
+        folder_count = sum(1 for child in child_nodes if child.kind == "folder")
+        data_count = sum(1 for child in child_nodes if child.kind == "data_file")
+        image_count = sum(1 for child in child_nodes if child.kind == "image_work")
+        analysis_count = sum(1 for child in child_nodes if child.kind == "analysis_result")
+        preview_lines = [
+            f"文件夹: {node.name or '未命名文件夹'}",
+            "",
+            f"直接子文件夹: {folder_count}",
+            f"数据文件: {data_count}",
+            f"图像: {image_count}",
+            f"分析结果: {analysis_count}",
+        ]
+        self._show_text_preview(node.name or "文件夹", "\n".join(preview_lines), "当前节点为文件夹，支持摘要预览和管理操作。")
+
+    def _show_analysis_result_preview(self, node_id: str) -> bool:
+        project = project_manager.current_project
+        if project is None or project.tree is None:
+            return False
+        node = project.tree.get_node(node_id)
+        if node is None or node.kind != "analysis_result":
+            return False
+        analysis = project.find_analysis(node.analysis_id)
+        if analysis is None:
+            return False
+
+        summary = analysis.summary or {}
+        preview_lines = [
+            f"名称: {analysis.name or '未命名分析结果'}",
+            f"类型: {summary.get('analysis_type') or analysis.analysis_type or '-'}",
+            f"数据来源: {summary.get('source_name', '-')}",
+            f"创建时间: {analysis.created_at}",
+        ]
+        metric_pairs = [
+            ("模型", summary.get("model")),
+            ("方程", summary.get("equation")),
+            ("R²", summary.get("r2")),
+            ("相关系数", summary.get("r")),
+            ("样本数", summary.get("n")),
+            ("MAE", summary.get("mae")),
+            ("RMSE", summary.get("rmse")),
+            ("峰值数量", len(summary.get("peaks", []) or [])),
+            ("波谷数量", len(summary.get("valleys", []) or [])),
+        ]
+        for label, value in metric_pairs:
+            if value not in (None, "", [], {}):
+                preview_lines.append(f"{label}: {value}")
+
+        stats_text = "分析结果支持在分析页查看完整图表、摘要表和报告预览。"
+        self._show_text_preview(analysis.name or "分析结果", "\n".join(preview_lines), stats_text)
+        return True
+
+    def _show_data_file_preview(self, node_id: str) -> bool:
+        project = project_manager.current_project
+        if project is None or project.tree is None:
+            return False
+        node = project.tree.get_node(node_id)
+        if node is None or node.kind != "data_file":
+            return False
+        data_file = project.find_data_file(node.data_file_id)
+        if data_file is None:
+            return False
+        if data_file.series:
+            series = data_file.series[0]
+            self._selected_type = "series"
+            self._selected_id = series.id
+            self._show_xy_preview(series.x, series.y, series.name, series.x_label, series.y_label)
+            self._stats_label.setText(
+                f"数据文件: {data_file.name}\n系列数量: {len(data_file.series)}\n\n{self._stats_label.text()}"
+            )
+            return True
+        self._show_text_preview(data_file.name or "数据文件", f"数据文件: {data_file.name}\n\n当前数据文件中暂无数据系列。", "当前节点为数据文件，但文件内尚无数据可绘制。")
+        return True
 
     def _set_actions_enabled(self, enabled: bool):
         self._btn_to_vis.setEnabled(enabled)
@@ -878,15 +1028,41 @@ class DataPage(QWidget):
         self._selected_node_kind = kind
         self._selected_node_id = node_id
         self._shared_tree_hint.setText(f"当前共享树节点: {kind} / {node_id}")
-        if kind in ("data_file", "series", "curve", "image_work"):
+        if kind == "data_file" and self._show_data_file_preview(node_id):
+            self._set_actions_enabled(True)
+            self._refresh_management_panel()
+            return
+        if kind in ("series", "curve"):
             series = project_manager.get_series_from_node(kind, node_id)
             if series and series.x:
-                self._selected_type = "series" if kind in ("data_file", "series") else "curve"
+                self._selected_type = "series" if kind == "series" else "curve"
                 self._selected_id = series.id
                 self._show_xy_preview(series.x, series.y, series.name, series.x_label, series.y_label)
                 self._set_actions_enabled(True)
                 self._refresh_management_panel()
                 return
+        if kind == "image_work":
+            node = self._current_tree_node()
+            image_id = getattr(node, "image_work_id", None) if node is not None else None
+            if image_id and self._show_image_preview(image_id, self._current_node_name() or "图像"):
+                self._selected_type = None
+                self._selected_id = None
+                self._set_actions_enabled(False)
+                self._refresh_management_panel()
+                return
+        if kind == "analysis_result" and self._show_analysis_result_preview(node_id):
+            self._selected_type = None
+            self._selected_id = None
+            self._set_actions_enabled(False)
+            self._refresh_management_panel()
+            return
+        if kind == "folder":
+            self._selected_type = None
+            self._selected_id = None
+            self._show_folder_preview(self._current_tree_node())
+            self._set_actions_enabled(False)
+            self._refresh_management_panel()
+            return
         self._selected_type = None
         self._selected_id = None
         self._clear_preview()

@@ -28,8 +28,10 @@ from models.schemas import (
     ReportTemplate,
     SavedPipeline,
 )
+from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
 
 _GLOBAL_ASSET_VERSION = "1"
+_BUILTIN_DEFAULT_REPORT_TEMPLATE_ID = "builtin:default-report-template"
 
 
 def make_plot_style_asset_key(style_type: str, asset_id: str) -> str:
@@ -106,6 +108,17 @@ def _builtin_plot_themes() -> List[PlotTheme]:
                               font_size=10, legend_font_size=8, line_width=1.5, marker_size=4.4),
             is_builtin=True,
         ),
+    ]
+
+
+def _builtin_report_templates() -> List[ReportTemplate]:
+    return [
+        ReportTemplate(
+            id=_BUILTIN_DEFAULT_REPORT_TEMPLATE_ID,
+            name="默认模板",
+            content=_DEFAULT_REPORT_TEMPLATE,
+            is_builtin=True,
+        )
     ]
 
 
@@ -247,11 +260,14 @@ class GlobalAssetManager:
         self.save()
         return True
 
-    def list_report_templates(self) -> List[ReportTemplate]:
-        return list(self.data.report_templates)
+    def list_report_templates(self, include_builtin: bool = False) -> List[ReportTemplate]:
+        user_templates = list(self.data.report_templates)
+        if not include_builtin:
+            return user_templates
+        return _builtin_report_templates() + user_templates
 
     def get_report_template(self, template_id: str) -> Optional[ReportTemplate]:
-        return next((item for item in self.data.report_templates if item.id == template_id), None)
+        return next((item for item in self.list_report_templates(include_builtin=True) if item.id == template_id), None)
 
     def add_report_template(self, template: ReportTemplate) -> ReportTemplate:
         self.data.report_templates.append(template)
@@ -273,7 +289,7 @@ class GlobalAssetManager:
     def update_report_template(self, template_id: str, *, name: Optional[str] = None,
                                content: Optional[str] = None) -> bool:
         item = self.get_report_template(template_id)
-        if item is None:
+        if item is None or item.is_builtin:
             return False
         if name is not None:
             item.name = name
