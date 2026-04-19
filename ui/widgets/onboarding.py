@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QHBoxLayout, QWidget
 from qfluentwidgets import (
     InfoBarIcon,
     PrimaryPushButton,
@@ -98,21 +98,28 @@ class PageOnboardingController:
             tailPosition=step.tail_position,
         )
 
-        end_btn = PushButton("结束引导", view)
-        end_btn.clicked.connect(self.close)
-        view.addWidget(end_btn, align=Qt.AlignmentFlag.AlignRight)
+        button_row = QWidget(view)
+        button_layout = QHBoxLayout(button_row)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(8)
 
-        prev_btn = PushButton("上一步", view)
+        end_btn = PushButton("结束引导", button_row)
+        end_btn.clicked.connect(self.close)
+        button_layout.addWidget(end_btn)
+
+        prev_btn = PushButton("上一步", button_row)
         prev_btn.setEnabled(index > 0)
         prev_btn.clicked.connect(lambda: self._show_step(max(0, index - 1)))
-        view.addWidget(prev_btn, align=Qt.AlignmentFlag.AlignRight)
+        button_layout.addWidget(prev_btn)
 
-        next_btn = PrimaryPushButton("下一步", view)
+        next_btn = PrimaryPushButton("下一步", button_row)
         if index < len(steps) - 1:
             next_btn.clicked.connect(lambda: self._show_step(index + 1))
         else:
             next_btn.clicked.connect(self.close)
-        view.addWidget(next_btn, align=Qt.AlignmentFlag.AlignRight)
+        button_layout.addWidget(next_btn)
+
+        view.addWidget(button_row, align=Qt.AlignmentFlag.AlignRight)
 
         self._tip = TeachingTip.make(view, target, -1, step.tail_position, self._owner)
         view.closed.connect(self.close)

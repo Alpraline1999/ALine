@@ -864,10 +864,21 @@ class TestHomePage(unittest.TestCase):
                     page = HomePage()
                 try:
                     self.assertIsNone(page._guide_toggle_btn)
-                    self.assertIn("1 个失败文件", page._extension_status_label.text())
+                    self.assertEqual(page._extension_status_label.text(), "扩展：3 项可用，1 项失败")
                     self.assertTrue(page._extension_detail_btn.isEnabled())
                 finally:
                     page.deleteLater()
+
+    def test_home_page_uses_single_borderless_intro_panel(self):
+        from ui.pages.home_page import HomePage
+
+        page = HomePage()
+        try:
+            self.assertEqual(page._welcome_card.styleSheet(), "background: transparent; border: none;")
+            self.assertEqual(page._extension_detail_btn.text(), "详情")
+            self.assertEqual(len(page._home_onboarding_steps()), 4)
+        finally:
+            page.deleteLater()
 
 
 class TestSettingsPageAIActions(unittest.TestCase):
@@ -1009,6 +1020,17 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertGreaterEqual(panel.width(), 360)
         panel.deleteLater()
 
+    def test_panel_uses_dividers_and_compact_descriptions(self):
+        from qfluentwidgets import CaptionLabel
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+
+        self.assertGreaterEqual(len(panel._section_dividers), 4)
+        self.assertIsInstance(panel._description_label, CaptionLabel)
+        self.assertEqual(panel._status_detail_btn.text(), "详情")
+        panel.deleteLater()
+
     def test_status_summary_reflects_category_load_state(self):
         from ui.widgets.extension_panel import ExtensionConfigPanel
 
@@ -1024,7 +1046,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
         ):
             panel.set_status_context("processing", "处理扩展")
 
-        self.assertIn("处理扩展已注册 2 项", panel._status_label.text())
+        self.assertEqual(panel._status_label.text(), "处理扩展 2 项可用，1 项失败。")
         self.assertTrue(panel._status_detail_btn.isEnabled())
         panel.deleteLater()
 
@@ -1076,9 +1098,9 @@ class TestPageOnboardingController(unittest.TestCase):
             captured["target"] = tip_target
             captured["tail_position"] = tail_position
             captured["parent"] = parent
-            captured["push_buttons"] = sorted(
-                button.text() for button in view.findChildren(PushButton) if button.text()
-            )
+            buttons = [button for button in view.findChildren(PushButton) if button.text()]
+            captured["push_buttons"] = sorted(button.text() for button in buttons)
+            captured["button_parent_ids"] = {id(button.parentWidget()) for button in buttons}
             captured["primary_buttons"] = [
                 button.text() for button in view.findChildren(PrimaryPushButton) if button.text()
             ]
@@ -1104,6 +1126,7 @@ class TestPageOnboardingController(unittest.TestCase):
 
         self.assertCountEqual(captured["push_buttons"], ["上一步", "结束引导", "下一步"])
         self.assertEqual(captured["primary_buttons"], ["下一步"])
+        self.assertEqual(len(captured["button_parent_ids"]), 1)
         self.assertIs(captured["target"], target)
         self.assertIs(captured["parent"], host)
         target.deleteLater()
@@ -1396,6 +1419,15 @@ class TestChartPage(unittest.TestCase):
 
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
+
+    def test_style_tabs_use_consistent_scroll_containers(self):
+        from qfluentwidgets import SmoothScrollArea
+
+        tab_pages = [self.page._style_tabs.widget(index) for index in range(3)]
+
+        self.assertTrue(all(isinstance(tab_page, SmoothScrollArea) for tab_page in tab_pages))
+        min_heights = {tab_page.widget().minimumHeight() for tab_page in tab_pages}
+        self.assertEqual(len(min_heights), 1)
 
     def test_chart_current_curve_color_uses_fluent_picker_button(self):
         from PySide6.QtWidgets import QFrame
@@ -2010,7 +2042,7 @@ class TestChartPage(unittest.TestCase):
             self.page._on_chart_extension_apply("chart_plot_remove", {"enabled": True})
 
             self.assertEqual(len(self.page._applied_plot_extensions), 1)
-            self.assertEqual(self.page._remove_selected_plot_extension_btn.text(), "撤销选中扩展")
+            self.assertEqual(self.page._remove_selected_plot_extension_btn.text(), "撤销选中")
             self.page._on_chart_extension_remove_requested("chart_plot_remove")
             self.assertEqual(self.page._applied_plot_extensions, [])
         finally:

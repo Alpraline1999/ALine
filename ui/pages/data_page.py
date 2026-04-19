@@ -117,26 +117,26 @@ class DataPage(QWidget):
             OnboardingStep(
                 lambda: self._shared_tree_hint,
                 TeachingTipTailPosition.BOTTOM,
-                "共享树是数据入口",
-                "数据管理页不再维护第二套树；请直接从左侧共享项目树选择数据文件、系列或曲线，再回到这里处理当前对象。",
+                "先在共享树里选对象",
+                "左侧项目树是唯一入口，选中文件、系列或曲线后再回到这里处理。",
             ),
             OnboardingStep(
                 lambda: self._preview_type_combo,
                 TeachingTipTailPosition.BOTTOM,
-                "预览区先看数据质量",
-                "这里可以切换折线、散点、柱状等预览方式，快速确认导入结果、变量映射和异常点。",
+                "先看预览",
+                "切换折线、散点或柱状，先确认导入结果和异常点。",
             ),
             OnboardingStep(
                 lambda: self._manage_target_label,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "节点管理聚焦当前对象",
-                "共享树选中数据节点后，可以在这里直接重命名、复制为数据文件或删除，不用再回到树上找入口。",
+                "当前节点在这里管理",
+                "重命名、复制或删除都围绕当前对象完成。",
             ),
             OnboardingStep(
                 lambda: self._btn_to_vis,
                 TeachingTipTailPosition.BOTTOM,
-                "整理完就继续流转",
-                "确认数据无误后，可以直接把当前对象送到可视化或处理页，减少页面间重复选择。",
+                "确认后继续流转",
+                "数据无误后，可直接送到可视化或处理页。",
             ),
         ]
 

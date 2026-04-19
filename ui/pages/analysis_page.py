@@ -211,26 +211,26 @@ class AnalysisPage(QWidget):
             OnboardingStep(
                 lambda: self._type_combo,
                 TeachingTipTailPosition.BOTTOM,
-                "先确定分析类型",
-                "拟合、峰值检测、统计和相关性分析共用同一页；先选分析类型，参数区才会切到正确配置。",
+                "先选分析类型",
+                "先定任务，参数区才会切到对应配置。",
             ),
             OnboardingStep(
                 lambda: self._input_list,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "输入列表由共享树驱动",
-                "从共享树双击数据后，输入会进入这里；需要主输入和对比输入时，也在这里统一管理。",
+                "输入统一放这里",
+                "从共享树加入数据后，主输入和对比输入都在这里管理。",
             ),
             OnboardingStep(
                 lambda: self._result_tabs,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "右侧同时承接结果和报告",
-                "运行分析后，图表摘要会先出现在结果标签；需要沉淀结论时，再切到报告标签继续整理。",
+                "结果和报告都在右侧",
+                "先看结果标签，需要沉淀结论时再切到报告。",
             ),
             OnboardingStep(
                 lambda: self._report_template_combo,
                 TeachingTipTailPosition.BOTTOM,
-                "报告模板从这里切换",
-                "默认模板可以直接渲染；如果你维护了自己的模板，也可以在这里加载、更新或另存。",
+                "模板在这里切换",
+                "默认模板可直接渲染，自定义模板也从这里加载或更新。",
             ),
         ]
 

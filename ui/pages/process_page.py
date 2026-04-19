@@ -180,26 +180,26 @@ class ProcessPage(QWidget):
             OnboardingStep(
                 lambda: self._current_input_label,
                 TeachingTipTailPosition.BOTTOM,
-                "先从共享树选输入",
-                "处理页只保留当前输入状态；先在共享树中双击一条数据，这里会同步显示当前处理对象。",
+                "先选输入",
+                "从共享树双击数据后，这里会同步当前处理对象。",
             ),
             OnboardingStep(
                 lambda: self._add_op_combo,
                 TeachingTipTailPosition.BOTTOM,
-                "操作从这里加入链路",
-                "平滑、裁剪、重采样、FFT 等处理都从这里追加；参数区会跟着当前选中的步骤切换。",
+                "处理步骤从这里加",
+                "平滑、裁剪、重采样和 FFT 都从这里加入。",
             ),
             OnboardingStep(
                 lambda: self._op_list,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "中间是完整操作链",
-                "处理页按顺序执行操作链；确认顺序和参数后，右侧预览会实时反映输出结果。",
+                "操作链决定顺序",
+                "中间列表按顺序执行，右侧预览会跟随当前参数更新。",
             ),
             OnboardingStep(
                 lambda: self._save_name_edit,
                 TeachingTipTailPosition.BOTTOM,
-                "结果确认后再导出",
-                "给结果命名并选择目标数据文件后，就可以把处理后的数据列正式写回项目。",
+                "确认后再写回",
+                "命名结果并选目标列后，再把数据正式写回项目。",
             ),
         ]
 

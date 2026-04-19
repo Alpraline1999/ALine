@@ -21,7 +21,7 @@ from qfluentwidgets import (
 )
 
 from core.extension_api import format_extension_load_report, get_extension_load_status
-from ui.theme import make_hint_label, make_section_label
+from ui.theme import make_hint_label, make_hsep, make_section_label
 
 
 class _ExtensionLoadReportDialog(MessageBoxBase):
@@ -62,7 +62,13 @@ class ExtensionConfigPanel(QWidget):
         self._action_text = action_text
         self._status_category: Optional[str] = None
         self._status_title = title or "扩展"
+        self._section_dividers: List[QWidget] = []
         self._setup_ui(title)
+
+    def _add_section_divider(self, layout: QVBoxLayout, parent: QWidget) -> None:
+        divider = make_hsep(parent)
+        self._section_dividers.append(divider)
+        layout.addWidget(divider)
 
     def _setup_ui(self, title: str) -> None:
         root = QVBoxLayout(self)
@@ -72,13 +78,13 @@ class ExtensionConfigPanel(QWidget):
         card = CardWidget(self)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         self._title_label = BodyLabel(title, card)
-        self._title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        self._title_label.setStyleSheet("font-size: 17px; font-weight: 700;")
         layout.addWidget(self._title_label)
 
-        layout.addWidget(make_section_label("可用扩展", card))
+        layout.addWidget(make_section_label("扩展", card))
 
         selector_row = QHBoxLayout()
         self._selector = ComboBox(card)
@@ -90,24 +96,27 @@ class ExtensionConfigPanel(QWidget):
         selector_row.addWidget(self._reload_btn)
         layout.addLayout(selector_row)
 
-        layout.addWidget(make_section_label("加载状态", card))
+        self._add_section_divider(layout, card)
+        layout.addWidget(make_section_label("状态", card))
         status_row = QHBoxLayout()
-        self._status_label = make_hint_label("扩展状态尚未初始化。", card)
+        self._status_label = make_hint_label("尚未扫描扩展。", card)
         status_row.addWidget(self._status_label, 1)
-        self._status_detail_btn = PushButton("查看详情", card)
+        self._status_detail_btn = PushButton("详情", card)
         self._status_detail_btn.clicked.connect(self._show_status_details)
         status_row.addWidget(self._status_detail_btn)
         layout.addLayout(status_row)
 
-        layout.addWidget(make_section_label("扩展说明", card))
+        self._add_section_divider(layout, card)
+        layout.addWidget(make_section_label("说明", card))
 
-        self._description_label = BodyLabel("暂无已注册扩展", card)
+        self._description_label = CaptionLabel("暂无可用扩展", card)
         self._description_label.setWordWrap(True)
         layout.addWidget(self._description_label)
 
-        layout.addWidget(make_section_label("参数配置", card))
+        self._add_section_divider(layout, card)
+        layout.addWidget(make_section_label("参数", card))
 
-        self._usage_hint_label = CaptionLabel("参数会以 JSON 对象形式传给当前扩展。", card)
+        self._usage_hint_label = CaptionLabel("参数会按 JSON 传入扩展。", card)
         self._usage_hint_label.setWordWrap(True)
         layout.addWidget(self._usage_hint_label)
 
@@ -115,13 +124,13 @@ class ExtensionConfigPanel(QWidget):
         self._config_help_area.setWidgetResizable(True)
         self._config_help_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._config_help_area.setMinimumHeight(124)
-        self._config_help_area.setMaximumHeight(188)
+        self._config_help_area.setMaximumHeight(172)
         self._config_help_area.setStyleSheet("background: transparent; border: none;")
         self._config_help_container = QWidget(self._config_help_area)
         help_layout = QVBoxLayout(self._config_help_container)
         help_layout.setContentsMargins(0, 0, 0, 0)
         help_layout.setSpacing(0)
-        self._config_help_label = CaptionLabel("保持 {} 可使用默认配置。", self._config_help_container)
+        self._config_help_label = CaptionLabel("保留 {} 使用默认参数。", self._config_help_container)
         self._config_help_label.setWordWrap(True)
         help_layout.addWidget(self._config_help_label)
         help_layout.addStretch()
@@ -133,6 +142,7 @@ class ExtensionConfigPanel(QWidget):
         self._editor.setMinimumHeight(240)
         layout.addWidget(self._editor, 1)
 
+        self._add_section_divider(layout, card)
         btn_row = QHBoxLayout()
         self._apply_btn = PrimaryPushButton(self._action_text, card)
         self._apply_btn.clicked.connect(self._apply_current)
@@ -234,7 +244,7 @@ class ExtensionConfigPanel(QWidget):
     def _config_help_text(self, entry: dict) -> str:
         fields = list(entry.get("config_fields") or [])
         if fields:
-            lines = ["字段说明:"]
+            lines = ["字段："]
             for field in fields:
                 key = field.get("key") or "option"
                 field_type = field.get("field_type") or "string"
@@ -251,15 +261,15 @@ class ExtensionConfigPanel(QWidget):
 
         default_options = dict(entry.get("default_options") or {})
         if default_options:
-            lines = ["默认配置字段:"]
+            lines = ["默认字段："]
             for key, value in default_options.items():
                 lines.append(f"- {key}: {json.dumps(value, ensure_ascii=False)}")
             return "\n".join(lines)
-        return "此扩展不需要额外配置，保持 {} 即可。"
+        return "无需额外参数，保留 {} 即可。"
 
     def _set_empty_state(self) -> None:
-        self._description_label.setText("当前页面还没有已注册的自定义扩展。")
-        self._config_help_label.setText("保持 {} 可使用默认配置。")
+        self._description_label.setText("当前页没有可用扩展。")
+        self._config_help_label.setText("保留 {} 使用默认参数。")
         self._editor.setPlainText("{}")
         self._editor.setEnabled(False)
         self._apply_btn.setEnabled(False)
@@ -277,11 +287,11 @@ class ExtensionConfigPanel(QWidget):
         registered_count = status["registered_count"]
         error_count = status["error_count"]
         if error_count:
-            self._status_label.setText(f"{label}已注册 {registered_count} 项，本轮扫描有 {error_count} 个失败文件。")
+            self._status_label.setText(f"{label} {registered_count} 项可用，{error_count} 项失败。")
         elif registered_count:
-            self._status_label.setText(f"{label}已注册 {registered_count} 项，最近一次扫描未发现加载错误。")
+            self._status_label.setText(f"{label} {registered_count} 项可用。")
         else:
-            self._status_label.setText(f"当前没有已注册的{label}。")
+            self._status_label.setText(f"{label} 暂无可用项。")
         has_details = bool(status["details"].get("loaded") or status["details"].get("errors"))
         self._status_detail_btn.setEnabled(has_details)
 
@@ -294,7 +304,7 @@ class ExtensionConfigPanel(QWidget):
             return
         entry = self._entries[idx]
         type_id = entry.get("type")
-        self._description_label.setText(entry.get("description") or "无扩展说明")
+        self._description_label.setText((entry.get("description") or "暂无说明").strip())
         self._config_help_label.setText(self._config_help_text(entry))
         options = self._saved_options.get(type_id, self._default_options_for_type(type_id))
         self._editor.setEnabled(True)

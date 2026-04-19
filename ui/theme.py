@@ -49,7 +49,7 @@ def hover_color():
 def card_style_sheet():
     """统一卡片样式。"""
     return (
-        "QFrame {"
+        "QFrame#alineCardFrame {"
         f"background: {card_background_color()};"
         f"border: 1px solid {border_color()};"
         "border-radius: 14px;"
@@ -60,10 +60,10 @@ def card_style_sheet():
 # ── 通用 UI 工厂函数（避免各页面重复定义）──────────────────────────────
 
 def make_section_label(text: str, parent=None):
-    """创建节标题标签（粗体，11px）"""
+    """创建节标题标签。"""
     from qfluentwidgets import BodyLabel
     lbl = BodyLabel(text, parent)
-    lbl.setStyleSheet(f"color: {text_color()}; font-weight: bold; font-size: 11px;")
+    lbl.setStyleSheet(f"color: {text_color()}; font-weight: 700; font-size: 13px;")
     return lbl
 
 
@@ -72,6 +72,7 @@ def make_card_frame(parent=None):
     from PySide6.QtWidgets import QFrame
 
     frame = QFrame(parent)
+    frame.setObjectName("alineCardFrame")
     frame.setStyleSheet(card_style_sheet())
     return frame
 

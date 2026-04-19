@@ -186,26 +186,26 @@ class DigitizePage(QWidget):
             OnboardingStep(
                 lambda: self._image_viewer,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "中心画布就是主工作区",
-                "图片加载后，校准、取点、擦除和自动识别都会直接作用在这里；确认效果也以中心画布为准。",
+                "中心画布是主工作区",
+                "校准、取点、擦除和自动识别都直接作用在这里。",
             ),
             OnboardingStep(
                 lambda: self._calibrate_btn,
                 TeachingTipTailPosition.BOTTOM,
-                "手动取点前先做校准",
-                "校准会建立像素坐标到真实坐标的映射；完成之后，后面的取点和导出结果才有实际数值意义。",
+                "先做校准",
+                "先建立像素到真实坐标的映射，后续取点才有数值意义。",
             ),
             OnboardingStep(
                 lambda: self._auto_detect_btn,
                 TeachingTipTailPosition.BOTTOM,
-                "自动选点适合明显轨迹",
-                "当曲线颜色或形状比较清晰时，可以先做自动识别，再用手动工具做少量修正。",
+                "轨迹清晰时先自动识别",
+                "自动取点后再做少量手动修正，效率更高。",
             ),
             OnboardingStep(
                 lambda: self._right_tabs,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "右侧收拢取点与导出",
-                "图片选点和数据导出都放在右侧标签页里；整理完点集后，直接切到“数据导出”继续输出。",
+                "右侧负责整理与导出",
+                "取点结果和数据导出都收在右侧标签页。",
             ),
         ]
 

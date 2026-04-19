@@ -315,26 +315,26 @@ class ChartPage(QWidget):
             OnboardingStep(
                 lambda: self._chart_list,
                 TeachingTipTailPosition.BOTTOM,
-                "先确认画布里的曲线",
-                "共享树双击数据后，曲线会先进入这里；当前选中项也会作为样式编辑和绘图扩展的默认目标。",
+                "先看当前曲线",
+                "共享树双击数据后，曲线会进入这里；当前选中项也是样式和扩展的默认目标。",
             ),
             OnboardingStep(
                 lambda: self._style_tabs,
                 TeachingTipTailPosition.BOTTOM,
-                "样式和扩展都在左侧标签里",
-                "曲线样式、绘图样式和绘图扩展已经拆开管理；需要叠加参考线或自定义绘制流程时，切到“绘图扩展”页即可。",
+                "样式与扩展分开管理",
+                "曲线样式、绘图样式和绘图扩展分栏放置；叠加参考线时切到“绘图扩展”。",
             ),
             OnboardingStep(
                 lambda: self._plot_actions_bar,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "导出入口在这里收口",
-                "出图后可以直接导出图片，或者一键落到项目图片集中，方便后续统一管理。",
+                "导出入口集中在这里",
+                "出图后可直接导出，或一键落到项目图片集。",
             ),
             OnboardingStep(
                 lambda: self._canvas_host,
                 TeachingTipTailPosition.LEFT_BOTTOM,
-                "右侧始终是最终预览",
-                "所有样式、扩展和图例显示名调整，都会直接反映在这里；确认无误后再导出即可。",
+                "右侧就是最终预览",
+                "样式、扩展和图例名调整都会立即反映在这里。",
             ),
         ]
 
@@ -395,11 +395,23 @@ class ChartPage(QWidget):
     def _set_compact_edit_width(edit: LineEdit, width: int = 88) -> None:
         edit.setMaximumWidth(width)
 
-    def _build_curve_style_tab(self, parent: QWidget) -> QWidget:
-        page = QWidget(parent)
+    def _create_style_tab_page(self, parent: QWidget) -> tuple[SmoothScrollArea, QWidget, QVBoxLayout]:
+        scroll = SmoothScrollArea(parent)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+        page = QWidget(scroll)
+        page.setStyleSheet("background: transparent;")
+        page.setMinimumHeight(540)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
+        scroll.setWidget(page)
+        return scroll, page, layout
+
+    def _build_curve_style_tab(self, parent: QWidget) -> QWidget:
+        scroll, page, layout = self._create_style_tab_page(parent)
 
         layout.addWidget(make_section_label("曲线样式", page))
         self._curve_style_template_label = make_hint_label("当前曲线样式未绑定全局模板。", page)
@@ -481,19 +493,11 @@ class ChartPage(QWidget):
         layout.addLayout(density_row)
 
         layout.addStretch()
-        return page
+        return scroll
 
     def _build_plot_style_tab(self, parent: QWidget) -> QWidget:
-        scroll = SmoothScrollArea(parent)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
-        page = QWidget(scroll)
-        page.setStyleSheet("background: transparent;")
+        scroll, page, layout = self._create_style_tab_page(parent)
         self._plot_style_scroll = scroll
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
 
         layout.addWidget(make_section_label("绘图样式", page))
         self._template_summary_label = make_hint_label("当前为临时绘图样式。", page)
@@ -696,33 +700,24 @@ class ChartPage(QWidget):
         layout.addLayout(grid_width_row)
 
         layout.addStretch()
-        scroll.setWidget(page)
         return scroll
 
     def _build_plot_extension_tab(self, parent: QWidget) -> QWidget:
-        page = QWidget(parent)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
+        scroll, page, layout = self._create_style_tab_page(parent)
 
         layout.addWidget(make_section_label("绘图扩展", page))
-        layout.addWidget(make_hint_label("在右侧扩展面板中选择绘图扩展，并把它作为一个独立实例叠加到当前图表。", page))
-
-        description = BodyLabel(
-            "绘图扩展适合添加参考线、辅助标注、自定义子图，或接管默认绘图流程。",
-            page,
-        )
-        description.setWordWrap(True)
-        layout.addWidget(description)
+        layout.addWidget(make_hint_label("在右侧面板选择扩展，并叠加到当前图表。", page))
+        layout.addWidget(make_hint_label("适合参考线、标注或自定义绘制流程。", page))
 
         self._plot_extension_target_hint = make_hint_label("", page)
         self._plot_extension_target_hint.setWordWrap(True)
         layout.addWidget(self._plot_extension_target_hint)
+        layout.addWidget(make_hsep(page))
 
         applied_header = QHBoxLayout()
-        applied_header.addWidget(make_section_label("已加载扩展", page))
+        applied_header.addWidget(make_section_label("已加载", page))
         applied_header.addStretch()
-        self._remove_selected_plot_extension_btn = PushButton("撤销选中扩展", page)
+        self._remove_selected_plot_extension_btn = PushButton("撤销选中", page)
         self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
         self._remove_selected_plot_extension_btn.setEnabled(False)
         applied_header.addWidget(self._remove_selected_plot_extension_btn)
@@ -733,14 +728,10 @@ class ChartPage(QWidget):
         self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
         layout.addWidget(self._plot_extension_applied_list, 1)
 
-        note = BodyLabel(
-            "同一扩展可按不同参数重复加载；列表会保留每次加载的目标曲线和参数摘要，撤销操作也在这里完成。",
-            page,
-        )
-        note.setWordWrap(True)
+        note = make_hint_label("同一扩展可重复加载，列表会保留目标曲线和参数摘要。", page)
         layout.addWidget(note)
         self._refresh_plot_extension_list()
-        return page
+        return scroll
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         self._selected_tree_kind = kind
