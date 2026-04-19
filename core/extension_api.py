@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import util as importlib_util
+import inspect
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -57,10 +58,42 @@ class AnalysisExtension:
 class PlotExtension:
     type: str
     name: str
-    handler: Callable[[Any, List[Dict[str, Any]], Dict[str, Any]], None]
+    handler: Callable[..., None]
     description: str = ""
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
+
+
+@dataclass
+class PlotExtensionContext:
+    figure: Any
+    canvas: Any
+    axis: Any
+    axes: List[Any]
+    visible_series: List[Dict[str, Any]]
+    plotted_series: List[Dict[str, Any]]
+    figure_state: Dict[str, Any]
+    plot_style_extras: Dict[str, Any]
+    theme_colors: Dict[str, Any]
+    phase: str = "before_plot"
+    skip_default_plot: bool = False
+    skip_default_formatting: bool = False
+    skip_default_layout: bool = False
+
+    def refresh_axes(self) -> List[Any]:
+        self.axes = list(getattr(self.figure, "axes", []) or [])
+        if self.axes:
+            if self.axis not in self.axes:
+                self.axis = self.axes[0]
+        else:
+            self.axis = None
+        return list(self.axes)
+
+    def set_active_axis(self, axis: Any) -> Any:
+        self.axis = axis
+        if axis is not None and axis not in self.axes:
+            self.axes.append(axis)
+        return axis
 
 
 @dataclass(frozen=True)
@@ -223,6 +256,31 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "default_options": dict(getattr(extension, "default_options", {}) or {}),
         "config_fields": config_fields,
     }
+
+
+def plot_extension_uses_context_api(handler: Callable[..., Any]) -> bool:
+    try:
+        parameters = [
+            item
+            for item in inspect.signature(handler).parameters.values()
+            if item.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+    except (TypeError, ValueError):
+        return False
+    return len(parameters) <= 2
+
+
+def invoke_plot_extension_handler(
+    handler: Callable[..., Any],
+    context: PlotExtensionContext,
+    options: Dict[str, Any],
+) -> None:
+    if plot_extension_uses_context_api(handler):
+        handler(context, dict(options))
+        return
+    if context.phase != "after_plot" or context.axis is None:
+        return
+    handler(context.axis, context.plotted_series, dict(options))
 
 
 def default_extensions_directory(base_dir: str | Path | None = None) -> Path:

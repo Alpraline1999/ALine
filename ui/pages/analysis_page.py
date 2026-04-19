@@ -32,6 +32,7 @@ from ui.dialogs.export_flow import (
     choose_data_export_plan,
 )
 from core.analysis_engine import list_report_template_placeholders, run_analysis
+from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.theme import make_hint_label, make_section_label, make_hsep
 from core.analysis_engine import run_analysis
@@ -146,7 +147,9 @@ class AnalysisPage(QWidget):
         self._selected_tree_kind: Optional[str] = None
         self._selected_tree_node_id: Optional[str] = None
         self._report_placeholder_entries = list_report_template_placeholders()
+        self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
+        self._setup_shortcuts()
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -168,6 +171,20 @@ class AnalysisPage(QWidget):
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_analysis_extensions)
         root.addWidget(self._extension_panel)
+
+    def _setup_shortcuts(self) -> None:
+        context = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        self._shortcut_bindings.bind("analysis_run", self, self._run_analysis, context=context)
+        self._shortcut_bindings.bind("analysis_save_result", self, self._save_result, context=context)
+        self._shortcut_bindings.bind("analysis_export_result", self, self._export_result_series, context=context)
+        self._shortcut_bindings.bind("analysis_clear_inputs", self, self._clear_inputs, context=context)
+        self._shortcut_bindings.bind("analysis_remove_selected_input", self, self._remove_selected_inputs, context=context)
+        self._shortcut_bindings.bind("analysis_generate_report", self, self._on_generate_report, context=context)
+        self._shortcut_bindings.bind("analysis_save_report_template", self, self._save_report_template_as, context=context)
+        self._shortcut_bindings.bind("analysis_export_report", self, self._export_report, context=context)
+
+    def apply_shortcuts(self) -> None:
+        self._shortcut_bindings.apply()
         self._refresh_analysis_type_choices()
         self.set_extension_panel_visible(self._extension_panel_visible)
 

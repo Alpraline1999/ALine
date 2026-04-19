@@ -671,7 +671,7 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_ai_tab_is_hidden_from_settings_ui(self):
         titles = [self.page._tabs.tabText(i) for i in range(self.page._tabs.count())]
-        self.assertEqual(titles, ["常规"])
+        self.assertEqual(titles, ["常规", "快捷键"])
 
     def test_save_ai_config_no_crash(self):
         self.page._ai_url_edit.setText("https://api.openai.com/v1")
@@ -719,8 +719,8 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(len(received), 1)
 
     def test_shortcut_filter_hides_nonmatching_rows(self):
-        zoom_in = next(lbl for lbl in self.page._shortcut_labels if lbl.text().startswith("放大"))
-        save = next(lbl for lbl in self.page._shortcut_labels if lbl.text().startswith("保存项目"))
+        zoom_in = next(lbl for lbl in self.page._shortcut_labels if "放大" in lbl.text())
+        save = next(lbl for lbl in self.page._shortcut_labels if "保存项目" in lbl.text())
         self.page._filter_shortcut_rows("缩放")
         self.assertFalse(zoom_in.isHidden())
         self.assertTrue(save.isHidden())
@@ -1235,6 +1235,77 @@ class TestChartPage(unittest.TestCase):
         finally:
             extension_registry.unregister_plot("ui_plot_extension_test")
             self.page._refresh_style_extension_panel()
+
+    def test_legacy_plot_extension_still_runs_after_default_draw(self):
+        from core.extension_api import PlotExtension, extension_registry
+
+        def _draw(axis, series, options):
+            axis.axhline(options.get("y", 0.0), color="red", label="Legacy Reference")
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="ui_plot_extension_legacy_test",
+                name="Legacy 参考线",
+                handler=_draw,
+                default_options={"y": 3.5},
+            )
+        )
+        try:
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page._plot_extension_options["ui_plot_extension_legacy_test"] = {"y": 3.5}
+
+            self.page._apply_plot_extension("ui_plot_extension_legacy_test")
+
+            axis = self.page._figure.axes[0]
+            self.assertTrue(
+                any(
+                    list(line.get_ydata()) == [3.5, 3.5]
+                    for line in axis.lines
+                )
+            )
+        finally:
+            extension_registry.unregister_plot("ui_plot_extension_legacy_test")
+            self.page._plot_extension_options.pop("ui_plot_extension_legacy_test", None)
+
+    def test_plot_extension_context_can_take_over_matplotlib_figure(self):
+        from core.extension_api import PlotExtension, extension_registry
+
+        def _draw(context, options):
+            if context.phase == "before_plot":
+                context.skip_default_plot = True
+                context.skip_default_formatting = True
+                context.skip_default_layout = True
+                context.figure.clear()
+                left = context.figure.add_subplot(121)
+                right = context.figure.add_subplot(122)
+                left.plot([0, 1, 2], [1, 3, 2], color=options.get("color", "#ff6600"))
+                right.bar(["A", "B"], [2, 4], color=options.get("bar_color", "#3366cc"))
+                context.set_active_axis(left)
+                context.refresh_axes()
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="ui_plot_extension_context_test",
+                name="Context 自定义子图",
+                handler=_draw,
+                default_options={"color": "#ff6600", "bar_color": "#3366cc"},
+            )
+        )
+        try:
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page._plot_extension_options["ui_plot_extension_context_test"] = {
+                "color": "#ff6600",
+                "bar_color": "#3366cc",
+            }
+
+            self.page._apply_plot_extension("ui_plot_extension_context_test")
+
+            self.assertEqual(len(self.page._figure.axes), 2)
+            self.assertEqual(len(self.page._figure.axes[0].lines), 1)
+            self.assertEqual(len(self.page._figure.axes[1].patches), 2)
+        finally:
+            extension_registry.unregister_plot("ui_plot_extension_context_test")
+            self.page._plot_extension_options.pop("ui_plot_extension_context_test", None)
 
     def test_curve_style_extension_preserves_extra_plot_kwargs(self):
         from core.extension_api import CurveStyleExtension, extension_registry

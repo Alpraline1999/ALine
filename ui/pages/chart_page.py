@@ -45,7 +45,14 @@ from qfluentwidgets import (
 )
 
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
-from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
+from core.extension_api import (
+    PlotExtensionContext,
+    build_extension_entry,
+    extension_registry,
+    invoke_plot_extension_handler,
+    reload_builtin_extensions,
+)
+from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from models.schemas import AxisConfig, CurveStyle, CurveStyleTemplate, FigureConfig, FigureState
 from ui.dialogs.export_flow import choose_picture_export_plan
@@ -136,6 +143,7 @@ class ChartPage(QWidget):
         self._canvas_host: Optional[QWidget] = None
         self._selected_tree_kind: Optional[str] = None
         self._selected_tree_id: Optional[str] = None
+        self._shortcut_bindings = ShortcutBindingSet()
 
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
@@ -143,6 +151,7 @@ class ChartPage(QWidget):
         self._redraw_timer.timeout.connect(self._redraw_now)
 
         self._setup_ui()
+        self._setup_shortcuts()
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -272,6 +281,15 @@ class ChartPage(QWidget):
         self._update_visibility_button()
         self._install_tooltip_filters()
         self.set_extension_panel_visible(self._extension_panel_visible)
+
+    def _setup_shortcuts(self) -> None:
+        context = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        self._shortcut_bindings.bind("chart_save_template", self, self._on_save_template, context=context)
+        self._shortcut_bindings.bind("chart_save_curve_style_template", self, self._on_save_curve_style_template, context=context)
+        self._shortcut_bindings.bind("chart_export_picture", self, self._on_export_to_picture_group, context=context)
+
+    def apply_shortcuts(self) -> None:
+        self._shortcut_bindings.apply()
 
     def supports_extension_panel_toggle(self) -> bool:
         return True
@@ -1685,27 +1703,8 @@ class ChartPage(QWidget):
             fg = theme.foreground_color or "#222222"
             grid_color = theme.grid_color or "#dddddd"
 
-        self._figure.patch.set_facecolor(bg)
-        axis.set_facecolor(bg)
-        for spine in axis.spines.values():
-            spine.set_edgecolor(fg)
-
         figure_facecolor = self._plot_style_extras.get("figure_facecolor")
         axes_facecolor = self._plot_style_extras.get("axes_facecolor")
-        if figure_facecolor:
-            self._figure.patch.set_facecolor(figure_facecolor)
-        if axes_facecolor:
-            axis.set_facecolor(axes_facecolor)
-
-        grid_kwargs = {
-            "color": grid_color,
-            "linestyle": "--",
-            "linewidth": state.grid_line_width,
-            "alpha": state.grid_alpha,
-        }
-        grid_kwargs.update(dict(self._plot_style_extras.get("grid_kwargs", {}) or {}))
-        axis.grid(state.grid, **grid_kwargs)
-
         visible_series = [curve for curve in self._chart_series if curve.get("visible", True)]
         bw_colors = ["#000000", "#444444", "#888888", "#aaaaaa"]
         bw_index = 0
@@ -1716,63 +1715,112 @@ class ChartPage(QWidget):
         }
         plotted_series: List[dict] = []
 
-        for curve in visible_series:
-            name = curve["name"]
-            display_name = self._curve_display_name(curve)
-            style_overrides = self._curve_styles.get(name, {})
-            color = style_overrides.get("color") or curve.get("color")
-            linestyle = style_overrides.get("linestyle", "-")
-            marker = style_overrides.get("marker", "")
-            line_width = _safe_float_or(style_overrides.get("linewidth"), state.line_width)
-            marker_size = _safe_float_or(style_overrides.get("marker_size"), state.marker_size)
-            markevery = max(1, _safe_int_or(style_overrides.get("markevery"), 1))
-            dash_scale = _safe_float_or(style_overrides.get("dash_scale"), 1.0)
-            alpha = _safe_float_or(style_overrides.get("alpha"), 1.0)
-            extra_plot_kwargs = {key: value for key, value in style_overrides.items() if key not in reserved_curve_keys}
-
-            plot_kwargs = dict(default_line_kwargs)
-            plot_kwargs.update({
-                "label": display_name,
-                "linestyle": linestyle or "none",
-                "linewidth": line_width,
-                "alpha": alpha,
-            })
-            if marker:
-                plot_kwargs["marker"] = marker
-                plot_kwargs["markersize"] = marker_size
-                if markevery > 1:
-                    plot_kwargs["markevery"] = markevery
-            plot_kwargs.update(extra_plot_kwargs)
-            if state.theme == "简洁黑白":
-                plot_kwargs["color"] = bw_colors[bw_index % len(bw_colors)]
-                bw_index += 1
-            elif color:
-                plot_kwargs["color"] = color
-            if linestyle in ("--", ":", "-.") and dash_scale != 1.0:
-                base_dashes = {"--": [6, 4], ":": [1, 2], "-.": [8, 3, 1, 3]}.get(linestyle)
-                if base_dashes:
-                    plot_kwargs["dashes"] = [segment * dash_scale for segment in base_dashes]
-
-            x_values = list(curve.get("x", []))
-            y_values = list(curve.get("y", []))
-            y_err = list(curve.get("y_err", []) or [])
-            plotted_series.append({**curve, "display_name": display_name, "style": dict(style_overrides)})
-            if state.show_errbar and y_err and len(y_err) == len(x_values):
-                axis.errorbar(x_values, y_values, yerr=y_err, capsize=3, **errorbar_kwargs, **plot_kwargs)
-            else:
-                axis.plot(x_values, y_values, **plot_kwargs)
+        plot_context = PlotExtensionContext(
+            figure=self._figure,
+            canvas=self._canvas,
+            axis=axis,
+            axes=[axis],
+            visible_series=[dict(curve) for curve in visible_series],
+            plotted_series=plotted_series,
+            figure_state=self._current_plot_style_payload(),
+            plot_style_extras=dict(self._plot_style_extras),
+            theme_colors={"background": bg, "foreground": fg, "grid": grid_color},
+        )
 
         for type_id, options in list(self._plot_extension_options.items()):
             extension = extension_registry.get_plot(type_id)
             if extension is None:
                 continue
             try:
-                extension.handler(axis, plotted_series, dict(options))
+                plot_context.phase = "before_plot"
+                invoke_plot_extension_handler(extension.handler, plot_context, dict(options))
             except Exception:
                 continue
+            plot_context.refresh_axes()
+
+        axis = plot_context.axis
+        if axis is None:
+            axis = self._figure.add_subplot(111)
+            plot_context.set_active_axis(axis)
+
+        self._figure.patch.set_facecolor(figure_facecolor or bg)
+        if axis is not None and not plot_context.skip_default_formatting:
+            axis.set_facecolor(axes_facecolor or bg)
+            for spine in axis.spines.values():
+                spine.set_edgecolor(fg)
+
+            grid_kwargs = {
+                "color": grid_color,
+                "linestyle": "--",
+                "linewidth": state.grid_line_width,
+                "alpha": state.grid_alpha,
+            }
+            grid_kwargs.update(dict(self._plot_style_extras.get("grid_kwargs", {}) or {}))
+            axis.grid(state.grid, **grid_kwargs)
+
+        if not plot_context.skip_default_plot and axis is not None:
+            for curve in visible_series:
+                name = curve["name"]
+                display_name = self._curve_display_name(curve)
+                style_overrides = self._curve_styles.get(name, {})
+                color = style_overrides.get("color") or curve.get("color")
+                linestyle = style_overrides.get("linestyle", "-")
+                marker = style_overrides.get("marker", "")
+                line_width = _safe_float_or(style_overrides.get("linewidth"), state.line_width)
+                marker_size = _safe_float_or(style_overrides.get("marker_size"), state.marker_size)
+                markevery = max(1, _safe_int_or(style_overrides.get("markevery"), 1))
+                dash_scale = _safe_float_or(style_overrides.get("dash_scale"), 1.0)
+                alpha = _safe_float_or(style_overrides.get("alpha"), 1.0)
+                extra_plot_kwargs = {key: value for key, value in style_overrides.items() if key not in reserved_curve_keys}
+
+                plot_kwargs = dict(default_line_kwargs)
+                plot_kwargs.update({
+                    "label": display_name,
+                    "linestyle": linestyle or "none",
+                    "linewidth": line_width,
+                    "alpha": alpha,
+                })
+                if marker:
+                    plot_kwargs["marker"] = marker
+                    plot_kwargs["markersize"] = marker_size
+                    if markevery > 1:
+                        plot_kwargs["markevery"] = markevery
+                plot_kwargs.update(extra_plot_kwargs)
+                if state.theme == "简洁黑白":
+                    plot_kwargs["color"] = bw_colors[bw_index % len(bw_colors)]
+                    bw_index += 1
+                elif color:
+                    plot_kwargs["color"] = color
+                if linestyle in ("--", ":", "-.") and dash_scale != 1.0:
+                    base_dashes = {"--": [6, 4], ":": [1, 2], "-.": [8, 3, 1, 3]}.get(linestyle)
+                    if base_dashes:
+                        plot_kwargs["dashes"] = [segment * dash_scale for segment in base_dashes]
+
+                x_values = list(curve.get("x", []))
+                y_values = list(curve.get("y", []))
+                y_err = list(curve.get("y_err", []) or [])
+                plotted_series.append({**curve, "display_name": display_name, "style": dict(style_overrides)})
+                if state.show_errbar and y_err and len(y_err) == len(x_values):
+                    axis.errorbar(x_values, y_values, yerr=y_err, capsize=3, **errorbar_kwargs, **plot_kwargs)
+                else:
+                    axis.plot(x_values, y_values, **plot_kwargs)
+
+        for type_id, options in list(self._plot_extension_options.items()):
+            extension = extension_registry.get_plot(type_id)
+            if extension is None:
+                continue
+            try:
+                plot_context.phase = "after_plot"
+                plot_context.axis = axis
+                invoke_plot_extension_handler(extension.handler, plot_context, dict(options))
+            except Exception:
+                continue
+            plot_context.refresh_axes()
+
+        axis = plot_context.axis or axis
 
         legend = None
-        if visible_series:
+        if visible_series and not plot_context.skip_default_plot and axis is not None and not plot_context.skip_default_formatting:
             legend_kwargs: Dict[str, Any] = {
                 "facecolor": bg,
                 "edgecolor": fg,
@@ -1788,34 +1836,36 @@ class ChartPage(QWidget):
                 **legend_kwargs,
             )
 
-        axis.set_xlabel(state.x_label or "X")
-        axis.set_ylabel(state.y_label or "Y")
-        if state.x_min is not None or state.x_max is not None:
-            axis.set_xlim(left=state.x_min, right=state.x_max)
-        if state.y_min is not None or state.y_max is not None:
-            axis.set_ylim(bottom=state.y_min, top=state.y_max)
-        if state.x_log:
-            axis.set_xscale("log")
-        if state.y_log:
-            axis.set_yscale("log")
+        if axis is not None and not plot_context.skip_default_formatting:
+            axis.set_xlabel(state.x_label or "X")
+            axis.set_ylabel(state.y_label or "Y")
+            if state.x_min is not None or state.x_max is not None:
+                axis.set_xlim(left=state.x_min, right=state.x_max)
+            if state.y_min is not None or state.y_max is not None:
+                axis.set_ylim(bottom=state.y_min, top=state.y_max)
+            if state.x_log:
+                axis.set_xscale("log")
+            if state.y_log:
+                axis.set_yscale("log")
 
-        axis_kwargs = dict(self._plot_style_extras.get("axis_kwargs", {}) or {})
-        if axis_kwargs:
-            axis.set(**axis_kwargs)
+            axis_kwargs = dict(self._plot_style_extras.get("axis_kwargs", {}) or {})
+            if axis_kwargs:
+                axis.set(**axis_kwargs)
 
-        self._apply_axis_text_style(axis, state, fg)
-        tick_params = dict(self._plot_style_extras.get("tick_params", {}) or {})
-        if tick_params:
-            axis.tick_params(**tick_params)
-        if legend is not None:
-            for text in legend.get_texts():
-                self._apply_text_style(text, font_family=state.font_family, font_size=state.legend_font_size, color=fg)
-            self._apply_text_style(legend.get_title(), font_family=state.font_family, font_size=state.legend_font_size, color=fg)
+            self._apply_axis_text_style(axis, state, fg)
+            tick_params = dict(self._plot_style_extras.get("tick_params", {}) or {})
+            if tick_params:
+                axis.tick_params(**tick_params)
+            if legend is not None:
+                for text in legend.get_texts():
+                    self._apply_text_style(text, font_family=state.font_family, font_size=state.legend_font_size, color=fg)
+                self._apply_text_style(legend.get_title(), font_family=state.font_family, font_size=state.legend_font_size, color=fg)
 
-        self._apply_figure_layout(state)
-        subplot_adjust = self._plot_style_extras.get("subplot_adjust")
-        if isinstance(subplot_adjust, dict) and subplot_adjust:
-            self._figure.subplots_adjust(**subplot_adjust)
+        if not plot_context.skip_default_layout:
+            self._apply_figure_layout(state)
+            subplot_adjust = self._plot_style_extras.get("subplot_adjust")
+            if isinstance(subplot_adjust, dict) and subplot_adjust:
+                self._figure.subplots_adjust(**subplot_adjust)
         self._canvas.draw()
         self._canvas.updateGeometry()
 

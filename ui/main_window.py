@@ -26,6 +26,7 @@ from core.project_manager import project_manager
 from core.ai_client import AIConfig
 from core.ai.tool_executor import execute_tool
 from core.ai.tool_registry import TOOLS
+from core.shortcut_manager import ShortcutBindingSet, shortcut_manager
 
 # 页面 2-6 默认显示完整共享树，主页和设置页不显示。
 _BUSINESS_TREE_KINDS = [
@@ -136,7 +137,9 @@ class MainWindow(FluentWindow):
         super().__init__()
         self._tree_panel_user_hidden = False
         self._tree_panel_width = _TREE_PANEL_DEFAULT_WIDTH
+        self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
+        self._setup_shortcuts()
         self._setup_theme_watcher()
         self._setup_project_signals()
 
@@ -169,10 +172,10 @@ class MainWindow(FluentWindow):
         # ── 导航注册（新顺序：数据管理优先）──────────────────
         self.addSubInterface(self.home_page,     FIF.HOME,            "主页",    NavigationItemPosition.TOP)
         self.addSubInterface(self.data_page,     FIF.FOLDER,          "数据管理", NavigationItemPosition.TOP)
-        self.addSubInterface(self.chart_page,    FIF.PIE_SINGLE,      "可视化",   NavigationItemPosition.TOP)
+        self.addSubInterface(self.chart_page,    FIF.PIE_SINGLE,      "数据可视化",   NavigationItemPosition.TOP)
         self.addSubInterface(self.process_page,  FIF.DEVELOPER_TOOLS, "数据处理", NavigationItemPosition.TOP)
         self.addSubInterface(self.analysis_page, FIF.SEARCH,          "数据分析", NavigationItemPosition.TOP)
-        self.addSubInterface(self.digitize_page, FIF.EDIT,            "图片取点", NavigationItemPosition.TOP)
+        self.addSubInterface(self.digitize_page, FIF.EDIT,            "图片数据化", NavigationItemPosition.TOP)
         self.addSubInterface(self.settings_page, FIF.SETTING,         "设置",    NavigationItemPosition.BOTTOM)
 
         self._tree_toggle_nav_btn = NavigationToolButton(FIF.MENU, self)
@@ -218,8 +221,23 @@ class MainWindow(FluentWindow):
 
     def _setup_theme_watcher(self):
         self.settings_page.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        self.settings_page.shortcuts_changed.connect(self.digitize_page.apply_shortcuts)
+        shortcut_manager.shortcuts_changed.connect(self.apply_shortcuts)
         self.settings_page.tree_display_mode_changed.connect(self._tree_panel.tree.set_name_display_mode)
+
+    def _setup_shortcuts(self) -> None:
+        context = Qt.ShortcutContext.WindowShortcut
+        self._shortcut_bindings.bind("new_project", self, self._create_project_from_panel, context=context)
+        self._shortcut_bindings.bind("open_project", self, self._open_project_from_panel, context=context)
+        self._shortcut_bindings.bind("save", self, self._save_current_project_from_panel, context=context)
+        self._shortcut_bindings.bind("close_project", self, self._close_current_project_from_panel, context=context)
+        self._shortcut_bindings.bind("data_add_dataset", self, self.data_page._add_dataset, context=context)
+        self._shortcut_bindings.bind("data_import_file", self, self.data_page._import_file, context=context)
+
+    def apply_shortcuts(self) -> None:
+        self._shortcut_bindings.apply()
+        for page in (self.data_page, self.chart_page, self.process_page, self.analysis_page, self.digitize_page):
+            if hasattr(page, "apply_shortcuts"):
+                page.apply_shortcuts()
 
     def _setup_project_signals(self):
         self.home_page.project_created.connect(self._on_project_created)

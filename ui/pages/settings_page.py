@@ -19,30 +19,6 @@ from core.ai.providers import (
 )
 
 
-_SHORTCUT_SEARCH_TAGS = {
-    "save": ["项目", "文件"],
-    "new_project": ["项目", "文件"],
-    "open_project": ["项目", "文件"],
-    "close_project": ["项目", "文件"],
-    "add_image": ["数字化", "导入"],
-    "add_curve": ["数字化", "曲线"],
-    "extract": ["数字化", "工具"],
-    "calibrate": ["数字化", "工具"],
-    "eraser": ["数字化", "工具"],
-    "auto_detect": ["数字化", "工具"],
-    "apply_auto": ["数字化", "工具"],
-    "clear_points": ["数字化", "清理"],
-    "clear_masks": ["数字化", "清理"],
-    "escape_tool": ["数字化", "工具"],
-    "zoom_in": ["缩放", "视图"],
-    "zoom_out": ["缩放", "视图"],
-    "zoom_fit": ["缩放", "视图"],
-    "undo": ["编辑"],
-    "redo": ["编辑"],
-    "delete_rows": ["编辑", "表格"],
-}
-
-
 class SettingsPage(QWidget):
     """设置页面 - 主题切换、快捷键自定义等配置"""
 
@@ -87,6 +63,7 @@ class SettingsPage(QWidget):
         self._tabs = tabs
 
         tabs.addTab(self._build_general_tab(), "常规")
+        tabs.addTab(self._build_shortcuts_tab(), "快捷键")
         self._hidden_ai_tab = self._build_ai_tab()
         self._hidden_ai_tab.hide()
 
@@ -168,7 +145,22 @@ class SettingsPage(QWidget):
         layout.addWidget(self._lang_card)
         self._lang_card.hide()  # 暂不实现语言设置
 
-        # ── 快捷键自定义 ──
+        layout.addStretch()
+        return outer
+
+    def _build_shortcuts_tab(self) -> QWidget:
+        outer = SmoothScrollArea()
+        outer.setWidgetResizable(True)
+        outer.setFrameShape(QFrame.Shape.NoFrame)
+        outer.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(content)
+        layout.setSpacing(20)
+        layout.setContentsMargins(40, 40, 40, 40)
+        outer.setWidget(content)
+
         self._shortcuts_card = CardWidget(content)
         shortcuts_layout = QVBoxLayout(self._shortcuts_card)
 
@@ -176,13 +168,13 @@ class SettingsPage(QWidget):
         self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
         shortcuts_layout.addWidget(self._shortcuts_title)
 
-        hint = BodyLabel("点击输入框后按下新快捷键即可修改。按 → 应用快捷键 保存。", self._shortcuts_card)
+        hint = BodyLabel("所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击“应用快捷键”保存。", self._shortcuts_card)
         hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
         hint.setWordWrap(True)
         shortcuts_layout.addWidget(hint)
 
         self._shortcut_filter_edit = LineEdit(self._shortcuts_card)
-        self._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如“项目”或“缩放”")
+        self._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如“分析”或“导出”")
         self._shortcut_filter_edit.textChanged.connect(self._filter_shortcut_rows)
         shortcuts_layout.addWidget(self._shortcut_filter_edit)
 
@@ -191,10 +183,13 @@ class SettingsPage(QWidget):
         sc_form.setSpacing(6)
         sc_form.setContentsMargins(0, 4, 0, 4)
 
-        for action, label in shortcut_manager.LABELS.items():
-            from ui.theme import card_background_color, border_color
+        from ui.theme import card_background_color, border_color
+        from PySide6.QtGui import QKeySequence
+
+        for definition in shortcut_manager.list_definitions():
+            action = definition.action
+            label = f"[{definition.category}] {definition.label}"
             edit = QKeySequenceEdit(sc_content)
-            from PySide6.QtGui import QKeySequence
             edit.setKeySequence(QKeySequence(shortcut_manager.get(action)))
             edit.setStyleSheet(
                 f"background: {card_background_color()}; color: {text_color()};"
@@ -203,12 +198,10 @@ class SettingsPage(QWidget):
             row_lbl = BodyLabel(label + ":", sc_content)
             row_lbl.setStyleSheet(f"color: {text_color()};")
 
-            # 冲突提示标签
             conflict_lbl = BodyLabel("", sc_content)
             conflict_lbl.setStyleSheet("color: #e81123; font-size: 10px;")
             conflict_lbl.setVisible(False)
 
-            # 垂直堆叠 edit + conflict_lbl
             edit_col = QWidget(sc_content)
             ecol_layout = QVBoxLayout(edit_col)
             ecol_layout.setContentsMargins(0, 0, 0, 0)
@@ -236,7 +229,6 @@ class SettingsPage(QWidget):
         shortcuts_layout.addLayout(btn_row)
 
         layout.addWidget(self._shortcuts_card)
-
         layout.addStretch()
         return outer
 
@@ -453,10 +445,13 @@ class SettingsPage(QWidget):
 
     def _filter_shortcut_rows(self, text: str) -> None:
         query = text.strip().lower()
-        for action, label in shortcut_manager.LABELS.items():
-            tags = " ".join(_SHORTCUT_SEARCH_TAGS.get(action, []))
+        for definition in shortcut_manager.list_definitions():
+            action = definition.action
+            label = definition.label
+            tags = " ".join(shortcut_manager.search_tags(action))
             visible = not query or query in action.lower() or query in label.lower() or query in tags.lower()
-            row_label = next((item for item in self._shortcut_labels if item.text().startswith(label)), None)
+            row_prefix = f"[{definition.category}] {label}"
+            row_label = next((item for item in self._shortcut_labels if item.text().startswith(row_prefix)), None)
             edit_col = self._shortcut_rows.get(action)
             if row_label is not None:
                 row_label.setVisible(visible)

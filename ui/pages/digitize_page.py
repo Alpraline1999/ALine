@@ -14,6 +14,7 @@ from ui.theme import text_color, secondary_color, placeholder_color, make_sectio
 from ui.widgets import ImageViewer
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_plan
+from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from models.schemas import CalibrationData, DataFile, DataSeries
 
@@ -76,6 +77,7 @@ class DigitizePage(QWidget):
         # 表格排序
         self._sort_col = -1  # -1表示未排序
         self._sort_order = Qt.SortOrder.AscendingOrder
+        self._shortcut_bindings = ShortcutBindingSet()
         self.setup_ui()
         self._setup_viewer_signals()
         self._setup_shortcuts()
@@ -148,45 +150,27 @@ class DigitizePage(QWidget):
 
     def _setup_shortcuts(self):
         """设置键盘快捷键（可在设置页自定义）"""
-        from PySide6.QtGui import QShortcut, QKeySequence
-        from core.shortcut_manager import shortcut_manager
-        sm = shortcut_manager
-        self._shortcut_objects: dict[str, QShortcut] = {}
-
-        def _reg(action: str, parent, callback, context=None):
-            sc = QShortcut(QKeySequence(sm.get(action)), parent)
-            if context is not None:
-                sc.setContext(context)
-            sc.activated.connect(callback)
-            self._shortcut_objects[action] = sc
-
-        _reg("undo",         self, self._undo)
-        _reg("redo",         self, self._redo)
-        _reg("save",         self, self._on_save_project)
-        _reg("new_project",  self, self._on_new_project)
-        _reg("open_project", self, self._on_open_project)
-        _reg("close_project", self, self._on_close_project)
-        _reg("add_image",    self, self._on_add_image)
-        _reg("add_curve",    self, self._on_add_curve)
-        _reg("extract",      self, lambda: self._on_tool_clicked("extract"))
-        _reg("calibrate",    self, lambda: self._on_tool_clicked("calibrate"))
-        _reg("eraser",       self, lambda: self._on_tool_clicked("eraser"))
-        _reg("auto_detect",  self, self._on_auto_detect)
-        _reg("apply_auto",   self, self._on_apply_auto_points)
-        _reg("clear_points", self, self._on_clear_all_points)
-        _reg("clear_masks",  self, self._on_clear_masks)
-        _reg("escape_tool",  self, self._on_escape_tool)
-        _reg("zoom_in",      self._image_viewer, self._image_viewer.zoom_in)
-        _reg("zoom_out",     self._image_viewer, self._image_viewer.zoom_out)
-        _reg("zoom_fit",     self._image_viewer, self._image_viewer.fit_to_window)
-        _reg("delete_rows",  self._curve_table,  self._delete_selected_table_rows)
+        context = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        self._shortcut_bindings.bind("undo", self, self._undo, context=context)
+        self._shortcut_bindings.bind("redo", self, self._redo, context=context)
+        self._shortcut_bindings.bind("add_image", self, self._on_add_image, context=context)
+        self._shortcut_bindings.bind("add_curve", self, self._on_add_curve, context=context)
+        self._shortcut_bindings.bind("extract", self, lambda: self._on_tool_clicked("extract"), context=context)
+        self._shortcut_bindings.bind("calibrate", self, lambda: self._on_tool_clicked("calibrate"), context=context)
+        self._shortcut_bindings.bind("eraser", self, lambda: self._on_tool_clicked("eraser"), context=context)
+        self._shortcut_bindings.bind("auto_detect", self, self._on_auto_detect, context=context)
+        self._shortcut_bindings.bind("apply_auto", self, self._on_apply_auto_points, context=context)
+        self._shortcut_bindings.bind("clear_points", self, self._on_clear_all_points, context=context)
+        self._shortcut_bindings.bind("clear_masks", self, self._on_clear_masks, context=context)
+        self._shortcut_bindings.bind("escape_tool", self, self._on_escape_tool, context=context)
+        self._shortcut_bindings.bind("zoom_in", self._image_viewer, self._image_viewer.zoom_in, context=context)
+        self._shortcut_bindings.bind("zoom_out", self._image_viewer, self._image_viewer.zoom_out, context=context)
+        self._shortcut_bindings.bind("zoom_fit", self._image_viewer, self._image_viewer.fit_to_window, context=context)
+        self._shortcut_bindings.bind("delete_rows", self._curve_table, self._delete_selected_table_rows, context=context)
 
     def apply_shortcuts(self):
         """由设置页调用，用新配置刷新所有快捷键绑定"""
-        from PySide6.QtGui import QKeySequence
-        from core.shortcut_manager import shortcut_manager
-        for action, sc in self._shortcut_objects.items():
-            sc.setKey(QKeySequence(shortcut_manager.get(action)))
+        self._shortcut_bindings.apply()
 
     def _create_left_panel(self) -> CardWidget:
         panel = CardWidget(self)

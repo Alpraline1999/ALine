@@ -28,6 +28,7 @@ from ui.theme import (
     make_section_label, make_hsep,
 )
 from ui.matplotlib_fonts import configure_matplotlib_cjk
+from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, Dataset, Curve
 
@@ -74,7 +75,9 @@ class DataPage(QWidget):
         self._preview_name = ""
         self._preview_x_label = "X"
         self._preview_y_label = "Y"
+        self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
+        self._setup_shortcuts()
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -85,6 +88,17 @@ class DataPage(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
         root.addWidget(self._build_right_panel())
+
+    def _setup_shortcuts(self) -> None:
+        context = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        self._shortcut_bindings.bind("data_copy_curve_to_series", self, self._copy_curve_to_series, context=context)
+        self._shortcut_bindings.bind("data_delete_selected", self, self._delete_selected, context=context)
+        self._shortcut_bindings.bind("data_apply_rename", self, self._apply_rename_current_node, context=context)
+        self._shortcut_bindings.bind("data_duplicate_to_file", self, self._duplicate_current_node_as_data_file, context=context)
+        self._shortcut_bindings.bind("data_delete_node", self, self._delete_current_node, context=context)
+
+    def apply_shortcuts(self) -> None:
+        self._shortcut_bindings.apply()
 
     # ── 左侧面板 ─────────────────────────────────────────────
 

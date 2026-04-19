@@ -23,6 +23,7 @@ from qfluentwidgets import (
 )
 
 from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
+from core.shortcut_manager import ShortcutBindingSet
 from ui.theme import make_section_label, make_hsep
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.dialogs.export_flow import choose_data_export_plan
@@ -117,7 +118,9 @@ class ProcessPage(QWidget):
         self._run_timer.setSingleShot(True)
         self._run_timer.setInterval(300)
         self._run_timer.timeout.connect(self._run_pipeline_now)
+        self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
+        self._setup_shortcuts()
         self._refresh_tree()
 
     # ─────────────────────────────────────────────────────────
@@ -131,9 +134,11 @@ class ProcessPage(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(4)
         root.addWidget(splitter, 1)
+
+        splitter.addWidget(self._build_left())
         splitter.addWidget(self._build_middle())
         splitter.addWidget(self._build_right())
-        splitter.setSizes([360, 620])
+        splitter.setSizes([220, 360, 620])
 
         self._extension_panel = ExtensionConfigPanel("处理扩展", "添加扩展", self)
         self._extension_panel.set_context("数据处理", "当前操作链")
@@ -142,6 +147,18 @@ class ProcessPage(QWidget):
         root.addWidget(self._extension_panel)
         self._refresh_processing_extensions()
         self.set_extension_panel_visible(self._extension_panel_visible)
+
+    def _setup_shortcuts(self) -> None:
+        context = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        self._shortcut_bindings.bind("process_add_op", self, self._add_op, context=context)
+        self._shortcut_bindings.bind("process_clear_ops", self, self._clear_ops, context=context)
+        self._shortcut_bindings.bind("process_remove_op", self, self._remove_op, context=context)
+        self._shortcut_bindings.bind("process_move_op_up", self, self._move_op_up, context=context)
+        self._shortcut_bindings.bind("process_move_op_down", self, self._move_op_down, context=context)
+        self._shortcut_bindings.bind("process_run_pipeline", self, self._run_pipeline_now, context=context)
+
+    def apply_shortcuts(self) -> None:
+        self._shortcut_bindings.apply()
 
     def supports_extension_panel_toggle(self) -> bool:
         return True
