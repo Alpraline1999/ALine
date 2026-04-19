@@ -11,9 +11,9 @@ from typing import Dict, List, Optional, Tuple
 
 from math import ceil
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPainter, QPen, QPixmap, QTextDocument, QTextOption
-from PySide6.QtWidgets import QAbstractItemView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyleOptionViewItem, QStyledItemDelegate, QVBoxLayout, QWidget
 from qfluentwidgets import (
     Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip, TreeWidget,
 )
@@ -162,6 +162,56 @@ class _ProjectTreeView(TreeWidget):
             self._owner._clear_drag_source_item()
 
 
+class _ProjectTreeWrapAnywhereDelegate(QStyledItemDelegate):
+    def __init__(self, owner: "ProjectTreeWidget", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._owner = owner
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        if self._owner._name_display_mode != "wrap":
+            super().paint(painter, option, index)
+            return
+
+        item_option = QStyleOptionViewItem(option)
+        self.initStyleOption(item_option, index)
+        text = item_option.text
+        if not text:
+            super().paint(painter, option, index)
+            return
+
+        item_option.text = ""
+        style = item_option.widget.style() if item_option.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item_option, painter, item_option.widget)
+
+        text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, item_option, item_option.widget)
+        if not text_rect.isValid() or text_rect.width() <= 0:
+            return
+
+        document = QTextDocument()
+        document.setDefaultFont(item_option.font)
+        text_option = QTextOption()
+        text_option.setWrapMode(QTextOption.WrapMode.WrapAnywhere)
+        text_option.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        document.setDefaultTextOption(text_option)
+        document.setPlainText(text)
+        document.setTextWidth(max(1, text_rect.width()))
+
+        palette = item_option.palette
+        if item_option.state & QStyle.StateFlag.State_Selected:
+            text_color = palette.color(palette.ColorRole.HighlightedText)
+        else:
+            text_color = palette.color(palette.ColorRole.Text)
+        document.setDefaultStyleSheet(f"body {{ color: {text_color.name()}; }}")
+
+        content_height = document.size().height()
+        y_offset = text_rect.top() + max(0.0, (text_rect.height() - content_height) / 2.0)
+        painter.save()
+        painter.setClipRect(text_rect)
+        painter.translate(text_rect.left(), y_offset)
+        document.drawContents(painter, QRectF(0, 0, text_rect.width(), content_height))
+        painter.restore()
+
+
 class ProjectTreeWidget(QWidget):
     """可嵌入任意页面的项目树组件。
 
@@ -199,6 +249,7 @@ class ProjectTreeWidget(QWidget):
         self._tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._tree.setDropIndicatorShown(True)
+        self._tree.setItemDelegate(_ProjectTreeWrapAnywhereDelegate(self, self._tree))
 
         self._tree.itemClicked.connect(self._on_item_clicked)
         self._tree.itemActivated.connect(self._on_item_activated)
@@ -1302,7 +1353,7 @@ class ProjectTreeWidget(QWidget):
             available_width = max(120, viewport_width - indentation - icon_width - 44)
             text_height = _wrap_text_height(item.font(0), text, available_width)
             content_height = max(font_metrics.lineSpacing(), icon_height, text_height)
-            item.setSizeHint(0, QSize(max(available_width, font_metrics.horizontalAdvance(text)), content_height + 10))
+            item.setSizeHint(0, QSize(available_width, content_height + 10))
         except RuntimeError:
             return
 

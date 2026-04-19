@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -24,10 +24,14 @@ class ExtensionConfigPanel(QWidget):
 
     apply_requested = Signal(str, dict)
     reload_requested = Signal()
+    remove_requested = Signal(str)
+    selection_changed = Signal(str)
 
     def __init__(self, title: str = "自定义扩展", action_text: str = "应用扩展", parent=None):
         super().__init__(parent)
-        self.setFixedWidth(360)
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(520)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._entries: List[dict] = []
         self._saved_options: Dict[str, Dict[str, Any]] = {}
         self._action_text = action_text
@@ -99,12 +103,18 @@ class ExtensionConfigPanel(QWidget):
         self._apply_btn = PrimaryPushButton(self._action_text, card)
         self._apply_btn.clicked.connect(self._apply_current)
         btn_row.addWidget(self._apply_btn)
-        self._reset_btn = PushButton("重置配置", card)
+        self._remove_btn = PushButton("撤销应用", card)
+        self._remove_btn.clicked.connect(self._remove_current)
+        self._remove_btn.hide()
+        btn_row.addWidget(self._remove_btn)
+        self._reset_btn = ToolButton(getattr(FIF, "SYNC", FIF.UPDATE), card)
+        self._reset_btn.setToolTip("重置配置")
         self._reset_btn.clicked.connect(self._reset_current)
         btn_row.addWidget(self._reset_btn)
-        clear_btn = PushButton("清空配置", card)
-        clear_btn.clicked.connect(lambda: self._editor.setPlainText("{}"))
-        btn_row.addWidget(clear_btn)
+        self._clear_btn = ToolButton(FIF.DELETE, card)
+        self._clear_btn.setToolTip("清空配置")
+        self._clear_btn.clicked.connect(lambda: self._editor.setPlainText("{}"))
+        btn_row.addWidget(self._clear_btn)
         layout.addLayout(btn_row)
 
         root.addWidget(card, 1)
@@ -116,6 +126,13 @@ class ExtensionConfigPanel(QWidget):
     def set_action_text(self, text: str) -> None:
         self._action_text = text or "应用扩展"
         self._apply_btn.setText(self._action_text)
+
+    def set_remove_action(self, *, visible: bool, enabled: Optional[bool] = None, text: Optional[str] = None) -> None:
+        self._remove_btn.setVisible(bool(visible))
+        if text is not None:
+            self._remove_btn.setText(text)
+        if enabled is not None:
+            self._remove_btn.setEnabled(bool(enabled))
 
     def set_context(self, page_name: str, target_name: str) -> None:
         del page_name, target_name
@@ -179,16 +196,16 @@ class ExtensionConfigPanel(QWidget):
             lines = ["字段说明:"]
             for field in fields:
                 key = field.get("key") or "option"
-                label = field.get("label") or key
                 field_type = field.get("field_type") or "string"
-                required = "必填" if field.get("required") else "可选"
-                line = f"- {label} ({key}, {field_type}, {required})"
+                required = "必选" if field.get("required") else "可选"
+                parts = [f"{key}: {field_type}", required]
+                description = str(field.get("description") or "").strip()
+                if description:
+                    parts.append(description)
                 choices = field.get("choices") or []
                 if choices:
-                    line += f"，可选值: {', '.join(str(choice) for choice in choices)}"
-                lines.append(line)
-                if field.get("description"):
-                    lines.append(f"  {field['description']}")
+                    parts.append(f"可选值: {', '.join(str(choice) for choice in choices)}")
+                lines.append(f"- {'; '.join(parts)}")
             return "\n".join(lines)
 
         default_options = dict(entry.get("default_options") or {})
@@ -205,8 +222,12 @@ class ExtensionConfigPanel(QWidget):
         self._editor.setPlainText("{}")
         self._editor.setEnabled(False)
         self._apply_btn.setEnabled(False)
+        self._remove_btn.setVisible(False)
+        self._remove_btn.setEnabled(False)
         self._reload_btn.setEnabled(True)
         self._reset_btn.setEnabled(False)
+        self._clear_btn.setEnabled(False)
+        self.selection_changed.emit("")
 
     def _on_selection_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._entries):
@@ -221,7 +242,9 @@ class ExtensionConfigPanel(QWidget):
         self._apply_btn.setEnabled(True)
         self._reload_btn.setEnabled(True)
         self._reset_btn.setEnabled(True)
+        self._clear_btn.setEnabled(True)
         self._editor.setPlainText(json.dumps(options, ensure_ascii=False, indent=2))
+        self.selection_changed.emit(type_id or "")
 
     def _reset_current(self) -> None:
         type_id = self.current_type()
@@ -238,3 +261,9 @@ class ExtensionConfigPanel(QWidget):
         options = self.current_options()
         self._saved_options[type_id] = dict(options)
         self.apply_requested.emit(type_id, options)
+
+    def _remove_current(self) -> None:
+        type_id = self.current_type()
+        if type_id is None:
+            return
+        self.remove_requested.emit(type_id)

@@ -921,11 +921,11 @@ class TestAnalysisEngine(unittest.TestCase):
 
         directory = default_extensions_directory()
         expected = {
-            "processing_scale_demo.py": ("processing", "demo_processing_scale", "processing_scale_demo.json", {"factor", "baseline"}),
-            "analysis_peak_span_demo.py": ("analysis", "demo_analysis_peak_span", "analysis_peak_span_demo.json", {"unit"}),
-            "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", "plot_reference_line_demo.json", {"color", "linestyle", "linewidth", "alpha", "offset", "label"}),
-            "plot_style_presentation_demo.py": ("plot_style", "demo_plot_style_presentation", "plot_style_presentation_demo.json", {"grid", "grid_alpha", "line_width", "marker_size"}),
-            "curve_style_highlight_demo.py": ("curve_style", "demo_curve_style_highlight", "curve_style_highlight_demo.json", {"color", "linestyle", "linewidth", "marker", "alpha", "markevery"}),
+            "processing_scale_demo.py": ("processing", "demo_processing_scale", {"factor", "baseline"}),
+            "analysis_peak_span_demo.py": ("analysis", "demo_analysis_peak_span", {"unit"}),
+            "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
+            "plot_style_presentation_demo.py": ("plot_style", "demo_plot_style_presentation", {"grid", "grid_alpha", "line_width", "marker_size"}),
+            "curve_style_highlight_demo.py": ("curve_style", "demo_curve_style_highlight", {"color", "linestyle", "linewidth", "marker", "alpha", "markevery"}),
         }
 
         registry = ExtensionRegistry()
@@ -942,11 +942,12 @@ class TestAnalysisEngine(unittest.TestCase):
             "curve_style": registry.get_curve_style,
         }
 
-        for _py_name, (kind, type_id, json_name, required_keys) in expected.items():
-            self.assertIsNotNone(getters[kind](type_id))
-            payload = json.loads((directory / json_name).read_text(encoding="utf-8"))
-            self.assertIsInstance(payload, dict)
-            self.assertTrue(required_keys.issubset(payload.keys()))
+        self.assertEqual(sorted(path.name for path in directory.glob("*.json")), [])
+
+        for _py_name, (kind, type_id, required_keys) in expected.items():
+            extension = getters[kind](type_id)
+            self.assertIsNotNone(extension)
+            self.assertTrue(required_keys.issubset(set(extension.default_options.keys())))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1554,6 +1555,14 @@ class TestProjectManagerV3(unittest.TestCase):
         self.assertIsNotNone(self.p.tree)
         self.assertGreater(len(self.p.tree.nodes), 0)
 
+    def test_create_new_with_structure_uses_aline_suffix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = self.pm.create_new("aline_suffix_demo", parent_dir=temp_dir, create_structure=True)
+
+            self.assertIsNotNone(project.file_path)
+            self.assertTrue(project.file_path.endswith(".aline"))
+            self.assertTrue(Path(project.file_path).exists())
+
     def test_system_folders_have_group_type(self):
         """系统文件夹应携带 group_type"""
         group_types = [n.group_type for n in self.p.tree.nodes
@@ -1865,12 +1874,12 @@ class TestCommandLayerV3(unittest.TestCase):
         self.assertIsInstance(r.data, list)
 
     def test_list_report_templates_after_add(self):
-        self.pm.add_report_template("tmpl1", "# Template")
+        self.pm.add_report_template("report_template_demo", "# Template")
         from ai.command_layer import cmd_list_report_templates
         r = cmd_list_report_templates({})
         self.assertTrue(r.success)
         names = [t["name"] for t in r.data]
-        self.assertIn("tmpl1", names)
+        self.assertIn("report_template_demo", names)
 
     def test_save_figure_template_command(self):
         from ai.command_layer import cmd_save_figure_template

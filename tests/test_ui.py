@@ -253,6 +253,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertFalse(global_root.isExpanded())
 
     def test_tree_config_enables_wrapped_labels(self):
+        self.widget.set_name_display_mode("wrap")
         self.assertEqual(self.widget._tree.textElideMode(), Qt.TextElideMode.ElideNone)
 
     def test_tree_uses_default_delegate_and_no_custom_foreground_role(self):
@@ -339,6 +340,35 @@ class TestProjectTreeWidget(unittest.TestCase):
         with mock.patch.object(self.widget._tree, "topLevelItemCount", return_value=1), \
              mock.patch.object(self.widget._tree, "topLevelItem", return_value=stale_item):
             self.widget._update_wrapped_item_size_hints()
+
+    def test_wrapped_item_size_hint_does_not_expand_to_unwrapped_text_width(self):
+        self.p.name = "这是一个用于验证项目树节点自动换行不会被未换行宽度撑开的超长项目名称测试文本"
+        self.widget.resize(240, 480)
+        self.widget._tree.resize(240, 480)
+        self.widget.refresh()
+
+        root = self.widget._tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+
+        self.widget._update_wrapped_item_size_hint_for_item(root)
+
+        self.assertLessEqual(root.sizeHint(0).width(), max(120, self.widget._tree.viewport().width()))
+        self.assertLess(root.sizeHint(0).width(), self.widget._tree.fontMetrics().horizontalAdvance(root.text(0)))
+
+    def test_wrapped_delegate_breaks_long_single_token_labels(self):
+        self.widget.set_name_display_mode("wrap")
+        self.p.name = "eta1_wave_data_elevation_profile_reference_baseline_measurement"
+        self.widget.resize(220, 480)
+        self.widget._tree.resize(220, 480)
+        self.widget.refresh()
+
+        root = self.widget._tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+
+        self.widget._update_wrapped_item_size_hint_for_item(root)
+
+        self.assertEqual(type(self.widget._tree.itemDelegate()).__name__, "_ProjectTreeWrapAnywhereDelegate")
+        self.assertGreater(root.sizeHint(0).height(), self.widget._tree.fontMetrics().lineSpacing() + 10)
 
     def test_set_filter_kinds_all(self):
         """空过滤 = 显示全部"""
@@ -792,6 +822,43 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertIs(panel._config_help_area.widget(), panel._config_help_container)
         panel.deleteLater()
 
+    def test_reset_and_clear_actions_use_tool_buttons(self):
+        from qfluentwidgets import ToolButton
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+
+        self.assertIsInstance(panel._reset_btn, ToolButton)
+        self.assertIsInstance(panel._clear_btn, ToolButton)
+        self.assertEqual(panel._apply_btn.text(), "应用扩展")
+        panel.deleteLater()
+
+    def test_config_help_uses_key_type_required_description_format(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+
+        help_text = panel._config_help_text(
+            {
+                "config_fields": [
+                    {
+                        "key": "show_reference_line",
+                        "label": "显示参考线",
+                        "field_type": "boolean",
+                        "required": False,
+                        "description": "在 before_plot 阶段绘制一条水平参考线。",
+                    }
+                ]
+            }
+        )
+
+        self.assertIn(
+            "show_reference_line: boolean; 可选; 在 before_plot 阶段绘制一条水平参考线。",
+            help_text,
+        )
+        self.assertNotIn("显示参考线", help_text)
+        panel.deleteLater()
+
     def test_panel_layout_matches_page_card_spacing_baseline(self):
         from ui.widgets.extension_panel import ExtensionConfigPanel
 
@@ -842,6 +909,28 @@ class TestDataPage(unittest.TestCase):
         )
         self.page._preview_type_combo.setCurrentIndex(scatter_index)
         self.assertGreaterEqual(len(self.page._preview_figure.axes[0].collections), 1)
+
+    def test_preview_host_follows_dark_background(self):
+        if self.page._preview_figure is None or self.page._preview_canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch("ui.pages.data_page.isDarkTheme", return_value=True):
+            self.page._apply_preview_host_background()
+            self.page._draw_preview()
+
+        self.assertIn("#1e1e1e", self.page._plot_preview_panel.styleSheet())
+        self.assertIn("#1e1e1e", self.page._preview_canvas.styleSheet())
+
+    def test_preview_drop_detects_supported_import_file(self):
+        from PySide6.QtCore import QMimeData, QUrl
+
+        mime_data = QMimeData()
+        mime_data.setUrls([
+            QUrl.fromLocalFile("/tmp/ignore.md"),
+            QUrl.fromLocalFile("/tmp/demo.csv"),
+        ])
+
+        self.assertEqual(self.page._supported_drop_file_path(mime_data), "/tmp/demo.csv")
 
     def test_on_tree_node_selected_data_file(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
@@ -1026,6 +1115,15 @@ class TestDataPage(unittest.TestCase):
 
         self.assertEqual(len(existing.series), 1)
         self.assertEqual(existing.series[0].name, "力")
+
+    def test_import_file_preloads_dropped_path_into_dialog(self):
+        with mock.patch("ui.dialogs.import_dialog.ImportDialog") as dialog_cls:
+            dialog = dialog_cls.return_value
+            dialog.exec.return_value = False
+
+            self.page._import_file("/tmp/dropped.csv")
+
+        dialog.load_file.assert_called_once_with("/tmp/dropped.csv")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1212,6 +1310,11 @@ class TestChartPage(unittest.TestCase):
     def test_plot_style_tab_has_explicit_load_button(self):
         self.assertIsNotNone(self.page._btn_load_template)
 
+    def test_style_tabs_include_dedicated_plot_extension_tab(self):
+        titles = [self.page._style_tabs.tabText(i) for i in range(self.page._style_tabs.count())]
+
+        self.assertEqual(titles, ["曲线样式", "绘图样式", "绘图扩展"])
+
     def test_plot_extension_appears_in_extension_panel(self):
         from core.extension_api import PlotExtension, extension_registry
 
@@ -1227,7 +1330,7 @@ class TestChartPage(unittest.TestCase):
             )
         )
         try:
-            self.page._style_tabs.setCurrentIndex(1)
+            self.page._style_tabs.setCurrentIndex(2)
             self.page._refresh_style_extension_panel()
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
@@ -1540,6 +1643,49 @@ class TestChartPage(unittest.TestCase):
             self.page._refresh_template_combo()
             self.page._refresh_curve_style_template_combo()
 
+    def test_plot_style_and_plot_extensions_are_split_across_tabs(self):
+        from core.extension_api import PlotExtension, PlotStyleExtension, extension_registry
+
+        extension_registry.register_plot_style(
+            PlotStyleExtension(
+                type="chart_plot_style_split",
+                name="绘图样式拆分",
+                handler=lambda state, options: state,
+                description="只应出现在绘图样式扩展页。",
+            )
+        )
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_extension_split",
+                name="绘图扩展拆分",
+                handler=lambda context, options: None,
+                description="只应出现在绘图扩展页。",
+            )
+        )
+        try:
+            self.page._style_tabs.setCurrentIndex(1)
+            QApplication.processEvents()
+            plot_style_items = [
+                self.page._extension_panel._selector.itemText(i)
+                for i in range(self.page._extension_panel._selector.count())
+            ]
+
+            self.page._style_tabs.setCurrentIndex(2)
+            QApplication.processEvents()
+            plot_extension_items = [
+                self.page._extension_panel._selector.itemText(i)
+                for i in range(self.page._extension_panel._selector.count())
+            ]
+
+            self.assertIn("样式扩展 · 绘图样式拆分", plot_style_items)
+            self.assertNotIn("绘图扩展 · 绘图扩展拆分", plot_style_items)
+            self.assertIn("绘图扩展 · 绘图扩展拆分", plot_extension_items)
+            self.assertNotIn("样式扩展 · 绘图样式拆分", plot_extension_items)
+        finally:
+            extension_registry.unregister_plot_style("chart_plot_style_split")
+            extension_registry.unregister_plot("chart_plot_extension_split")
+            self.page._refresh_style_extension_panel()
+
     def test_chart_style_extension_panel_applies_plot_and_curve_styles(self):
         from core.extension_api import CurveStyleExtension, PlotStyleExtension, extension_registry
 
@@ -1595,6 +1741,40 @@ class TestChartPage(unittest.TestCase):
             extension_registry.unregister_curve_style("chart_curve_apply")
             self.page._refresh_template_combo()
             self.page._refresh_curve_style_template_combo()
+
+    def test_plot_extension_can_be_removed_after_apply(self):
+        from core.extension_api import PlotExtension, extension_registry
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_remove",
+                name="绘图扩展撤销",
+                handler=lambda context, options: None,
+                description="用于验证绘图扩展可撤销。",
+                default_options={"enabled": True},
+            )
+        )
+        try:
+            self.page._style_tabs.setCurrentIndex(2)
+            QApplication.processEvents()
+            self.page._on_chart_extension_apply("chart_plot_remove", {"enabled": True})
+
+            self.assertIn("chart_plot_remove", self.page._plot_extension_options)
+            self.assertEqual(self.page._extension_panel._remove_btn.text(), "撤销应用")
+            self.page._on_chart_extension_remove_requested("chart_plot_remove")
+            self.assertNotIn("chart_plot_remove", self.page._plot_extension_options)
+        finally:
+            extension_registry.unregister_plot("chart_plot_remove")
+            self.page._refresh_style_extension_panel()
+
+    def test_chart_preview_host_follows_dark_background(self):
+        if self.page._figure is None or self.page._canvas_host is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch("ui.pages.chart_page.isDarkTheme", return_value=True):
+            self.page._apply_preview_host_background()
+
+        self.assertIn("#1e1e1e", self.page._canvas_host.viewport().styleSheet())
 
     def test_curve_display_name_only_affects_chart_list_and_legend(self):
         if self.page._figure is None:
@@ -1698,6 +1878,15 @@ class TestProcessPage(unittest.TestCase):
 
         layout_warnings = [str(item.message) for item in caught if "Tight layout not applied" in str(item.message)]
         self.assertEqual(layout_warnings, [])
+
+    def test_process_preview_host_follows_dark_background(self):
+        if self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch("ui.pages.process_page.isDarkTheme", return_value=True):
+            self.page._apply_preview_host_background()
+
+        self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
 
     def test_on_tree_node_selected_series(self):
         self.page.on_tree_node_selected("series", self.s.id)
@@ -1907,12 +2096,18 @@ class TestProcessPage(unittest.TestCase):
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
             self.page._extension_panel._selector.setCurrentIndex(selector_items.index("UI 配置说明"))
             help_text = self.page._extension_panel._config_help_label.text()
-            self.assertIn("倍率", help_text)
-            self.assertIn("factor", help_text)
-            self.assertIn("number", help_text)
+            self.assertIn("factor: number; 可选; 用于缩放当前 Y 值。", help_text)
+            self.assertNotIn("倍率", help_text)
         finally:
             extension_registry.unregister_processing("ui_scale_help")
             self.page._refresh_processing_extensions()
+
+    def test_processing_extension_panel_uses_generic_apply_text(self):
+        self.assertEqual(self.page._extension_panel._apply_btn.text(), "应用扩展")
+
+    def test_process_page_content_splitter_keeps_two_main_panels(self):
+        self.assertEqual(self.page._content_splitter.count(), 2)
+        self.assertFalse(hasattr(self.page, "_src_tree"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1985,6 +2180,15 @@ class TestAnalysisPage(unittest.TestCase):
 
         layout_warnings = [str(item.message) for item in caught if "Tight layout not applied" in str(item.message)]
         self.assertEqual(layout_warnings, [])
+
+    def test_analysis_result_canvas_follows_dark_background(self):
+        if self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch("ui.pages.analysis_page.isDarkTheme", return_value=True):
+            self.page._apply_result_canvas_background(self.page._canvas)
+
+        self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
 
     def test_input_role_labels_are_hidden(self):
         self.assertTrue(self.page._primary_input_label.isHidden())
@@ -2233,6 +2437,28 @@ class TestAnalysisPage(unittest.TestCase):
         finally:
             extension_registry.unregister_analysis("ui_span_run")
             self.page._refresh_analysis_type_choices()
+
+    def test_analysis_page_loads_registered_extensions_on_init(self):
+        from core.extension_api import AnalysisExtension, extension_registry
+        from ui.pages.analysis_page import AnalysisPage
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_init_analysis_extension",
+                name="初始化分析扩展",
+                handler=lambda inputs, params: {"analysis_type": "ui_init_analysis_extension"},
+                description="用于验证初始化时自动加载扩展。",
+            )
+        )
+        page = AnalysisPage()
+        try:
+            combo_items = [page._type_combo.itemText(i) for i in range(page._type_combo.count())]
+            selector_items = [page._extension_panel._selector.itemText(i) for i in range(page._extension_panel._selector.count())]
+            self.assertIn("初始化分析扩展", combo_items)
+            self.assertIn("初始化分析扩展", selector_items)
+        finally:
+            page.deleteLater()
+            extension_registry.unregister_analysis("ui_init_analysis_extension")
 
     def test_export_report_to_path(self):
         self.page.on_tree_node_activated("series", self.s.id)
@@ -2687,14 +2913,14 @@ class TestMainWindow(unittest.TestCase):
         created_mock.assert_called_once_with("面板项目")
 
     def test_open_project_from_panel_uses_window_level_dialog_flow(self):
-        with mock.patch("ui.main_window.QFileDialog.getOpenFileName", return_value=("/tmp/demo.pyline", "PyLine 项目 (*.pyline)")) as file_mock, \
+        with mock.patch("ui.main_window.QFileDialog.getOpenFileName", return_value=("/tmp/demo.aline", "ALine 项目 (*.aline *.pyline)")) as file_mock, \
              mock.patch.object(self.pm, "open", return_value=self.p) as open_mock, \
              mock.patch.object(self.win, "_on_project_opened") as opened_mock:
             self.win._open_project_from_panel()
 
         file_mock.assert_called_once()
-        open_mock.assert_called_once_with("/tmp/demo.pyline")
-        opened_mock.assert_called_once_with("/tmp/demo.pyline")
+        open_mock.assert_called_once_with("/tmp/demo.aline")
+        opened_mock.assert_called_once_with("/tmp/demo.aline")
 
     def test_ai_panel_is_disabled(self):
         self.assertIsNone(self.win._ai_panel)
@@ -3206,6 +3432,25 @@ class TestImportDialogParsers(unittest.TestCase):
         self.assertEqual(dlg.get_file_name(), "demo.csv")
         dlg.deleteLater()
 
+    def test_import_dialog_load_file_populates_preview_state(self):
+        from ui.dialogs.import_dialog import ImportDialog
+
+        temp_path = Path(tempfile.NamedTemporaryFile(suffix=".csv", delete=False).name)
+        try:
+            temp_path.write_text("x,y\n0,1\n1,2\n", encoding="utf-8")
+            dlg = ImportDialog()
+
+            dlg.load_file(str(temp_path))
+
+            self.assertEqual(dlg._file_path, str(temp_path))
+            self.assertEqual(dlg._path_edit.text(), str(temp_path))
+            self.assertEqual(dlg._raw_headers, ["x", "y"])
+            self.assertEqual(len(dlg._raw_rows), 2)
+            self.assertTrue(dlg._btn_next.isEnabled())
+            dlg.deleteLater()
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     def test_import_dialog_can_target_existing_data_file(self):
         from ui.dialogs.import_dialog import ImportDialog
 
@@ -3444,9 +3689,11 @@ class TestSettingsPageV3(unittest.TestCase):
 
     def test_refresh_templates_with_project(self):
         from core.project_manager import ProjectManager
+
+        restore_assets = _patch_global_assets()
         pm = ProjectManager()
-        p = pm.create_new("sett_tmpl_test")
-        pm.add_report_template("tmpl1", "# Hello")
+        pm.create_new("sett_tmpl_test")
+        pm.add_report_template("settings_template_demo", "# Hello")
         # Patch and refresh
         restore = _patch_pm(pm)
         try:
@@ -3454,6 +3701,7 @@ class TestSettingsPageV3(unittest.TestCase):
             self.assertEqual(self.page._tmpl_list.count(), 0)
         finally:
             restore()
+            restore_assets()
 
     def test_report_template_card_hidden(self):
         self.assertTrue(self.page._tmpl_card.isHidden())

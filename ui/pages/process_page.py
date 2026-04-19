@@ -10,10 +10,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout,
-    QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem,
-)
+from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem
 from qfluentwidgets import (
     BodyLabel, ComboBox, FluentIcon as FIF,
     CardWidget,
@@ -97,6 +94,7 @@ class ProcessPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._extension_panel_visible = False
+        self._extension_panel_width = 360
         self._src_xs: List[float] = []
         self._src_ys: List[float] = []
         self._out_xs: List[float] = []
@@ -131,22 +129,28 @@ class ProcessPage(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(4)
-        root.addWidget(splitter, 1)
+        self._page_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._page_splitter.setHandleWidth(4)
+        root.addWidget(self._page_splitter, 1)
 
-        splitter.addWidget(self._build_left())
-        splitter.addWidget(self._build_middle())
-        splitter.addWidget(self._build_right())
-        splitter.setSizes([220, 360, 620])
+        self._content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._content_splitter.setHandleWidth(4)
+        self._content_splitter.addWidget(self._build_middle())
+        self._content_splitter.addWidget(self._build_right())
+        self._content_splitter.setSizes([360, 620])
+        self._page_splitter.addWidget(self._content_splitter)
 
-        self._extension_panel = ExtensionConfigPanel("处理扩展", "添加扩展", self)
+        self._extension_panel = ExtensionConfigPanel("处理扩展", "应用扩展", self)
         self._extension_panel.set_context("数据处理", "当前操作链")
         self._extension_panel.apply_requested.connect(self._on_processing_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_processing_extensions)
-        root.addWidget(self._extension_panel)
+        self._page_splitter.addWidget(self._extension_panel)
+        self._page_splitter.setStretchFactor(0, 1)
+        self._page_splitter.setStretchFactor(1, 0)
+        self._page_splitter.setSizes([980, self._extension_panel_width])
         self._refresh_processing_extensions()
         self.set_extension_panel_visible(self._extension_panel_visible)
+        self._apply_preview_host_background()
 
     def _setup_shortcuts(self) -> None:
         context = Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -168,8 +172,20 @@ class ProcessPage(QWidget):
 
     def set_extension_panel_visible(self, visible: bool) -> None:
         self._extension_panel_visible = bool(visible)
-        if hasattr(self, "_extension_panel"):
-            self._extension_panel.setVisible(self._extension_panel_visible)
+        if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
+            return
+        sizes = self._page_splitter.sizes()
+        if self._extension_panel_visible:
+            self._extension_panel.show()
+            total_width = max(self._page_splitter.width(), sum(sizes) or 1)
+            panel_width = max(self._extension_panel.minimumWidth(), self._extension_panel_width)
+            self._page_splitter.setSizes([max(1, total_width - panel_width), panel_width])
+            return
+        if len(sizes) > 1 and sizes[1] > 0:
+            self._extension_panel_width = sizes[1]
+        self._extension_panel.hide()
+        total_width = max(self._page_splitter.width(), sum(sizes) or 1)
+        self._page_splitter.setSizes([total_width, 0])
 
     def _build_left(self) -> QWidget:
         panel = QWidget()
@@ -486,6 +502,7 @@ class ProcessPage(QWidget):
         bg = "#1e1e1e" if dark else "#ffffff"
         fg = "#cccccc" if dark else "#222222"
         gc = "#444444" if dark else "#dddddd"
+        self._apply_preview_host_background()
         self._figure.patch.set_facecolor(bg)
         ax.set_facecolor(bg)
         ax.tick_params(colors=fg, labelcolor=fg)
@@ -504,6 +521,12 @@ class ProcessPage(QWidget):
         if self._src_xs or self._out_xs:
             ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
         self._canvas.draw()
+
+    def _apply_preview_host_background(self) -> None:
+        if getattr(self, "_canvas", None) is None:
+            return
+        background = "#1e1e1e" if isDarkTheme() else "#ffffff"
+        self._canvas.setStyleSheet(f"background: {background};")
 
     def _update_stats(self):
         n = len(self._out_ys)

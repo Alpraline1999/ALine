@@ -2429,7 +2429,7 @@ class DigitizePage(QWidget):
 
     def _on_open_project(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "打开项目", "", "PyLine 项目 (*.pyline);;所有文件 (*)"
+            self, "打开项目", "", "ALine 项目 (*.aline *.pyline);;所有文件 (*)"
         )
         if file_path:
             try:
@@ -2447,7 +2447,7 @@ class DigitizePage(QWidget):
         file_path = project_manager.current_project.file_path
         if file_path is None:
             file_path, _ = QFileDialog.getSaveFileName(
-                self, "保存项目", f"{project_manager.current_project.name}.pyline", "PyLine 项目 (*.pyline)"
+                self, "保存项目", f"{project_manager.current_project.name}.aline", "ALine 项目 (*.aline)"
             )
 
         if file_path:

@@ -21,6 +21,7 @@ from core.project_manager import project_manager
 from models.schemas import DataSeries
 
 _ROLES = ["X 轴", "Y 轴", "Y 误差棒", "X 误差棒", "跳过"]
+SUPPORTED_IMPORT_SUFFIXES = (".csv", ".txt", ".dat", ".tsv", ".xlsx", ".xls", ".json", ".npy", ".npz")
 
 
 class ImportDialog(QDialog):
@@ -110,6 +111,9 @@ class ImportDialog(QDialog):
         )
         if not path:
             return
+        self.load_file(path)
+
+    def load_file(self, path: str) -> None:
         self._file_path = path
         self._path_edit.setText(path)
         try:
@@ -123,6 +127,7 @@ class ImportDialog(QDialog):
         except Exception as e:
             self._p1_info.setText(f"⚠ 读取失败：{e}")
             self._btn_next.setEnabled(False)
+            raise
 
     # ── Step 2 ──────────────────────────────────────────────────────────
 

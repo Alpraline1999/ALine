@@ -36,7 +36,7 @@ class HomePage(QWidget):
         layout.setContentsMargins(40, 40, 40, 40)
 
         # 标题
-        self._title = BodyLabel("PyLine", self)
+        self._title = BodyLabel("ALine", self)
         self._title.setStyleSheet("font-size: 48px; font-weight: bold;")
         layout.addWidget(self._title, alignment=Qt.AlignCenter)
 
@@ -232,7 +232,7 @@ class HomePage(QWidget):
             self,
             "打开项目",
             "",
-            "PyLine 项目 (*.pyline);;所有文件 (*)"
+            "ALine 项目 (*.aline *.pyline);;所有文件 (*)"
         )
         if file_path:
             try:

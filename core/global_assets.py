@@ -32,6 +32,11 @@ from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
 
 _GLOBAL_ASSET_VERSION = "1"
 _BUILTIN_DEFAULT_REPORT_TEMPLATE_ID = "builtin:default-report-template"
+_KNOWN_TEST_REPORT_TEMPLATE_SIGNATURES = {
+    ("tmpl1", "# Hello"),
+    ("tmpl1", "# Template"),
+    ("tmpl1", "# Hello {{date}}"),
+}
 
 
 def make_plot_style_asset_key(style_type: str, asset_id: str) -> str:
@@ -122,6 +127,33 @@ def _builtin_report_templates() -> List[ReportTemplate]:
     ]
 
 
+def _normalized_report_template_key(template: ReportTemplate) -> tuple[str, str, bool]:
+    return (
+        (template.name or "").strip(),
+        (template.content or "").strip(),
+        bool(template.is_builtin),
+    )
+
+
+def _sanitize_report_templates(templates: List[ReportTemplate]) -> tuple[List[ReportTemplate], bool]:
+    sanitized: List[ReportTemplate] = []
+    seen: set[tuple[str, str, bool]] = set()
+    changed = False
+    for template in templates:
+        name = (template.name or "").strip()
+        content = (template.content or "").strip()
+        if not template.is_builtin and (name, content) in _KNOWN_TEST_REPORT_TEMPLATE_SIGNATURES:
+            changed = True
+            continue
+        key = _normalized_report_template_key(template)
+        if key in seen:
+            changed = True
+            continue
+        seen.add(key)
+        sanitized.append(template)
+    return sanitized, changed
+
+
 class GlobalAssets(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -154,7 +186,17 @@ class GlobalAssetManager:
             return self._cache
         with self._asset_path.open("r", encoding="utf-8") as handle:
             self._cache = GlobalAssets(**json.load(handle))
+        if self._sanitize_cached_assets():
+            self.save()
         return self._cache
+
+    def _sanitize_cached_assets(self) -> bool:
+        if self._cache is None:
+            return False
+        report_templates, changed = _sanitize_report_templates(list(self._cache.report_templates))
+        if changed:
+            self._cache.report_templates = report_templates
+        return changed
 
     def save(self) -> None:
         assets = self.load()
@@ -270,6 +312,16 @@ class GlobalAssetManager:
         return next((item for item in self.list_report_templates(include_builtin=True) if item.id == template_id), None)
 
     def add_report_template(self, template: ReportTemplate) -> ReportTemplate:
+        existing = next(
+            (
+                item
+                for item in self.data.report_templates
+                if _normalized_report_template_key(item) == _normalized_report_template_key(template)
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
         self.data.report_templates.append(template)
         self.save()
         return template

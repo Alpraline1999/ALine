@@ -26,28 +26,24 @@ def register_extensions(registry):
             config_fields=[
                 ExtensionConfigField(
                     key="grid",
-                    label="显示网格",
                     description="是否启用网格。",
                     field_type="boolean",
                     default=True,
                 ),
                 ExtensionConfigField(
                     key="grid_alpha",
-                    label="网格透明度",
                     description="0 到 1 之间的透明度值。",
                     field_type="number",
                     default=0.28,
                 ),
                 ExtensionConfigField(
                     key="line_width",
-                    label="线宽",
                     description="应用后的整体线宽。",
                     field_type="number",
                     default=2.2,
                 ),
                 ExtensionConfigField(
                     key="marker_size",
-                    label="点大小",
                     description="应用后的整体点大小。",
                     field_type="number",
                     default=5.5,

@@ -165,7 +165,7 @@ class ProjectManager:
             project_dir.mkdir(parents=True, exist_ok=True)
             (project_dir / "files" / "images").mkdir(parents=True, exist_ok=True)
             (project_dir / "files" / "pictures").mkdir(parents=True, exist_ok=True)
-            project_file = project_dir / f"{safe_name}.pyline"
+            project_file = project_dir / f"{safe_name}.aline"
             self.save(str(project_file))
 
         return project

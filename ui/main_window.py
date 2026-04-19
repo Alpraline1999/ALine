@@ -391,7 +391,7 @@ class MainWindow(FluentWindow):
             self,
             "打开项目",
             "",
-            "PyLine 项目 (*.pyline);;所有文件 (*)",
+            "ALine 项目 (*.aline *.pyline);;所有文件 (*)",
         )
         if not file_path:
             return
@@ -413,8 +413,8 @@ class MainWindow(FluentWindow):
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "保存项目",
-                f"{project.name}.pyline",
-                "PyLine 项目 (*.pyline)",
+                f"{project.name}.aline",
+                "ALine 项目 (*.aline)",
             )
         if not file_path:
             return False

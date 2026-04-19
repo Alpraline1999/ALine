@@ -1,8 +1,7 @@
 """
 最近项目记录模块
 
-与 PyLine 共用同一个 ~/.pyline_recent.json 文件，两个工具均可读取历史记录。
-直接迁移自 PyLine core/recent_projects.py，逻辑完全一致。
+默认使用 ~/.aline_recent.json，同时兼容读取旧的 ~/.pyline_recent.json。
 """
 from __future__ import annotations
 
@@ -11,8 +10,15 @@ import os
 from datetime import datetime
 from typing import Dict, List
 
-_RECENT_FILE = os.path.join(os.path.expanduser("~"), ".pyline_recent.json")
+_RECENT_FILE = os.path.join(os.path.expanduser("~"), ".aline_recent.json")
+_LEGACY_RECENT_FILE = os.path.join(os.path.expanduser("~"), ".pyline_recent.json")
 _MAX_RECENT = 10
+
+
+def _load_file_path() -> str:
+    if os.path.exists(_RECENT_FILE):
+        return _RECENT_FILE
+    return _LEGACY_RECENT_FILE
 
 
 def load_recent() -> List[Dict]:
@@ -25,10 +31,11 @@ def load_recent() -> List[Dict]:
     ]
     自动过滤已不存在的文件。
     """
-    if not os.path.exists(_RECENT_FILE):
+    recent_file = _load_file_path()
+    if not os.path.exists(recent_file):
         return []
     try:
-        with open(_RECENT_FILE, "r", encoding="utf-8") as f:
+        with open(recent_file, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, list):
             return []

@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -20,7 +21,7 @@ from qfluentwidgets import (
     CardWidget, ToolButton, PushButton, PrimaryPushButton,
     TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
-    MessageBox, MessageBoxBase, LineEdit,
+    MessageBox, MessageBoxBase, LineEdit, isDarkTheme,
 )
 
 from ui.theme import (
@@ -88,6 +89,8 @@ class DataPage(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
         root.addWidget(self._build_right_panel())
+        self._apply_preview_host_background()
+        self._install_preview_drop_targets()
 
     def _setup_shortcuts(self) -> None:
         context = Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -99,6 +102,62 @@ class DataPage(QWidget):
 
     def apply_shortcuts(self) -> None:
         self._shortcut_bindings.apply()
+
+    def eventFilter(self, watched, event):
+        preview_targets = getattr(self, "_preview_drop_targets", ())
+        if watched in preview_targets:
+            if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+                file_path = self._supported_drop_file_path(event.mimeData())
+                if file_path:
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
+                return True
+            if event.type() == QEvent.Type.Drop:
+                file_path = self._supported_drop_file_path(event.mimeData())
+                if not file_path:
+                    event.ignore()
+                    return True
+                event.acceptProposedAction()
+                self._import_file(file_path)
+                return True
+        return super().eventFilter(watched, event)
+
+    def _install_preview_drop_targets(self) -> None:
+        targets = [self._preview_stack, self._plot_preview_panel, self._image_preview_label, self._text_preview]
+        if self._preview_canvas is not None:
+            targets.append(self._preview_canvas)
+        self._preview_drop_targets = tuple(targets)
+        for widget in self._preview_drop_targets:
+            widget.setAcceptDrops(True)
+            widget.installEventFilter(self)
+
+    @staticmethod
+    def _supported_drop_file_path(mime_data) -> Optional[str]:
+        if mime_data is None or not mime_data.hasUrls():
+            return None
+        from ui.dialogs.import_dialog import SUPPORTED_IMPORT_SUFFIXES
+
+        allowed_suffixes = set(SUPPORTED_IMPORT_SUFFIXES)
+        for url in mime_data.urls():
+            if not url.isLocalFile():
+                continue
+            file_path = url.toLocalFile()
+            if Path(file_path).suffix.lower() in allowed_suffixes:
+                return file_path
+        return None
+
+    def _apply_preview_host_background(self) -> None:
+        dark = isDarkTheme()
+        bg = "#1e1e1e" if dark else "#ffffff"
+        fg = "#cccccc" if dark else "#222222"
+        self._plot_preview_panel.setStyleSheet(f"background: {bg};")
+        if self._preview_canvas is not None:
+            self._preview_canvas.setStyleSheet(f"background: {bg};")
+        if hasattr(self, "_preview_canvas_label"):
+            self._preview_canvas_label.setStyleSheet(f"background: {bg}; color: {fg};")
+        self._image_preview_label.setStyleSheet(f"background: {bg}; color: {fg};")
+        self._text_preview.setStyleSheet(f"background: {bg}; color: {fg};")
 
     # ── 左侧面板 ─────────────────────────────────────────────
 
@@ -537,10 +596,28 @@ class DataPage(QWidget):
         if self._preview_figure is None or self._preview_canvas is None:
             return
         self._preview_stack.setCurrentWidget(self._plot_preview_panel)
+        self._apply_preview_host_background()
         self._preview_figure.clear()
         axis = self._preview_figure.add_subplot(111)
+        dark = isDarkTheme()
+        bg = "#1e1e1e" if dark else "#ffffff"
+        fg = "#cccccc" if dark else "#222222"
+        gc = "#444444" if dark else "#dddddd"
+        self._preview_figure.patch.set_facecolor(bg)
+        axis.set_facecolor(bg)
+        axis.tick_params(colors=fg, labelcolor=fg)
+        for spine in axis.spines.values():
+            spine.set_edgecolor(fg)
         if not self._preview_xs or not self._preview_ys:
-            axis.text(0.5, 0.5, "选择数据后显示绘图预览", ha="center", va="center", transform=axis.transAxes)
+            axis.text(
+                0.5,
+                0.5,
+                "选择数据后显示绘图预览",
+                ha="center",
+                va="center",
+                color=fg,
+                transform=axis.transAxes,
+            )
             axis.set_axis_off()
             self._preview_canvas.draw()
             return
@@ -557,10 +634,10 @@ class DataPage(QWidget):
         else:
             axis.plot(self._preview_xs, self._preview_ys, linewidth=1.8, color="#0078D4")
 
-        axis.set_title(self._preview_name or "数据预览")
-        axis.set_xlabel(self._preview_x_label or "X")
-        axis.set_ylabel(self._preview_y_label or "Y")
-        axis.grid(True, alpha=0.2)
+        axis.set_title(self._preview_name or "数据预览", color=fg)
+        axis.set_xlabel(self._preview_x_label or "X", color=fg)
+        axis.set_ylabel(self._preview_y_label or "Y", color=fg)
+        axis.grid(True, color=gc, alpha=0.35)
         self._preview_figure.tight_layout()
         self._preview_canvas.draw()
 
@@ -825,7 +902,7 @@ class DataPage(QWidget):
     # 操作：导入文件
     # ─────────────────────────────────────────────────────────
 
-    def _import_file(self):
+    def _import_file(self, file_path: Optional[str] = None):
         p = project_manager.current_project
         if p is None:
             InfoBar.warning("提示", "请先打开项目", parent=self, position=InfoBarPosition.TOP)
@@ -833,6 +910,12 @@ class DataPage(QWidget):
 
         from ui.dialogs.import_dialog import ImportDialog
         dlg = ImportDialog(self)
+        if file_path:
+            try:
+                dlg.load_file(file_path)
+            except Exception as exc:
+                InfoBar.warning("导入失败", f"无法读取拖入文件：{exc}", parent=self, position=InfoBarPosition.TOP)
+                return
         if dlg.exec():
             series_list = dlg.get_results()
             if not series_list:

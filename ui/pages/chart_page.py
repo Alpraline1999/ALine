@@ -123,6 +123,7 @@ class ChartPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._extension_panel_visible = False
+        self._extension_panel_width = 360
         self._chart_series: List[dict] = []
         self._curve_styles: Dict[str, dict] = {}
         self._style_target: Optional[str] = None
@@ -140,7 +141,7 @@ class ChartPage(QWidget):
         self._plot_style_extras: Dict[str, Any] = {}
         self._display_dpi = 100.0
         self._display_canvas_size: Optional[tuple[int, int]] = None
-        self._canvas_host: Optional[QWidget] = None
+        self._canvas_host: Optional[QScrollArea] = None
         self._selected_tree_kind: Optional[str] = None
         self._selected_tree_id: Optional[str] = None
         self._shortcut_bindings = ShortcutBindingSet()
@@ -158,12 +159,12 @@ class ChartPage(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        content_row = QHBoxLayout()
-        content_row.setContentsMargins(0, 0, 0, 0)
-        content_row.setSpacing(8)
+        self._page_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._page_splitter.setHandleWidth(4)
+        root.addWidget(self._page_splitter, 1)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        splitter.setHandleWidth(6)
+        self._content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._content_splitter.setHandleWidth(6)
 
         left_card = CardWidget(self)
         left_layout = QVBoxLayout(left_card)
@@ -201,6 +202,7 @@ class ChartPage(QWidget):
         self._style_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
         self._style_tabs.addTab(self._build_curve_style_tab(left_card), "曲线样式")
         self._style_tabs.addTab(self._build_plot_style_tab(left_card), "绘图样式")
+        self._style_tabs.addTab(self._build_plot_extension_tab(left_card), "绘图扩展")
         left_layout.addWidget(self._style_tabs, 1)
 
         left_layout.addWidget(make_hsep(left_card))
@@ -221,7 +223,7 @@ class ChartPage(QWidget):
 
         left_card.setMinimumWidth(300)
         left_card.setMaximumWidth(360)
-        splitter.addWidget(left_card)
+        self._content_splitter.addWidget(left_card)
 
         right_card = CardWidget(self)
         right_layout = QVBoxLayout(right_card)
@@ -258,25 +260,29 @@ class ChartPage(QWidget):
             right_layout.addWidget(self._canvas_host, 1)
             self._figure = None
             self._canvas = None
-        splitter.addWidget(right_card)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([340, 980])
+        self._content_splitter.addWidget(right_card)
+        self._content_splitter.setStretchFactor(0, 0)
+        self._content_splitter.setStretchFactor(1, 1)
+        self._content_splitter.setSizes([340, 980])
 
-        content_row.addWidget(splitter, 1)
+        self._page_splitter.addWidget(self._content_splitter)
 
-        self._extension_panel = ExtensionConfigPanel("样式扩展", "应用样式扩展", self)
+        self._extension_panel = ExtensionConfigPanel("样式扩展", "应用扩展", self)
         self._extension_panel.apply_requested.connect(self._on_chart_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_chart_extensions)
-        content_row.addWidget(self._extension_panel)
-
-        root.addLayout(content_row, 1)
+        self._extension_panel.remove_requested.connect(self._on_chart_extension_remove_requested)
+        self._extension_panel.selection_changed.connect(lambda _type_id: self._update_extension_remove_action())
+        self._page_splitter.addWidget(self._extension_panel)
+        self._page_splitter.setStretchFactor(0, 1)
+        self._page_splitter.setStretchFactor(1, 0)
+        self._page_splitter.setSizes([1320, self._extension_panel_width])
 
         self._refresh_curve_style_template_combo()
         self._refresh_template_combo()
         self._style_tabs.stackedWidget.currentChanged.connect(self._refresh_style_extension_panel)
         self._refresh_style_extension_panel()
         self._apply_figure_state(self._figure_state)
+        self._apply_preview_host_background()
         self._update_color_btn("#888888")
         self._update_visibility_button()
         self._install_tooltip_filters()
@@ -299,8 +305,62 @@ class ChartPage(QWidget):
 
     def set_extension_panel_visible(self, visible: bool) -> None:
         self._extension_panel_visible = bool(visible)
-        if hasattr(self, "_extension_panel"):
-            self._extension_panel.setVisible(self._extension_panel_visible)
+        if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
+            return
+        sizes = self._page_splitter.sizes()
+        if self._extension_panel_visible:
+            self._extension_panel.show()
+            total_width = max(self._page_splitter.width(), sum(sizes) or 1)
+            panel_width = max(self._extension_panel.minimumWidth(), self._extension_panel_width)
+            self._page_splitter.setSizes([max(1, total_width - panel_width), panel_width])
+            return
+        if len(sizes) > 1 and sizes[1] > 0:
+            self._extension_panel_width = sizes[1]
+        self._extension_panel.hide()
+        total_width = max(self._page_splitter.width(), sum(sizes) or 1)
+        self._page_splitter.setSizes([total_width, 0])
+
+    def _apply_preview_host_background(self) -> None:
+        if self._canvas_host is None:
+            return
+        background = "#1e1e1e" if isDarkTheme() else "#ffffff"
+        self._canvas_host.setStyleSheet(f"QScrollArea {{ background: {background}; border: none; }}")
+        self._canvas_host.viewport().setStyleSheet(f"background: {background};")
+        canvas_stage = self._canvas_host.widget()
+        if canvas_stage is not None:
+            canvas_stage.setStyleSheet(f"background: {background};")
+
+    def _update_extension_remove_action(self) -> None:
+        if not hasattr(self, "_extension_panel") or not hasattr(self, "_style_tabs"):
+            return
+        if self._style_tabs.currentIndex() != 2:
+            self._extension_panel.set_remove_action(visible=False, enabled=False)
+            return
+        current_type = self._extension_panel.current_type()
+        can_remove = (
+            current_type is not None
+            and extension_registry.get_plot(current_type) is not None
+            and current_type in self._plot_extension_options
+        )
+        self._extension_panel.set_remove_action(
+            visible=True,
+            enabled=can_remove,
+            text="撤销应用",
+        )
+
+    def _on_chart_extension_remove_requested(self, type_id: str) -> None:
+        extension = extension_registry.get_plot(type_id)
+        if extension is None or type_id not in self._plot_extension_options:
+            return
+        self._plot_extension_options.pop(type_id, None)
+        self._refresh_style_extension_panel()
+        self._redraw_now()
+        InfoBar.success(
+            "已撤销",
+            f"绘图扩展 {extension.name} 已移除",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
 
     def eventFilter(self, watched, event):
         if self._canvas_host is not None and watched is self._canvas_host.viewport() and event.type() == QEvent.Type.Resize:
@@ -620,6 +680,31 @@ class ChartPage(QWidget):
         scroll.setWidget(page)
         return scroll
 
+    def _build_plot_extension_tab(self, parent: QWidget) -> QWidget:
+        page = QWidget(parent)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+
+        layout.addWidget(make_section_label("绘图扩展", page))
+        layout.addWidget(make_hint_label("在右侧扩展面板中选择绘图扩展，并叠加到当前图表绘制流程。", page))
+
+        description = BodyLabel(
+            "绘图扩展适合添加参考线、辅助标注、自定义子图，或接管默认绘图流程。",
+            page,
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        note = BodyLabel(
+            "已应用的绘图扩展会保留当前配置，可在右侧直接重置、撤销或重新应用。",
+            page,
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        layout.addStretch()
+        return page
+
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         self._selected_tree_kind = kind
         self._selected_tree_id = node_id
@@ -724,7 +809,8 @@ class ChartPage(QWidget):
         return [build_extension_entry(extension) for extension in extension_registry.list_curve_style()]
 
     def _refresh_style_extension_panel(self, _index: Optional[int] = None) -> None:
-        if self._style_tabs.currentIndex() == 0:
+        current_tab = self._style_tabs.currentIndex()
+        if current_tab == 0:
             selected_curve = self._selected_curve()
             target = selected_curve["name"] if selected_curve is not None else "未选中曲线"
             available_types = {entry["type"] for entry in self._curve_style_extension_entries()}
@@ -735,40 +821,60 @@ class ChartPage(QWidget):
             elif self._active_curve_style_ref and self._active_curve_style_ref.startswith("curve_extension:"):
                 current_type = parse_plot_style_asset_key(self._active_curve_style_ref)[1]
             self._extension_panel.set_panel_title("曲线样式扩展")
-            self._extension_panel.set_action_text("应用曲线扩展")
+            self._extension_panel.set_action_text("应用扩展")
             self._extension_panel.set_context("图表样式", target)
             self._extension_panel.set_entries(
                 self._curve_style_extension_entries(),
                 saved_options=self._curve_style_extension_options,
                 current_type=current_type,
             )
+            self._update_extension_remove_action()
             return
-        plot_style_entries = self._plot_style_extension_entries()
+        if current_tab == 1:
+            plot_style_entries = self._plot_style_extension_entries()
+            available_types = {entry["type"] for entry in plot_style_entries}
+            panel_current_type = self._extension_panel.current_type() if hasattr(self, "_extension_panel") else None
+            current_type = None
+            if panel_current_type in available_types:
+                current_type = panel_current_type
+            elif self._applied_plot_style_ref and self._applied_plot_style_ref.startswith("extension:"):
+                current_type = parse_plot_style_asset_key(self._applied_plot_style_ref)[1]
+            self._extension_panel.set_panel_title("绘图样式扩展")
+            self._extension_panel.set_action_text("应用扩展")
+            self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
+            self._extension_panel.set_entries(
+                plot_style_entries,
+                saved_options=self._plot_style_extension_options,
+                current_type=current_type,
+            )
+            self._update_extension_remove_action()
+            return
+
         plot_entries = self._plot_extension_entries()
-        available_types = {entry["type"] for entry in plot_style_entries + plot_entries}
+        available_types = {entry["type"] for entry in plot_entries}
         panel_current_type = self._extension_panel.current_type() if hasattr(self, "_extension_panel") else None
         current_type = None
         if panel_current_type in available_types:
             current_type = panel_current_type
-        elif self._applied_plot_style_ref and self._applied_plot_style_ref.startswith("extension:"):
-            current_type = parse_plot_style_asset_key(self._applied_plot_style_ref)[1]
-        elif self._plot_extension_options:
-            current_type = next(iter(self._plot_extension_options))
+        else:
+            current_type = next((type_id for type_id in self._plot_extension_options if type_id in available_types), None)
         self._extension_panel.set_panel_title("绘图扩展")
-        self._extension_panel.set_action_text("应用绘图扩展")
+        self._extension_panel.set_action_text("应用扩展")
         self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
         self._extension_panel.set_entries(
-            plot_style_entries + plot_entries,
-            saved_options={**self._plot_style_extension_options, **self._plot_extension_options},
+            plot_entries,
+            saved_options=self._plot_extension_options,
             current_type=current_type,
         )
+        self._update_extension_remove_action()
 
     def _on_chart_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
-        if self._style_tabs.currentIndex() == 0:
+        current_tab = self._style_tabs.currentIndex()
+        if current_tab == 0:
             self._curve_style_extension_options[type_id] = dict(options)
             self._apply_curve_style_extension(type_id)
             return
-        if extension_registry.get_plot(type_id) is not None:
+        if current_tab == 2:
             self._plot_extension_options[type_id] = dict(options)
             self._apply_plot_extension(type_id)
             return
@@ -1690,6 +1796,7 @@ class ChartPage(QWidget):
         theme = self._resolve_plot_theme()
 
         dark = isDarkTheme()
+        self._apply_preview_host_background()
         if theme is None or theme.canvas_mode == "app":
             bg = theme.background_color if theme and theme.background_color else ("#1e1e1e" if dark else "#ffffff")
             fg = theme.foreground_color if theme and theme.foreground_color else ("#cccccc" if dark else "#222222")
@@ -2009,7 +2116,8 @@ class ChartPage(QWidget):
             self._figure.set_dpi(display_dpi)
             self._figure.set_size_inches(display_size[0], display_size[1], forward=False)
             self._sync_canvas_display_geometry()
-            self._canvas.draw_idle()
+            if self._canvas is not None:
+                self._canvas.draw_idle()
         return True
 
     def _on_export_to_picture_group(self) -> None:

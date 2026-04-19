@@ -130,6 +130,7 @@ class AnalysisPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._extension_panel_visible = False
+        self._extension_panel_width = 360
         self._result: Optional[Dict[str, Any]] = None
         self._analysis_type_labels: List[str] = list(_TYPE_LABELS)
         self._analysis_type_ids: List[str] = list(_TYPE_IDS)
@@ -159,18 +160,27 @@ class AnalysisPage(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(4)
-        root.addWidget(splitter, 1)
-        splitter.addWidget(self._build_left())
-        splitter.addWidget(self._build_right())
-        splitter.setSizes([320, 660])
+        self._page_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._page_splitter.setHandleWidth(4)
+        root.addWidget(self._page_splitter, 1)
+
+        self._content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._content_splitter.setHandleWidth(4)
+        self._content_splitter.addWidget(self._build_left())
+        self._content_splitter.addWidget(self._build_right())
+        self._content_splitter.setSizes([320, 660])
+        self._page_splitter.addWidget(self._content_splitter)
 
         self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self)
         self._extension_panel.set_context("数据分析", "未选择输入")
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_analysis_extensions)
-        root.addWidget(self._extension_panel)
+        self._page_splitter.addWidget(self._extension_panel)
+        self._page_splitter.setStretchFactor(0, 1)
+        self._page_splitter.setStretchFactor(1, 0)
+        self._page_splitter.setSizes([980, self._extension_panel_width])
+        self._refresh_analysis_type_choices()
+        self.set_extension_panel_visible(self._extension_panel_visible)
 
     def _setup_shortcuts(self) -> None:
         context = Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -185,8 +195,6 @@ class AnalysisPage(QWidget):
 
     def apply_shortcuts(self) -> None:
         self._shortcut_bindings.apply()
-        self._refresh_analysis_type_choices()
-        self.set_extension_panel_visible(self._extension_panel_visible)
 
     def supports_extension_panel_toggle(self) -> bool:
         return True
@@ -196,8 +204,20 @@ class AnalysisPage(QWidget):
 
     def set_extension_panel_visible(self, visible: bool) -> None:
         self._extension_panel_visible = bool(visible)
-        if hasattr(self, "_extension_panel"):
-            self._extension_panel.setVisible(self._extension_panel_visible)
+        if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
+            return
+        sizes = self._page_splitter.sizes()
+        if self._extension_panel_visible:
+            self._extension_panel.show()
+            total_width = max(self._page_splitter.width(), sum(sizes) or 1)
+            panel_width = max(self._extension_panel.minimumWidth(), self._extension_panel_width)
+            self._page_splitter.setSizes([max(1, total_width - panel_width), panel_width])
+            return
+        if len(sizes) > 1 and sizes[1] > 0:
+            self._extension_panel_width = sizes[1]
+        self._extension_panel.hide()
+        total_width = max(self._page_splitter.width(), sum(sizes) or 1)
+        self._page_splitter.setSizes([total_width, 0])
 
     def _build_left(self) -> QWidget:
         panel = CardWidget(self)
@@ -439,6 +459,7 @@ class AnalysisPage(QWidget):
             figure = Figure(figsize=(6, 4))
             canvas = FigureCanvas(figure)
             canvas.setMinimumHeight(300)
+            self._apply_result_canvas_background(canvas)
             layout.addWidget(canvas, stretch=2)
         else:
             layout.addWidget(BodyLabel("需要 matplotlib"), stretch=2)
@@ -1108,6 +1129,7 @@ class AnalysisPage(QWidget):
         bg = "#1e1e1e" if dark else "#ffffff"
         fg = "#cccccc" if dark else "#222222"
         gc = "#444444" if dark else "#dddddd"
+        self._apply_result_canvas_background(canvas)
         figure.patch.set_facecolor(bg)
         ax.set_facecolor(bg)
         ax.tick_params(colors=fg, labelcolor=fg)
@@ -1167,6 +1189,13 @@ class AnalysisPage(QWidget):
             ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
 
         canvas.draw()
+
+    def _apply_result_canvas_background(self, canvas=None) -> None:
+        canvas = self._canvas if canvas is None else canvas
+        if canvas is None:
+            return
+        background = "#1e1e1e" if isDarkTheme() else "#ffffff"
+        canvas.setStyleSheet(f"background: {background};")
 
     def _summary_rows(self, t: str, r: dict) -> List[tuple[str, str]]:
         if t == "curve_fit":

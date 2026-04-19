@@ -18,14 +18,12 @@ def register_extensions(registry):
             config_fields=[
                 ExtensionConfigField(
                     key="factor",
-                    label="倍率",
                     description="把当前 Y 值乘以这个倍率。",
                     field_type="number",
                     default=1.5,
                 ),
                 ExtensionConfigField(
                     key="baseline",
-                    label="基线偏移",
                     description="在缩放后额外加到每个 Y 值上的偏移量。",
                     field_type="number",
                     default=0.0,

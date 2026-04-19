@@ -25,7 +25,6 @@ def register_extensions(registry):
             config_fields=[
                 ExtensionConfigField(
                     key="unit",
-                    label="结果单位",
                     description="写入分析结果中的单位文本。",
                     field_type="string",
                     default="MPa",
