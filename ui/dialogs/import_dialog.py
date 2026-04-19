@@ -36,6 +36,8 @@ class ImportDialog(QDialog):
         self._file_path: str = ""
         self._raw_headers: List[str] = []
         self._raw_rows: List[List[float]] = []  # 全量数据行
+        self._target_data_file_id: Optional[str] = None
+        self._last_auto_data_file_name = ""
 
         self._setup_ui()
 
@@ -141,23 +143,22 @@ class ImportDialog(QDialog):
             self._col_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         lv.addWidget(self._col_table, 1)
 
-        name_row = QHBoxLayout()
-        name_row.addWidget(BodyLabel("单系列命名:", w))
-        self._series_name_combo = ComboBox(w)
-        self._series_name_keys: List[str] = []
-        self._series_name_combo.currentIndexChanged.connect(self._on_series_name_choice_changed)
-        name_row.addWidget(self._series_name_combo, 1)
-        self._series_name_edit = LineEdit(w)
-        self._series_name_edit.setPlaceholderText("输入新的系列名")
-        self._series_name_edit.setEnabled(False)
-        name_row.addWidget(self._series_name_edit, 1)
-        lv.addLayout(name_row)
+        target_row = QHBoxLayout()
+        target_row.addWidget(BodyLabel("目标数据文件:", w))
+        self._data_file_target_combo = ComboBox(w)
+        self._data_file_target_keys: List[Optional[str]] = []
+        self._data_file_target_combo.currentIndexChanged.connect(self._on_data_file_target_changed)
+        target_row.addWidget(self._data_file_target_combo, 1)
+        self._data_file_name_edit = LineEdit(w)
+        self._data_file_name_edit.setPlaceholderText("新数据文件名称，默认使用源文件名")
+        target_row.addWidget(self._data_file_name_edit, 1)
+        lv.addLayout(target_row)
 
-        self._series_name_hint = CaptionLabel("单个 Y 变量时可复用现有系列名或输入新系列名。", w)
-        self._series_name_hint.setWordWrap(True)
-        lv.addWidget(self._series_name_hint)
+        self._data_file_target_hint = CaptionLabel("可选择追加到现有数据文件，或新建一个数据文件承载本次导入结果。", w)
+        self._data_file_target_hint.setWordWrap(True)
+        lv.addWidget(self._data_file_target_hint)
 
-        self._refresh_series_name_choices()
+        self._refresh_data_file_target_choices()
         return w
 
     def _populate_col_table(self):
@@ -188,7 +189,6 @@ class ImportDialog(QDialog):
 
             for column, role in enumerate(_ROLES, start=1):
                 button = RadioButton("", self._col_table)
-                button.toggled.connect(self._update_series_name_controls)
                 container = QWidget(self._col_table)
                 container_layout = QHBoxLayout(container)
                 container_layout.setContentsMargins(0, 0, 0, 0)
@@ -205,7 +205,7 @@ class ImportDialog(QDialog):
             default_role = "X 轴" if row == 0 else "Y 轴" if row == 1 else "跳过"
             role_map[default_role].setChecked(True)
 
-        self._update_series_name_controls()
+        self._refresh_data_file_target_choices()
 
     def _default_variable_name(self, index: int) -> str:
         if index < len(self._raw_headers):
@@ -228,64 +228,58 @@ class ImportDialog(QDialog):
             names.append(name or self._default_variable_name(index))
         return names
 
-    def _existing_series_names(self) -> List[str]:
+    def _existing_data_file_choices(self) -> List[tuple[str, str]]:
         project = project_manager.current_project
         if project is None:
             return []
-        names: List[str] = []
+        labels: List[str] = []
+        choices: List[tuple[str, str]] = []
         for data_file in getattr(project, "data_files", []):
-            for series in data_file.series:
-                if series.name and series.name not in names:
-                    names.append(series.name)
-        for dataset in getattr(project, "datasets", []):
-            for series in dataset.series:
-                if series.name and series.name not in names:
-                    names.append(series.name)
-        return names
+            label = data_file.name.strip() or f"数据文件 {data_file.id[:8]}"
+            if label in labels:
+                label = f"{label} [{data_file.id[:8]}]"
+            labels.append(label)
+            choices.append((label, data_file.id))
+        return choices
 
-    def _refresh_series_name_choices(self) -> None:
-        self._series_name_combo.blockSignals(True)
-        self._series_name_combo.clear()
-        self._series_name_keys = ["__by_variable__", "__new__"]
-        self._series_name_combo.addItem("使用变量名")
-        self._series_name_combo.addItem("新建系列")
-        for name in self._existing_series_names():
-            self._series_name_keys.append(name)
-            self._series_name_combo.addItem(f"复用现有: {name}")
-        self._series_name_combo.setCurrentIndex(0)
-        self._series_name_combo.blockSignals(False)
-        self._on_series_name_choice_changed(0)
+    def _default_data_file_name(self) -> str:
+        return Path(self._file_path).name if self._file_path else "导入数据"
 
-    def _current_series_name_key(self) -> str:
-        index = self._series_name_combo.currentIndex()
-        if 0 <= index < len(self._series_name_keys):
-            return self._series_name_keys[index]
-        return "__by_variable__"
+    def _refresh_data_file_target_choices(self) -> None:
+        current_new_name = self._data_file_name_edit.text().strip() if hasattr(self, "_data_file_name_edit") else ""
+        default_name = self._default_data_file_name()
+        if not current_new_name or current_new_name == self._last_auto_data_file_name:
+            current_new_name = default_name
+        self._data_file_target_combo.blockSignals(True)
+        self._data_file_target_combo.clear()
+        self._data_file_target_keys = [None]
+        self._data_file_target_combo.addItem("新建数据文件")
+        for label, data_file_id in self._existing_data_file_choices():
+            self._data_file_target_keys.append(data_file_id)
+            self._data_file_target_combo.addItem(f"追加到现有: {label}")
+        self._data_file_target_combo.setCurrentIndex(0)
+        self._data_file_target_combo.blockSignals(False)
+        self._last_auto_data_file_name = default_name
+        self._data_file_name_edit.setText(current_new_name)
+        self._on_data_file_target_changed(self._data_file_target_combo.currentIndex())
 
-    def _on_series_name_choice_changed(self, _index: int) -> None:
-        allow_custom = self._current_series_name_key() == "__new__"
-        self._series_name_edit.setEnabled(allow_custom and self._selected_roles().count("Y 轴") == 1)
-        self._update_series_name_controls()
+    def _current_target_data_file_id(self) -> Optional[str]:
+        index = self._data_file_target_combo.currentIndex()
+        if 0 <= index < len(self._data_file_target_keys):
+            return self._data_file_target_keys[index]
+        return None
 
-    def _update_series_name_controls(self) -> None:
-        y_count = self._selected_roles().count("Y 轴")
-        single_y = y_count == 1
-        self._series_name_combo.setEnabled(single_y)
-        self._series_name_edit.setEnabled(single_y and self._current_series_name_key() == "__new__")
-        if y_count <= 0:
-            self._series_name_hint.setText("请至少选择一列 Y 变量后再导入。")
-        elif single_y:
-            self._series_name_hint.setText("单个 Y 变量时可使用变量名、复用现有系列名，或输入新的系列名。")
-        else:
-            self._series_name_hint.setText("检测到多个 Y 变量，导入后会直接使用变量名作为各系列名称。")
-
-    def _resolve_single_series_name(self, fallback_name: str) -> str:
-        key = self._current_series_name_key()
-        if key == "__new__":
-            return self._series_name_edit.text().strip() or fallback_name
-        if key == "__by_variable__":
-            return fallback_name
-        return key or fallback_name
+    def _on_data_file_target_changed(self, _index: int) -> None:
+        target_id = self._current_target_data_file_id()
+        self._target_data_file_id = target_id
+        create_new = target_id is None
+        self._data_file_name_edit.setEnabled(create_new)
+        if create_new:
+            if not self._data_file_name_edit.text().strip():
+                self._data_file_name_edit.setText(self._default_data_file_name())
+            self._data_file_target_hint.setText("将导入结果写入一个新的数据文件，文件名可自定义。")
+            return
+        self._data_file_target_hint.setText("将把本次导入的系列追加到所选现有数据文件。")
 
     # ── Step 3 ──────────────────────────────────────────────────────────
 
@@ -372,11 +366,10 @@ class ImportDialog(QDialog):
         x_data = arr[:, x_idx].tolist()
 
         series_list: List[DataSeries] = []
-        single_y = len(y_cols) == 1
         for y_idx in y_cols:
             y_data = arr[:, y_idx].tolist()
             col_name = variable_names[y_idx] if y_idx < len(variable_names) else self._default_variable_name(y_idx)
-            s_name = self._resolve_single_series_name(col_name) if single_y else col_name
+            s_name = col_name
 
             # 匹配 Y 误差棒（按照 y_cols 顺序对应 ye_cols）
             y_pos = y_cols.index(y_idx)
@@ -399,8 +392,11 @@ class ImportDialog(QDialog):
     def get_results(self) -> List[DataSeries]:
         return self.imported_series
 
+    def get_target_data_file_id(self) -> Optional[str]:
+        return self._target_data_file_id
+
     def get_file_name(self) -> str:
-        return Path(self._file_path).name if self._file_path else "导入数据"
+        return self._data_file_name_edit.text().strip() or self._default_data_file_name()
 
 
 # ─────────────────────── 文件解析工具 ──────────────────────────────────

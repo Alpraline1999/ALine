@@ -673,6 +673,28 @@ class DataPage(QWidget):
             series_list = dlg.get_results()
             if not series_list:
                 return
+            target_data_file_id = dlg.get_target_data_file_id()
+            if target_data_file_id:
+                data_file = project_manager.get_data_file(target_data_file_id)
+                if data_file is None:
+                    InfoBar.warning("提示", "所选目标数据文件不存在", parent=self, position=InfoBarPosition.TOP)
+                    return
+                appended = 0
+                for series in series_list:
+                    if project_manager.add_series_to_data_file(target_data_file_id, series):
+                        appended += 1
+                if appended != len(series_list):
+                    InfoBar.warning("提示", "部分数据系列追加失败", parent=self, position=InfoBarPosition.TOP)
+                    return
+                self.refresh()
+                self.project_modified.emit()
+                InfoBar.success(
+                    "导入成功",
+                    f"已导入 {len(series_list)} 条数据系列到数据文件 {data_file.name}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                )
+                return
             df = DataFile(name=dlg.get_file_name(), series=series_list)
             project_manager.add_data_file(df, parent_id=self._current_dataset_parent_id())
             self.refresh()

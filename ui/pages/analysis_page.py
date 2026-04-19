@@ -26,7 +26,7 @@ from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.theme import make_hint_label, make_section_label, make_hsep
 from core.analysis_engine import run_analysis
-from core.extension_api import build_extension_entry, extension_registry
+from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 
@@ -106,7 +106,7 @@ class AnalysisPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._extension_panel_visible = True
+        self._extension_panel_visible = False
         self._result: Optional[Dict[str, Any]] = None
         self._analysis_type_labels: List[str] = list(_TYPE_LABELS)
         self._analysis_type_ids: List[str] = list(_TYPE_IDS)
@@ -141,8 +141,10 @@ class AnalysisPage(QWidget):
         self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self)
         self._extension_panel.set_context("数据分析", "未选择输入")
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
+        self._extension_panel.reload_requested.connect(self._reload_analysis_extensions)
         root.addWidget(self._extension_panel)
         self._refresh_analysis_type_choices()
+        self.set_extension_panel_visible(self._extension_panel_visible)
 
     def supports_extension_panel_toggle(self) -> bool:
         return True
@@ -379,6 +381,7 @@ class AnalysisPage(QWidget):
         layout.addWidget(make_hsep())
         layout.addWidget(make_section_label("摘要"))
         summary_stack = QStackedWidget(widget)
+        summary_stack.setMinimumHeight(280)
         summary_table = _SelectableResultTable(widget)
         self._configure_result_table(summary_table, ["数据类型", "结果"])
         summary_stack.addWidget(summary_table)
@@ -416,7 +419,7 @@ class AnalysisPage(QWidget):
         peak_points_layout.addWidget(peak_points_table, stretch=1)
         peak_summary_layout.addWidget(peak_points_panel, stretch=5)
         summary_stack.addWidget(peak_summary_widget)
-        layout.addWidget(summary_stack, stretch=1)
+        layout.addWidget(summary_stack, stretch=2)
 
         view = {
             "widget": widget,
@@ -460,6 +463,7 @@ class AnalysisPage(QWidget):
         for row_idx, (label, value) in enumerate(rows):
             table.setItem(row_idx, 0, QTableWidgetItem(label))
             table.setItem(row_idx, 1, QTableWidgetItem(value))
+        table.resizeRowsToContents()
 
     @staticmethod
     def _format_summary_value(value: Any) -> str:
@@ -468,6 +472,33 @@ class AnalysisPage(QWidget):
         if isinstance(value, float):
             return f"{value:.6g}"
         return str(value)
+
+    def _flatten_json_summary(self, rows: List[tuple[str, str]], value: Any, prefix: str = "") -> None:
+        if isinstance(value, dict):
+            if not value:
+                rows.append((prefix or "结果", "{}"))
+                return
+            for key, item in value.items():
+                label = f"{prefix}.{key}" if prefix else str(key)
+                self._flatten_json_summary(rows, item, label)
+            return
+        if isinstance(value, list):
+            if not value:
+                rows.append((prefix or "结果", "[]"))
+                return
+            if all(not isinstance(item, (dict, list)) for item in value):
+                rows.append((prefix or "结果", ", ".join(self._format_summary_value(item) for item in value)))
+                return
+            for index, item in enumerate(value):
+                label = f"{prefix}[{index}]" if prefix else f"[{index}]"
+                self._flatten_json_summary(rows, item, label)
+            return
+        rows.append((prefix or "结果", self._format_summary_value(value)))
+
+    def _json_summary_rows(self, value: Any) -> List[tuple[str, str]]:
+        rows: List[tuple[str, str]] = []
+        self._flatten_json_summary(rows, value)
+        return rows or [("结果", self._format_summary_value(value))]
 
     def _peak_summary_rows(self, r: dict) -> List[tuple[str, str]]:
         distance_mode = "X 值间距" if r.get("distance_mode") == "x_distance" else "采样点数"
@@ -497,6 +528,7 @@ class AnalysisPage(QWidget):
             ]
             for col_idx, value in enumerate(values):
                 table.setItem(row_idx, col_idx, QTableWidgetItem(value))
+        table.resizeRowsToContents()
 
     def _analysis_type_label(self, analysis_type: str) -> str:
         return self._analysis_label_map.get(analysis_type, analysis_type or "分析结果")
@@ -533,6 +565,24 @@ class AnalysisPage(QWidget):
         if type_id in self._analysis_type_ids:
             self._type_combo.setCurrentIndex(self._analysis_type_ids.index(type_id))
         InfoBar.success("已应用", f"当前分析类型已切换为 {self._analysis_type_label(type_id)}", parent=self, position=InfoBarPosition.TOP)
+
+    def _reload_analysis_extensions(self) -> None:
+        report = reload_builtin_extensions()
+        self._refresh_analysis_type_choices()
+        if report.get("errors"):
+            InfoBar.warning(
+                "重载完成",
+                f"已加载 {len(report.get('loaded', []))} 个扩展，{len(report.get('errors', []))} 个失败",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return
+        InfoBar.success(
+            "已重载",
+            f"已重新加载 {len(report.get('loaded', []))} 个扩展",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
 
     def _report_result_candidates_by_type(self) -> Dict[str, List[Dict[str, Any]]]:
         candidates: Dict[str, List[Dict[str, Any]]] = {}
@@ -1100,7 +1150,7 @@ class AnalysisPage(QWidget):
                 rows.append(("相对平均误差", f"{rel:.6f}"))
             return rows
         else:
-            return [("结果", str(r))]
+            return self._json_summary_rows(r)
 
     def _write_summary(self, t: str, r: dict):
         current_view = self._analysis_tab_views.get("current")

@@ -41,7 +41,7 @@ class HomePage(QWidget):
         layout.addWidget(self._title, alignment=Qt.AlignCenter)
 
         # 副标题
-        self._subtitle = BodyLabel("曲线数据提取工具", self)
+        self._subtitle = BodyLabel("科研数据管理工具", self)
         self._subtitle.setStyleSheet("font-size: 18px;")
         layout.addWidget(self._subtitle, alignment=Qt.AlignCenter)
 

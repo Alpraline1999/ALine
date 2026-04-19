@@ -230,9 +230,10 @@ class TestProjectManager(unittest.TestCase):
             if node.kind == "folder"
         }
         self.assertIn(("数据集", "datasets", None), folder_map)
-        self.assertIn(("图片集", "images", None), folder_map)
+        self.assertIn(("数据化", "images", None), folder_map)
+        self.assertIn(("图片集", "pictures", None), folder_map)
         self.assertIn(("分析结果", "analysis_result_group", None), folder_map)
-        self.assertEqual(len(folder_map), 3)
+        self.assertEqual(len(folder_map), 4)
 
     def test_migrate_to_v3_removes_legacy_tools_folder(self):
         from models.schemas import FolderNode, ProjectTree
@@ -869,6 +870,83 @@ class TestAnalysisEngine(unittest.TestCase):
                 self.assertIsNotNone(extension_registry.get_processing("helper_shift"))
             finally:
                 extension_registry.unregister_processing("helper_shift")
+
+    def test_reload_builtin_extensions_replaces_previous_registry_entries(self):
+        from core.extension_api import default_extensions_directory, extension_registry, reload_builtin_extensions
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "reload_extension.py"
+            path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import ProcessingExtension
+
+                def _first(xs, ys, params):
+                    return list(xs), list(ys)
+
+                def register_extensions(registry):
+                    registry.register_processing(
+                        ProcessingExtension(type='reload_first', name='第一次加载', handler=_first)
+                    )
+                """
+            ), encoding="utf-8")
+
+            report = reload_builtin_extensions(temp_dir)
+            self.assertEqual(report["errors"], [])
+            self.assertIsNotNone(extension_registry.get_processing("reload_first"))
+
+            path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import ProcessingExtension
+
+                def _second(xs, ys, params):
+                    return list(xs), list(ys)
+
+                def register_extensions(registry):
+                    registry.register_processing(
+                        ProcessingExtension(type='reload_second', name='第二次加载', handler=_second)
+                    )
+                """
+            ), encoding="utf-8")
+
+            report = reload_builtin_extensions(temp_dir)
+            self.assertEqual(report["errors"], [])
+            self.assertIsNone(extension_registry.get_processing("reload_first"))
+            self.assertIsNotNone(extension_registry.get_processing("reload_second"))
+
+        extension_registry.clear()
+        extension_registry.load_from_directory(default_extensions_directory())
+
+    def test_repository_demo_extensions_and_json_samples_are_valid(self):
+        from core.extension_api import ExtensionRegistry, default_extensions_directory
+
+        directory = default_extensions_directory()
+        expected = {
+            "processing_scale_demo.py": ("processing", "demo_processing_scale", "processing_scale_demo.json", {"factor", "baseline"}),
+            "analysis_peak_span_demo.py": ("analysis", "demo_analysis_peak_span", "analysis_peak_span_demo.json", {"unit"}),
+            "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", "plot_reference_line_demo.json", {"color", "linestyle", "linewidth", "alpha", "offset", "label"}),
+            "plot_style_presentation_demo.py": ("plot_style", "demo_plot_style_presentation", "plot_style_presentation_demo.json", {"grid", "grid_alpha", "line_width", "marker_size"}),
+            "curve_style_highlight_demo.py": ("curve_style", "demo_curve_style_highlight", "curve_style_highlight_demo.json", {"color", "linestyle", "linewidth", "marker", "alpha", "markevery"}),
+        }
+
+        registry = ExtensionRegistry()
+        report = registry.load_from_directory(directory)
+
+        self.assertEqual(report["errors"], [])
+        self.assertTrue(set(expected).issubset({Path(path).name for path in report["loaded"]}))
+
+        getters = {
+            "processing": registry.get_processing,
+            "analysis": registry.get_analysis,
+            "plot": registry.get_plot,
+            "plot_style": registry.get_plot_style,
+            "curve_style": registry.get_curve_style,
+        }
+
+        for _py_name, (kind, type_id, json_name, required_keys) in expected.items():
+            self.assertIsNotNone(getters[kind](type_id))
+            payload = json.loads((directory / json_name).read_text(encoding="utf-8"))
+            self.assertIsInstance(payload, dict)
+            self.assertTrue(required_keys.issubset(payload.keys()))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1564,7 +1642,7 @@ class TestProjectManagerV3(unittest.TestCase):
             for n in self.p.tree.nodes
             if n.kind == "folder" and getattr(n, "parent_id", None) is None
         ]
-        self.assertEqual(root_groups, ["datasets", "images", "analysis_result_group"])
+        self.assertEqual(root_groups, ["datasets", "images", "pictures", "analysis_result_group"])
 
     def test_rename_series(self):
         from models.schemas import DataFile, DataSeries

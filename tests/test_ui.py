@@ -61,6 +61,7 @@ def _make_project(name="ui_test"):
 _PM_MODULES = [
     "core.project_manager",
     "ai.command_layer",
+    "ui.dialogs.import_dialog",
     "ui.pages.data_page",
     "ui.pages.chart_page",
     "ui.pages.process_page",
@@ -228,11 +229,80 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertEqual(self.widget._tree.textElideMode(), Qt.TextElideMode.ElideNone)
         self.assertFalse(self.widget._tree.uniformRowHeights())
 
+    def test_set_name_display_mode_elides_long_labels(self):
+        self.widget.set_name_display_mode("elide")
+        self.assertEqual(self.widget._tree.textElideMode(), Qt.TextElideMode.ElideRight)
+        self.assertTrue(self.widget._tree.uniformRowHeights())
+
     def test_tree_item_tooltip_shows_full_long_label(self):
         self.p.name = "这是一个用于验证项目树节点 hover 可显示完整名称的超长项目名称"
         self.widget.refresh()
         root = self.widget._tree.topLevelItem(0)
         self.assertEqual(root.toolTip(0), self.p.name)
+
+    def test_project_root_includes_digitize_and_picture_groups(self):
+        self.widget.refresh()
+        root = self.widget._tree.topLevelItem(0)
+        labels = [root.child(i).text(0) for i in range(root.childCount())]
+        self.assertEqual(labels[:4], ["数据集", "数据化", "图片集", "分析结果"])
+
+    def test_add_picture_creates_picture_node_under_picture_group(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "chart.png"
+            picture_path.write_bytes(b"png")
+            node = self.pm.add_picture(str(picture_path), name="图表快照")
+
+        self.assertIsNotNone(node)
+        self.assertEqual(len(self.p.pictures), 1)
+        self.assertEqual(self.p.pictures[0].name, "图表快照")
+        parent = self.p.tree.get_node(node.parent_id)
+        self.assertIsNotNone(parent)
+        self.assertEqual(getattr(parent, "group_type", None), "pictures")
+
+    def test_picture_path_tracks_picture_folder_move(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "picture_move.aline"
+            self.pm.save(str(project_file))
+            picture_root = self.pm._find_folder_by_group_type("pictures")
+            self.assertIsNotNone(picture_root)
+            folder_a = self.pm.add_folder("导出A", parent_id=picture_root.id, group_type="pictures")
+            folder_b = self.pm.add_folder("导出B", parent_id=picture_root.id, group_type="pictures")
+            self.assertIsNotNone(folder_a)
+            self.assertIsNotNone(folder_b)
+
+            source_path = Path(temp_dir) / "chart.png"
+            source_path.write_bytes(b"png")
+            node = self.pm.add_picture(str(source_path), name="chart.png", parent_id=folder_a.id)
+            self.assertIsNotNone(node)
+
+            picture = self.p.pictures[0]
+            self.assertIn("files/pictures/导出A/chart.png", self.pm.get_picture_path(picture.id))
+
+            moved = self.pm.move_node(node.id, folder_b.id, 0)
+
+            self.assertTrue(moved)
+            target_path = self.pm.get_picture_path(picture.id)
+            self.assertTrue(Path(target_path).exists())
+            self.assertIn("files/pictures/导出B/chart.png", target_path)
+
+    def test_rename_node_syncs_image_work_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "source.png"
+            image_path.write_bytes(b"png")
+            image = self.pm.add_image(str(image_path), name="原图")
+
+        image_node = next(n for n in self.p.tree.nodes if n.kind == "image_work" and n.image_work_id == image.id)
+        self.assertTrue(self.pm.rename_node(image_node.id, "重命名图"))
+        self.assertEqual(self.pm.get_image(image.id).name, "重命名图")
+
+    def test_update_wrapped_item_size_hints_ignores_deleted_tree_items(self):
+        self.widget.refresh()
+        stale_item = self.widget._tree.topLevelItem(0)
+        self.widget.refresh()
+
+        with mock.patch.object(self.widget._tree, "topLevelItemCount", return_value=1), \
+             mock.patch.object(self.widget._tree, "topLevelItem", return_value=stale_item):
+            self.widget._update_wrapped_item_size_hints()
 
     def test_set_filter_kinds_all(self):
         """空过滤 = 显示全部"""
@@ -335,7 +405,7 @@ class TestProjectTreeWidget(unittest.TestCase):
             project_root = widget._tree.topLevelItem(0)
             self.assertEqual(project_root.text(0), project.name)
             names = [project_root.child(i).text(0) for i in range(project_root.childCount())]
-            self.assertEqual(names, ["数据集", "图片集", "分析结果"])
+            self.assertEqual(names, ["数据集", "数据化", "图片集", "分析结果"])
         finally:
             restore()
             if widget is not None:
@@ -350,6 +420,24 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertTrue(moved)
         self.assertEqual(len(self.df.series), 0)
         self.assertTrue(any(series.id == self.s.id for series in other.series))
+
+    def test_drop_move_moves_series_into_data_file(self):
+        from models.schemas import DataFile, DataSeries
+
+        other_node = self.pm.add_data_file(DataFile(name="other.csv", series=[DataSeries(name="other", x=[1.0], y=[2.0])]))
+        self.assertIsNotNone(other_node)
+
+        self.widget.refresh()
+        source_item = self.widget._find_item(self.s.id)
+        target_item = self.widget._find_item(other_node.id)
+
+        self.assertIsNotNone(source_item)
+        self.assertIsNotNone(target_item)
+        self.assertTrue(self.widget._perform_drop_move(source_item, target_item))
+        self.assertEqual(len(self.df.series), 0)
+        target_df = self.p.find_data_file(other_node.data_file_id)
+        self.assertIsNotNone(target_df)
+        self.assertTrue(any(series.id == self.s.id for series in target_df.series))
 
     def test_create_child_folder_inherits_collection_group_type(self):
         for group_type in ("datasets", "images", "analysis_result_group"):
@@ -393,6 +481,21 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertTrue(bool(item.flags() & Qt.ItemFlag.ItemIsEditable))
         self.assertTrue(bool(item.flags() & Qt.ItemFlag.ItemIsDragEnabled))
 
+    def test_data_file_and_image_work_nodes_are_editable(self):
+        image = self.pm.add_image("/tmp/aline-tree-image.png", name="image.png")
+
+        self.widget.refresh()
+        data_file_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+        image_node = next(n for n in self.p.tree.nodes if n.kind == "image_work" and n.image_work_id == image.id)
+
+        data_file_item = self.widget._find_item(data_file_node.id)
+        image_item = self.widget._find_item(image_node.id)
+
+        self.assertIsNotNone(data_file_item)
+        self.assertIsNotNone(image_item)
+        self.assertTrue(bool(data_file_item.flags() & Qt.ItemFlag.ItemIsEditable))
+        self.assertTrue(bool(image_item.flags() & Qt.ItemFlag.ItemIsEditable))
+
     def test_cmd_add_child_folder_creates_and_selects_root_child(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
@@ -408,6 +511,17 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertIsNotNone(created)
         selected = self.widget.get_selected_node()
         self.assertEqual(selected, ("folder", created.id))
+
+    def test_empty_child_folder_remains_visible_with_folder_filter(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        self.widget.set_filter_kinds(["folder", "data_file"])
+        folder = self.widget._create_child_folder(datasets_root.id, "空文件夹")
+        self.assertIsNotNone(folder)
+        self.widget.refresh()
+
+        self.assertIsNotNone(self.widget._find_item(folder.id))
 
     def test_move_nested_folder_to_another_folder(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
@@ -477,6 +591,23 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_theme_combo_exists(self):
         self.assertIsNotNone(self.page.theme_combo)
+
+    def test_settings_title_label_is_removed(self):
+        self.assertIsNone(self.page._title_label)
+
+    def test_tree_display_mode_combo_defaults_to_wrap(self):
+        from pathlib import Path
+        from unittest import mock
+        from ui.pages.settings_page import SettingsPage
+
+        temp_page = None
+        try:
+            with mock.patch("core.ui_preferences._CONFIG_PATH", Path("/nonexistent/aline_ui_preferences.json")):
+                temp_page = SettingsPage()
+            self.assertEqual(temp_page._current_tree_display_mode(), "wrap")
+        finally:
+            if temp_page is not None:
+                temp_page.deleteLater()
 
     def test_ai_tab_is_hidden_from_settings_ui(self):
         titles = [self.page._tabs.tabText(i) for i in range(self.page._tabs.count())]
@@ -567,6 +698,29 @@ class TestSettingsPage(unittest.TestCase):
             self.assertTrue(any("skill-a" in t for t in combo_texts))
         finally:
             restore()
+
+
+class TestExtensionConfigPanel(unittest.TestCase):
+
+    def test_reload_button_emits_signal(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+        received = []
+        panel.reload_requested.connect(lambda: received.append(True))
+        panel._reload_btn.click()
+
+        self.assertEqual(received, [True])
+        panel.deleteLater()
+
+    def test_reload_button_uses_icon_tool_button(self):
+        from qfluentwidgets import ToolButton
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+
+        self.assertIsInstance(panel._reload_btn, ToolButton)
+        panel.deleteLater()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -718,12 +872,31 @@ class TestDataPage(unittest.TestCase):
             dialog = dialog_cls.return_value
             dialog.exec.return_value = True
             dialog.get_results.return_value = [DataSeries(name="imported", x=[1.0], y=[2.0])]
+            dialog.get_target_data_file_id.return_value = None
             dialog.get_file_name.return_value = "imported.csv"
             self.page._import_file()
 
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file" and n.name == "imported.csv"), None)
         self.assertIsNotNone(node)
         self.assertEqual(node.parent_id, folder.id)
+
+    def test_import_file_can_append_to_existing_data_file(self):
+        from models.schemas import DataFile, DataSeries
+
+        target = self.pm.add_data_file(DataFile(name="existing.csv", series=[]))
+        self.assertIsNotNone(target)
+        existing = next((df for df in self.p.data_files if df.name == "existing.csv"), None)
+        self.assertIsNotNone(existing)
+
+        with mock.patch("ui.dialogs.import_dialog.ImportDialog") as dialog_cls:
+            dialog = dialog_cls.return_value
+            dialog.exec.return_value = True
+            dialog.get_results.return_value = [DataSeries(name="力", x=[1.0], y=[2.0])]
+            dialog.get_target_data_file_id.return_value = existing.id
+            self.page._import_file()
+
+        self.assertEqual(len(existing.series), 1)
+        self.assertEqual(existing.series[0].name, "力")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -904,6 +1077,85 @@ class TestChartPage(unittest.TestCase):
     def test_plot_style_tab_has_explicit_load_button(self):
         self.assertIsNotNone(self.page._btn_load_template)
 
+    def test_plot_extension_appears_in_extension_panel(self):
+        from core.extension_api import PlotExtension, extension_registry
+
+        def _draw(axis, series, options):
+            axis.axhline(options.get("y", 0.0))
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="ui_plot_extension_test",
+                name="UI 参考线",
+                handler=_draw,
+                default_options={"y": 1.5},
+            )
+        )
+        try:
+            self.page._style_tabs.setCurrentIndex(1)
+            self.page._refresh_style_extension_panel()
+            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
+
+            self.assertIn("绘图扩展 · UI 参考线", selector_items)
+        finally:
+            extension_registry.unregister_plot("ui_plot_extension_test")
+            self.page._refresh_style_extension_panel()
+
+    def test_curve_style_extension_preserves_extra_plot_kwargs(self):
+        from core.extension_api import CurveStyleExtension, extension_registry
+
+        def _style_patch(style, options):
+            style.update({"markeredgewidth": options.get("markeredgewidth", 2.5)})
+            return style
+
+        extension_registry.register_curve_style(
+            CurveStyleExtension(
+                type="ui_curve_kwargs_test",
+                name="UI 曲线扩展",
+                handler=_style_patch,
+                default_options={"markeredgewidth": 2.5},
+            )
+        )
+        try:
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page._chart_list.setCurrentRow(0)
+            self.page._curve_style_extension_options["ui_curve_kwargs_test"] = {"markeredgewidth": 3.0}
+
+            self.page._apply_curve_style_extension("ui_curve_kwargs_test")
+
+            curve_name = self.page._chart_series[0]["name"]
+            self.assertEqual(self.page._curve_styles[curve_name]["markeredgewidth"], 3.0)
+        finally:
+            extension_registry.unregister_curve_style("ui_curve_kwargs_test")
+
+    def test_plot_style_extension_preserves_extra_plot_config(self):
+        from core.extension_api import PlotStyleExtension, extension_registry
+
+        def _style_patch(state, options):
+            state.update({
+                "legend_kwargs": {"title": options.get("title", "Demo")},
+                "line_defaults": {"solid_capstyle": options.get("capstyle", "round")},
+            })
+            return state
+
+        extension_registry.register_plot_style(
+            PlotStyleExtension(
+                type="ui_plot_style_kwargs_test",
+                name="UI 绘图样式扩展",
+                handler=_style_patch,
+                default_options={"title": "Legend", "capstyle": "round"},
+            )
+        )
+        try:
+            self.page._plot_style_extension_options["ui_plot_style_kwargs_test"] = {"title": "Legend", "capstyle": "projecting"}
+
+            self.page._apply_plot_style_extension("ui_plot_style_kwargs_test")
+
+            self.assertEqual(self.page._plot_style_extras["legend_kwargs"]["title"], "Legend")
+            self.assertEqual(self.page._plot_style_extras["line_defaults"]["solid_capstyle"], "projecting")
+        finally:
+            extension_registry.unregister_plot_style("ui_plot_style_kwargs_test")
+
     def test_style_tabs_hide_add_and_close_buttons(self):
         from qfluentwidgets import TabCloseButtonDisplayMode
 
@@ -1075,7 +1327,7 @@ class TestChartPage(unittest.TestCase):
             self.page._style_tabs.setCurrentIndex(1)
             QApplication.processEvents()
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-            self.assertIn("绘图扩展选择", selector_items)
+            self.assertIn("样式扩展 · 绘图扩展选择", selector_items)
         finally:
             extension_registry.unregister_plot_style("chart_plot_selector")
             extension_registry.unregister_curve_style("chart_curve_selector")
@@ -1115,7 +1367,7 @@ class TestChartPage(unittest.TestCase):
             self.page._style_tabs.setCurrentIndex(1)
             QApplication.processEvents()
             plot_selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-            self.page._extension_panel._selector.setCurrentIndex(plot_selector_items.index("绘图扩展应用"))
+            self.page._extension_panel._selector.setCurrentIndex(plot_selector_items.index("样式扩展 · 绘图扩展应用"))
             self.page._extension_panel._editor.setPlainText('{"line_width": 4.5}')
             self.page._extension_panel._apply_current()
 
@@ -1194,11 +1446,11 @@ class TestChartPage(unittest.TestCase):
         self.assertIsNotNone(template)
         global_assets.update_figure_template(template.id, name="renamed_template")
 
-        def _fake_get_item(_parent, _title, _label, items, _current, _editable):
+        def _fake_get_item(_parent, _title, _label, items, current_text=None):
             self.assertIn("renamed_template", items)
             return ("renamed_template", True)
 
-        with mock.patch("PySide6.QtWidgets.QInputDialog.getItem", side_effect=_fake_get_item):
+        with mock.patch("ui.pages.chart_page.SelectionDialog.get_item", side_effect=_fake_get_item):
             self.page._on_load_template()
 
         self.assertEqual(self.page._figure_state.theme, "ACS")
@@ -1324,23 +1576,42 @@ class TestProcessPage(unittest.TestCase):
         )
 
     def test_save_result_creates_new_data_file_with_custom_name(self):
+        from ui.dialogs.export_flow import DataExportPlan
+
         self.page._out_xs = [1.0, 2.0, 3.0]
         self.page._out_ys = [2.0, 3.0, 4.0]
         self.page._save_name_edit.setText("处理结果A")
-        self.page._save_target_combo.setCurrentIndex(0)
-        self.page._save_result()
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        with mock.patch(
+            "ui.pages.process_page.choose_data_export_plan",
+            return_value=DataExportPlan(
+                export_name="处理结果A",
+                new_parent_id=datasets_root.id,
+                new_data_file_name="处理结果A.process",
+            ),
+        ):
+            self.page._save_result()
+
         data_file = next((df for df in self.p.data_files if df.name == "处理结果A.process"), None)
         self.assertIsNotNone(data_file)
         self.assertEqual(data_file.series[0].name, "处理结果A")
 
     def test_save_result_appends_to_selected_data_file(self):
+        from ui.dialogs.export_flow import DataExportPlan
+
         self.page._out_xs = [1.0, 2.0, 3.0]
         self.page._out_ys = [2.0, 3.0, 4.0]
         self.page._save_name_edit.setText("处理结果B")
-        self.page._refresh_save_targets()
-        self.page._save_target_combo.setCurrentIndex(1)
         original_count = len(self.df.series)
-        self.page._save_result()
+
+        with mock.patch(
+            "ui.pages.process_page.choose_data_export_plan",
+            return_value=DataExportPlan(export_name="处理结果B", target_data_file_id=self.df.id),
+        ):
+            self.page._save_result()
+
         self.assertEqual(len(self.df.series), original_count + 1)
         self.assertEqual(self.df.series[-1].name, "处理结果B")
 
@@ -1517,6 +1788,28 @@ class TestAnalysisPage(unittest.TestCase):
         clipboard_text = QApplication.clipboard().text()
         self.assertIn(self.s.name, clipboard_text)
         self.assertIn(other.name, clipboard_text)
+
+    def test_summary_area_has_larger_minimum_height(self):
+        current_view = self.page._analysis_tab_views["current"]
+        self.assertGreaterEqual(current_view["summary_stack"].minimumHeight(), 280)
+
+    def test_unknown_analysis_json_renders_as_flattened_summary_rows(self):
+        payload = {
+            "summary": {"score": 0.875, "status": "ok"},
+            "items": [
+                {"name": "A", "value": 1},
+                {"name": "B", "value": 2},
+            ],
+        }
+
+        self.page._write_summary("custom_json", payload)
+
+        labels = [self.page._summary_table.item(row, 0).text() for row in range(self.page._summary_table.rowCount())]
+        values = [self.page._summary_table.item(row, 1).text() for row in range(self.page._summary_table.rowCount())]
+        self.assertIn("summary.score", labels)
+        self.assertIn("items[0].name", labels)
+        self.assertIn("0.875", values)
+        self.assertIn("A", values)
 
     def test_on_tree_node_selected_data_file(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
@@ -1985,11 +2278,24 @@ class TestDigitizePage(unittest.TestCase):
         self.assertIn("曲线1", self.page._export_name_edit.text())
 
     def test_export_to_data_file_creates_digitize_result_folder_by_default(self):
+        from ui.dialogs.export_flow import DataExportPlan
+
         self._add_digitize_curve()
         received = []
         self.page.project_modified.connect(lambda: received.append(True))
 
-        self.page._on_export_to_data_file()
+        derived_folder_id = self.page._ensure_digitize_result_folder()
+        self.assertIsNotNone(derived_folder_id)
+
+        with mock.patch(
+            "ui.pages.digitize_page.choose_data_export_plan",
+            return_value=DataExportPlan(
+                export_name="SEM_曲线1",
+                new_parent_id=derived_folder_id,
+                new_data_file_name="SEM_曲线1.digitize",
+            ),
+        ):
+            self.page._on_export_to_data_file()
 
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
@@ -2011,13 +2317,19 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(len(received), 1)
 
     def test_export_to_existing_data_file_appends_series(self):
+        from ui.dialogs.export_flow import DataExportPlan
+
         self._add_digitize_curve()
         data_node = next((node for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id), None)
         self.assertIsNotNone(data_node)
         before = len(self.df.series)
 
         self.page.on_tree_node_selected("data_file", data_node.id)
-        self.page._on_export_to_data_file()
+        with mock.patch(
+            "ui.pages.digitize_page.choose_data_export_plan",
+            return_value=DataExportPlan(export_name="追加结果", target_data_file_id=self.df.id),
+        ):
+            self.page._on_export_to_data_file()
 
         self.assertEqual(len(self.df.series), before + 1)
         self.assertIn(data_node.name, self.page._status_label.text())
@@ -2060,6 +2372,10 @@ class TestMainWindow(unittest.TestCase):
         self.assertIsNotNone(self.win._tree_panel.save_project_btn)
         self.assertIsNotNone(self.win._tree_panel.close_project_btn)
         self.assertIsNotNone(self.win._tree_panel.extension_toggle_btn)
+
+    def test_tree_panel_has_expand_and_collapse_buttons(self):
+        self.assertIsNotNone(self.win._tree_panel.tree_expand_btn)
+        self.assertIsNotNone(self.win._tree_panel.tree_collapse_btn)
 
     def test_navigation_has_tree_toggle_button(self):
         self.assertIsNotNone(self.win._tree_toggle_nav_btn)
@@ -2136,16 +2452,16 @@ class TestMainWindow(unittest.TestCase):
 
     def test_extension_toggle_button_hides_and_shows_current_page_panel(self):
         self.win.switchTo(self.win.chart_page)
-        self.assertTrue(self.win.chart_page.is_extension_panel_visible())
-        self.assertFalse(self.win.chart_page._extension_panel.isHidden())
-
-        self.win._toggle_current_page_extension_panel()
         self.assertFalse(self.win.chart_page.is_extension_panel_visible())
         self.assertTrue(self.win.chart_page._extension_panel.isHidden())
 
         self.win._toggle_current_page_extension_panel()
         self.assertTrue(self.win.chart_page.is_extension_panel_visible())
         self.assertFalse(self.win.chart_page._extension_panel.isHidden())
+
+        self.win._toggle_current_page_extension_panel()
+        self.assertFalse(self.win.chart_page.is_extension_panel_visible())
+        self.assertTrue(self.win.chart_page._extension_panel.isHidden())
 
     def test_tree_toggle_button_hides_and_shows_tree_panel(self):
         self.win.switchTo(self.win.data_page)
@@ -2580,7 +2896,7 @@ class TestImportDialogParsers(unittest.TestCase):
         self.assertTrue(dlg._role_buttons[2]["跳过"].isChecked())
         dlg.deleteLater()
 
-    def test_import_dialog_single_series_uses_custom_name_without_prefix(self):
+    def test_import_dialog_defaults_to_new_data_file_name(self):
         from ui.dialogs.import_dialog import ImportDialog
 
         dlg = ImportDialog()
@@ -2588,15 +2904,32 @@ class TestImportDialogParsers(unittest.TestCase):
         dlg._raw_headers = ["time", "signal"]
         dlg._raw_rows = [[0.0, 1.0], [1.0, 2.0]]
         dlg._populate_col_table()
-        dlg._series_name_combo.setCurrentIndex(dlg._series_name_keys.index("__new__"))
-        dlg._series_name_edit.setText("实验A")
 
-        series_list = dlg._do_import()
-
-        self.assertEqual([series.name for series in series_list], ["实验A"])
-        self.assertEqual(series_list[0].x_label, "time")
-        self.assertEqual(series_list[0].y_label, "signal")
+        self.assertIsNone(dlg.get_target_data_file_id())
+        self.assertEqual(dlg.get_file_name(), "demo.csv")
         dlg.deleteLater()
+
+    def test_import_dialog_can_target_existing_data_file(self):
+        from ui.dialogs.import_dialog import ImportDialog
+
+        pm, _p, _df, _s = _make_project("import_existing")
+        restore = _patch_pm(pm)
+        dlg = None
+        try:
+            dlg = ImportDialog()
+            dlg._file_path = "demo.csv"
+            dlg._raw_headers = ["time", "signal"]
+            dlg._raw_rows = [[0.0, 1.0], [1.0, 2.0]]
+            dlg._populate_col_table()
+
+            self.assertGreaterEqual(dlg._data_file_target_combo.count(), 2)
+            dlg._data_file_target_combo.setCurrentIndex(1)
+            self.assertEqual(dlg.get_target_data_file_id(), pm.current_project.data_files[0].id)
+            self.assertFalse(dlg._data_file_name_edit.isEnabled())
+        finally:
+            restore()
+            if dlg is not None:
+                dlg.deleteLater()
 
     def test_import_dialog_multi_y_uses_variable_names(self):
         from ui.dialogs.import_dialog import ImportDialog
@@ -2609,8 +2942,6 @@ class TestImportDialogParsers(unittest.TestCase):
         dlg._name_edits[1].setText("力")
         dlg._name_edits[2].setText("应力")
         dlg._role_buttons[2]["Y 轴"].setChecked(True)
-        dlg._series_name_combo.setCurrentIndex(dlg._series_name_keys.index("__new__"))
-        dlg._series_name_edit.setText("不会作为前缀")
 
         series_list = dlg._do_import()
 
@@ -2724,6 +3055,31 @@ class TestChartPageV3(unittest.TestCase):
 
         self.assertEqual(len(self.page._chart_series), 2)
         self.assertEqual(redraw.call_count, 1)
+
+    def test_export_to_picture_group_creates_project_picture_node(self):
+        from ui.dialogs.export_flow import PictureExportPlan
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "chart_export.pyline"
+            self.pm.save(str(project_file))
+            picture_root = next(
+                n for n in self.p.tree.nodes
+                if n.kind == "folder" and getattr(n, "group_type", None) == "pictures"
+            )
+            self.page.on_tree_node_selected("folder", picture_root.id)
+            with mock.patch(
+                "ui.pages.chart_page.choose_picture_export_plan",
+                return_value=PictureExportPlan(export_name="chart.png", target_folder_id=picture_root.id),
+            ):
+                self.page._on_export_to_picture_group()
+
+            self.assertEqual(len(self.p.pictures), 1)
+            picture = self.p.pictures[0]
+            self.assertTrue(Path(self.pm.get_picture_path(picture.id)).exists())
+            picture_node = next((n for n in self.p.tree.nodes if n.kind == "picture" and n.picture_id == picture.id), None)
+            self.assertIsNotNone(picture_node)
+            self.assertEqual(picture_node.parent_id, picture_root.id)
 
     def test_project_modified_signal_emitted_on_save_template(self):
         """保存模板应发出 project_modified"""

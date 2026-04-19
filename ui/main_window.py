@@ -7,6 +7,7 @@ from qfluentwidgets import (
     FluentIcon as FIF, FluentWindow, NavigationItemPosition,
     NavigationToolButton,
     setTheme, Theme, MessageBox, ToggleToolButton, ToolButton,
+    PushButton,
     InfoBar, InfoBarPosition, ToolTipFilter, ToolTipPosition,
 )
 
@@ -29,7 +30,7 @@ from core.ai.tool_registry import TOOLS
 
 # 页面 2-6 默认显示完整共享树，主页和设置页不显示。
 _BUSINESS_TREE_KINDS = [
-    "folder", "data_file", "image_work",
+    "folder", "data_file", "image_work", "picture",
     "pipeline", "figure_template", "report_template", "analysis_result",
     "global_pipeline", "global_report_template",
     "global_curve_style_template", "global_plot_style", "global_plot_theme",
@@ -114,13 +115,30 @@ class _SharedTreePanel(QWidget):
 
         layout.addLayout(toolbar)
 
+        tree_toolbar = QHBoxLayout()
+        tree_toolbar.setContentsMargins(0, 0, 0, 0)
+        tree_toolbar.setSpacing(6)
+        tree_toolbar.addStretch()
+
+        self.tree_collapse_btn = PushButton("全部折叠", self)
+        self.tree_collapse_btn.setToolTip("折叠项目树中的全部节点")
+        tree_toolbar.addWidget(self.tree_collapse_btn)
+
+        self.tree_expand_btn = PushButton("全部展开", self)
+        self.tree_expand_btn.setToolTip("展开项目树中的全部节点")
+        tree_toolbar.addWidget(self.tree_expand_btn)
+
+        layout.addLayout(tree_toolbar)
+
         self.tree = ProjectTreeWidget(self)
+        self.tree_collapse_btn.clicked.connect(self.tree.collapse_all_items)
+        self.tree_expand_btn.clicked.connect(self.tree.expand_all_items)
         layout.addWidget(self.tree)
 
         # 安装 Fluent 风格 Tooltip
         for btn in [self.new_project_btn, self.open_project_btn, self.save_project_btn,
                 self.close_project_btn, self.add_dataset_btn, self.import_file_btn,
-                self.extension_toggle_btn,
+            self.extension_toggle_btn, self.tree_collapse_btn, self.tree_expand_btn,
                     self.ai_toggle_btn]:
             btn.installEventFilter(ToolTipFilter(btn, 500, ToolTipPosition.BOTTOM))
 
@@ -218,6 +236,7 @@ class MainWindow(FluentWindow):
     def _setup_theme_watcher(self):
         self.settings_page.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         self.settings_page.shortcuts_changed.connect(self.digitize_page.apply_shortcuts)
+        self.settings_page.tree_display_mode_changed.connect(self._tree_panel.tree.set_name_display_mode)
 
     def _setup_project_signals(self):
         self.home_page.project_created.connect(self._on_project_created)

@@ -75,6 +75,14 @@ class ImageWork(BaseModel):
     mask: Optional[MaskData] = None
 
 
+class PictureAsset(BaseModel):
+    """项目内管理的已导出图片。"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    image_path: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
 # ─────────────────────────────────────────────────────────────
 # ALine 新增模型
 # ─────────────────────────────────────────────────────────────
@@ -266,6 +274,7 @@ class Project(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
     images: List[ImageWork] = []
+    pictures: List[PictureAsset] = []
     imported_curves: List[Curve] = []
     created_at: str = ""
     updated_at: str = ""
@@ -329,6 +338,12 @@ class Project(BaseModel):
                 return a
         return None
 
+    def find_picture(self, picture_id: str) -> Optional[PictureAsset]:
+        for picture in self.pictures:
+            if picture.id == picture_id:
+                return picture
+        return None
+
     def iter_all_series(self):
         """遍历项目中所有 DataSeries（跨 Dataset）。"""
         for ds in self.datasets:
@@ -380,7 +395,8 @@ class _NodeBase(BaseModel):
 # group_type 语义：
 #   None / "user"            = 用户创建的普通文件夹
 #   "datasets"/"dataset_set" = 系统数据集容器（兼容旧值）
-#   "images"/"image_set"    = 系统图片集容器（兼容旧值）
+#   "images"/"image_set"    = 系统数据化容器（兼容旧值）
+#   "pictures"/"picture_set" = 系统图片集容器
 #   "tools"/"tool_set"      = 系统工具集容器（兼容旧值）
 #   "pipeline_group"         = 工具集内 Pipelines 子文件夹
 #   "template_group"         = 旧版绘图模板组（兼容）
@@ -393,8 +409,8 @@ class _NodeBase(BaseModel):
 #   "agent_group"            = Agents 子分组
 _GROUP_TYPE = Literal[
     "user",
-    "datasets", "images", "tools",
-    "dataset_set", "image_set", "tool_set",
+    "datasets", "images", "pictures", "tools",
+    "dataset_set", "image_set", "picture_set", "tool_set",
     "pipeline_group",
     "template_group", "figure_template_group", "report_template_group", "analysis_result_group",
     "ai_group", "prompt_group", "skill_group", "agent_group"
@@ -414,6 +430,11 @@ class DataFileNode(_NodeBase):
 class ImageWorkNode(_NodeBase):
     kind: Literal["image_work"] = "image_work"
     image_work_id: str = ""
+
+
+class PictureNode(_NodeBase):
+    kind: Literal["picture"] = "picture"
+    picture_id: str = ""
 
 
 class PipelineNode(_NodeBase):
@@ -461,7 +482,7 @@ class AIToolNode(_NodeBase):
 
 TreeNodeUnion = Annotated[
     Union[
-        FolderNode, DataFileNode, ImageWorkNode,
+        FolderNode, DataFileNode, ImageWorkNode, PictureNode,
         PipelineNode, FigureTemplateNode, ReportTemplateNode, AnalysisResultNode,
         AIPromptNode, AISkillNode, AIAgentNode,
         AIToolNode,   # 保留用于读取 v0.2 旧文件

@@ -6,20 +6,22 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPixmap
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
-    Action, FluentIcon as FIF, MessageBox, RoundMenu, TreeWidget,
+    Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip, TreeWidget,
 )
 from PySide6.QtWidgets import QTreeWidgetItem
 
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
 from core.project_manager import project_manager
+from core.ui_preferences import get_tree_name_display_mode
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 
 
@@ -30,11 +32,18 @@ def _series_color_icon(color_str: str) -> QPixmap:
     return px
 
 
+_PROJECT_ICON = getattr(FIF, "HOME", FIF.FOLDER)
+_DATA_ICON = FIF.DOCUMENT
+_DATASET_GROUP_ICON = getattr(FIF, "LIBRARY", FIF.FOLDER)
+_PICTURE_GROUP_ICON = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
+
+
 # ── 每种 kind 的 (FluentIcon, 颜色hint) ──────────────────────────
 _KIND_CONFIG = {
     "folder":          (FIF.FOLDER,          None),
-    "data_file":       (FIF.DOCUMENT,        None),
+    "data_file":       (_DATA_ICON,         None),
     "image_work":      (FIF.PHOTO,           None),
+    "picture":         (FIF.PHOTO,           None),
     "pipeline":        (FIF.DEVELOPER_TOOLS, "#0078D4"),
     "figure_template": (FIF.PIE_SINGLE,      "#107C10"),
     "report_template": (FIF.DOCUMENT,        "#8C6C00"),
@@ -55,10 +64,12 @@ _KIND_CONFIG = {
 
 # group_type → FluentIcon（系统文件夹专用图标）
 _GROUP_ICON = {
-    "datasets":       FIF.FOLDER,
-    "dataset_set":    FIF.FOLDER,
+    "datasets":       _DATASET_GROUP_ICON,
+    "dataset_set":    _DATASET_GROUP_ICON,
     "images":         FIF.PHOTO,
     "image_set":      FIF.PHOTO,
+    "pictures":       _PICTURE_GROUP_ICON,
+    "picture_set":    _PICTURE_GROUP_ICON,
     "tools":          FIF.DEVELOPER_TOOLS,
     "tool_set":       FIF.DEVELOPER_TOOLS,
     "analysis_result_group": FIF.SEARCH,
@@ -76,6 +87,7 @@ _GROUP_ICON = {
 _PROTECTED_GROUP_TYPES = frozenset({
     "datasets", "dataset_set",
     "images", "image_set",
+    "pictures", "picture_set",
     "tools", "tool_set",
     "analysis_result_group",
     "pipeline_group", "template_group", "figure_template_group",
@@ -85,12 +97,14 @@ _PROTECTED_GROUP_TYPES = frozenset({
 _ROOT_GROUP_TYPES = frozenset({
     "datasets", "dataset_set",
     "images", "image_set",
+    "pictures", "picture_set",
     "tools", "tool_set",
 })
 
 _MANAGED_FOLDER_GROUP_TYPES = frozenset({
     "datasets",
     "images",
+    "pictures",
     "analysis_result_group",
 })
 
@@ -117,7 +131,7 @@ class _ProjectTreeView(TreeWidget):
         source_item = self._owner._drag_source_item_for_drop(self.currentItem())
         target_item = self.itemAt(event.position().toPoint())
         try:
-            if self._owner._perform_drop_move(source_item, target_item):
+            if self._owner._perform_drop_move(source_item, target_item, defer_view_refresh=True):
                 event.acceptProposedAction()
                 return
             event.ignore()
@@ -141,7 +155,6 @@ class ProjectTreeWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._filter_kinds: List[str] = []  # 空 = 显示全部
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -156,6 +169,7 @@ class ProjectTreeWidget(QWidget):
         self._tree.setUniformRowHeights(False)
         self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._tree.header().setStretchLastSection(True)
+        self._tree.viewport().setMouseTracking(True)
         self._tree.setDragEnabled(True)
         self._tree.setAcceptDrops(True)
         self._tree.viewport().setAcceptDrops(True)
@@ -174,6 +188,9 @@ class ProjectTreeWidget(QWidget):
         self._renaming = False  # 防止 itemChanged 循环
         self._branch_toggle_item_key: Optional[str] = None
         self._drag_source_item_key: Optional[str] = None
+        self._fluent_tooltip: Optional[ToolTip] = None
+        self._name_display_mode = "wrap"
+        self.set_name_display_mode(get_tree_name_display_mode())
 
     # ─────────────────────────────────────────────────────────
     # 公开接口
@@ -198,7 +215,7 @@ class ProjectTreeWidget(QWidget):
             project_item = QTreeWidgetItem([project.name])
             project_item.setData(0, _ROLE, ("project", project.id))
             project_item.setData(0, _PROJECT_ROLE, project.id)
-            project_item.setIcon(0, FIF.FOLDER.icon())
+            project_item.setIcon(0, _PROJECT_ICON.icon())
             project_item.setToolTip(0, project.name)
             if project.id == project_manager.current_project_id:
                 font = project_item.font(0)
@@ -210,10 +227,16 @@ class ProjectTreeWidget(QWidget):
         self._build_global_assets_root()
         self._restore_expansion_state(expansion_state)
         self._restore_selection(selected_key)
-        self._update_wrapped_item_size_hints()
+        self._apply_name_display_mode()
         self._tree.blockSignals(False)
         self._tree.viewport().update()
         self._tree.updateGeometry()
+
+    def expand_all_items(self) -> None:
+        self._expand_all_items()
+
+    def collapse_all_items(self) -> None:
+        self._collapse_all_items()
 
     def select_node(self, node_id: str) -> None:
         """程序化选中节点（不触发 node_selected 信号）。"""
@@ -229,6 +252,10 @@ class ProjectTreeWidget(QWidget):
         """只显示指定 kind 的节点（空列表 = 显示全部）。"""
         self._filter_kinds = list(kinds)
         self.refresh()
+
+    def set_name_display_mode(self, mode: str) -> None:
+        self._name_display_mode = "elide" if mode == "elide" else "wrap"
+        self._apply_name_display_mode()
 
     def get_selected_node(self) -> Optional[Tuple[str, str]]:
         """返回 (kind, node_id) 或 None。"""
@@ -282,7 +309,8 @@ class ProjectTreeWidget(QWidget):
             # 过滤：文件夹下无可见子节点则隐藏（但受保护的系统文件夹始终保留）
             is_root_folder = kind == "folder" and parent_id is None and getattr(node, "group_type", None) in _ROOT_GROUP_TYPES
             is_protected_folder = self._is_protected_folder(node)
-            if kind == "folder" and self._filter_kinds and item.childCount() == 0 and not is_root_folder and not is_protected_folder:
+            show_empty_folder = not self._filter_kinds or "folder" in self._filter_kinds
+            if kind == "folder" and not show_empty_folder and item.childCount() == 0 and not is_root_folder and not is_protected_folder:
                 if parent_item is None:
                     idx = self._tree.indexOfTopLevelItem(item)
                     self._tree.takeTopLevelItem(idx)
@@ -355,14 +383,14 @@ class ProjectTreeWidget(QWidget):
             if not is_protected:
                 flags |= Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled
         else:
-            flags |= Qt.ItemFlag.ItemIsDragEnabled
+            flags |= Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsEditable
             if node.kind in {"data_file", "image_work"}:
                 flags |= Qt.ItemFlag.ItemIsDropEnabled
         item.setFlags(flags)
 
         # 图标选择
         if node.kind == "folder":
-            icon_fif = _GROUP_ICON.get(group_type, FIF.FOLDER) if group_type else FIF.FOLDER
+            icon_fif = self._folder_icon(node, group_type)
             item.setIcon(0, icon_fif.icon())
         else:
             cfg = _KIND_CONFIG.get(node.kind, (FIF.DOCUMENT, None))
@@ -384,7 +412,8 @@ class ProjectTreeWidget(QWidget):
             Qt.ItemFlag.ItemIsSelectable |
             Qt.ItemFlag.ItemIsDragEnabled
         )
-        item.setIcon(0, _series_color_icon(series.color or "#0078D4"))
+        item.setIcon(0, _DATA_ICON.icon())
+        item.setForeground(0, QColor(series.color or "#0078D4"))
         item.setToolTip(0, label)
         return item
 
@@ -445,8 +474,15 @@ class ProjectTreeWidget(QWidget):
                 QEvent.Type.Leave,
             }:
                 self._branch_toggle_item_key = None
+                self._hide_fluent_tooltip()
+            elif event.type() == QEvent.Type.ToolTip:
+                self._show_fluent_tooltip_for_event(event)
+                return True
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                self._hide_fluent_tooltip()
             elif event.type() == QEvent.Type.Resize:
-                self._update_wrapped_item_size_hints()
+                if self._name_display_mode == "wrap":
+                    self._update_wrapped_item_size_hints()
         return super().eventFilter(watched, event)
 
     def _on_item_changed(self, item: QTreeWidgetItem, _col: int) -> None:
@@ -466,6 +502,13 @@ class ProjectTreeWidget(QWidget):
         self._renaming = True
         project_manager.rename_node(node_id, new_name)
         self._renaming = False
+        if self._name_display_mode == "wrap":
+            self._update_wrapped_item_size_hint_for_item(item)
+            QTimer.singleShot(0, self._update_wrapped_item_size_hints)
+        else:
+            item.setSizeHint(0, QSize())
+        self._tree.viewport().update()
+        self._tree.updateGeometry()
         self.project_modified.emit()
 
     # ─────────────────────────────────────────────────────────
@@ -475,11 +518,15 @@ class ProjectTreeWidget(QWidget):
     def _on_context_menu(self, pos) -> None:
         item = self._tree.itemAt(pos)
         if item is None:
+            menu = RoundMenu(parent=self._dialog_parent())
+            self._add_menu_action(menu, FIF.ZOOM_IN, "全部展开", self._expand_all_items)
+            self._add_menu_action(menu, FIF.ZOOM_OUT, "全部折叠", self._collapse_all_items)
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
         self._tree.setCurrentItem(item)
         self._activate_item_project(item)
-        menu = RoundMenu(parent=self)
+        menu = RoundMenu(parent=self._dialog_parent())
 
         d = item.data(0, _ROLE)
         if not d:
@@ -514,6 +561,8 @@ class ProjectTreeWidget(QWidget):
             managed_group_type = self._folder_collection_group(node_id)
             if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
                 self._add_menu_action(menu, FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id))
+                if managed_group_type == "pictures":
+                    self._add_menu_action(menu, _PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id))
                 if not is_protected:
                     menu.addSeparator()
             if not is_protected:
@@ -546,6 +595,15 @@ class ProjectTreeWidget(QWidget):
             move_choices = self._move_target_choices(kind, node_id)
             self._add_menu_action(menu, FIF.EDIT, "打开取点", lambda: self.node_activated.emit("image_work", node_id))
             self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id))
+            menu.addSeparator()
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            if move_choices:
+                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+
+        elif kind == "picture":
+            move_choices = self._move_target_choices(kind, node_id)
+            self._add_menu_action(menu, _PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True))
             menu.addSeparator()
             self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
             self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
@@ -602,14 +660,14 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _cmd_delete(self, node_id: str, node_name: str) -> None:
-        box = MessageBox("确认删除", f'确定要删除「{node_name}」及其所有内容吗？', self)
+        box = MessageBox("确认删除", f'确定要删除「{node_name}」及其所有内容吗？', self._dialog_parent())
         if box.exec():
             project_manager.delete_node(node_id)
             self.refresh()
             self.project_modified.emit()
 
     def _cmd_add_child_folder(self, parent_id: str) -> None:
-        name, ok = TextInputDialog.get_text(self, "新建子文件夹", "文件夹名称:", placeholder="输入子文件夹名称")
+        name, ok = TextInputDialog.get_text(self._dialog_parent(), "新建子文件夹", "文件夹名称:", placeholder="输入子文件夹名称")
         if not ok:
             return
         folder = self._create_child_folder(parent_id, name)
@@ -621,7 +679,7 @@ class ProjectTreeWidget(QWidget):
 
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
         title = "重命名数据列" if kind == "series" else "重命名曲线"
-        new_name, ok = TextInputDialog.get_text(self, title, "名称:", text=current_name)
+        new_name, ok = TextInputDialog.get_text(self._dialog_parent(), title, "名称:", text=current_name)
         if not ok or not new_name.strip():
             return
         if kind == "series":
@@ -633,7 +691,7 @@ class ProjectTreeWidget(QWidget):
             self.project_modified.emit()
 
     def _cmd_delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
-        box = MessageBox("确认删除", f'确定要删除「{node_name}」吗？', self)
+        box = MessageBox("确认删除", f'确定要删除「{node_name}」吗？', self._dialog_parent())
         if not box.exec():
             return
         if kind == "series":
@@ -711,7 +769,7 @@ class ProjectTreeWidget(QWidget):
 
     def _cmd_rename_global(self, kind: str, node_id: str, current_name: str) -> None:
         title = "重命名全局资源"
-        new_name, ok = TextInputDialog.get_text(self, title, "名称:", text=current_name)
+        new_name, ok = TextInputDialog.get_text(self._dialog_parent(), title, "名称:", text=current_name)
         if not ok:
             return
         if self._rename_global_asset(kind, node_id, new_name):
@@ -719,7 +777,7 @@ class ProjectTreeWidget(QWidget):
             self.project_modified.emit()
 
     def _cmd_delete_global(self, kind: str, node_id: str, node_name: str) -> None:
-        box = MessageBox("确认删除", f'确定要删除全局资源「{node_name}」吗？', self)
+        box = MessageBox("确认删除", f'确定要删除全局资源「{node_name}」吗？', self._dialog_parent())
         if not box.exec():
             return
         if self._delete_global_asset(kind, node_id):
@@ -749,13 +807,14 @@ class ProjectTreeWidget(QWidget):
             for img in p.images:
                 if img.id != current_parent_id:
                     choices.append((img.name, img.id))
-        elif kind in {"data_file", "image_work", "analysis_result"} and p.tree is not None:
+        elif kind in {"data_file", "image_work", "picture", "analysis_result"} and p.tree is not None:
             node = p.tree.get_node(node_id)
             if node is None:
                 return []
             required_group = {
                 "data_file": "datasets",
                 "image_work": "images",
+                "picture": "pictures",
                 "analysis_result": "analysis_result_group",
             }[kind]
             for folder in p.tree.nodes:
@@ -782,7 +841,7 @@ class ProjectTreeWidget(QWidget):
 
     def _cmd_move_virtual(self, kind: str, node_id: str, choices: List[Tuple[str, str]]) -> None:
         labels = [label for label, _ in choices]
-        selected, ok = SelectionDialog.get_item(self, "移动到", "目标父级:", labels)
+        selected, ok = SelectionDialog.get_item(self._dialog_parent(), "移动到", "目标父级:", labels)
         if not ok or not selected:
             return
         target_id = next((target_id for label, target_id in choices if label == selected), None)
@@ -843,11 +902,85 @@ class ProjectTreeWidget(QWidget):
             return getattr(node, "parent_id", None) is None
         return group_type in _PROTECTED_GROUP_TYPES
 
+    def _dialog_parent(self) -> QWidget:
+        window = self.window()
+        return window if isinstance(window, QWidget) else self
+
+    def _folder_icon(self, node, group_type: Optional[str]):
+        if getattr(node, "parent_id", None) is not None:
+            return FIF.FOLDER
+        return _GROUP_ICON.get(group_type, FIF.FOLDER) if group_type else FIF.FOLDER
+
+    def _tooltip_item_at_event(self, event) -> Optional[QTreeWidgetItem]:
+        if hasattr(event, "position"):
+            return self._tree.itemAt(event.position().toPoint())
+        if hasattr(event, "pos"):
+            return self._tree.itemAt(event.pos())
+        return None
+
+    def _tooltip_global_pos(self, event) -> QPoint:
+        if hasattr(event, "globalPos"):
+            return event.globalPos()
+        if hasattr(event, "position"):
+            return self._tree.viewport().mapToGlobal(event.position().toPoint())
+        if hasattr(event, "pos"):
+            return self._tree.viewport().mapToGlobal(event.pos())
+        return self._tree.viewport().mapToGlobal(self._tree.viewport().rect().center())
+
+    def _show_fluent_tooltip_for_event(self, event) -> None:
+        item = self._tooltip_item_at_event(event)
+        text = ""
+        if item is not None:
+            try:
+                text = item.toolTip(0).strip()
+            except RuntimeError:
+                text = ""
+        if not text:
+            self._hide_fluent_tooltip()
+            return
+        if self._fluent_tooltip is None:
+            self._fluent_tooltip = ToolTip(text, self._dialog_parent())
+        self._fluent_tooltip.setText(text)
+        self._fluent_tooltip.adjustSize()
+        self._fluent_tooltip.move(self._tooltip_global_pos(event) + QPoint(12, 18))
+        self._fluent_tooltip.show()
+
+    def _hide_fluent_tooltip(self) -> None:
+        if self._fluent_tooltip is not None:
+            self._fluent_tooltip.hide()
+
+    def _expand_all_items(self) -> None:
+        self._tree.expandAll()
+
+    def _collapse_all_items(self) -> None:
+        self._tree.collapseAll()
+
     def _add_menu_action(self, menu: RoundMenu, icon, text: str, callback) -> Action:
         action = Action(icon, text)
         action.triggered.connect(lambda checked=False: callback())
         menu.addAction(action)
         return action
+
+    def _open_picture_folder(self, node_id: Optional[str], *, picture_node: bool = False) -> None:
+        target_path = ""
+        if picture_node and node_id:
+            node = project_manager.get_node_by_id(node_id)
+            if node is not None and getattr(node, "kind", None) == "picture":
+                picture_id = getattr(node, "picture_id", "")
+                picture_path = project_manager.get_picture_path(picture_id) if picture_id else ""
+                if picture_path:
+                    target_path = str(Path(picture_path).parent)
+        else:
+            target_path = project_manager.resolve_picture_folder_path(node_id, create=True)
+
+        if not target_path:
+            InfoBar.warning("提示", "当前节点没有可打开的图片文件夹", parent=self, position=InfoBarPosition.TOP)
+            return
+
+        folder_path = Path(target_path)
+        folder_path.mkdir(parents=True, exist_ok=True)
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
+            InfoBar.error("打开失败", str(folder_path), parent=self, position=InfoBarPosition.TOP)
 
     @staticmethod
     def _canonical_group_type(group_type: Optional[str]) -> Optional[str]:
@@ -855,6 +988,8 @@ class ProjectTreeWidget(QWidget):
             return "datasets"
         if group_type in {"image_set", "images"}:
             return "images"
+        if group_type in {"picture_set", "pictures"}:
+            return "pictures"
         return group_type
 
     def _folder_collection_group(self, node_id: Optional[str]) -> Optional[str]:
@@ -886,21 +1021,22 @@ class ProjectTreeWidget(QWidget):
         if not target_data:
             return None
         target_kind, target_id = target_data
+        resolved_target_id = self._resolve_virtual_drop_container_id(target_kind, target_id)
         if source_kind == "series":
-            if target_kind == "data_file" and target_id != source_id:
-                return target_id
+            if target_kind == "data_file" and resolved_target_id != source_id:
+                return resolved_target_id
             if target_kind == "series":
                 parent_data = self._item_role_data(target_item.parent())
                 if parent_data and parent_data[0] == "data_file":
-                    return parent_data[1]
+                    return self._resolve_virtual_drop_container_id(parent_data[0], parent_data[1])
             return None
         if source_kind == "curve":
-            if target_kind == "image_work" and target_id != source_id:
-                return target_id
+            if target_kind == "image_work" and resolved_target_id != source_id:
+                return resolved_target_id
             if target_kind == "curve":
                 parent_data = self._item_role_data(target_item.parent())
                 if parent_data and parent_data[0] == "image_work":
-                    return parent_data[1]
+                    return self._resolve_virtual_drop_container_id(parent_data[0], parent_data[1])
             return None
         if target_kind == "folder" and target_id != source_id:
             return target_id
@@ -909,10 +1045,20 @@ class ProjectTreeWidget(QWidget):
             return parent_data[1]
         return None
 
+    def _resolve_virtual_drop_container_id(self, target_kind: str, target_id: str) -> Optional[str]:
+        if target_kind == "data_file":
+            node = project_manager.get_node_by_id(target_id)
+            return getattr(node, "data_file_id", None)
+        if target_kind == "image_work":
+            node = project_manager.get_node_by_id(target_id)
+            return getattr(node, "image_work_id", None)
+        return target_id
+
     def _perform_drop_move(
         self,
         source_item: Optional[QTreeWidgetItem],
         target_item: Optional[QTreeWidgetItem],
+        defer_view_refresh: bool = False,
     ) -> bool:
         source_item = self._drag_source_item_for_drop(source_item)
         source_data = self._item_role_data(source_item)
@@ -929,10 +1075,18 @@ class ProjectTreeWidget(QWidget):
         target_id = self._resolve_drop_target_id(source_kind, source_id, target_item)
         if not target_id or not self._move_node_to_target(source_kind, source_id, target_id):
             return False
-        self.refresh()
-        self.select_node(source_id)
+        if defer_view_refresh:
+            QTimer.singleShot(0, lambda node_id=source_id: self._finalize_drop_move(node_id))
+        else:
+            self._finalize_drop_move(source_id)
         self.project_modified.emit()
         return True
+
+    def _finalize_drop_move(self, source_id: str) -> None:
+        self.refresh()
+        self.select_node(source_id)
+        self._tree.viewport().update()
+        self._tree.updateGeometry()
 
     def _remember_drag_source_item(self, item: Optional[QTreeWidgetItem]) -> None:
         self._drag_source_item_key = self._item_key(item)
@@ -1024,34 +1178,110 @@ class ProjectTreeWidget(QWidget):
         def _walk(item: Optional[QTreeWidgetItem], depth: int) -> None:
             if item is None:
                 return
-            self._apply_wrapped_item_size_hint(item, viewport_width, depth)
-            for index in range(item.childCount()):
-                _walk(item.child(index), depth + 1)
+            try:
+                self._apply_wrapped_item_size_hint(item, viewport_width, depth)
+                child_count = item.childCount()
+            except RuntimeError:
+                return
+            for index in range(child_count):
+                try:
+                    child = item.child(index)
+                except RuntimeError:
+                    continue
+                _walk(child, depth + 1)
 
-        for index in range(self._tree.topLevelItemCount()):
-            _walk(self._tree.topLevelItem(index), 0)
+        try:
+            top_level_count = self._tree.topLevelItemCount()
+        except RuntimeError:
+            return
+        for index in range(top_level_count):
+            try:
+                top_item = self._tree.topLevelItem(index)
+            except RuntimeError:
+                continue
+            _walk(top_item, 0)
 
-    def _apply_wrapped_item_size_hint(self, item: QTreeWidgetItem, viewport_width: int, depth: int) -> None:
-        text = item.text(0).strip()
-        if not text:
+    def _update_wrapped_item_size_hint_for_item(self, item: Optional[QTreeWidgetItem]) -> None:
+        if item is None:
+            return
+        try:
+            viewport_width = max(180, self._tree.viewport().width())
+            self._apply_wrapped_item_size_hint(item, viewport_width, self._item_depth(item))
+        except RuntimeError:
             return
 
-        font_metrics = QFontMetrics(item.font(0))
-        indentation = max(0, depth) * max(12, self._tree.indentation())
-        icon_size = self._tree.iconSize()
-        icon_width = icon_size.width() if icon_size.isValid() else 16
-        icon_height = icon_size.height() if icon_size.isValid() else 16
-        available_width = max(120, viewport_width - indentation - icon_width - 44)
-        text_rect = font_metrics.boundingRect(
-            0,
-            0,
-            available_width,
-            4096,
-            int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignVCenter),
-            text,
-        )
-        content_height = max(font_metrics.lineSpacing(), icon_height, text_rect.height())
-        item.setSizeHint(0, QSize(max(available_width, text_rect.width()), content_height + 10))
+    def _reset_item_size_hints(self) -> None:
+        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+            if item is None:
+                return
+            try:
+                item.setSizeHint(0, QSize())
+                child_count = item.childCount()
+            except RuntimeError:
+                return
+            for index in range(child_count):
+                try:
+                    child = item.child(index)
+                except RuntimeError:
+                    continue
+                _walk(child)
+
+        try:
+            top_level_count = self._tree.topLevelItemCount()
+        except RuntimeError:
+            return
+        for index in range(top_level_count):
+            try:
+                top_item = self._tree.topLevelItem(index)
+            except RuntimeError:
+                continue
+            _walk(top_item)
+
+    def _apply_name_display_mode(self) -> None:
+        wrap_mode = self._name_display_mode == "wrap"
+        self._tree.setWordWrap(wrap_mode)
+        self._tree.setTextElideMode(Qt.TextElideMode.ElideNone if wrap_mode else Qt.TextElideMode.ElideRight)
+        self._tree.setUniformRowHeights(not wrap_mode)
+        if wrap_mode:
+            self._update_wrapped_item_size_hints()
+        else:
+            self._reset_item_size_hints()
+        self._tree.viewport().update()
+        self._tree.updateGeometry()
+
+    @staticmethod
+    def _item_depth(item: Optional[QTreeWidgetItem]) -> int:
+        depth = 0
+        current = item.parent() if item is not None else None
+        while current is not None:
+            depth += 1
+            current = current.parent()
+        return depth
+
+    def _apply_wrapped_item_size_hint(self, item: QTreeWidgetItem, viewport_width: int, depth: int) -> None:
+        try:
+            text = item.text(0).strip()
+            if not text:
+                return
+
+            font_metrics = QFontMetrics(item.font(0))
+            indentation = max(0, depth) * max(12, self._tree.indentation())
+            icon_size = self._tree.iconSize()
+            icon_width = icon_size.width() if icon_size.isValid() else 16
+            icon_height = icon_size.height() if icon_size.isValid() else 16
+            available_width = max(120, viewport_width - indentation - icon_width - 44)
+            text_rect = font_metrics.boundingRect(
+                0,
+                0,
+                available_width,
+                4096,
+                int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignVCenter),
+                text,
+            )
+            content_height = max(font_metrics.lineSpacing(), icon_height, text_rect.height())
+            item.setSizeHint(0, QSize(max(available_width, text_rect.width()), content_height + 10))
+        except RuntimeError:
+            return
 
     def _project_branch_toggle_key(self, item: Optional[QTreeWidgetItem], x_pos: float) -> Optional[str]:
         data = self._item_role_data(item)

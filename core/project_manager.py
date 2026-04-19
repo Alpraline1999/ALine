@@ -41,6 +41,8 @@ from models.schemas import (
     AISkill,
     AIAgent,
     ImageWork,
+    PictureAsset,
+    PictureNode,
     Project,
 )
 
@@ -49,6 +51,7 @@ _ALINE_VERSION = "0.3"
 _GROUP_TYPE_ALIASES = {
     "datasets": {"datasets", "dataset_set"},
     "images": {"images", "image_set"},
+    "pictures": {"pictures", "picture_set"},
     "tools": {"tools", "tool_set"},
     "pipeline_group": {"pipeline_group"},
     "template_group": {"template_group", "figure_template_group"},
@@ -63,7 +66,8 @@ _GROUP_TYPE_ALIASES = {
 
 _GROUP_DISPLAY_NAMES = {
     "datasets": "数据集",
-    "images": "图片集",
+    "images": "数据化",
+    "pictures": "图片集",
     "tools": "工具集",
     "pipeline_group": "Pipelines",
     "figure_template_group": "绘图模板组",
@@ -160,6 +164,7 @@ class ProjectManager:
             project_dir = Path(base_dir) / safe_name
             project_dir.mkdir(parents=True, exist_ok=True)
             (project_dir / "files" / "images").mkdir(parents=True, exist_ok=True)
+            (project_dir / "files" / "pictures").mkdir(parents=True, exist_ok=True)
             project_file = project_dir / f"{safe_name}.pyline"
             self.save(str(project_file))
 
@@ -360,6 +365,155 @@ class ProjectManager:
         if image is None:
             return ""
         return self.resolve_image_path(image, project)
+
+    def add_picture(self, image_path: str, name: Optional[str] = None, parent_id: Optional[str] = None) -> Optional[PictureNode]:
+        p = self.current_project
+        if p is None:
+            return None
+        image_path = self._normalize_path(image_path)
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"图片文件不存在: {image_path}")
+        if p.tree is None:
+            self.migrate_to_v2(p)
+        self._ensure_project_tree_groups(p)
+        if parent_id is None:
+            picture_folder = self._find_folder_by_group_type("pictures")
+            parent_id = picture_folder.id if picture_folder else None
+        picture = PictureAsset(
+            id=str(uuid.uuid4()),
+            name=name or os.path.basename(image_path),
+            image_path=image_path,
+        )
+        if p.file_path:
+            self._backup_picture_for_project(picture, p.file_path, None, target_folder_id=parent_id)
+        p.pictures.append(picture)
+        order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore[union-attr]
+        node = PictureNode(name=picture.name, parent_id=parent_id, picture_id=picture.id, order=order)
+        p.tree.nodes.append(node)  # type: ignore[union-attr]
+        p.is_modified = True
+        return node
+
+    def get_picture(self, picture_id: str) -> Optional[PictureAsset]:
+        if self.current_project is None:
+            return None
+        return self.current_project.find_picture(picture_id)
+
+    def remove_picture(self, picture_id: str) -> Optional[PictureAsset]:
+        project, picture = self._get_picture_owner(picture_id)
+        if project is None or picture is None:
+            return None
+        self._delete_picture_backup_if_managed(picture, project)
+        project.pictures = [item for item in project.pictures if item.id != picture_id]
+        project.is_modified = True
+        return picture
+
+    def rename_picture(self, picture_id: str, new_name: str) -> bool:
+        project, picture = self._get_picture_owner(picture_id)
+        if project is None or picture is None:
+            return False
+        old_name = picture.name
+        picture.name = new_name
+        if not project.file_path:
+            project.is_modified = True
+            return True
+        raw_path = picture.image_path or ""
+        if not raw_path:
+            project.is_modified = True
+            return True
+        picture_path = Path(raw_path)
+        old_path = picture_path if picture_path.is_absolute() else (Path(project.file_path).parent / picture_path).resolve()
+        if not old_path.exists():
+            project.is_modified = True
+            return True
+        new_filename = self._backup_filename(picture, old_path.suffix)
+        new_path = old_path.with_name(new_filename)
+        if new_path.exists() and new_path.resolve() != old_path.resolve():
+            new_path = self._ensure_unique_path(new_path, picture.id)
+        try:
+            old_path.rename(new_path)
+            try:
+                rel = new_path.relative_to(Path(project.file_path).parent)
+                picture.image_path = rel.as_posix()
+            except Exception:
+                picture.image_path = str(new_path)
+        except OSError:
+            picture.name = old_name
+            return False
+        project.is_modified = True
+        return True
+
+    def resolve_picture_path(self, picture: PictureAsset, project: Optional[Project] = None) -> str:
+        raw_path = picture.image_path or ""
+        if not raw_path:
+            return ""
+        path = Path(raw_path)
+        if path.is_absolute():
+            return str(path)
+        owner = project
+        if owner is None:
+            owner, _ = self._get_picture_owner(picture.id)
+        if owner and owner.file_path:
+            return str((Path(owner.file_path).parent / path).resolve())
+        return str(path)
+
+    def get_picture_path(self, picture_id: str) -> str:
+        project, picture = self._get_picture_owner(picture_id)
+        if picture is None:
+            return ""
+        return self.resolve_picture_path(picture, project)
+
+    def get_picture_target_folder_id(self, node_id: Optional[str] = None) -> Optional[str]:
+        p = self.current_project
+        if p is None or p.tree is None:
+            return None
+        pictures_root = self._find_folder_by_group_type("pictures")
+        if pictures_root is None:
+            return None
+        if not node_id:
+            return pictures_root.id
+        node = p.tree.get_node(node_id)
+        if node is None:
+            return pictures_root.id
+        if node.kind == "picture":
+            return node.parent_id or pictures_root.id
+        if node.kind == "folder" and self._canonical_group_type(getattr(node, "group_type", None)) == "pictures":
+            return node.id
+        return pictures_root.id
+
+    def resolve_picture_folder_path(self, node_id: Optional[str] = None, create: bool = False) -> str:
+        p = self.current_project
+        if p is None or p.tree is None or not p.file_path:
+            return ""
+        pictures_root = self._find_folder_by_group_type("pictures")
+        if pictures_root is None:
+            return ""
+        target_folder_id = self.get_picture_target_folder_id(node_id)
+        base_dir = self._project_assets_dir(p.file_path, "pictures")
+        parts: List[str] = []
+        current = p.tree.get_node(target_folder_id) if target_folder_id else None
+        while current is not None and current.kind == "folder" and current.id != pictures_root.id:
+            parts.append(self._safe_filename(current.name))
+            parent_id = getattr(current, "parent_id", None)
+            current = p.tree.get_node(parent_id) if parent_id else None
+        folder_path = base_dir.joinpath(*reversed(parts)) if parts else base_dir
+        if create:
+            folder_path.mkdir(parents=True, exist_ok=True)
+        return str(folder_path)
+
+    def prepare_picture_export_path(
+        self,
+        name: str,
+        suffix: str = ".png",
+        target_node_id: Optional[str] = None,
+    ) -> str:
+        folder_path = self.resolve_picture_folder_path(target_node_id, create=True)
+        if not folder_path:
+            return ""
+        safe_name = self._safe_filename(name or "chart")
+        candidate = Path(folder_path) / safe_name
+        if candidate.suffix.lower() != suffix.lower():
+            candidate = candidate.with_suffix(suffix)
+        return str(self._ensure_unique_path(candidate, str(uuid.uuid4())))
 
     # ─────────────────────────────────────────────
     # 曲线管理（PyLine 原有，保持完整）
@@ -688,7 +842,7 @@ class ProjectManager:
 
         - 已有 tree 则跳过（幂等）
         - datasets → DataFile + DataFileNode（挂在"数据集"文件夹）
-        - images   → ImageWorkNode（挂在"图片集"文件夹）
+        - images   → ImageWorkNode（挂在"数据化"文件夹）
         """
         p = project or self.current_project
         if p is None:
@@ -721,9 +875,9 @@ class ProjectManager:
                 )
                 p.tree.nodes.append(df_node)
 
-        # 图片集文件夹
+        # 数据化文件夹
         if p.images:
-            img_folder = FolderNode(name="图片集", order=order, group_type="images")
+            img_folder = FolderNode(name="数据化", order=order, group_type="images")
             p.tree.nodes.append(img_folder)
             order += 1
 
@@ -735,6 +889,20 @@ class ProjectManager:
                     order=len(p.tree.nodes),
                 )
                 p.tree.nodes.append(img_node)
+
+        if p.pictures:
+            picture_folder = FolderNode(name="图片集", order=order, group_type="pictures")
+            p.tree.nodes.append(picture_folder)
+            order += 1
+
+            for picture in p.pictures:
+                picture_node = PictureNode(
+                    name=picture.name,
+                    parent_id=picture_folder.id,
+                    picture_id=picture.id,
+                    order=len(p.tree.nodes),
+                )
+                p.tree.nodes.append(picture_node)
 
         # 工具集文件夹（空，占位）
         tools_folder = FolderNode(name="工具集", order=order, group_type="tools")
@@ -932,12 +1100,17 @@ class ProjectManager:
         node = p.tree.get_node(node_id)
         if node is None:
             return False
-        node.name = new_name
         # 同步关联数据实体名称
         if node.kind == "data_file":
             df = p.find_data_file(node.data_file_id)
             if df:
                 df.name = new_name
+        elif node.kind == "image_work":
+            if not self.rename_image(node.image_work_id, new_name):
+                return False
+        elif node.kind == "picture":
+            if not self.rename_picture(node.picture_id, new_name):
+                return False
         elif node.kind == "pipeline":
             global_assets.update_saved_pipeline(node.pipeline_id, name=new_name)
         elif node.kind == "figure_template":
@@ -954,6 +1127,9 @@ class ProjectManager:
             global_assets.update_ai_skill(node.skill_id, name=new_name)
         elif node.kind == "ai_agent":
             global_assets.update_ai_agent(node.agent_id, name=new_name)
+        node.name = new_name
+        if node.kind in {"folder", "picture"} and self._node_collection_group_type(node.id) == "pictures":
+            self._sync_picture_storage()
         p.is_modified = True
         return True
 
@@ -977,6 +1153,16 @@ class ProjectManager:
                 continue
             if node.kind == "data_file":
                 p.data_files = [df for df in p.data_files if df.id != node.data_file_id]
+            elif node.kind == "image_work":
+                image = next((img for img in p.images if img.id == node.image_work_id), None)
+                if image is not None:
+                    self._delete_backup_if_managed(image, p)
+                p.images = [img for img in p.images if img.id != node.image_work_id]
+            elif node.kind == "picture":
+                picture = next((item for item in p.pictures if item.id == node.picture_id), None)
+                if picture is not None:
+                    self._delete_picture_backup_if_managed(picture, p)
+                p.pictures = [item for item in p.pictures if item.id != node.picture_id]
             elif node.kind == "pipeline":
                 global_assets.delete_saved_pipeline(node.pipeline_id)
             elif node.kind == "figure_template":
@@ -1032,11 +1218,15 @@ class ProjectManager:
                 current = p.tree.get_node(current.parent_id) if current.parent_id else None
             node.parent_id = new_parent_id
             node.order = new_order
+            if self._node_collection_group_type(node.id) == "pictures":
+                self._sync_picture_storage()
             p.is_modified = True
             return True
         if node.kind == "data_file" and parent_group_type not in _GROUP_TYPE_ALIASES["datasets"]:
             return False
         if node.kind == "image_work" and parent_group_type not in _GROUP_TYPE_ALIASES["images"]:
+            return False
+        if node.kind == "picture" and parent_group_type not in _GROUP_TYPE_ALIASES["pictures"]:
             return False
         if node.kind in _TOOL_NODE_PARENT_GROUP:
             required_group = _TOOL_NODE_PARENT_GROUP[node.kind]
@@ -1052,6 +1242,8 @@ class ProjectManager:
                 return False
         node.parent_id = new_parent_id
         node.order = new_order
+        if node.kind in {"folder", "picture"} and self._node_collection_group_type(node.id) == "pictures":
+            self._sync_picture_storage()
         p.is_modified = True
         return True
 
@@ -1097,6 +1289,7 @@ class ProjectManager:
         canonical_map = {
             "dataset_set": "datasets",
             "image_set": "images",
+            "picture_set": "pictures",
             "tool_set": "tools",
             "template_group": "figure_template_group",
             "figure_template_group": "figure_template_group",
@@ -1190,12 +1383,13 @@ class ProjectManager:
         changed = False
         ds_folder, ds_changed = self._ensure_group_folder(p, "datasets", None, 0)
         img_folder, img_changed = self._ensure_group_folder(p, "images", None, 1)
-        analysis_folder, analysis_changed = self._ensure_group_folder(p, "analysis_result_group", None, 2)
-        changed = changed or ds_changed or img_changed
+        picture_folder, picture_changed = self._ensure_group_folder(p, "pictures", None, 2)
+        analysis_folder, analysis_changed = self._ensure_group_folder(p, "analysis_result_group", None, 3)
+        changed = changed or ds_changed or img_changed or picture_changed
         changed = changed or analysis_changed
         changed = self._migrate_project_assets_to_global(p) or changed
 
-        for folder in (ds_folder, img_folder, analysis_folder):
+        for folder in (ds_folder, img_folder, picture_folder, analysis_folder):
             if folder is None:
                 continue
             changed = self._merge_duplicate_group_folders(p, folder.id) or changed
@@ -1206,6 +1400,8 @@ class ProjectManager:
                 desired_parent_id = ds_folder.id
             elif node.kind == "image_work" and node.parent_id is None:
                 desired_parent_id = img_folder.id
+            elif node.kind == "picture" and node.parent_id is None:
+                desired_parent_id = picture_folder.id
 
             if desired_parent_id is not None and node.parent_id != desired_parent_id:
                 node.parent_id = desired_parent_id
@@ -1552,7 +1748,14 @@ class ProjectManager:
                     return project, image
         return None, None
 
-    def _backup_filename(self, image: ImageWork, source_suffix: str) -> str:
+    def _get_picture_owner(self, picture_id: str) -> Tuple[Optional[Project], Optional[PictureAsset]]:
+        for project in self._projects:
+            for picture in project.pictures:
+                if picture.id == picture_id:
+                    return project, picture
+        return None, None
+
+    def _backup_filename(self, image: ImageWork | PictureAsset, source_suffix: str) -> str:
         name = self._safe_filename(image.name)
         p = Path(name)
         if p.suffix:
@@ -1570,8 +1773,8 @@ class ProjectManager:
                 return trial
         return candidate.with_name(f"{stem}_{image_id}{suffix}")
 
-    def _project_assets_dir(self, project_file_path: str) -> Path:
-        return Path(project_file_path).parent / "files" / "images"
+    def _project_assets_dir(self, project_file_path: str, folder_name: str = "images") -> Path:
+        return Path(project_file_path).parent / "files" / folder_name
 
     def _backup_image_for_project(
         self,
@@ -1585,7 +1788,7 @@ class ProjectManager:
         source_path = Path(source_abs)
         if not source_path.exists():
             raise FileNotFoundError(f"图像文件不存在: {source_abs}")
-        backup_dir = self._project_assets_dir(project_file_path)
+        backup_dir = self._project_assets_dir(project_file_path, "images")
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_filename = self._backup_filename(image, source_path.suffix)
         backup_path = backup_dir / backup_filename
@@ -1594,13 +1797,121 @@ class ProjectManager:
             current_backup_abs = str(
                 (Path(project_file_path).parent / image.image_path).resolve()
             )
-        if backup_path.exists() and str(backup_path.resolve()) != current_backup_abs:
+        if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
             backup_path = self._ensure_unique_path(backup_path, image.id)
         if source_path.resolve() != backup_path.resolve():
             shutil.copy2(source_path, backup_path)
         rel_path = backup_path.relative_to(Path(project_file_path).parent)
         image.image_path = rel_path.as_posix()
         image.source_image_path = str(source_path)
+
+    def _backup_picture_for_project(
+        self,
+        picture: PictureAsset,
+        project_file_path: str,
+        source_project: Optional[Project],
+        target_folder_id: Optional[str] = None,
+    ) -> None:
+        source_abs = self.resolve_picture_path(picture, source_project)
+        if not source_abs:
+            return
+        source_path = Path(source_abs)
+        if not source_path.exists():
+            raise FileNotFoundError(f"图片文件不存在: {source_abs}")
+        backup_root = self._project_assets_dir(project_file_path, "pictures")
+        relative_subdir = self._picture_relative_subdir(picture)
+        if relative_subdir is not None:
+            backup_dir = backup_root / relative_subdir
+        elif target_folder_id and self.current_project is not None and self.current_project.file_path == project_file_path:
+            folder_path = self.resolve_picture_folder_path(target_folder_id, create=True)
+            backup_dir = Path(folder_path) if folder_path else backup_root
+        else:
+            backup_dir = backup_root
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_filename = self._backup_filename(picture, source_path.suffix)
+        backup_path = backup_dir / backup_filename
+        current_backup_abs = ""
+        if picture.image_path and not Path(picture.image_path).is_absolute():
+            current_backup_abs = str((Path(project_file_path).parent / picture.image_path).resolve())
+        if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
+            backup_path = self._ensure_unique_path(backup_path, picture.id)
+        if source_path.resolve() != backup_path.resolve():
+            shutil.copy2(source_path, backup_path)
+        rel_path = backup_path.relative_to(Path(project_file_path).parent)
+        picture.image_path = rel_path.as_posix()
+
+    def _picture_relative_subdir(self, picture: PictureAsset) -> Optional[Path]:
+        raw_path = picture.image_path or ""
+        if not raw_path or Path(raw_path).is_absolute():
+            return None
+        parts = Path(raw_path).parts
+        if len(parts) >= 3 and parts[0] == "files" and parts[1] == "pictures":
+            return Path(*parts[2:-1]) if len(parts) > 3 else Path()
+        return None
+
+    def _node_collection_group_type(self, node_id: str) -> Optional[str]:
+        p = self.current_project
+        if p is None or p.tree is None:
+            return None
+        current = p.tree.get_node(node_id)
+        while current is not None:
+            if current.kind == "folder":
+                group_type = self._canonical_group_type(getattr(current, "group_type", None))
+                if group_type is not None:
+                    return group_type
+            parent_id = getattr(current, "parent_id", None)
+            current = p.tree.get_node(parent_id) if parent_id else None
+        return None
+
+    def _sync_picture_storage(self) -> None:
+        p = self.current_project
+        if p is None or p.tree is None or not p.file_path:
+            return
+        base_dir = self._project_assets_dir(p.file_path, "pictures")
+        base_dir.mkdir(parents=True, exist_ok=True)
+        project_root = Path(p.file_path).parent
+        for node in [item for item in p.tree.nodes if item.kind == "picture"]:
+            picture = p.find_picture(node.picture_id)
+            if picture is None:
+                continue
+            current_path_str = self.resolve_picture_path(picture, p)
+            if not current_path_str:
+                continue
+            current_path = Path(current_path_str)
+            if not current_path.exists():
+                continue
+            target_folder = self.resolve_picture_folder_path(node.id, create=True)
+            if not target_folder:
+                continue
+            target_dir = Path(target_folder)
+            target_name = self._backup_filename(picture, current_path.suffix or Path(picture.name).suffix)
+            target_path = target_dir / target_name
+            if target_path.exists() and target_path.resolve() != current_path.resolve():
+                target_path = self._ensure_unique_path(target_path, picture.id)
+            if current_path.resolve() != target_path.resolve():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(current_path), str(target_path))
+            try:
+                picture.image_path = target_path.relative_to(project_root).as_posix()
+            except Exception:
+                picture.image_path = str(target_path)
+        self._remove_empty_directories(base_dir)
+
+    def _remove_empty_directories(self, root_dir: Path) -> None:
+        if not root_dir.exists():
+            return
+        for child in sorted(root_dir.rglob("*"), reverse=True):
+            if not child.is_dir():
+                continue
+            try:
+                next(child.iterdir())
+            except StopIteration:
+                try:
+                    child.rmdir()
+                except OSError:
+                    pass
+            except OSError:
+                continue
 
     def _sync_project_backups(
         self,
@@ -1612,11 +1923,26 @@ class ProjectManager:
         source_project.file_path = source_file_path
         for image in project.images:
             self._backup_image_for_project(image, target_file_path, source_project)
+        for picture in project.pictures:
+            self._backup_picture_for_project(picture, target_file_path, source_project)
 
     def _delete_backup_if_managed(self, image: ImageWork, project: Project) -> None:
         if not project.file_path:
             return
         raw_path = image.image_path or ""
+        if not raw_path or Path(raw_path).is_absolute():
+            return
+        backup_path = Path(project.file_path).parent / raw_path
+        try:
+            if backup_path.exists():
+                backup_path.unlink()
+        except OSError:
+            pass
+
+    def _delete_picture_backup_if_managed(self, picture: PictureAsset, project: Project) -> None:
+        if not project.file_path:
+            return
+        raw_path = picture.image_path or ""
         if not raw_path or Path(raw_path).is_absolute():
             return
         backup_path = Path(project.file_path).parent / raw_path

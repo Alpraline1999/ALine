@@ -21,9 +21,10 @@ from qfluentwidgets import (
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
 )
 
-from core.extension_api import build_extension_entry, extension_registry
+from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
 from ui.theme import make_section_label, make_hsep
 from ui.dialogs.fluent_dialogs import TextInputDialog
+from ui.dialogs.export_flow import choose_data_export_plan
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from core.global_assets import global_assets
 from core.project_manager import project_manager
@@ -93,7 +94,7 @@ class ProcessPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._extension_panel_visible = True
+        self._extension_panel_visible = False
         self._src_xs: List[float] = []
         self._src_ys: List[float] = []
         self._out_xs: List[float] = []
@@ -105,6 +106,8 @@ class ProcessPage(QWidget):
         self._processing_op_hints: Dict[str, str] = dict(_OP_HINTS)
         self._processing_extension_options: Dict[str, Dict[str, Any]] = {}
         self._selected_src_id: Optional[str] = None
+        self._selected_source_kind: Optional[str] = None
+        self._selected_source_node_id: Optional[str] = None
         self._current_pipeline_id: Optional[str] = None
         self._pipeline_template_ids: List[str] = []
         self._save_target_ids: List[Optional[str]] = []
@@ -134,8 +137,10 @@ class ProcessPage(QWidget):
         self._extension_panel = ExtensionConfigPanel("处理扩展", "添加扩展", self)
         self._extension_panel.set_context("数据处理", "当前操作链")
         self._extension_panel.apply_requested.connect(self._on_processing_extension_apply)
+        self._extension_panel.reload_requested.connect(self._reload_processing_extensions)
         root.addWidget(self._extension_panel)
         self._refresh_processing_extensions()
+        self.set_extension_panel_visible(self._extension_panel_visible)
 
     def supports_extension_panel_toggle(self) -> bool:
         return True
@@ -243,23 +248,20 @@ class ProcessPage(QWidget):
         mv.addStretch()
 
         mv.addWidget(make_hsep())
-        mv.addWidget(make_section_label("结果保存"))
+        mv.addWidget(make_section_label("导出为数据列"))
 
-        save_name_row = QHBoxLayout()
-        save_name_row.addWidget(BodyLabel("名称:", self))
+        export_hint = BodyLabel("导出时会先命名，并选择或新建目标数据文件。", self)
+        export_hint.setWordWrap(True)
+        mv.addWidget(export_hint)
+
         self._save_name_edit = LineEdit(self)
         self._save_name_edit.setPlaceholderText("processed_result")
-        save_name_row.addWidget(self._save_name_edit, 1)
-        mv.addLayout(save_name_row)
-
-        save_target_row = QHBoxLayout()
-        save_target_row.addWidget(BodyLabel("目标:", self))
         self._save_target_combo = ComboBox(self)
-        save_target_row.addWidget(self._save_target_combo, 1)
-        mv.addLayout(save_target_row)
+        self._save_name_edit.hide()
+        self._save_target_combo.hide()
 
         mv.addWidget(make_hsep())
-        save_btn = PrimaryPushButton(FIF.SAVE, "保存结果到项目")
+        save_btn = PrimaryPushButton(FIF.SAVE, "导出为数据列")
         save_btn.clicked.connect(self._save_result)
         mv.addWidget(save_btn)
         self._refresh_pipeline_templates()
@@ -515,23 +517,35 @@ class ProcessPage(QWidget):
             return
         from models.schemas import DataFile, DataSeries
 
-        result_name = self._save_name_edit.text().strip() or self._suggest_result_name()
+        default_name = self._save_name_edit.text().strip() or self._suggest_result_name()
+        preferred_target_node_id = self._selected_source_node_id if self._selected_source_kind == "data_file" else None
+        export_plan = choose_data_export_plan(
+            self,
+            title="导出为数据列",
+            default_export_name=default_name,
+            default_file_name=f"{default_name}.process",
+            preferred_target_node_id=preferred_target_node_id,
+            file_suffix=".process",
+        )
+        if export_plan is None:
+            return
+        result_name = export_plan.export_name
+        self._save_name_edit.setText(result_name)
         series = DataSeries(
             name=result_name,
             x=list(self._out_xs),
             y=list(self._out_ys),
             source="computed",
         )
-        target_id = self._selected_save_target_id()
-        if target_id:
-            target_file = p.find_data_file(target_id)
-            if target_file is None or not project_manager.add_series_to_data_file(target_id, series):
+        if export_plan.target_data_file_id:
+            target_file = p.find_data_file(export_plan.target_data_file_id)
+            if target_file is None or not project_manager.add_series_to_data_file(export_plan.target_data_file_id, series):
                 InfoBar.error("保存失败", "未能追加到目标数据文件", parent=self, position=InfoBarPosition.TOP)
                 return
             message = f"{series.name} -> {target_file.name}"
         else:
-            data_file = DataFile(name=f"{result_name}.process", series=[series])
-            node = project_manager.add_data_file(data_file)
+            data_file = DataFile(name=export_plan.new_data_file_name or f"{result_name}.process", series=[series])
+            node = project_manager.add_data_file(data_file, parent_id=export_plan.new_parent_id)
             if node is None:
                 InfoBar.error("保存失败", "未能创建处理结果数据文件", parent=self, position=InfoBarPosition.TOP)
                 return
@@ -613,6 +627,24 @@ class ProcessPage(QWidget):
             self._processing_extension_entries(),
             saved_options=self._processing_extension_options,
             current_type=current_type if extension_registry.get_processing(current_type or "") else None,
+        )
+
+    def _reload_processing_extensions(self) -> None:
+        report = reload_builtin_extensions()
+        self._refresh_processing_extensions()
+        if report.get("errors"):
+            InfoBar.warning(
+                "重载完成",
+                f"已加载 {len(report.get('loaded', []))} 个扩展，{len(report.get('errors', []))} 个失败",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return
+        InfoBar.success(
+            "已重载",
+            f"已重新加载 {len(report.get('loaded', []))} 个扩展",
+            parent=self,
+            position=InfoBarPosition.TOP,
         )
 
     def _op_label_for_type(self, op_type: str) -> str:
@@ -708,6 +740,8 @@ class ProcessPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def receive_data(self, data_type: str, obj_id: str):
+        self._selected_source_kind = data_type
+        self._selected_source_node_id = obj_id
         if self._set_source_from_tree_node(data_type, obj_id):
             return
         self._current_input_label.setText("当前输入: 未选择")

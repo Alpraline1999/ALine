@@ -11,6 +11,7 @@ from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
 from ui.theme import text_color, secondary_color, placeholder_color
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from core.shortcut_manager import shortcut_manager
+from core.ui_preferences import get_tree_name_display_mode, set_tree_name_display_mode
 from core.ai.providers import (
     get_provider_preset,
     list_builtin_models,
@@ -46,6 +47,7 @@ class SettingsPage(QWidget):
     """设置页面 - 主题切换、快捷键自定义等配置"""
 
     shortcuts_changed = Signal()  # 快捷键保存后发出
+    tree_display_mode_changed = Signal(str)
     ai_panel_visibility_changed = Signal(bool)
     project_modified = Signal()
     assets_modified = Signal()
@@ -54,6 +56,9 @@ class SettingsPage(QWidget):
         super().__init__(parent)
         self._title_label = None
         self._theme_label = None
+        self._tree_display_mode_label = None
+        self._tree_display_mode_combo = None
+        self._tree_display_mode_keys = ["wrap", "elide"]
         self._appearance_title = None
         self._lang_title = None
         self._lang_placeholder = None
@@ -111,11 +116,6 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(40, 40, 40, 40)
         outer.setWidget(content)
 
-        # 标题
-        self._title_label = BodyLabel("设置", content)
-        self._title_label.setStyleSheet(f"font-size: 32px; font-weight: bold; color: {text_color()};")
-        layout.addWidget(self._title_label)
-
         # ── 外观设置 ──
         self._appearance_card = CardWidget(content)
         appearance_layout = QVBoxLayout(self._appearance_card)
@@ -136,6 +136,21 @@ class SettingsPage(QWidget):
         theme_layout.addWidget(self.theme_combo)
 
         appearance_layout.addLayout(theme_layout)
+
+        tree_mode_layout = QVBoxLayout()
+        self._tree_display_mode_label = BodyLabel("项目树长名称显示", content)
+        self._tree_display_mode_label.setStyleSheet(f"color: {text_color()};")
+        tree_mode_layout.addWidget(self._tree_display_mode_label)
+
+        self._tree_display_mode_combo = ComboBox(content)
+        self._tree_display_mode_combo.addItems(["自动换行", "部分隐藏"])
+        current_mode = get_tree_name_display_mode()
+        current_index = 1 if current_mode == "elide" else 0
+        self._tree_display_mode_combo.setCurrentIndex(current_index)
+        self._tree_display_mode_combo.currentIndexChanged.connect(self._on_tree_display_mode_changed)
+        tree_mode_layout.addWidget(self._tree_display_mode_combo)
+        appearance_layout.addLayout(tree_mode_layout)
+
         layout.addWidget(self._appearance_card)
 
         # ── 语言设置（预留）──
@@ -491,9 +506,10 @@ class SettingsPage(QWidget):
         from ui.theme import card_background_color, border_color
         tc = text_color()
         pc = placeholder_color()
-        self._title_label.setStyleSheet(f"font-size: 32px; font-weight: bold; color: {tc};")
         self._appearance_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
         self._theme_label.setStyleSheet(f"color: {tc};")
+        if self._tree_display_mode_label is not None:
+            self._tree_display_mode_label.setStyleSheet(f"color: {tc};")
         if self._shortcuts_title:
             self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
         if self._shortcut_filter_edit is not None:
@@ -516,6 +532,18 @@ class SettingsPage(QWidget):
                 lbl.setStyleSheet(f"color: {pc}; font-size: 11px;")
         if hasattr(self, "_ai_provider_hint") and self._ai_provider_hint is not None:
             self._ai_provider_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
+
+    def _current_tree_display_mode(self) -> str:
+        if self._tree_display_mode_combo is None:
+            return "wrap"
+        idx = self._tree_display_mode_combo.currentIndex()
+        if 0 <= idx < len(self._tree_display_mode_keys):
+            return self._tree_display_mode_keys[idx]
+        return "wrap"
+
+    def _on_tree_display_mode_changed(self, _index: int) -> None:
+        mode = set_tree_name_display_mode(self._current_tree_display_mode())
+        self.tree_display_mode_changed.emit(mode)
 
     # ── AI 配置方法 ──────────────────────────────────────────
 

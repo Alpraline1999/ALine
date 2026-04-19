@@ -4,14 +4,26 @@ import json
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CaptionLabel, CardWidget, ComboBox, PlainTextEdit, PrimaryPushButton, PushButton
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
+from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
+    CardWidget,
+    ComboBox,
+    FluentIcon as FIF,
+    PlainTextEdit,
+    PrimaryPushButton,
+    PushButton,
+    SmoothScrollArea,
+    ToolButton,
+)
 
 
 class ExtensionConfigPanel(QWidget):
     """页面级自定义扩展侧边栏。"""
 
     apply_requested = Signal(str, dict)
+    reload_requested = Signal()
 
     def __init__(self, title: str = "自定义扩展", action_text: str = "应用扩展", parent=None):
         super().__init__(parent)
@@ -26,7 +38,18 @@ class ExtensionConfigPanel(QWidget):
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(4)
 
-        card = CardWidget(self)
+        scroll = SmoothScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        root.addWidget(scroll)
+
+        container = QWidget(scroll)
+        scroll.setWidget(container)
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        card = CardWidget(container)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
@@ -35,14 +58,6 @@ class ExtensionConfigPanel(QWidget):
         self._title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(self._title_label)
 
-        self._page_label = BodyLabel("当前页面: 未设置", card)
-        self._page_label.setWordWrap(True)
-        layout.addWidget(self._page_label)
-
-        self._target_label = BodyLabel("当前目标: 未设置", card)
-        self._target_label.setWordWrap(True)
-        layout.addWidget(self._target_label)
-
         selector_row = QHBoxLayout()
         self._selector = ComboBox(card)
         self._selector.currentIndexChanged.connect(self._on_selection_changed)
@@ -50,6 +65,10 @@ class ExtensionConfigPanel(QWidget):
         self._reset_btn = PushButton("重置配置", card)
         self._reset_btn.clicked.connect(self._reset_current)
         selector_row.addWidget(self._reset_btn)
+        self._reload_btn = ToolButton(getattr(FIF, "SYNC", FIF.UPDATE), card)
+        self._reload_btn.setToolTip("重载扩展")
+        self._reload_btn.clicked.connect(lambda checked=False: self.reload_requested.emit())
+        selector_row.addWidget(self._reload_btn)
         layout.addLayout(selector_row)
 
         desc_title = BodyLabel("说明", card)
@@ -60,13 +79,13 @@ class ExtensionConfigPanel(QWidget):
         self._description_label.setWordWrap(True)
         layout.addWidget(self._description_label)
 
-        self._usage_hint_label = CaptionLabel("配置 JSON 会在应用时作为 params/options 传给扩展处理函数。", card)
-        self._usage_hint_label.setWordWrap(True)
-        layout.addWidget(self._usage_hint_label)
-
         config_title = BodyLabel("扩展配置 JSON", card)
         config_title.setStyleSheet("font-weight: bold;")
         layout.addWidget(config_title)
+
+        self._usage_hint_label = CaptionLabel("配置 JSON 会在应用时作为 params/options 传给扩展处理函数。", card)
+        self._usage_hint_label.setWordWrap(True)
+        layout.addWidget(self._usage_hint_label)
 
         self._config_help_label = CaptionLabel("保持 {} 可使用默认配置。", card)
         self._config_help_label.setWordWrap(True)
@@ -74,7 +93,7 @@ class ExtensionConfigPanel(QWidget):
 
         self._editor = PlainTextEdit(card)
         self._editor.setPlaceholderText('{\n  "option": "value"\n}')
-        self._editor.setFixedHeight(220)
+        self._editor.setMinimumHeight(220)
         layout.addWidget(self._editor)
 
         btn_row = QHBoxLayout()
@@ -86,7 +105,8 @@ class ExtensionConfigPanel(QWidget):
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
 
-        root.addWidget(card)
+        outer.addWidget(card)
+        outer.addStretch()
         self._set_empty_state()
 
     def set_panel_title(self, title: str) -> None:
@@ -97,8 +117,7 @@ class ExtensionConfigPanel(QWidget):
         self._apply_btn.setText(self._action_text)
 
     def set_context(self, page_name: str, target_name: str) -> None:
-        self._page_label.setText(f"当前页面: {page_name or '未设置'}")
-        self._target_label.setText(f"当前目标: {target_name or '未设置'}")
+        del page_name, target_name
 
     def set_entries(
         self,
@@ -185,6 +204,7 @@ class ExtensionConfigPanel(QWidget):
         self._editor.setPlainText("{}")
         self._editor.setEnabled(False)
         self._apply_btn.setEnabled(False)
+        self._reload_btn.setEnabled(True)
         self._reset_btn.setEnabled(False)
 
     def _on_selection_changed(self, idx: int) -> None:
@@ -198,6 +218,7 @@ class ExtensionConfigPanel(QWidget):
         options = self._saved_options.get(type_id, self._default_options_for_type(type_id))
         self._editor.setEnabled(True)
         self._apply_btn.setEnabled(True)
+        self._reload_btn.setEnabled(True)
         self._reset_btn.setEnabled(True)
         self._editor.setPlainText(json.dumps(options, ensure_ascii=False, indent=2))
 

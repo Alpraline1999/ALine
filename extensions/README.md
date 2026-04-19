@@ -14,6 +14,18 @@ ALine 支持 5 类 Python 扩展，并且应用启动时会自动加载 `extensi
 - 文件名建议使用 `snake_case.py`。
 - 以下划线开头的文件不会被自动加载。
 
+仓库内已经附带一组可直接加载的示例扩展与对应 JSON：
+
+- `processing_scale_demo.py` / `processing_scale_demo.json`
+- `analysis_peak_span_demo.py` / `analysis_peak_span_demo.json`
+- `plot_reference_line_demo.py` / `plot_reference_line_demo.json`
+- `plot_style_presentation_demo.py` / `plot_style_presentation_demo.json`
+- `curve_style_highlight_demo.py` / `curve_style_highlight_demo.json`
+
+其中 `.py` 文件会在启动时自动加载，`.json` 文件可直接作为扩展面板里的示例配置粘贴或另存。
+
+处理页、分析页、图表页右侧扩展面板都带有“重载扩展”按钮；修改 `extensions/*.py` 后无需重启应用，点击该按钮即可重新扫描并刷新当前页面的扩展列表。
+
 ## 2. 必须提供的入口函数
 
 每个扩展文件都必须导出：
@@ -54,12 +66,7 @@ ExtensionConfigField(
 ## 4. 完整示例
 
 ```python
-from core.extension_api import (
-    AnalysisExtension,
-    ExtensionConfigField,
-    PlotStyleExtension,
-    ProcessingExtension,
-)
+from core.extension_api import AnalysisExtension, ExtensionConfigField, PlotStyleExtension, ProcessingExtension
 
 
 def scale_y(xs, ys, params):
@@ -138,6 +145,97 @@ def register_extensions(registry):
                     field_type="number",
                     default=2.4,
                 )
+            ],
+        )
+    )
+```
+
+## 4.1 PlotStyleExtension 完整示例
+
+```python
+from core.extension_api import ExtensionConfigField, PlotStyleExtension
+
+
+def presentation_style(state, options):
+    updated = dict(state)
+    updated["grid"] = bool(options.get("grid", True))
+    updated["grid_alpha"] = float(options.get("grid_alpha", 0.28))
+    updated["line_width"] = float(options.get("line_width", 2.2))
+    updated["marker_size"] = float(options.get("marker_size", 5.5))
+    updated["font_size"] = int(options.get("font_size", updated.get("font_size", 10)))
+    updated["legend_font_size"] = int(options.get("legend_font_size", updated.get("legend_font_size", 8)))
+    return updated
+
+
+def register_extensions(registry):
+    registry.register_plot_style(
+        PlotStyleExtension(
+            type="presentation_style",
+            name="演示版绘图样式",
+            handler=presentation_style,
+            description="统一调高线宽、字号和网格透明度。",
+            default_options={
+                "grid": True,
+                "grid_alpha": 0.28,
+                "line_width": 2.2,
+                "marker_size": 5.5,
+                "font_size": 11,
+                "legend_font_size": 9,
+            },
+            config_fields=[
+                ExtensionConfigField(key="grid", label="显示网格", field_type="boolean", default=True),
+                ExtensionConfigField(key="grid_alpha", label="网格透明度", field_type="number", default=0.28),
+                ExtensionConfigField(key="line_width", label="线宽", field_type="number", default=2.2),
+                ExtensionConfigField(key="marker_size", label="点大小", field_type="number", default=5.5),
+                ExtensionConfigField(key="font_size", label="字号", field_type="integer", default=11),
+                ExtensionConfigField(key="legend_font_size", label="图例字号", field_type="integer", default=9),
+            ],
+        )
+    )
+```
+
+## 4.2 CurveStyleExtension 完整示例
+
+```python
+from core.extension_api import CurveStyleExtension, ExtensionConfigField
+
+
+def highlight_curve(style, options):
+    updated = dict(style)
+    updated["color"] = str(options.get("color", updated.get("color") or "#D13438"))
+    updated["linestyle"] = str(options.get("linestyle", updated.get("linestyle") or "-"))
+    updated["linewidth"] = float(options.get("linewidth", updated.get("linewidth", 1.6)))
+    updated["marker"] = str(options.get("marker", updated.get("marker") or "o"))
+    updated["marker_size"] = float(options.get("marker_size", updated.get("marker_size", 5.0)))
+    updated["alpha"] = float(options.get("alpha", updated.get("alpha", 1.0)))
+    updated["markevery"] = int(options.get("markevery", updated.get("markevery", 1)))
+    return updated
+
+
+def register_extensions(registry):
+    registry.register_curve_style(
+        CurveStyleExtension(
+            type="highlight_curve",
+            name="重点曲线高亮",
+            handler=highlight_curve,
+            description="统一设置颜色、线型、点型与采样密度。",
+            default_options={
+                "color": "#D13438",
+                "linestyle": "-",
+                "linewidth": 2.4,
+                "marker": "o",
+                "marker_size": 5.0,
+                "alpha": 1.0,
+                "markevery": 1,
+            },
+            config_fields=[
+                ExtensionConfigField(key="color", label="颜色", field_type="string", default="#D13438"),
+                ExtensionConfigField(key="linestyle", label="线型", field_type="string", default="-"),
+                ExtensionConfigField(key="linewidth", label="线宽", field_type="number", default=2.4),
+                ExtensionConfigField(key="marker", label="点型", field_type="string", default="o"),
+                ExtensionConfigField(key="marker_size", label="点大小", field_type="number", default=5.0),
+                ExtensionConfigField(key="alpha", label="透明度", field_type="number", default=1.0),
+                ExtensionConfigField(key="markevery", label="标记密度", field_type="integer", default=1),
             ],
         )
     )

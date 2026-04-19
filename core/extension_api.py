@@ -91,6 +91,13 @@ class ExtensionRegistry:
         self._plot_style: Dict[str, PlotStyleExtension] = {}
         self._curve_style: Dict[str, CurveStyleExtension] = {}
 
+    def clear(self) -> None:
+        self._processing.clear()
+        self._analysis.clear()
+        self._plot.clear()
+        self._plot_style.clear()
+        self._curve_style.clear()
+
     def register_processing(self, extension: ProcessingExtension) -> None:
         if not extension.type.strip():
             raise ValueError("processing extension type is required")
@@ -226,6 +233,11 @@ def default_extensions_directory(base_dir: str | Path | None = None) -> Path:
 
 def load_builtin_extensions(directory: str | Path | None = None) -> Dict[str, List[str]]:
     return extension_registry.load_from_directory(default_extensions_directory(directory))
+
+
+def reload_builtin_extensions(directory: str | Path | None = None) -> Dict[str, List[str]]:
+    extension_registry.clear()
+    return load_builtin_extensions(directory)
 
 
 def register_processing_extension(extension: ProcessingExtension) -> None:

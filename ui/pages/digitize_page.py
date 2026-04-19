@@ -4,13 +4,14 @@ from PySide6.QtGui import QFont, QColor
 from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePushButton,
     LineEdit, SpinBox, ColorPickerButton, BodyLabel, CaptionLabel, SubtitleLabel,
     PushButton as FPushButton, TableWidget, ComboBox, TreeWidget, TreeItemDelegate,
-    Slider, SmoothScrollArea, TabWidget, TabCloseButtonDisplayMode,
+    Slider, SmoothScrollArea, TabWidget, TabCloseButtonDisplayMode, PrimaryPushButton,
     MessageBox, InfoBar, RoundMenu, MessageBoxBase,
     ToolTipFilter, ToolTipPosition, Action)
 
 from ui.theme import text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
+from ui.dialogs.export_flow import choose_data_export_plan
 from core.project_manager import project_manager
 from models.schemas import CalibrationData, DataFile, DataSeries
 
@@ -880,7 +881,7 @@ class DigitizePage(QWidget):
         self._export_target_label.setWordWrap(True)
         layout.addWidget(self._export_target_label)
 
-        export_data_btn = PushButton("导出为数据列", tab)
+        export_data_btn = PrimaryPushButton("导出为数据列", tab)
         export_data_btn.clicked.connect(self._on_export_to_data_file)
         layout.addWidget(export_data_btn)
 
@@ -1762,7 +1763,7 @@ class DigitizePage(QWidget):
             node = project_manager.get_node_by_id(node.parent_id) if getattr(node, "parent_id", None) else None
         return False
 
-    def _curve_to_data_series(self, curve) -> DataSeries:
+    def _curve_to_data_series(self, curve, export_name: str | None = None) -> DataSeries:
         """将 Curve 转换为 DataSeries，导出时重新从像素坐标计算实际坐标以确保一致性。"""
         if curve.calibration and curve.x_data:
             x_vals: list = []
@@ -1778,7 +1779,7 @@ class DigitizePage(QWidget):
             x_vals = list(curve.x_actual or [])
             y_vals = list(curve.y_actual or [])
         return DataSeries(
-            name=curve.name or "提取曲线",
+            name=export_name or curve.name or "提取曲线",
             x=x_vals,
             y=y_vals,
             color=curve.color,
@@ -1843,38 +1844,59 @@ class DigitizePage(QWidget):
             InfoBar.warning(title="警告", content="请先选择有效曲线", parent=self, duration=3000)
             return
 
-        target_kind = self._export_target_kind
-        target_id = self._export_target_id
-        appended = 0
+        default_name = self._sanitize_export_name(self._export_name_edit.text().strip() or self._suggest_export_name())
+        preferred_target_node_id = self._export_target_id or self._ensure_digitize_result_folder()
+        export_plan = choose_data_export_plan(
+            self,
+            title="导出为数据列",
+            default_export_name=default_name,
+            default_file_name=f"{default_name}.digitize",
+            preferred_target_node_id=preferred_target_node_id,
+            file_suffix=".digitize",
+        )
+        if export_plan is None:
+            return
 
-        if target_kind == "data_file" and target_id:
-            target_node = project_manager.get_node_by_id(target_id)
-            data_file_id = target_node.data_file_id if target_node is not None and target_node.kind == "data_file" else target_id
-            for curve in curves:
-                if project_manager.add_series_to_data_file(data_file_id, self._curve_to_data_series(curve)):
+        base_name = self._sanitize_export_name(export_plan.export_name)
+        self._export_name_edit.setText(base_name)
+        total = len(curves)
+        export_series = []
+        for index, curve in enumerate(curves, start=1):
+            if total == 1:
+                series_name = base_name
+            else:
+                curve_suffix = self._sanitize_export_name(curve.name or f"curve_{index}")
+                series_name = self._sanitize_export_name(f"{base_name}_{curve_suffix}")
+            export_series.append(self._curve_to_data_series(curve, export_name=series_name))
+
+        if export_plan.target_data_file_id:
+            project = project_manager.current_project
+            target_node = next(
+                (
+                    node for node in project.tree.nodes
+                    if node.kind == "data_file" and node.data_file_id == export_plan.target_data_file_id
+                ),
+                None,
+            ) if project is not None and project.tree is not None else None
+            appended = 0
+            for series in export_series:
+                if project_manager.add_series_to_data_file(export_plan.target_data_file_id, series):
                     appended += 1
             if appended == 0:
                 InfoBar.error(title="导出失败", content="未能追加到目标数据文件", parent=self, duration=3000)
                 return
+            if target_node is not None:
+                self._export_target_kind = "data_file"
+                self._export_target_id = target_node.id
+            self._update_export_target_label()
             target_name = target_node.name if target_node is not None else "目标数据文件"
             self._status_label.setText(f"已追加 {appended} 条数据列到数据文件: {target_name}")
         else:
-            parent_id = None
-            if target_kind == "folder" and target_id and self._is_data_folder_target(target_id):
-                target_node = project_manager.get_node_by_id(target_id)
-                if getattr(target_node, "group_type", None) in ("datasets", "dataset_set"):
-                    parent_id = self._ensure_digitize_result_folder()
-                else:
-                    parent_id = target_id
-            else:
-                parent_id = self._ensure_digitize_result_folder()
-
-            file_name = self._sanitize_export_name(self._export_name_edit.text().strip() or self._suggest_export_name())
             df = DataFile(
-                name=f"{file_name}.digitize",
-                series=[self._curve_to_data_series(curve) for curve in curves],
+                name=export_plan.new_data_file_name or f"{base_name}.digitize",
+                series=export_series,
             )
-            node = project_manager.add_data_file(df, parent_id=parent_id)
+            node = project_manager.add_data_file(df, parent_id=export_plan.new_parent_id)
             if node is None:
                 InfoBar.error(title="导出失败", content="未能创建目标数据文件", parent=self, duration=3000)
                 return
