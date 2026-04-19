@@ -113,9 +113,46 @@ class ImportDialog(QDialog):
             return
         self.load_file(path)
 
+    def _clear_import_results(self) -> None:
+        self.imported_series = []
+        self._import_completed = False
+        self._p3_summary.setText("")
+
+    def _clear_column_assignment_state(self) -> None:
+        self._col_table.clear()
+        self._col_table.setRowCount(0)
+        self._col_table.setColumnCount(0)
+        self._name_edits = []
+        self._role_buttons = []
+        self._role_groups = []
+        self._data_file_target_keys = [None]
+        self._data_file_target_combo.blockSignals(True)
+        self._data_file_target_combo.clear()
+        self._data_file_target_combo.addItem("新建数据文件")
+        self._data_file_target_combo.setCurrentIndex(0)
+        self._data_file_target_combo.blockSignals(False)
+        self._data_file_name_edit.clear()
+        self._data_file_name_edit.setEnabled(True)
+        self._data_file_target_hint.setText("可选择追加到现有数据文件，或新建一个数据文件承载本次导入结果。")
+        self._target_data_file_id = None
+        self._last_auto_data_file_name = ""
+
+    def _show_file_selection_step(self, *, enable_next: bool) -> None:
+        self._stack.setCurrentIndex(0)
+        self._step_label.setText("步骤 1 / 3：选择文件")
+        self._btn_back.setEnabled(False)
+        self._btn_next.setText("下一步")
+        self._btn_next.setEnabled(enable_next)
+
     def load_file(self, path: str) -> None:
         self._file_path = path
         self._path_edit.setText(path)
+        self._raw_headers = []
+        self._raw_rows = []
+        self._p1_info.setText("")
+        self._clear_import_results()
+        self._clear_column_assignment_state()
+        self._show_file_selection_step(enable_next=False)
         try:
             headers, rows = _parse_file_preview(path)
             self._raw_headers = headers
@@ -335,17 +372,14 @@ class ImportDialog(QDialog):
     def _go_back(self):
         cur = self._stack.currentIndex()
         if cur == 1:
-            self._stack.setCurrentIndex(0)
-            self._step_label.setText("步骤 1 / 3：选择文件")
-            self._btn_back.setEnabled(False)
-            self._btn_next.setText("下一步")
-            self._import_completed = False
+            self._clear_import_results()
+            self._show_file_selection_step(enable_next=bool(self._raw_headers and self._raw_rows))
         elif cur == 2:
+            self._clear_import_results()
             self._stack.setCurrentIndex(1)
             self._step_label.setText("步骤 2 / 3：分配列角色")
             self._btn_back.setEnabled(True)
             self._btn_next.setText("导入")
-            self._import_completed = False
 
     # ── 导入逻辑 ─────────────────────────────────────────────────────────
 

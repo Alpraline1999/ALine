@@ -315,6 +315,28 @@ class TestProjectManager(unittest.TestCase):
         self.assertNotIn(child.id, ids)
         self.assertNotIn(df, p.data_files)
 
+    def test_remove_empty_folders_prunes_nested_user_folders(self):
+        from models.schemas import DataFile
+
+        p = self.pm.create_new("test")
+        self.pm.migrate_to_v2(p)
+        root = self.pm.add_folder("root")
+        empty_child = self.pm.add_folder("empty_child", root.id)
+        nested_parent = self.pm.add_folder("nested_parent", root.id)
+        nested_leaf = self.pm.add_folder("nested_leaf", nested_parent.id)
+        kept_folder = self.pm.add_folder("kept_folder", root.id)
+        self.pm.add_data_file(DataFile(name="kept.csv"), kept_folder.id)
+
+        removed_ids = self.pm.remove_empty_folders(root.id)
+        remaining_ids = {node.id for node in p.tree.nodes}
+
+        self.assertIn(root.id, remaining_ids)
+        self.assertIn(kept_folder.id, remaining_ids)
+        self.assertNotIn(empty_child.id, remaining_ids)
+        self.assertNotIn(nested_leaf.id, remaining_ids)
+        self.assertNotIn(nested_parent.id, remaining_ids)
+        self.assertGreaterEqual(len(removed_ids), 3)
+
     def test_add_and_load_pipeline(self):
         from core.global_assets import global_assets
 
@@ -870,6 +892,91 @@ class TestAnalysisEngine(unittest.TestCase):
                 self.assertIsNotNone(extension_registry.get_processing("helper_shift"))
             finally:
                 extension_registry.unregister_processing("helper_shift")
+
+    def test_extension_registry_exposes_last_load_report(self):
+        from core.extension_api import (
+            extension_registry,
+            get_last_extension_load_report,
+            load_builtin_extensions,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            good_path = Path(temp_dir) / "good_extension.py"
+            bad_path = Path(temp_dir) / "bad_extension.py"
+            good_path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import ProcessingExtension
+
+                def _noop(xs, ys, params):
+                    return list(xs), list(ys)
+
+                def register_extensions(registry):
+                    registry.register_processing(
+                        ProcessingExtension(type='report_probe', name='报告探针', handler=_noop)
+                    )
+                """
+            ), encoding="utf-8")
+            bad_path.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+
+            report = load_builtin_extensions(temp_dir)
+            snapshot = get_last_extension_load_report()
+            try:
+                self.assertEqual(snapshot, report)
+                self.assertEqual(len(snapshot["loaded"]), 1)
+                self.assertEqual(len(snapshot["errors"]), 1)
+                self.assertIn("bad_extension.py", snapshot["errors"][0])
+
+                snapshot["loaded"].append("mutated")
+                self.assertNotIn("mutated", get_last_extension_load_report()["loaded"])
+            finally:
+                extension_registry.unregister_processing("report_probe")
+
+    def test_extension_load_details_are_available_by_category(self):
+        from core.extension_api import (
+            extension_registry,
+            get_extension_load_status,
+            get_last_extension_load_details,
+            load_builtin_extensions,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            good_path = Path(temp_dir) / "processing_probe.py"
+            bad_path = Path(temp_dir) / "analysis_probe.py"
+            good_path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import ProcessingExtension
+
+                def _noop(xs, ys, params):
+                    return list(xs), list(ys)
+
+                def register_extensions(registry):
+                    registry.register_processing(
+                        ProcessingExtension(type='processing_probe', name='处理探针', handler=_noop)
+                    )
+                """
+            ), encoding="utf-8")
+            bad_path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import AnalysisExtension
+
+                raise RuntimeError('analysis boom')
+                """
+            ), encoding="utf-8")
+
+            load_builtin_extensions(temp_dir)
+            processing_details = get_last_extension_load_details("processing")
+            analysis_details = get_last_extension_load_details("analysis")
+            processing_status = get_extension_load_status("processing")
+            analysis_status = get_extension_load_status("analysis")
+            try:
+                self.assertEqual(len(processing_details["loaded"]), 1)
+                self.assertEqual(processing_details["loaded"][0]["categories"], ["processing"])
+                self.assertEqual(len(analysis_details["errors"]), 1)
+                self.assertIn("analysis", analysis_details["errors"][0]["categories"])
+                self.assertEqual(processing_status["registered_count"], 1)
+                self.assertEqual(analysis_status["error_count"], 1)
+            finally:
+                extension_registry.unregister_processing("processing_probe")
 
     def test_reload_builtin_extensions_replaces_previous_registry_entries(self):
         from core.extension_api import default_extensions_directory, extension_registry, reload_builtin_extensions

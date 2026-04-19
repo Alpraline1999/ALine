@@ -8,10 +8,11 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
     PushButton as FPushButton, TableWidget, ComboBox, TreeWidget, TreeItemDelegate,
     Slider, SmoothScrollArea, TabWidget, TabCloseButtonDisplayMode, PrimaryPushButton,
     MessageBox, InfoBar, RoundMenu, MessageBoxBase,
-    ToolTipFilter, ToolTipPosition, Action)
+    ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action)
 
 from ui.theme import text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
+from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_plan
 from core.shortcut_manager import ShortcutBindingSet
@@ -85,6 +86,11 @@ class DigitizePage(QWidget):
         self._image_viewer.set_point_size(self._point_size_spin.value())
         # 为所有带 tooltip 的 widget 安装 Fluent 样式过滤器
         self._install_tooltip_filters()
+        self._onboarding_controller = PageOnboardingController(self, "digitize", self._digitize_onboarding_steps)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._onboarding_controller.schedule_auto_start()
 
     def _install_tooltip_filters(self):
         """为所有带 tooltip 的子 widget 安装 Fluent ToolTipFilter"""
@@ -171,6 +177,37 @@ class DigitizePage(QWidget):
     def apply_shortcuts(self):
         """由设置页调用，用新配置刷新所有快捷键绑定"""
         self._shortcut_bindings.apply()
+
+    def start_onboarding(self, force: bool = False) -> None:
+        self._onboarding_controller.start(force=force)
+
+    def _digitize_onboarding_steps(self) -> list[OnboardingStep]:
+        return [
+            OnboardingStep(
+                lambda: self._image_viewer,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "中心画布就是主工作区",
+                "图片加载后，校准、取点、擦除和自动识别都会直接作用在这里；确认效果也以中心画布为准。",
+            ),
+            OnboardingStep(
+                lambda: self._calibrate_btn,
+                TeachingTipTailPosition.BOTTOM,
+                "手动取点前先做校准",
+                "校准会建立像素坐标到真实坐标的映射；完成之后，后面的取点和导出结果才有实际数值意义。",
+            ),
+            OnboardingStep(
+                lambda: self._auto_detect_btn,
+                TeachingTipTailPosition.BOTTOM,
+                "自动选点适合明显轨迹",
+                "当曲线颜色或形状比较清晰时，可以先做自动识别，再用手动工具做少量修正。",
+            ),
+            OnboardingStep(
+                lambda: self._right_tabs,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "右侧收拢取点与导出",
+                "图片选点和数据导出都放在右侧标签页里；整理完点集后，直接切到“数据导出”继续输出。",
+            ),
+        ]
 
     def _create_left_panel(self) -> CardWidget:
         panel = CardWidget(self)

@@ -12,11 +12,12 @@ from typing import Dict, List, Optional, Tuple
 from math import ceil
 
 from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPainter, QPen, QPixmap, QTextDocument, QTextOption
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyleOptionViewItem, QStyledItemDelegate, QVBoxLayout, QWidget
+from PySide6.QtGui import QAbstractTextDocumentLayout, QColor, QDesktopServices, QFontMetrics, QPainter, QPalette, QPen, QPixmap, QTextDocument, QTextOption
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
 from qfluentwidgets import (
     Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip, TreeWidget,
 )
+from qfluentwidgets.components.widgets.tree_view import TreeItemDelegate
 from PySide6.QtWidgets import QTreeWidgetItem
 
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
@@ -162,8 +163,8 @@ class _ProjectTreeView(TreeWidget):
             self._owner._clear_drag_source_item()
 
 
-class _ProjectTreeWrapAnywhereDelegate(QStyledItemDelegate):
-    def __init__(self, owner: "ProjectTreeWidget", parent: Optional[QWidget] = None):
+class _ProjectTreeWrapAnywhereDelegate(TreeItemDelegate):
+    def __init__(self, owner: "ProjectTreeWidget", parent: "_ProjectTreeView"):
         super().__init__(parent)
         self._owner = owner
 
@@ -179,9 +180,20 @@ class _ProjectTreeWrapAnywhereDelegate(QStyledItemDelegate):
             super().paint(painter, option, index)
             return
 
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
         item_option.text = ""
         style = item_option.widget.style() if item_option.widget is not None else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item_option, painter, item_option.widget)
+
+        if index.data(Qt.ItemDataRole.CheckStateRole) is not None:
+            self._drawCheckBox(painter, item_option, index)
+
+        if item_option.state & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver):
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            self._drawBackground(painter, item_option, index)
+            self._drawIndicator(painter, item_option, index)
+            painter.restore()
 
         text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, item_option, item_option.widget)
         if not text_rect.isValid() or text_rect.width() <= 0:
@@ -196,19 +208,27 @@ class _ProjectTreeWrapAnywhereDelegate(QStyledItemDelegate):
         document.setPlainText(text)
         document.setTextWidth(max(1, text_rect.width()))
 
-        palette = item_option.palette
+        palette = QPalette(item_option.palette)
+        foreground = index.data(Qt.ItemDataRole.ForegroundRole)
         if item_option.state & QStyle.StateFlag.State_Selected:
-            text_color = palette.color(palette.ColorRole.HighlightedText)
+            text_color = palette.color(QPalette.ColorRole.HighlightedText)
+        elif hasattr(foreground, "color"):
+            text_color = foreground.color()
         else:
-            text_color = palette.color(palette.ColorRole.Text)
-        document.setDefaultStyleSheet(f"body {{ color: {text_color.name()}; }}")
+            text_color = palette.color(QPalette.ColorRole.Text)
+
+        paint_context = QAbstractTextDocumentLayout.PaintContext()
+        paint_context.palette = QPalette(palette)
+        paint_context.palette.setColor(QPalette.ColorRole.Text, text_color)
+        paint_context.palette.setColor(QPalette.ColorRole.WindowText, text_color)
+        paint_context.palette.setColor(QPalette.ColorRole.HighlightedText, text_color)
 
         content_height = document.size().height()
         y_offset = text_rect.top() + max(0.0, (text_rect.height() - content_height) / 2.0)
         painter.save()
         painter.setClipRect(text_rect)
         painter.translate(text_rect.left(), y_offset)
-        document.drawContents(painter, QRectF(0, 0, text_rect.width(), content_height))
+        document.documentLayout().draw(painter, paint_context)
         painter.restore()
 
 
@@ -234,7 +254,7 @@ class ProjectTreeWidget(QWidget):
 
         self._tree = _ProjectTreeView(self, self)
         self._tree.setHeaderHidden(True)
-        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self._tree.setWordWrap(True)
@@ -319,7 +339,9 @@ class ProjectTreeWidget(QWidget):
         item = self._find_item(node_id)
         if item:
             self._tree.blockSignals(True)
+            self._tree.clearSelection()
             self._expand_item_ancestors(item)
+            item.setSelected(True)
             self._tree.setCurrentItem(item)
             self._tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
             self._tree.blockSignals(False)
@@ -595,9 +617,19 @@ class ProjectTreeWidget(QWidget):
             menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
-        self._tree.setCurrentItem(item)
+        selected_items = self._selected_items_for_context_menu(item)
         self._activate_item_project(item)
         menu = RoundMenu(parent=self._dialog_parent())
+
+        batch_payloads = self._batch_action_payloads(selected_items)
+        if len(batch_payloads) > 1:
+            self._add_menu_action(menu, FIF.DELETE, f"删除选中 {len(batch_payloads)} 项", lambda: self._cmd_delete_batch(batch_payloads))
+            move_choices = self._common_batch_move_choices(batch_payloads)
+            if move_choices:
+                self._add_menu_action(menu, FIF.SYNC, f"移动选中 {len(batch_payloads)} 项...", lambda: self._cmd_move_batch(batch_payloads, move_choices))
+            self._append_tree_scope_actions(menu, separated=True)
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
+            return
 
         d = item.data(0, _ROLE)
         if not d:
@@ -635,6 +667,7 @@ class ProjectTreeWidget(QWidget):
             managed_group_type = self._folder_collection_group(node_id)
             if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
                 self._add_menu_action(menu, FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id))
+                self._add_menu_action(menu, FIF.SYNC, "清理空子文件夹", lambda: self._cmd_prune_empty_folders(node_id, scope_label=item.text(0)))
                 if managed_group_type == "pictures":
                     self._add_menu_action(menu, _PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id))
                 if not is_protected:
@@ -761,6 +794,55 @@ class ProjectTreeWidget(QWidget):
             changed = project_manager.rename_series(node_id, new_name.strip())
         else:
             changed = project_manager.rename_curve(node_id, new_name.strip())
+        if changed:
+            self.refresh()
+            self.project_modified.emit()
+
+    def _cmd_prune_empty_folders(self, root_id: Optional[str] = None, *, scope_label: str = "项目树") -> None:
+        removed_ids = project_manager.remove_empty_folders(root_id)
+        if not removed_ids:
+            InfoBar.success("无需清理", f"{scope_label} 中没有可移除的空文件夹", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.refresh()
+        self.project_modified.emit()
+        InfoBar.success("清理完成", f"已移除 {len(removed_ids)} 个空文件夹", parent=self, position=InfoBarPosition.TOP)
+
+    def _cmd_delete_batch(self, payloads: List[Dict[str, object]]) -> None:
+        count = len(payloads)
+        names = [str(item["name"]) for item in payloads[:5]]
+        summary = "\n".join(f"- {name}" for name in names)
+        if count > 5:
+            summary += f"\n- ... 另有 {count - 5} 项"
+        box = MessageBox("确认批量删除", f"确定要删除选中的 {count} 项吗？\n\n{summary}", self._dialog_parent())
+        if not box.exec():
+            return
+
+        changed = False
+        for payload in payloads:
+            kind = str(payload["kind"])
+            node_id = str(payload["node_id"])
+            if kind == "series":
+                changed = project_manager.delete_series(node_id) or changed
+            elif kind == "curve":
+                changed = project_manager.delete_curve(node_id) or changed
+            else:
+                changed = project_manager.delete_node(node_id) or changed
+        if changed:
+            self.refresh()
+            self.project_modified.emit()
+
+    def _cmd_move_batch(self, payloads: List[Dict[str, object]], choices: List[Tuple[str, str]]) -> None:
+        labels = [label for label, _ in choices]
+        selected, ok = SelectionDialog.get_item(self._dialog_parent(), "批量移动到", "目标父级:", labels)
+        if not ok or not selected:
+            return
+        target_id = next((target_id for label, target_id in choices if label == selected), None)
+        if target_id is None:
+            return
+
+        changed = False
+        for payload in payloads:
+            changed = self._move_node_to_target(str(payload["kind"]), str(payload["node_id"]), target_id) or changed
         if changed:
             self.refresh()
             self.project_modified.emit()
@@ -924,6 +1006,85 @@ class ProjectTreeWidget(QWidget):
             self.refresh()
             self.project_modified.emit()
 
+    def _selected_items_for_context_menu(self, anchor_item: QTreeWidgetItem) -> List[QTreeWidgetItem]:
+        selected_items = [item for item in self._tree.selectedItems() if item is not None]
+        if anchor_item not in selected_items:
+            self._tree.clearSelection()
+            anchor_item.setSelected(True)
+            selected_items = [anchor_item]
+        self._tree.setCurrentItem(anchor_item)
+        return selected_items
+
+    def _batch_action_payloads(self, items: List[QTreeWidgetItem]) -> List[Dict[str, object]]:
+        if len(items) < 2:
+            return []
+
+        selected_keys = {self._item_key(item) for item in items}
+        payloads: List[Dict[str, object]] = []
+        expected_kind: Optional[str] = None
+        expected_project_id: Optional[str] = None
+
+        for item in items:
+            data = self._item_role_data(item)
+            if not data:
+                return []
+            kind, node_id = data
+            if kind in {"project", *_SYNTHETIC_GLOBAL_KINDS}:
+                return []
+
+            project_id = item.data(0, _PROJECT_ROLE)
+            if expected_kind is None:
+                expected_kind = kind
+            elif kind != expected_kind:
+                return []
+
+            if expected_project_id is None:
+                expected_project_id = project_id
+            elif project_id != expected_project_id:
+                return []
+
+            if kind == "folder" and self._is_protected_folder(project_manager.get_node_by_id(node_id)):
+                return []
+
+            ancestor = item.parent()
+            while ancestor is not None:
+                if self._item_key(ancestor) in selected_keys:
+                    break
+                ancestor = ancestor.parent()
+            if ancestor is not None:
+                continue
+
+            payloads.append({
+                "kind": kind,
+                "node_id": node_id,
+                "name": item.text(0),
+            })
+
+        return payloads if len(payloads) > 1 else []
+
+    def _common_batch_move_choices(self, payloads: List[Dict[str, object]]) -> List[Tuple[str, str]]:
+        if not payloads:
+            return []
+
+        first_kind = str(payloads[0]["kind"])
+        choice_maps: List[Dict[str, str]] = []
+        for payload in payloads:
+            if str(payload["kind"]) != first_kind:
+                return []
+            current_choices = self._move_target_choices(first_kind, str(payload["node_id"]))
+            if not current_choices:
+                return []
+            choice_maps.append({target_id: label for label, target_id in current_choices})
+
+        common_ids = set(choice_maps[0])
+        for choice_map in choice_maps[1:]:
+            common_ids &= set(choice_map)
+        if not common_ids:
+            return []
+
+        labels = choice_maps[0]
+        return sorted([(labels[target_id], target_id) for target_id in common_ids], key=lambda item: item[0])
+
     # ─────────────────────────────────────────────────────────
     # 内部辅助
     # ─────────────────────────────────────────────────────────
@@ -1027,6 +1188,7 @@ class ProjectTreeWidget(QWidget):
     def _append_tree_scope_actions(self, menu: RoundMenu, separated: bool = False) -> None:
         if separated and menu.actions():
             menu.addSeparator()
+        self._add_menu_action(menu, FIF.SYNC, "清理空文件夹", self._cmd_prune_empty_folders)
         self._add_menu_action(menu, FIF.ZOOM_IN, "全部展开", self._expand_all_items)
         self._add_menu_action(menu, FIF.ZOOM_OUT, "全部折叠", self._collapse_all_items)
 

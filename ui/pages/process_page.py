@@ -16,6 +16,7 @@ from qfluentwidgets import (
     CardWidget,
     InfoBar, InfoBarPosition, LineEdit,
     PlainTextEdit, PrimaryPushButton, ToolButton,
+    TeachingTipTailPosition,
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
 )
 
@@ -25,6 +26,7 @@ from ui.theme import make_section_label, make_hsep
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.dialogs.export_flow import choose_data_export_plan
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 from models.schemas import SavedPipeline
@@ -120,6 +122,11 @@ class ProcessPage(QWidget):
         self._setup_ui()
         self._setup_shortcuts()
         self._refresh_tree()
+        self._onboarding_controller = PageOnboardingController(self, "process", self._process_onboarding_steps)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._onboarding_controller.schedule_auto_start()
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -142,6 +149,7 @@ class ProcessPage(QWidget):
 
         self._extension_panel = ExtensionConfigPanel("处理扩展", "应用扩展", self)
         self._extension_panel.set_context("数据处理", "当前操作链")
+        self._extension_panel.set_status_context("processing", "处理扩展")
         self._extension_panel.apply_requested.connect(self._on_processing_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_processing_extensions)
         self._page_splitter.addWidget(self._extension_panel)
@@ -163,6 +171,37 @@ class ProcessPage(QWidget):
 
     def apply_shortcuts(self) -> None:
         self._shortcut_bindings.apply()
+
+    def start_onboarding(self, force: bool = False) -> None:
+        self._onboarding_controller.start(force=force)
+
+    def _process_onboarding_steps(self) -> list[OnboardingStep]:
+        return [
+            OnboardingStep(
+                lambda: self._current_input_label,
+                TeachingTipTailPosition.BOTTOM,
+                "先从共享树选输入",
+                "处理页只保留当前输入状态；先在共享树中双击一条数据，这里会同步显示当前处理对象。",
+            ),
+            OnboardingStep(
+                lambda: self._add_op_combo,
+                TeachingTipTailPosition.BOTTOM,
+                "操作从这里加入链路",
+                "平滑、裁剪、重采样、FFT 等处理都从这里追加；参数区会跟着当前选中的步骤切换。",
+            ),
+            OnboardingStep(
+                lambda: self._op_list,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "中间是完整操作链",
+                "处理页按顺序执行操作链；确认顺序和参数后，右侧预览会实时反映输出结果。",
+            ),
+            OnboardingStep(
+                lambda: self._save_name_edit,
+                TeachingTipTailPosition.BOTTOM,
+                "结果确认后再导出",
+                "给结果命名并选择目标数据文件后，就可以把处理后的数据列正式写回项目。",
+            ),
+        ]
 
     def supports_extension_panel_toggle(self) -> bool:
         return True

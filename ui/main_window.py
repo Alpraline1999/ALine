@@ -242,6 +242,8 @@ class MainWindow(FluentWindow):
     def _setup_project_signals(self):
         self.home_page.project_created.connect(self._on_project_created)
         self.home_page.project_opened.connect(self._on_project_opened)
+        self.home_page.quick_start_requested.connect(self._on_home_quick_start_requested)
+        self.settings_page.replay_onboarding_requested.connect(self._replay_home_onboarding)
         self.settings_page.project_modified.connect(self._on_project_modified)
         self.settings_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.digitize_page.project_modified.connect(self._on_project_modified)
@@ -368,6 +370,20 @@ class MainWindow(FluentWindow):
         if project_manager.current_project:
             project_manager.current_project.is_modified = True
         self._update_window_title()
+
+    def _on_home_quick_start_requested(self, destination: str) -> None:
+        destination_map = {
+            "data": self.data_page,
+            "process": self.process_page,
+            "analysis": self.analysis_page,
+        }
+        page = destination_map.get(destination)
+        if page is not None:
+            self.switchTo(page)
+
+    def _replay_home_onboarding(self) -> None:
+        self.switchTo(self.home_page)
+        QTimer.singleShot(0, lambda: self.home_page.start_onboarding(force=True))
 
     def _create_project_from_panel(self) -> None:
         name, ok = TextInputDialog.get_text(self, "新建项目", placeholder="请输入项目名称")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from importlib import util as importlib_util
 import inspect
+import copy
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -10,6 +11,22 @@ import hashlib
 
 
 XY = Tuple[List[float], List[float]]
+
+_EXTENSION_CATEGORY_LABELS = {
+    "processing": "处理扩展",
+    "analysis": "分析扩展",
+    "plot": "绘图扩展",
+    "plot_style": "绘图样式扩展",
+    "curve_style": "曲线样式扩展",
+}
+
+_EXTENSION_SOURCE_HINTS = {
+    "processing": ("register_processing", "ProcessingExtension"),
+    "analysis": ("register_analysis", "AnalysisExtension"),
+    "plot": ("register_plot", "PlotExtension"),
+    "plot_style": ("register_plot_style", "PlotStyleExtension"),
+    "curve_style": ("register_curve_style", "CurveStyleExtension"),
+}
 
 
 @dataclass(frozen=True)
@@ -75,6 +92,8 @@ class PlotExtensionContext:
     figure_state: Dict[str, Any]
     plot_style_extras: Dict[str, Any]
     theme_colors: Dict[str, Any]
+    selected_series: Optional[Dict[str, Any]] = None
+    selected_series_identity: Optional[str] = None
     phase: str = "before_plot"
     skip_default_plot: bool = False
     skip_default_formatting: bool = False
@@ -123,6 +142,8 @@ class ExtensionRegistry:
         self._plot: Dict[str, PlotExtension] = {}
         self._plot_style: Dict[str, PlotStyleExtension] = {}
         self._curve_style: Dict[str, CurveStyleExtension] = {}
+        self._last_load_report: Dict[str, List[str]] = {"loaded": [], "errors": []}
+        self._last_load_details: Dict[str, List[Dict[str, Any]]] = {"loaded": [], "errors": []}
 
     def clear(self) -> None:
         self._processing.clear()
@@ -130,6 +151,17 @@ class ExtensionRegistry:
         self._plot.clear()
         self._plot_style.clear()
         self._curve_style.clear()
+        self._last_load_report = {"loaded": [], "errors": []}
+        self._last_load_details = {"loaded": [], "errors": []}
+
+    def get_last_load_report(self) -> Dict[str, List[str]]:
+        return {
+            "loaded": list(self._last_load_report.get("loaded", [])),
+            "errors": list(self._last_load_report.get("errors", [])),
+        }
+
+    def get_last_load_details(self) -> Dict[str, List[Dict[str, Any]]]:
+        return copy.deepcopy(self._last_load_details)
 
     def register_processing(self, extension: ProcessingExtension) -> None:
         if not extension.type.strip():
@@ -201,19 +233,74 @@ class ExtensionRegistry:
     def list_curve_style(self) -> List[CurveStyleExtension]:
         return list(self._curve_style.values())
 
+    def _registry_snapshot(self) -> Dict[str, set[str]]:
+        return {
+            "processing": {extension.type for extension in self.list_processing()},
+            "analysis": {extension.type for extension in self.list_analysis()},
+            "plot": {extension.type for extension in self.list_plot()},
+            "plot_style": {extension.type for extension in self.list_plot_style()},
+            "curve_style": {extension.type for extension in self.list_curve_style()},
+        }
+
+    @staticmethod
+    def _diff_registry_snapshot(before: Dict[str, set[str]], after: Dict[str, set[str]]) -> Dict[str, List[str]]:
+        diff: Dict[str, List[str]] = {}
+        for category, previous_types in before.items():
+            added = sorted(after.get(category, set()) - previous_types)
+            if added:
+                diff[category] = added
+        return diff
+
+    @staticmethod
+    def _infer_categories_from_source(path: Path) -> List[str]:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            source = path.read_text(encoding="latin-1")
+        except Exception:
+            return []
+
+        categories: List[str] = []
+        for category, markers in _EXTENSION_SOURCE_HINTS.items():
+            if any(marker in source for marker in markers):
+                categories.append(category)
+        return categories
+
     def load_from_directory(self, directory: str | Path) -> Dict[str, List[str]]:
         target = Path(directory)
         report = {"loaded": [], "errors": []}
+        detail_report: Dict[str, List[Dict[str, Any]]] = {"loaded": [], "errors": []}
         if not target.exists() or not target.is_dir():
+            self._last_load_report = {"loaded": [], "errors": []}
+            self._last_load_details = {"loaded": [], "errors": []}
             return report
         for path in sorted(target.glob("*.py")):
             if path.name.startswith("_"):
                 continue
             try:
+                before = self._registry_snapshot()
                 self.load_from_file(path)
+                after = self._registry_snapshot()
+                registered = self._diff_registry_snapshot(before, after)
+                categories = sorted(registered.keys())
                 report["loaded"].append(str(path))
+                detail_report["loaded"].append({
+                    "path": str(path),
+                    "categories": categories,
+                    "extensions": registered,
+                })
             except Exception as exc:
                 report["errors"].append(f"{path}: {exc}")
+                detail_report["errors"].append({
+                    "path": str(path),
+                    "message": str(exc),
+                    "categories": self._infer_categories_from_source(path),
+                })
+        self._last_load_report = {
+            "loaded": list(report["loaded"]),
+            "errors": list(report["errors"]),
+        }
+        self._last_load_details = detail_report
         return report
 
     def load_from_file(self, file_path: str | Path) -> ModuleType:
@@ -296,6 +383,98 @@ def load_builtin_extensions(directory: str | Path | None = None) -> Dict[str, Li
 def reload_builtin_extensions(directory: str | Path | None = None) -> Dict[str, List[str]]:
     extension_registry.clear()
     return load_builtin_extensions(directory)
+
+
+def get_last_extension_load_report() -> Dict[str, List[str]]:
+    return extension_registry.get_last_load_report()
+
+
+def get_last_extension_load_details(category: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    details = extension_registry.get_last_load_details()
+    if category is None:
+        return details
+
+    normalized = category.strip().lower()
+    return {
+        "loaded": [
+            item for item in details.get("loaded", [])
+            if normalized in item.get("categories", [])
+        ],
+        "errors": [
+            item for item in details.get("errors", [])
+            if normalized in item.get("categories", [])
+        ],
+    }
+
+
+def get_extension_load_status(category: Optional[str] = None) -> Dict[str, Any]:
+    normalized = category.strip().lower() if category else None
+    details = get_last_extension_load_details(normalized)
+
+    if normalized == "processing":
+        registered_count = len(extension_registry.list_processing())
+    elif normalized == "analysis":
+        registered_count = len(extension_registry.list_analysis())
+    elif normalized == "plot":
+        registered_count = len(extension_registry.list_plot())
+    elif normalized == "plot_style":
+        registered_count = len(extension_registry.list_plot_style())
+    elif normalized == "curve_style":
+        registered_count = len(extension_registry.list_curve_style())
+    else:
+        registered_count = sum([
+            len(extension_registry.list_processing()),
+            len(extension_registry.list_analysis()),
+            len(extension_registry.list_plot()),
+            len(extension_registry.list_plot_style()),
+            len(extension_registry.list_curve_style()),
+        ])
+
+    return {
+        "category": normalized,
+        "label": _EXTENSION_CATEGORY_LABELS.get(normalized, "扩展"),
+        "registered_count": registered_count,
+        "loaded_file_count": len(details.get("loaded", [])),
+        "error_count": len(details.get("errors", [])),
+        "details": details,
+    }
+
+
+def format_extension_load_report(category: Optional[str] = None) -> str:
+    status = get_extension_load_status(category)
+    details = status["details"]
+    lines = [
+        f"{status['label']}状态",
+        f"已注册扩展: {status['registered_count']}",
+        f"成功扫描文件: {status['loaded_file_count']}",
+        f"失败文件: {status['error_count']}",
+    ]
+
+    if details.get("loaded"):
+        lines.append("")
+        lines.append("成功扫描文件:")
+        for item in details["loaded"]:
+            lines.append(f"- {Path(item['path']).name}")
+            extension_parts = []
+            for detail_category, type_ids in sorted(item.get("extensions", {}).items()):
+                category_label = _EXTENSION_CATEGORY_LABELS.get(detail_category, detail_category)
+                extension_parts.append(f"{category_label}: {', '.join(type_ids)}")
+            if extension_parts:
+                lines.append(f"  {' | '.join(extension_parts)}")
+
+    if details.get("errors"):
+        lines.append("")
+        lines.append("失败文件:")
+        for item in details["errors"]:
+            category_text = "、".join(_EXTENSION_CATEGORY_LABELS.get(cat, cat) for cat in item.get("categories", []))
+            lines.append(f"- {Path(item['path']).name}: {item.get('message', '')}")
+            if category_text:
+                lines.append(f"  推断分类: {category_text}")
+
+    if len(lines) == 4:
+        lines.append("")
+        lines.append("最近一次扫描没有记录到任何扩展文件。")
+    return "\n".join(lines)
 
 
 def register_processing_extension(extension: ProcessingExtension) -> None:

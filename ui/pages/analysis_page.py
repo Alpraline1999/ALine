@@ -21,7 +21,7 @@ from qfluentwidgets import (
     InfoBar, InfoBarPosition, LineEdit,
     ListWidget, PlainTextEdit, PrimaryPushButton, PushButton, TableWidget,
     RoundMenu,
-    TabCloseButtonDisplayMode, TabWidget, ToolButton,
+    TabCloseButtonDisplayMode, TabWidget, TeachingTipTailPosition, ToolButton,
 )
 
 from ui.matplotlib_fonts import configure_matplotlib_cjk
@@ -34,6 +34,7 @@ from ui.dialogs.export_flow import (
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import make_hint_label, make_section_label, make_hsep
 from core.analysis_engine import run_analysis
 from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
@@ -151,6 +152,11 @@ class AnalysisPage(QWidget):
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
+        self._onboarding_controller = PageOnboardingController(self, "analysis", self._analysis_onboarding_steps)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._onboarding_controller.schedule_auto_start()
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -173,6 +179,7 @@ class AnalysisPage(QWidget):
 
         self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self)
         self._extension_panel.set_context("数据分析", "未选择输入")
+        self._extension_panel.set_status_context("analysis", "分析扩展")
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_analysis_extensions)
         self._page_splitter.addWidget(self._extension_panel)
@@ -195,6 +202,37 @@ class AnalysisPage(QWidget):
 
     def apply_shortcuts(self) -> None:
         self._shortcut_bindings.apply()
+
+    def start_onboarding(self, force: bool = False) -> None:
+        self._onboarding_controller.start(force=force)
+
+    def _analysis_onboarding_steps(self) -> list[OnboardingStep]:
+        return [
+            OnboardingStep(
+                lambda: self._type_combo,
+                TeachingTipTailPosition.BOTTOM,
+                "先确定分析类型",
+                "拟合、峰值检测、统计和相关性分析共用同一页；先选分析类型，参数区才会切到正确配置。",
+            ),
+            OnboardingStep(
+                lambda: self._input_list,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "输入列表由共享树驱动",
+                "从共享树双击数据后，输入会进入这里；需要主输入和对比输入时，也在这里统一管理。",
+            ),
+            OnboardingStep(
+                lambda: self._result_tabs,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "右侧同时承接结果和报告",
+                "运行分析后，图表摘要会先出现在结果标签；需要沉淀结论时，再切到报告标签继续整理。",
+            ),
+            OnboardingStep(
+                lambda: self._report_template_combo,
+                TeachingTipTailPosition.BOTTOM,
+                "报告模板从这里切换",
+                "默认模板可以直接渲染；如果你维护了自己的模板，也可以在这里加载、更新或另存。",
+            ),
+        ]
 
     def supports_extension_panel_toggle(self) -> bool:
         return True

@@ -21,7 +21,7 @@ from qfluentwidgets import (
     CardWidget, ToolButton, PushButton, PrimaryPushButton,
     TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
-    MessageBox, MessageBoxBase, LineEdit, isDarkTheme,
+    MessageBox, MessageBoxBase, LineEdit, TeachingTipTailPosition, isDarkTheme,
 )
 
 from ui.theme import (
@@ -29,6 +29,7 @@ from ui.theme import (
     make_section_label, make_hsep,
 )
 from ui.matplotlib_fonts import configure_matplotlib_cjk
+from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, Dataset, Curve
@@ -79,6 +80,11 @@ class DataPage(QWidget):
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
+        self._onboarding_controller = PageOnboardingController(self, "data", self._data_onboarding_steps)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._onboarding_controller.schedule_auto_start()
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -102,6 +108,37 @@ class DataPage(QWidget):
 
     def apply_shortcuts(self) -> None:
         self._shortcut_bindings.apply()
+
+    def start_onboarding(self, force: bool = False) -> None:
+        self._onboarding_controller.start(force=force)
+
+    def _data_onboarding_steps(self) -> list[OnboardingStep]:
+        return [
+            OnboardingStep(
+                lambda: self._shared_tree_hint,
+                TeachingTipTailPosition.BOTTOM,
+                "共享树是数据入口",
+                "数据管理页不再维护第二套树；请直接从左侧共享项目树选择数据文件、系列或曲线，再回到这里处理当前对象。",
+            ),
+            OnboardingStep(
+                lambda: self._preview_type_combo,
+                TeachingTipTailPosition.BOTTOM,
+                "预览区先看数据质量",
+                "这里可以切换折线、散点、柱状等预览方式，快速确认导入结果、变量映射和异常点。",
+            ),
+            OnboardingStep(
+                lambda: self._manage_target_label,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "节点管理聚焦当前对象",
+                "共享树选中数据节点后，可以在这里直接重命名、复制为数据文件或删除，不用再回到树上找入口。",
+            ),
+            OnboardingStep(
+                lambda: self._btn_to_vis,
+                TeachingTipTailPosition.BOTTOM,
+                "整理完就继续流转",
+                "确认数据无误后，可以直接把当前对象送到可视化或处理页，减少页面间重复选择。",
+            ),
+        ]
 
     def eventFilter(self, watched, event):
         preview_targets = getattr(self, "_preview_drop_targets", ())
@@ -422,6 +459,8 @@ class DataPage(QWidget):
             return "datasets"
         if group_type in {"image_set", "images"}:
             return "images"
+        if group_type in {"picture_set", "pictures"}:
+            return "pictures"
         if group_type in {"tool_set", "tools"}:
             return "tools"
         if group_type in {"template_group", "figure_template_group"}:
@@ -432,7 +471,7 @@ class DataPage(QWidget):
         current = node
         while current is not None and getattr(current, "kind", None) == "folder":
             group_type = self._canonical_folder_group(getattr(current, "group_type", None))
-            if group_type in {"datasets", "images", "analysis_result_group"}:
+            if group_type in {"datasets", "images", "pictures", "analysis_result_group"}:
                 return group_type
             parent_id = getattr(current, "parent_id", None)
             current = project_manager.get_node_by_id(parent_id) if parent_id else None
@@ -442,7 +481,7 @@ class DataPage(QWidget):
         if node is None or getattr(node, "kind", None) != "folder":
             return False
         group_type = self._canonical_folder_group(getattr(node, "group_type", None))
-        if group_type in {"datasets", "images", "analysis_result_group"}:
+        if group_type in {"datasets", "images", "pictures", "analysis_result_group"}:
             return getattr(node, "parent_id", None) is None
         return group_type in {
             "tools", "pipeline_group", "figure_template_group",

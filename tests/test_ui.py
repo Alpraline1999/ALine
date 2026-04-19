@@ -256,11 +256,17 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.set_name_display_mode("wrap")
         self.assertEqual(self.widget._tree.textElideMode(), Qt.TextElideMode.ElideNone)
 
+    def test_tree_supports_extended_selection_for_batch_actions(self):
+        self.assertEqual(self.widget._tree.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
+
     def test_tree_uses_default_delegate_and_no_custom_foreground_role(self):
+        from qfluentwidgets.components.widgets.tree_view import TreeItemDelegate
+
         self.pm.add_saved_pipeline("流程A", [{"type": "smooth", "params": {}}])
         self.widget.refresh()
 
         self.assertNotEqual(type(self.widget._tree.itemDelegate()).__name__, "_ProjectTreeItemDelegate")
+        self.assertIsInstance(self.widget._tree.itemDelegate(), TreeItemDelegate)
         series_item = self.widget._find_item(self.s.id)
         self.assertIsNotNone(series_item)
         self.assertIsNone(series_item.data(0, Qt.ItemDataRole.ForegroundRole))
@@ -370,6 +376,39 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertEqual(type(self.widget._tree.itemDelegate()).__name__, "_ProjectTreeWrapAnywhereDelegate")
         self.assertGreater(root.sizeHint(0).height(), self.widget._tree.fontMetrics().lineSpacing() + 10)
 
+    def test_wrapped_delegate_preserves_selected_text_render_in_dark_theme(self):
+        from PySide6.QtGui import QImage
+        from qfluentwidgets import Theme, setTheme
+
+        self.widget.set_name_display_mode("wrap")
+        self.p.name = "WWWWWWWWWWWWWWWWWWWWWWWWWWWW"
+        self.widget.resize(320, 480)
+        self.widget._tree.resize(320, 480)
+
+        try:
+            setTheme(Theme.DARK)
+            self.widget.refresh()
+            root = self.widget._tree.topLevelItem(0)
+            self.assertIsNotNone(root)
+            self.widget._tree.setCurrentItem(root)
+            QApplication.processEvents()
+
+            rect = self.widget._tree.visualItemRect(root)
+            image = self.widget._tree.viewport().grab(rect).toImage().convertToFormat(QImage.Format.Format_RGB32)
+            bright_pixels = 0
+            x_start = min(max(56, 0), image.width())
+            x_end = min(max(120, x_start + 1), image.width())
+            y_start = max(0, image.height() // 2 - 6)
+            y_end = min(image.height(), image.height() // 2 + 7)
+            for x_pos in range(x_start, x_end):
+                for y_pos in range(y_start, y_end):
+                    color = image.pixelColor(x_pos, y_pos)
+                    if max(color.red(), color.green(), color.blue()) >= 210:
+                        bright_pixels += 1
+            self.assertGreater(bright_pixels, 0)
+        finally:
+            setTheme(Theme.LIGHT)
+
     def test_set_filter_kinds_all(self):
         """空过滤 = 显示全部"""
         self.widget.set_filter_kinds([])
@@ -412,6 +451,55 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.node_activated.connect(lambda k, nid: received.append((k, nid)))
         self.widget.node_activated.emit("data_file", "fake-id")
         self.assertEqual(len(received), 1)
+
+    def test_batch_delete_removes_multiple_data_files(self):
+        from models.schemas import DataFile, DataSeries
+
+        second = self.pm.add_data_file(DataFile(name="batch.csv", series=[DataSeries(name="s2", x=[1.0], y=[2.0])]))
+        self.assertIsNotNone(second)
+        self.widget.refresh()
+
+        first_item = self.widget._find_item(next(node.id for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id))
+        second_item = self.widget._find_item(second.id)
+        self.assertIsNotNone(first_item)
+        self.assertIsNotNone(second_item)
+
+        payloads = self.widget._batch_action_payloads([first_item, second_item])
+        self.assertEqual(len(payloads), 2)
+
+        with mock.patch("ui.widgets.project_tree.MessageBox.exec", return_value=True):
+            self.widget._cmd_delete_batch(payloads)
+
+        remaining_data_file_ids = [node.id for node in self.p.tree.nodes if node.kind == "data_file"]
+        self.assertNotIn(second.id, remaining_data_file_ids)
+        self.assertEqual(len(remaining_data_file_ids), 0)
+
+    def test_batch_move_uses_common_target_for_multiple_data_files(self):
+        from models.schemas import DataFile, DataSeries
+
+        dataset_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(dataset_root)
+        target_folder = self.pm.add_folder("批量目标", parent_id=dataset_root.id, group_type="datasets")
+        second = self.pm.add_data_file(DataFile(name="batch.csv", series=[DataSeries(name="s2", x=[1.0], y=[2.0])]))
+        self.assertIsNotNone(target_folder)
+        self.assertIsNotNone(second)
+        self.widget.refresh()
+
+        first_item = self.widget._find_item(next(node.id for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id))
+        second_item = self.widget._find_item(second.id)
+        self.assertIsNotNone(first_item)
+        self.assertIsNotNone(second_item)
+
+        payloads = self.widget._batch_action_payloads([first_item, second_item])
+        choices = self.widget._common_batch_move_choices(payloads)
+        self.assertIn((self.widget._folder_path_label(target_folder.id), target_folder.id), choices)
+
+        with mock.patch("ui.widgets.project_tree.SelectionDialog.get_item", return_value=(self.widget._folder_path_label(target_folder.id), True)):
+            self.widget._cmd_move_batch(payloads, choices)
+
+        moved_nodes = {node.id: node.parent_id for node in self.p.tree.nodes if node.kind == "data_file"}
+        self.assertEqual(moved_nodes[next(node.id for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id)], target_folder.id)
+        self.assertEqual(moved_nodes[second.id], target_folder.id)
 
     def test_project_modified_signal_emitted(self):
         received = []
@@ -742,6 +830,57 @@ class TestSettingsPage(unittest.TestCase):
             if temp_page is not None:
                 temp_page.deleteLater()
 
+    def test_replay_onboarding_button_emits_signal(self):
+        received = []
+        self.page.replay_onboarding_requested.connect(lambda: received.append(True))
+
+        self.page._replay_onboarding_btn.click()
+
+        self.assertEqual(received, [True])
+
+
+class TestHomePage(unittest.TestCase):
+    """HomePage 引导入口与扩展状态"""
+
+    def test_home_page_hides_guide_button_and_shows_extension_status_summary(self):
+        from core.ui_preferences import set_home_onboarding_completed
+        from ui.pages.home_page import HomePage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "ui_preferences.json"
+            with mock.patch("core.ui_preferences._CONFIG_PATH", config_path):
+                set_home_onboarding_completed(True)
+                with mock.patch(
+                    "ui.pages.home_page.get_extension_load_status",
+                    return_value={
+                        "registered_count": 3,
+                        "error_count": 1,
+                        "details": {
+                            "loaded": [{"path": "ok.py"}],
+                            "errors": [{"path": "bad.py", "message": "boom", "categories": ["processing"]}],
+                        },
+                    },
+                ):
+                    page = HomePage()
+                try:
+                    self.assertIsNone(page._guide_toggle_btn)
+                    self.assertIn("1 个失败文件", page._extension_status_label.text())
+                    self.assertTrue(page._extension_detail_btn.isEnabled())
+                finally:
+                    page.deleteLater()
+
+
+class TestSettingsPageAIActions(unittest.TestCase):
+
+    def setUp(self):
+        self._restore_assets = _patch_global_assets()
+        from ui.pages.settings_page import SettingsPage
+        self.page = SettingsPage()
+
+    def tearDown(self):
+        self.page.deleteLater()
+        self._restore_assets()
+
     def test_shortcuts_changed_signal(self):
         received = []
         self.page.shortcuts_changed.connect(lambda: received.append(True))
@@ -870,6 +1009,106 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertGreaterEqual(panel.width(), 360)
         panel.deleteLater()
 
+    def test_status_summary_reflects_category_load_state(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+        with mock.patch(
+            "ui.widgets.extension_panel.get_extension_load_status",
+            return_value={
+                "label": "处理扩展",
+                "registered_count": 2,
+                "error_count": 1,
+                "details": {"loaded": [{"path": "ok.py"}], "errors": [{"path": "bad.py"}]},
+            },
+        ):
+            panel.set_status_context("processing", "处理扩展")
+
+        self.assertIn("处理扩展已注册 2 项", panel._status_label.text())
+        self.assertTrue(panel._status_detail_btn.isEnabled())
+        panel.deleteLater()
+
+    def test_report_dialog_uses_top_level_window_as_parent(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets import extension_panel
+
+        host = QWidget()
+        child = QWidget(host)
+        captured = {}
+
+        class _FakeDialog:
+            def __init__(self, title, content, parent=None):
+                captured["title"] = title
+                captured["content"] = content
+                captured["parent"] = parent
+
+            def exec(self):
+                captured["executed"] = True
+
+        with mock.patch.object(extension_panel, "_ExtensionLoadReportDialog", _FakeDialog):
+            extension_panel.show_extension_load_report_dialog(child, "扩展详情", "plot")
+
+        self.assertEqual(captured["title"], "扩展详情")
+        self.assertIs(captured["parent"], host)
+        self.assertTrue(captured["executed"])
+        child.deleteLater()
+        host.deleteLater()
+
+
+class TestPageOnboardingController(unittest.TestCase):
+
+    def test_controller_uses_end_prev_next_buttons_in_one_flow(self):
+        from PySide6.QtWidgets import QWidget
+        from qfluentwidgets import PrimaryPushButton, PushButton, TeachingTipTailPosition
+        from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
+
+        host = QWidget()
+        target = QWidget(host)
+        host.show()
+        QApplication.processEvents()
+        captured = {}
+
+        class _FakeTip:
+            def close(self):
+                return None
+
+        def _fake_make(view, tip_target, duration, tail_position, parent):
+            captured["target"] = tip_target
+            captured["tail_position"] = tail_position
+            captured["parent"] = parent
+            captured["push_buttons"] = sorted(
+                button.text() for button in view.findChildren(PushButton) if button.text()
+            )
+            captured["primary_buttons"] = [
+                button.text() for button in view.findChildren(PrimaryPushButton) if button.text()
+            ]
+            return _FakeTip()
+
+        controller = PageOnboardingController(
+            host,
+            "test-onboarding",
+            lambda: [
+                OnboardingStep(
+                    lambda: target,
+                    TeachingTipTailPosition.BOTTOM,
+                    "标题",
+                    "内容",
+                )
+            ],
+            is_completed=lambda: False,
+            mark_completed=lambda completed: completed,
+        )
+
+        with mock.patch("ui.widgets.onboarding.TeachingTip.make", side_effect=_fake_make):
+            controller.start(force=True)
+
+        self.assertCountEqual(captured["push_buttons"], ["上一步", "结束引导", "下一步"])
+        self.assertEqual(captured["primary_buttons"], ["下一步"])
+        self.assertIs(captured["target"], target)
+        self.assertIs(captured["parent"], host)
+        target.deleteLater()
+        host.deleteLater()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. DataPage — on_tree_node_selected
@@ -951,6 +1190,17 @@ class TestDataPage(unittest.TestCase):
 
         self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
         self.assertIn("文件夹:", self.page._text_preview.toPlainText())
+
+    def test_picture_root_cannot_be_renamed_from_management_panel(self):
+        self.pm.migrate_to_v3(self.p)
+        picture_root = self.pm._find_folder_by_group_type("pictures")
+        self.assertIsNotNone(picture_root)
+
+        self.page.on_tree_node_selected("folder", picture_root.id)
+
+        self.assertFalse(self.page._can_rename_current_node())
+        self.assertFalse(self.page._manage_name_edit.isEnabled())
+        self.assertFalse(self.page._btn_apply_name.isEnabled())
 
     def test_on_tree_node_selected_image_work_shows_image_preview(self):
         from PySide6.QtGui import QImage
@@ -1759,12 +2009,92 @@ class TestChartPage(unittest.TestCase):
             QApplication.processEvents()
             self.page._on_chart_extension_apply("chart_plot_remove", {"enabled": True})
 
-            self.assertIn("chart_plot_remove", self.page._plot_extension_options)
-            self.assertEqual(self.page._extension_panel._remove_btn.text(), "撤销应用")
+            self.assertEqual(len(self.page._applied_plot_extensions), 1)
+            self.assertEqual(self.page._remove_selected_plot_extension_btn.text(), "撤销选中扩展")
             self.page._on_chart_extension_remove_requested("chart_plot_remove")
-            self.assertNotIn("chart_plot_remove", self.page._plot_extension_options)
+            self.assertEqual(self.page._applied_plot_extensions, [])
         finally:
             extension_registry.unregister_plot("chart_plot_remove")
+            self.page._refresh_style_extension_panel()
+
+    def test_plot_extension_supports_multiple_instances_with_different_params(self):
+        from core.extension_api import PlotExtension, extension_registry
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_multi",
+                name="多实例参考线",
+                handler=lambda axis, series, options: axis.axhline(float(options.get("y", 0.0)), color=options.get("color", "#cc3300")),
+                default_options={"y": 1.0, "color": "#cc3300"},
+            )
+        )
+        try:
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page._style_tabs.setCurrentIndex(2)
+            QApplication.processEvents()
+
+            self.page._on_chart_extension_apply("chart_plot_multi", {"y": 1.0, "color": "#cc3300"})
+            self.page._on_chart_extension_apply("chart_plot_multi", {"y": 2.5, "color": "#0066cc"})
+
+            self.assertEqual(len(self.page._applied_plot_extensions), 2)
+            self.assertEqual(self.page._plot_extension_applied_list.count(), 2)
+            axis = self.page._figure.axes[0]
+            horizontal_lines = [line for line in axis.lines if len(set(line.get_ydata())) == 1]
+            self.assertTrue(any(list(line.get_ydata()) == [1.0, 1.0] for line in horizontal_lines))
+            self.assertTrue(any(list(line.get_ydata()) == [2.5, 2.5] for line in horizontal_lines))
+        finally:
+            extension_registry.unregister_plot("chart_plot_multi")
+            self.page._applied_plot_extensions.clear()
+            self.page._plot_extension_options.pop("chart_plot_multi", None)
+            self.page._refresh_style_extension_panel()
+
+    def test_plot_extension_context_uses_selected_curve_when_applying(self):
+        from core.extension_api import PlotExtension, extension_registry
+
+        selected_names: list[str | None] = []
+
+        def _draw(context, options):
+            if context.phase != "after_plot" or context.axis is None:
+                return
+            selected_names.append(None if context.selected_series is None else context.selected_series.get("name"))
+            if context.selected_series is None:
+                return
+            context.axis.axhline(float(context.selected_series["y"][0]), color=options.get("color", "#009966"))
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_selected_curve",
+                name="读取当前选中曲线",
+                handler=_draw,
+                default_options={"color": "#009966"},
+            )
+        )
+        try:
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.add_series_to_chart({
+                "name": "第二条曲线",
+                "x": [0.0, 1.0, 2.0],
+                "y": [8.0, 9.0, 10.0],
+                "color": "#ff6600",
+                "obj_id": "series-second",
+                "visible": True,
+            })
+            self.page._refresh_chart_list()
+            self.page._chart_list.setCurrentRow(1)
+            QApplication.processEvents()
+
+            self.page._style_tabs.setCurrentIndex(2)
+            QApplication.processEvents()
+            self.page._on_chart_extension_apply("chart_plot_selected_curve", {"color": "#009966"})
+
+            self.assertEqual(selected_names[-1], "第二条曲线")
+            self.assertIn("当前选中：第二条曲线", self.page._plot_extension_target_hint.text())
+            applied = self.page._applied_plot_extensions[0]
+            self.assertEqual(applied["curve_name"], "第二条曲线")
+        finally:
+            extension_registry.unregister_plot("chart_plot_selected_curve")
+            self.page._applied_plot_extensions.clear()
+            self.page._plot_extension_options.pop("chart_plot_selected_curve", None)
             self.page._refresh_style_extension_panel()
 
     def test_chart_preview_host_follows_dark_background(self):
@@ -3450,6 +3780,31 @@ class TestImportDialogParsers(unittest.TestCase):
             dlg.deleteLater()
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def test_import_dialog_failed_reload_clears_previous_state(self):
+        from ui.dialogs.import_dialog import ImportDialog
+
+        dlg = ImportDialog()
+        dlg._file_path = "old.csv"
+        dlg._raw_headers = ["x", "y"]
+        dlg._raw_rows = [[1.0, 2.0]]
+        dlg.imported_series = [mock.Mock(name="series")]
+        dlg._populate_col_table()
+        dlg._go_next()
+
+        with mock.patch("ui.dialogs.import_dialog._parse_file_preview", side_effect=ValueError("bad file")):
+            with self.assertRaisesRegex(ValueError, "bad file"):
+                dlg.load_file("broken.csv")
+
+        self.assertEqual(dlg._stack.currentIndex(), 0)
+        self.assertEqual(dlg._btn_next.text(), "下一步")
+        self.assertFalse(dlg._btn_back.isEnabled())
+        self.assertFalse(dlg._btn_next.isEnabled())
+        self.assertEqual(dlg._raw_headers, [])
+        self.assertEqual(dlg._raw_rows, [])
+        self.assertEqual(dlg.imported_series, [])
+        self.assertEqual(dlg._col_table.rowCount(), 0)
+        dlg.deleteLater()
 
     def test_import_dialog_can_target_existing_data_file(self):
         from ui.dialogs.import_dialog import ImportDialog

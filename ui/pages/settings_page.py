@@ -27,6 +27,7 @@ class SettingsPage(QWidget):
     ai_panel_visibility_changed = Signal(bool)
     project_modified = Signal()
     assets_modified = Signal()
+    replay_onboarding_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -36,6 +37,9 @@ class SettingsPage(QWidget):
         self._tree_display_mode_combo = None
         self._tree_display_mode_keys = ["wrap", "elide"]
         self._appearance_title = None
+        self._onboarding_label = None
+        self._onboarding_hint = None
+        self._replay_onboarding_btn = None
         self._lang_title = None
         self._lang_placeholder = None
         self._shortcuts_title = None
@@ -127,6 +131,21 @@ class SettingsPage(QWidget):
         self._tree_display_mode_combo.currentIndexChanged.connect(self._on_tree_display_mode_changed)
         tree_mode_layout.addWidget(self._tree_display_mode_combo)
         appearance_layout.addLayout(tree_mode_layout)
+
+        onboarding_layout = QVBoxLayout()
+        self._onboarding_label = BodyLabel("新手引导", content)
+        self._onboarding_label.setStyleSheet(f"color: {text_color()};")
+        onboarding_layout.addWidget(self._onboarding_label)
+
+        self._onboarding_hint = BodyLabel("主页引导可以在这里重新播放；数据管理、处理、可视化、分析和图片数据化页面会在首次进入时自动显示简短 TeachingTip。", content)
+        self._onboarding_hint.setWordWrap(True)
+        self._onboarding_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        onboarding_layout.addWidget(self._onboarding_hint)
+
+        self._replay_onboarding_btn = PushButton("重新显示引导", content)
+        self._replay_onboarding_btn.clicked.connect(self.replay_onboarding_requested.emit)
+        onboarding_layout.addWidget(self._replay_onboarding_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        appearance_layout.addLayout(onboarding_layout)
 
         layout.addWidget(self._appearance_card)
 
@@ -505,6 +524,10 @@ class SettingsPage(QWidget):
         self._theme_label.setStyleSheet(f"color: {tc};")
         if self._tree_display_mode_label is not None:
             self._tree_display_mode_label.setStyleSheet(f"color: {tc};")
+        if self._onboarding_label is not None:
+            self._onboarding_label.setStyleSheet(f"color: {tc};")
+        if self._onboarding_hint is not None:
+            self._onboarding_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
         if self._shortcuts_title:
             self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
         if self._shortcut_filter_edit is not None:

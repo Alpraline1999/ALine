@@ -11,12 +11,37 @@ from qfluentwidgets import (
     CardWidget,
     ComboBox,
     FluentIcon as FIF,
+    MessageBoxBase,
     PlainTextEdit,
     PrimaryPushButton,
     PushButton,
     SmoothScrollArea,
+    SubtitleLabel,
     ToolButton,
 )
+
+from core.extension_api import format_extension_load_report, get_extension_load_status
+from ui.theme import make_hint_label, make_section_label
+
+
+class _ExtensionLoadReportDialog(MessageBoxBase):
+    def __init__(self, title: str, content: str, parent=None):
+        super().__init__(parent)
+        self.viewLayout.addWidget(SubtitleLabel(title, self))
+        editor = PlainTextEdit(self)
+        editor.setReadOnly(True)
+        editor.setMinimumHeight(280)
+        editor.setPlainText(content)
+        self.viewLayout.addWidget(editor)
+        self.yesButton.setText("关闭")
+        self.cancelButton.hide()
+        self.widget.setMinimumWidth(560)
+
+
+def show_extension_load_report_dialog(parent, title: str, category: Optional[str] = None) -> None:
+    dialog_parent = parent.window() if hasattr(parent, "window") and parent is not None else parent
+    dialog = _ExtensionLoadReportDialog(title, format_extension_load_report(category), dialog_parent)
+    dialog.exec()
 
 
 class ExtensionConfigPanel(QWidget):
@@ -35,6 +60,8 @@ class ExtensionConfigPanel(QWidget):
         self._entries: List[dict] = []
         self._saved_options: Dict[str, Dict[str, Any]] = {}
         self._action_text = action_text
+        self._status_category: Optional[str] = None
+        self._status_title = title or "扩展"
         self._setup_ui(title)
 
     def _setup_ui(self, title: str) -> None:
@@ -51,6 +78,8 @@ class ExtensionConfigPanel(QWidget):
         self._title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(self._title_label)
 
+        layout.addWidget(make_section_label("可用扩展", card))
+
         selector_row = QHBoxLayout()
         self._selector = ComboBox(card)
         self._selector.currentIndexChanged.connect(self._on_selection_changed)
@@ -61,19 +90,24 @@ class ExtensionConfigPanel(QWidget):
         selector_row.addWidget(self._reload_btn)
         layout.addLayout(selector_row)
 
-        desc_title = BodyLabel("说明", card)
-        desc_title.setStyleSheet("font-weight: bold;")
-        layout.addWidget(desc_title)
+        layout.addWidget(make_section_label("加载状态", card))
+        status_row = QHBoxLayout()
+        self._status_label = make_hint_label("扩展状态尚未初始化。", card)
+        status_row.addWidget(self._status_label, 1)
+        self._status_detail_btn = PushButton("查看详情", card)
+        self._status_detail_btn.clicked.connect(self._show_status_details)
+        status_row.addWidget(self._status_detail_btn)
+        layout.addLayout(status_row)
+
+        layout.addWidget(make_section_label("扩展说明", card))
 
         self._description_label = BodyLabel("暂无已注册扩展", card)
         self._description_label.setWordWrap(True)
         layout.addWidget(self._description_label)
 
-        config_title = BodyLabel("扩展配置 JSON", card)
-        config_title.setStyleSheet("font-weight: bold;")
-        layout.addWidget(config_title)
+        layout.addWidget(make_section_label("参数配置", card))
 
-        self._usage_hint_label = CaptionLabel("配置 JSON 会在应用时作为 params/options 传给扩展处理函数。", card)
+        self._usage_hint_label = CaptionLabel("参数会以 JSON 对象形式传给当前扩展。", card)
         self._usage_hint_label.setWordWrap(True)
         layout.addWidget(self._usage_hint_label)
 
@@ -120,6 +154,12 @@ class ExtensionConfigPanel(QWidget):
         root.addWidget(card, 1)
         self._set_empty_state()
 
+    def set_status_context(self, category: Optional[str], title: Optional[str] = None) -> None:
+        self._status_category = category.strip().lower() if category else None
+        if title:
+            self._status_title = title
+        self._refresh_status_summary()
+
     def set_panel_title(self, title: str) -> None:
         self._title_label.setText(title or "自定义扩展")
 
@@ -160,6 +200,7 @@ class ExtensionConfigPanel(QWidget):
         self._selector.setCurrentIndex(target_index)
         self._selector.blockSignals(False)
         self._on_selection_changed(target_index)
+        self._refresh_status_summary()
 
     def current_type(self) -> Optional[str]:
         if not self._entries:
@@ -227,7 +268,25 @@ class ExtensionConfigPanel(QWidget):
         self._reload_btn.setEnabled(True)
         self._reset_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
+        self._refresh_status_summary()
         self.selection_changed.emit("")
+
+    def _refresh_status_summary(self) -> None:
+        status = get_extension_load_status(self._status_category)
+        label = status["label"]
+        registered_count = status["registered_count"]
+        error_count = status["error_count"]
+        if error_count:
+            self._status_label.setText(f"{label}已注册 {registered_count} 项，本轮扫描有 {error_count} 个失败文件。")
+        elif registered_count:
+            self._status_label.setText(f"{label}已注册 {registered_count} 项，最近一次扫描未发现加载错误。")
+        else:
+            self._status_label.setText(f"当前没有已注册的{label}。")
+        has_details = bool(status["details"].get("loaded") or status["details"].get("errors"))
+        self._status_detail_btn.setEnabled(has_details)
+
+    def _show_status_details(self) -> None:
+        show_extension_load_report_dialog(self, f"{self._status_title}详情", self._status_category)
 
     def _on_selection_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._entries):

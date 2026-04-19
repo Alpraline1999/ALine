@@ -97,6 +97,8 @@ _LEGACY_TOOL_NODE_KINDS = {
     "pipeline", "figure_template", "report_template", "ai_prompt", "ai_skill", "ai_agent", "ai_tool",
 }
 
+_NON_REMOVABLE_FOLDER_GROUP_TYPES = set(_GROUP_DISPLAY_NAMES.keys())
+
 
 class ProjectManager:
     """项目管理器（全局单例）。
@@ -1213,6 +1215,58 @@ class ProjectManager:
         p.tree.nodes = [n for n in p.tree.nodes if n.id not in ids_to_delete]
         p.is_modified = True
         return True
+
+    def remove_empty_folders(self, root_id: Optional[str] = None, *, include_root: bool = False) -> List[str]:
+        """清理空的用户文件夹，保留系统分组文件夹。"""
+        p = self.current_project
+        if p is None or p.tree is None:
+            return []
+
+        scoped_ids = None
+        if root_id is not None:
+            root = p.tree.get_node(root_id)
+            if root is None or root.kind != "folder":
+                return []
+
+            def _collect_folder_ids(node_id: str) -> List[str]:
+                ids = [node_id]
+                for child in p.tree.get_children(node_id):  # type: ignore
+                    if child.kind == "folder":
+                        ids.extend(_collect_folder_ids(child.id))
+                return ids
+
+            scoped_ids = set(_collect_folder_ids(root_id))
+            if not include_root:
+                scoped_ids.discard(root_id)
+
+        removed_ids: List[str] = []
+        while True:
+            removable_ids: List[str] = []
+            for node in list(p.tree.nodes):
+                if node.kind != "folder":
+                    continue
+                if scoped_ids is not None and node.id not in scoped_ids:
+                    continue
+                canonical_group = self._canonical_group_type(getattr(node, "group_type", None))
+                if canonical_group not in {None, "user"}:
+                    if canonical_group in _NON_REMOVABLE_FOLDER_GROUP_TYPES:
+                        continue
+                if p.tree.get_children(node.id):  # type: ignore
+                    continue
+                removable_ids.append(node.id)
+
+            if not removable_ids:
+                break
+
+            removable_set = set(removable_ids)
+            p.tree.nodes = [node for node in p.tree.nodes if node.id not in removable_set]
+            removed_ids.extend(removable_ids)
+            if scoped_ids is not None:
+                scoped_ids.difference_update(removable_set)
+
+        if removed_ids:
+            p.is_modified = True
+        return removed_ids
 
     def move_node(self, node_id: str, new_parent_id: Optional[str], new_order: int) -> bool:
         p = self.current_project

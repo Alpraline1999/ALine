@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import warnings
 from typing import Any, Dict, List, Optional
@@ -38,6 +39,7 @@ from qfluentwidgets import (
     SmoothScrollArea,
     TabCloseButtonDisplayMode,
     TabWidget,
+    TeachingTipTailPosition,
     ToolButton,
     ToolTipFilter,
     ToolTipPosition,
@@ -59,6 +61,7 @@ from ui.dialogs.export_flow import choose_picture_export_plan
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import make_hint_label, make_hsep, make_section_label
 
 try:
@@ -136,6 +139,8 @@ class ChartPage(QWidget):
         self._active_curve_style_template_id: Optional[str] = None
         self._current_plot_theme_id: Optional[str] = None
         self._plot_extension_options: Dict[str, dict] = {}
+        self._applied_plot_extensions: List[Dict[str, Any]] = []
+        self._plot_extension_instance_seed = 0
         self._plot_style_extension_options: Dict[str, dict] = {}
         self._curve_style_extension_options: Dict[str, dict] = {}
         self._plot_style_extras: Dict[str, Any] = {}
@@ -153,6 +158,11 @@ class ChartPage(QWidget):
 
         self._setup_ui()
         self._setup_shortcuts()
+        self._onboarding_controller = PageOnboardingController(self, "chart", self._chart_onboarding_steps)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._onboarding_controller.schedule_auto_start()
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -297,6 +307,37 @@ class ChartPage(QWidget):
     def apply_shortcuts(self) -> None:
         self._shortcut_bindings.apply()
 
+    def start_onboarding(self, force: bool = False) -> None:
+        self._onboarding_controller.start(force=force)
+
+    def _chart_onboarding_steps(self) -> List[OnboardingStep]:
+        return [
+            OnboardingStep(
+                lambda: self._chart_list,
+                TeachingTipTailPosition.BOTTOM,
+                "先确认画布里的曲线",
+                "共享树双击数据后，曲线会先进入这里；当前选中项也会作为样式编辑和绘图扩展的默认目标。",
+            ),
+            OnboardingStep(
+                lambda: self._style_tabs,
+                TeachingTipTailPosition.BOTTOM,
+                "样式和扩展都在左侧标签里",
+                "曲线样式、绘图样式和绘图扩展已经拆开管理；需要叠加参考线或自定义绘制流程时，切到“绘图扩展”页即可。",
+            ),
+            OnboardingStep(
+                lambda: self._plot_actions_bar,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "导出入口在这里收口",
+                "出图后可以直接导出图片，或者一键落到项目图片集中，方便后续统一管理。",
+            ),
+            OnboardingStep(
+                lambda: self._canvas_host,
+                TeachingTipTailPosition.LEFT_BOTTOM,
+                "右侧始终是最终预览",
+                "所有样式、扩展和图例显示名调整，都会直接反映在这里；确认无误后再导出即可。",
+            ),
+        ]
+
     def supports_extension_panel_toggle(self) -> bool:
         return True
 
@@ -331,36 +372,14 @@ class ChartPage(QWidget):
             canvas_stage.setStyleSheet(f"background: {background};")
 
     def _update_extension_remove_action(self) -> None:
-        if not hasattr(self, "_extension_panel") or not hasattr(self, "_style_tabs"):
-            return
-        if self._style_tabs.currentIndex() != 2:
+        if hasattr(self, "_extension_panel"):
             self._extension_panel.set_remove_action(visible=False, enabled=False)
-            return
-        current_type = self._extension_panel.current_type()
-        can_remove = (
-            current_type is not None
-            and extension_registry.get_plot(current_type) is not None
-            and current_type in self._plot_extension_options
-        )
-        self._extension_panel.set_remove_action(
-            visible=True,
-            enabled=can_remove,
-            text="撤销应用",
-        )
 
     def _on_chart_extension_remove_requested(self, type_id: str) -> None:
-        extension = extension_registry.get_plot(type_id)
-        if extension is None or type_id not in self._plot_extension_options:
+        applied = next((entry for entry in reversed(self._applied_plot_extensions) if entry.get("type") == type_id), None)
+        if applied is None:
             return
-        self._plot_extension_options.pop(type_id, None)
-        self._refresh_style_extension_panel()
-        self._redraw_now()
-        InfoBar.success(
-            "已撤销",
-            f"绘图扩展 {extension.name} 已移除",
-            parent=self,
-            position=InfoBarPosition.TOP,
-        )
+        self._remove_plot_extension_instance(str(applied.get("id") or ""))
 
     def eventFilter(self, watched, event):
         if self._canvas_host is not None and watched is self._canvas_host.viewport() and event.type() == QEvent.Type.Resize:
@@ -687,7 +706,7 @@ class ChartPage(QWidget):
         layout.setSpacing(8)
 
         layout.addWidget(make_section_label("绘图扩展", page))
-        layout.addWidget(make_hint_label("在右侧扩展面板中选择绘图扩展，并叠加到当前图表绘制流程。", page))
+        layout.addWidget(make_hint_label("在右侧扩展面板中选择绘图扩展，并把它作为一个独立实例叠加到当前图表。", page))
 
         description = BodyLabel(
             "绘图扩展适合添加参考线、辅助标注、自定义子图，或接管默认绘图流程。",
@@ -696,13 +715,31 @@ class ChartPage(QWidget):
         description.setWordWrap(True)
         layout.addWidget(description)
 
+        self._plot_extension_target_hint = make_hint_label("", page)
+        self._plot_extension_target_hint.setWordWrap(True)
+        layout.addWidget(self._plot_extension_target_hint)
+
+        applied_header = QHBoxLayout()
+        applied_header.addWidget(make_section_label("已加载扩展", page))
+        applied_header.addStretch()
+        self._remove_selected_plot_extension_btn = PushButton("撤销选中扩展", page)
+        self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
+        self._remove_selected_plot_extension_btn.setEnabled(False)
+        applied_header.addWidget(self._remove_selected_plot_extension_btn)
+        layout.addLayout(applied_header)
+
+        self._plot_extension_applied_list = ListWidget(page)
+        self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
+        layout.addWidget(self._plot_extension_applied_list, 1)
+
         note = BodyLabel(
-            "已应用的绘图扩展会保留当前配置，可在右侧直接重置、撤销或重新应用。",
+            "同一扩展可按不同参数重复加载；列表会保留每次加载的目标曲线和参数摘要，撤销操作也在这里完成。",
             page,
         )
         note.setWordWrap(True)
         layout.addWidget(note)
-        layout.addStretch()
+        self._refresh_plot_extension_list()
         return page
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
@@ -805,6 +842,154 @@ class ChartPage(QWidget):
             entries.append(entry)
         return entries
 
+    def _next_plot_extension_instance_id(self) -> str:
+        self._plot_extension_instance_seed += 1
+        return f"plot-extension-{self._plot_extension_instance_seed}"
+
+    def _resolve_plot_extension_curve(self, curve_identity: Optional[str], *, visible_only: bool = True) -> Optional[dict]:
+        if not curve_identity:
+            return None
+        series = self._chart_series if not visible_only else [curve for curve in self._chart_series if curve.get("visible", True)]
+        return next((curve for curve in series if self._curve_identity(curve) == curve_identity), None)
+
+    @staticmethod
+    def _plot_extension_option_summary(options: Dict[str, Any]) -> str:
+        if not options:
+            return "默认配置"
+        parts: List[str] = []
+        for index, (key, value) in enumerate(options.items()):
+            if index >= 2:
+                break
+            rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+            rendered = str(rendered)
+            if len(rendered) > 24:
+                rendered = f"{rendered[:21]}..."
+            parts.append(f"{key}={rendered}")
+        if len(options) > 2:
+            parts.append("...")
+        return "，".join(parts)
+
+    def _plot_extension_target_hint_text(self) -> str:
+        selected_curve = self._selected_curve()
+        if selected_curve is not None:
+            return f"当前选中：{self._curve_display_name(selected_curve)}。现在应用扩展时，会把这条曲线记录为本次加载实例的目标曲线。"
+
+        visible_series = [curve for curve in self._chart_series if curve.get("visible", True)]
+        if len(visible_series) > 1:
+            return "当前选中：未选中。当前画布存在多条曲线，建议先在“已绘图曲线”中选中目标曲线，再应用绘图扩展。"
+        if len(visible_series) == 1:
+            return f"当前选中：未选中。当前只有 {self._curve_display_name(visible_series[0])} 可见，扩展会按默认逻辑处理这条曲线。"
+        return "当前选中：未选中。请先向画布添加曲线，再应用绘图扩展。"
+
+    def _build_applied_plot_extension(self, type_id: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        target_curve = self._selected_curve()
+        return {
+            "id": self._next_plot_extension_instance_id(),
+            "type": type_id,
+            "options": dict(options),
+            "curve_identity": self._curve_identity(target_curve) if target_curve is not None else None,
+            "curve_name": target_curve.get("name") if target_curve is not None else None,
+            "curve_display_name": self._curve_display_name(target_curve) if target_curve is not None else "",
+        }
+
+    def _applied_plot_extension_label(self, entry: Dict[str, Any], index: int) -> str:
+        extension = extension_registry.get_plot(str(entry.get("type") or ""))
+        extension_name = extension.name if extension is not None else str(entry.get("type") or "绘图扩展")
+        curve_identity = entry.get("curve_identity")
+        selected_curve = self._selected_curve()
+        selected_identity = self._curve_identity(selected_curve) if selected_curve is not None else None
+        if curve_identity:
+            curve = self._resolve_plot_extension_curve(str(curve_identity), visible_only=False)
+            curve_label = (
+                self._curve_display_name(curve)
+                if curve is not None
+                else f"{entry.get('curve_display_name') or entry.get('curve_name') or '目标曲线'}（已失效）"
+            )
+        else:
+            curve_label = "全部可见曲线"
+        current_hint = " · 当前选中" if selected_identity and selected_identity == curve_identity else ""
+        summary = self._plot_extension_option_summary(dict(entry.get("options") or {}))
+        return f"{index + 1}. {extension_name} · {curve_label} · {summary}{current_hint}"
+
+    def _selected_plot_extension_instance(self) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_plot_extension_applied_list"):
+            return None
+        item = self._plot_extension_applied_list.currentItem()
+        if item is None:
+            return None
+        instance_id = item.data(Qt.ItemDataRole.UserRole)
+        return next((entry for entry in self._applied_plot_extensions if entry.get("id") == instance_id), None)
+
+    def _refresh_plot_extension_list(self, *, selected_instance_id: Optional[str] = None) -> None:
+        if hasattr(self, "_plot_extension_target_hint"):
+            self._plot_extension_target_hint.setText(self._plot_extension_target_hint_text())
+        if not hasattr(self, "_plot_extension_applied_list"):
+            return
+
+        current_item = self._plot_extension_applied_list.currentItem()
+        target_instance_id = selected_instance_id
+        if target_instance_id is None and current_item is not None:
+            target_instance_id = current_item.data(Qt.ItemDataRole.UserRole)
+
+        self._plot_extension_applied_list.blockSignals(True)
+        self._plot_extension_applied_list.clear()
+        target_row = -1
+        for index, entry in enumerate(self._applied_plot_extensions):
+            item = QListWidgetItem(self._applied_plot_extension_label(entry, index))
+            item.setData(Qt.ItemDataRole.UserRole, entry.get("id"))
+            item.setToolTip(json.dumps(dict(entry.get("options") or {}), ensure_ascii=False, indent=2))
+            self._plot_extension_applied_list.addItem(item)
+            if entry.get("id") == target_instance_id:
+                target_row = index
+        if self._plot_extension_applied_list.count() > 0:
+            if target_row < 0:
+                target_row = 0
+            self._plot_extension_applied_list.setCurrentRow(target_row)
+        self._plot_extension_applied_list.blockSignals(False)
+        self._on_plot_extension_instance_selection_changed(self._plot_extension_applied_list.currentItem(), None)
+
+    def _on_plot_extension_instance_selection_changed(self, current, _previous) -> None:
+        has_selection = current is not None
+        if hasattr(self, "_remove_selected_plot_extension_btn"):
+            self._remove_selected_plot_extension_btn.setEnabled(has_selection)
+        if not has_selection or not hasattr(self, "_extension_panel"):
+            return
+        applied = self._selected_plot_extension_instance()
+        if applied is None:
+            return
+        type_id = str(applied.get("type") or "")
+        target_index = next(
+            (index for index, entry in enumerate(self._extension_panel._entries) if entry.get("type") == type_id),
+            -1,
+        )
+        if target_index >= 0:
+            self._extension_panel._selector.setCurrentIndex(target_index)
+        self._extension_panel._editor.setPlainText(json.dumps(dict(applied.get("options") or {}), ensure_ascii=False, indent=2))
+
+    def _remove_plot_extension_instance(self, instance_id: str) -> bool:
+        if not instance_id:
+            return False
+        target = next((entry for entry in self._applied_plot_extensions if entry.get("id") == instance_id), None)
+        if target is None:
+            return False
+        self._applied_plot_extensions = [entry for entry in self._applied_plot_extensions if entry.get("id") != instance_id]
+        self._refresh_style_extension_panel()
+        self._redraw_now()
+        extension = extension_registry.get_plot(str(target.get("type") or ""))
+        InfoBar.success(
+            "已撤销",
+            f"绘图扩展 {(extension.name if extension is not None else target.get('type') or '扩展')} 已移除",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
+        return True
+
+    def _remove_selected_plot_extension(self) -> None:
+        applied = self._selected_plot_extension_instance()
+        if applied is None:
+            return
+        self._remove_plot_extension_instance(str(applied.get("id") or ""))
+
     def _curve_style_extension_entries(self) -> List[dict]:
         return [build_extension_entry(extension) for extension in extension_registry.list_curve_style()]
 
@@ -823,6 +1008,7 @@ class ChartPage(QWidget):
             self._extension_panel.set_panel_title("曲线样式扩展")
             self._extension_panel.set_action_text("应用扩展")
             self._extension_panel.set_context("图表样式", target)
+            self._extension_panel.set_status_context("curve_style", "曲线样式扩展")
             self._extension_panel.set_entries(
                 self._curve_style_extension_entries(),
                 saved_options=self._curve_style_extension_options,
@@ -842,6 +1028,7 @@ class ChartPage(QWidget):
             self._extension_panel.set_panel_title("绘图样式扩展")
             self._extension_panel.set_action_text("应用扩展")
             self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
+            self._extension_panel.set_status_context("plot_style", "绘图样式扩展")
             self._extension_panel.set_entries(
                 plot_style_entries,
                 saved_options=self._plot_style_extension_options,
@@ -857,16 +1044,21 @@ class ChartPage(QWidget):
         if panel_current_type in available_types:
             current_type = panel_current_type
         else:
-            current_type = next((type_id for type_id in self._plot_extension_options if type_id in available_types), None)
+            current_type = next(
+                (str(entry.get("type")) for entry in reversed(self._applied_plot_extensions) if entry.get("type") in available_types),
+                None,
+            ) or next((type_id for type_id in self._plot_extension_options if type_id in available_types), None)
         self._extension_panel.set_panel_title("绘图扩展")
         self._extension_panel.set_action_text("应用扩展")
         self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
+        self._extension_panel.set_status_context("plot", "绘图扩展")
         self._extension_panel.set_entries(
             plot_entries,
             saved_options=self._plot_extension_options,
             current_type=current_type,
         )
         self._update_extension_remove_action()
+        self._refresh_plot_extension_list()
 
     def _on_chart_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
         current_tab = self._style_tabs.currentIndex()
@@ -887,6 +1079,7 @@ class ChartPage(QWidget):
         plot_style_types = {extension.type for extension in extension_registry.list_plot_style()}
         curve_style_types = {extension.type for extension in extension_registry.list_curve_style()}
         self._plot_extension_options = {key: value for key, value in self._plot_extension_options.items() if key in plot_types}
+        self._applied_plot_extensions = [entry for entry in self._applied_plot_extensions if entry.get("type") in plot_types]
         self._plot_style_extension_options = {key: value for key, value in self._plot_style_extension_options.items() if key in plot_style_types}
         self._curve_style_extension_options = {key: value for key, value in self._curve_style_extension_options.items() if key in curve_style_types}
         self._refresh_curve_style_template_combo()
@@ -1118,8 +1311,12 @@ class ChartPage(QWidget):
         extension = extension_registry.get_plot(type_id)
         if extension is None:
             return
-        self._plot_extension_options[type_id] = dict(self._plot_extension_options.get(type_id, extension.default_options))
+        options = dict(self._plot_extension_options.get(type_id, extension.default_options))
+        self._plot_extension_options[type_id] = dict(options)
+        applied = self._build_applied_plot_extension(type_id, options)
+        self._applied_plot_extensions.append(applied)
         self._refresh_style_extension_panel()
+        self._refresh_plot_extension_list(selected_instance_id=str(applied.get("id") or ""))
         self._redraw_now()
 
     def load_plot_theme(self, theme_id: str) -> None:
@@ -1813,6 +2010,7 @@ class ChartPage(QWidget):
         figure_facecolor = self._plot_style_extras.get("figure_facecolor")
         axes_facecolor = self._plot_style_extras.get("axes_facecolor")
         visible_series = [curve for curve in self._chart_series if curve.get("visible", True)]
+        selected_curve = self._selected_curve()
         bw_colors = ["#000000", "#444444", "#888888", "#aaaaaa"]
         bw_index = 0
         default_line_kwargs = dict(self._plot_style_extras.get("line_defaults", {}) or {})
@@ -1829,18 +2027,24 @@ class ChartPage(QWidget):
             axes=[axis],
             visible_series=[dict(curve) for curve in visible_series],
             plotted_series=plotted_series,
+            selected_series=(dict(selected_curve) if selected_curve is not None else None),
+            selected_series_identity=(self._curve_identity(selected_curve) if selected_curve is not None else None),
             figure_state=self._current_plot_style_payload(),
             plot_style_extras=dict(self._plot_style_extras),
             theme_colors={"background": bg, "foreground": fg, "grid": grid_color},
         )
 
-        for type_id, options in list(self._plot_extension_options.items()):
+        for applied in list(self._applied_plot_extensions):
+            type_id = str(applied.get("type") or "")
             extension = extension_registry.get_plot(type_id)
             if extension is None:
                 continue
+            target_curve = self._resolve_plot_extension_curve(applied.get("curve_identity"))
+            plot_context.selected_series = dict(target_curve) if target_curve is not None else None
+            plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
             try:
                 plot_context.phase = "before_plot"
-                invoke_plot_extension_handler(extension.handler, plot_context, dict(options))
+                invoke_plot_extension_handler(extension.handler, plot_context, dict(applied.get("options") or {}))
             except Exception:
                 continue
             plot_context.refresh_axes()
@@ -1912,14 +2116,18 @@ class ChartPage(QWidget):
                 else:
                     axis.plot(x_values, y_values, **plot_kwargs)
 
-        for type_id, options in list(self._plot_extension_options.items()):
+        for applied in list(self._applied_plot_extensions):
+            type_id = str(applied.get("type") or "")
             extension = extension_registry.get_plot(type_id)
             if extension is None:
                 continue
+            target_curve = self._resolve_plot_extension_curve(applied.get("curve_identity"))
             try:
                 plot_context.phase = "after_plot"
                 plot_context.axis = axis
-                invoke_plot_extension_handler(extension.handler, plot_context, dict(options))
+                plot_context.selected_series = dict(target_curve) if target_curve is not None else None
+                plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
+                invoke_plot_extension_handler(extension.handler, plot_context, dict(applied.get("options") or {}))
             except Exception:
                 continue
             plot_context.refresh_axes()

@@ -24,12 +24,18 @@ def _visible_points(visible_series):
     return points
 
 
+def _context_series(plot_context):
+    if plot_context.selected_series:
+        return [plot_context.selected_series]
+    return plot_context.visible_series
+
+
 def draw_reference_overlay(plot_context, options):
     axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
     if axis is None:
         return
 
-    points = _visible_points(plot_context.visible_series)
+    points = _visible_points(_context_series(plot_context))
     if not points:
         return
 

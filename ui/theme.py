@@ -46,6 +46,17 @@ def hover_color():
     return "#383838" if isDarkTheme() else "#e8f0fe"
 
 
+def card_style_sheet():
+    """统一卡片样式。"""
+    return (
+        "QFrame {"
+        f"background: {card_background_color()};"
+        f"border: 1px solid {border_color()};"
+        "border-radius: 14px;"
+        "}"
+    )
+
+
 # ── 通用 UI 工厂函数（避免各页面重复定义）──────────────────────────────
 
 def make_section_label(text: str, parent=None):
@@ -53,6 +64,44 @@ def make_section_label(text: str, parent=None):
     from qfluentwidgets import BodyLabel
     lbl = BodyLabel(text, parent)
     lbl.setStyleSheet(f"color: {text_color()}; font-weight: bold; font-size: 11px;")
+    return lbl
+
+
+def make_card_frame(parent=None):
+    """创建统一卡片容器。"""
+    from PySide6.QtWidgets import QFrame
+
+    frame = QFrame(parent)
+    frame.setStyleSheet(card_style_sheet())
+    return frame
+
+
+def make_card_title(text: str, parent=None):
+    """创建卡片标题标签。"""
+    from qfluentwidgets import BodyLabel
+
+    lbl = BodyLabel(text, parent)
+    lbl.setStyleSheet(f"color: {text_color()}; font-weight: 700; font-size: 16px;")
+    return lbl
+
+
+def make_card_caption(text: str = "", parent=None):
+    """创建卡片说明标签。"""
+    from qfluentwidgets import CaptionLabel
+
+    lbl = CaptionLabel(text, parent)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(f"color: {secondary_color()}; font-size: 12px;")
+    return lbl
+
+
+def make_empty_state_label(text: str = "", parent=None):
+    """创建统一空状态/占位说明。"""
+    from qfluentwidgets import BodyLabel
+
+    lbl = BodyLabel(text, parent)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 12px;")
     return lbl
 
 
