@@ -57,11 +57,13 @@ def _wrap_text_height(font, text: str, width: int) -> int:
     return ceil(document.size().height())
 
 
-_PROJECT_ICON = getattr(FIF, "HOME", FIF.FOLDER)
-_DATA_ICON = FIF.DOCUMENT
+_PROJECT_ICON = getattr(FIF, "LIBRARY_FILL", getattr(FIF, "LIBRARY", FIF.FOLDER))
+_DATA_ICON = FIF.DICTIONARY
+_SOURCE_FOLDER_ICON = getattr(FIF, "IOT", FIF.FOLDER)
 _SOURCE_FILE_ICON = getattr(FIF, "DOCUMENT", FIF.FOLDER)
 _DATASET_GROUP_ICON = getattr(FIF, "LIBRARY", FIF.FOLDER)
-_PICTURE_GROUP_ICON = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
+_DIGITIZE_GROUP_ICON = getattr(FIF, "LABEL", FIF.PHOTO)
+_PICTURE_GROUP_ICON = getattr(FIF, "PHOTO", FIF.PHOTO)
 _SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
@@ -70,7 +72,7 @@ _KIND_CONFIG = {
     "folder":          (FIF.FOLDER,          None),
     "data_file":       (_DATA_ICON,         None),
     "source_file":     (_SOURCE_FILE_ICON,  None),
-    "image_work":      (FIF.PHOTO,           None),
+    "image_work":      (_DIGITIZE_GROUP_ICON, None),
     "picture":         (FIF.PHOTO,           None),
     "pipeline":        (FIF.DEVELOPER_TOOLS, "#0078D4"),
     "figure_template": (FIF.PIE_SINGLE,      "#107C10"),
@@ -94,8 +96,8 @@ _KIND_CONFIG = {
 _GROUP_ICON = {
     "datasets":       _DATASET_GROUP_ICON,
     "dataset_set":    _DATASET_GROUP_ICON,
-    "source_files":   _SOURCE_FILE_ICON,
-    "images":         FIF.PHOTO,
+    "source_files":   _SOURCE_FOLDER_ICON,
+    "images":         _DIGITIZE_GROUP_ICON,
     "image_set":      FIF.PHOTO,
     "pictures":       _PICTURE_GROUP_ICON,
     "picture_set":    _PICTURE_GROUP_ICON,
@@ -849,6 +851,7 @@ class ProjectTreeWidget(QWidget):
             if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
                 if managed_group_type == "datasets":
                     import_entries.append((_DATA_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id)))
+                    import_entries.append((FIF.DICTIONARY_ADD, "导入数据文件...", lambda: self._cmd_import_data_file(node_id)))
                 if managed_group_type == "source_files":
                     import_entries.append((FIF.DOWNLOAD, "批量导入源文件...", lambda: self._cmd_import_source_files(node_id)))
                 if managed_group_type == "images":
@@ -857,7 +860,7 @@ class ProjectTreeWidget(QWidget):
                 if managed_group_type == "pictures":
                     manage_entries.append((_PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id)))
                 elif managed_group_type == "source_files":
-                    manage_entries.append((_SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id)))
+                    manage_entries.append((_SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id)))
             if not is_protected:
                 manage_entries.extend([
                     (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
@@ -881,11 +884,11 @@ class ProjectTreeWidget(QWidget):
         elif kind == "source_file":
             move_choices = self._move_target_choices(kind, node_id)
             import_entries.extend([
-                (FIF.DOWNLOAD, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id)),
+                (FIF.DICTIONARY_ADD, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id)),
                 (FIF.PHOTO, "导入到数据化", lambda: self.node_activated.emit("source_file_to_digitize", node_id)),
             ])
             manage_entries.extend([
-                (_SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
+                (_SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
                 (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
@@ -907,9 +910,9 @@ class ProjectTreeWidget(QWidget):
         elif kind == "image_work":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (FIF.EDIT, "打开取点", lambda: self.node_activated.emit("image_work", node_id)),
                 (FIF.ADD, "新增曲线", lambda: self.node_activated.emit("image_work_add_curve", node_id)),
-                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id)),
+                (FIF.EDIT, "打开取点", lambda: self.node_activated.emit("image_work", node_id)),
+                # (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id)),
                 (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
@@ -929,9 +932,6 @@ class ProjectTreeWidget(QWidget):
         elif kind == "curve":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("curve_to_chart", node_id)),
-                (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("curve_to_process", node_id)),
-                (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("curve_to_analysis", node_id)),
                 (FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0))),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
             ])
@@ -1030,6 +1030,42 @@ class ProjectTreeWidget(QWidget):
             return
         self.refresh()
         self.select_node(node.id)
+        self.project_modified.emit()
+
+    def _cmd_import_data_file(self, parent_id: Optional[str] = None) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self._dialog_parent(),
+            "导入数据文件",
+            "",
+            "数据文件 (*.csv *.txt *.dat *.tsv *.xlsx *.xls *.json *.npy *.npz);;所有文件 (*)",
+        )
+        if not file_path:
+            return
+        if not self._supports_source_file_dataset_import(file_path):
+            InfoBar.warning(
+                "导入失败",
+                "当前文件类型不支持导入为数据文件",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+        try:
+            dialog = self._create_source_file_import_dialog(file_path)
+        except Exception as exc:
+            InfoBar.warning(
+                "导入失败",
+                f"无法读取文件: {exc}",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+        if not dialog.exec():
+            return
+        selected_node_id = self._apply_source_file_import_dialog_results(dialog, target_folder_id=parent_id)
+        if not selected_node_id:
+            return
+        self.refresh()
+        self.select_node(selected_node_id)
         self.project_modified.emit()
 
     def _cmd_import_source_files(self, parent_id: Optional[str] = None) -> None:
@@ -1499,9 +1535,9 @@ class ProjectTreeWidget(QWidget):
         return window if isinstance(window, QWidget) else self
 
     def _folder_icon(self, node, group_type: Optional[str]):
-        if getattr(node, "parent_id", None) is not None:
-            return FIF.FOLDER
-        return _GROUP_ICON.get(group_type, FIF.FOLDER) if group_type else FIF.FOLDER
+        if group_type:
+            return _GROUP_ICON.get(group_type, FIF.FOLDER)
+        return FIF.FOLDER
 
     def _tooltip_item_at_event(self, event) -> Optional[QTreeWidgetItem]:
         if hasattr(event, "position"):

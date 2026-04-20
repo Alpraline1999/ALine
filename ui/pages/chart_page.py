@@ -32,6 +32,7 @@ from qfluentwidgets import (
     ColorPickerButton,
     ComboBox,
     FluentIcon as FIF,
+    InfoBarIcon,
     InfoBar,
     InfoBarPosition,
     LineEdit,
@@ -42,7 +43,9 @@ from qfluentwidgets import (
     SmoothScrollArea,
     TabCloseButtonDisplayMode,
     TabWidget,
+    TeachingTip,
     TeachingTipTailPosition,
+    TeachingTipView,
     ToolButton,
     ToolTipFilter,
     ToolTipPosition,
@@ -106,6 +109,8 @@ _THEME_HINTS = {
 _ICON_SHOW = getattr(FIF, "VIEW", FIF.SEARCH)
 _ICON_HIDE = getattr(FIF, "HIDE", FIF.CANCEL)
 _ICON_EXPORT_TO_PICTURES = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
+_ICON_PLOT_EXTENSION_HELP = getattr(FIF, "INFO", getattr(FIF, "HELP", FIF.SEARCH))
+_PLOT_EXTENSION_TEACHING_TIP_TEXT = "在右侧面板选择扩展，并叠加到当前图表。适合参考线、标注或自定义绘制流程。"
 
 
 class ChartPage(QWidget):
@@ -150,6 +155,7 @@ class ChartPage(QWidget):
         self._display_dpi = 100.0
         self._display_canvas_size: Optional[tuple[int, int]] = None
         self._canvas_host: Optional[QScrollArea] = None
+        self._plot_extension_teaching_tip = None
         self._selected_tree_kind: Optional[str] = None
         self._selected_tree_id: Optional[str] = None
         self._shortcut_bindings = ShortcutBindingSet()
@@ -350,6 +356,33 @@ class ChartPage(QWidget):
                 "样式、扩展和图例名调整都会立即反映在这里。",
             ),
         ]
+
+    def _clear_plot_extension_teaching_tip(self) -> None:
+        tip = self._plot_extension_teaching_tip
+        self._plot_extension_teaching_tip = None
+        if tip is not None:
+            tip.close()
+
+    def _show_plot_extension_teaching_tip(self) -> None:
+        target = getattr(self, "_plot_extension_help_btn", None)
+        if target is None:
+            return
+        self._clear_plot_extension_teaching_tip()
+        view = TeachingTipView(
+            title="绘图扩展",
+            content=_PLOT_EXTENSION_TEACHING_TIP_TEXT,
+            icon=InfoBarIcon.INFORMATION,
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+        )
+        view.closed.connect(self._clear_plot_extension_teaching_tip)
+        self._plot_extension_teaching_tip = TeachingTip.make(
+            view,
+            target,
+            -1,
+            TeachingTipTailPosition.BOTTOM,
+            self,
+        )
 
     def supports_extension_panel_toggle(self) -> bool:
         return True
@@ -652,18 +685,15 @@ class ChartPage(QWidget):
         self._font_size_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._font_size_edit)
         font_size_row.addWidget(self._font_size_edit)
-        font_size_row.addStretch()
-        layout.addLayout(font_size_row)
-
-        legend_font_row = QHBoxLayout()
-        legend_font_row.addWidget(self._make_style_form_label("图例字号:", page))
+        
+        font_size_row.addWidget(self._make_style_form_label("图例字号:", page))
         self._legend_font_size_edit = LineEdit(page)
         self._legend_font_size_edit.setPlaceholderText("8")
         self._legend_font_size_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._legend_font_size_edit)
-        legend_font_row.addWidget(self._legend_font_size_edit)
-        legend_font_row.addStretch()
-        layout.addLayout(legend_font_row)
+        font_size_row.addWidget(self._legend_font_size_edit)
+        font_size_row.addStretch()
+        layout.addLayout(font_size_row)
 
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("画布与默认样式", page))
@@ -744,11 +774,6 @@ class ChartPage(QWidget):
     def _build_plot_extension_tab(self, parent: QWidget) -> QWidget:
         scroll, page, layout = self._create_style_tab_page(parent)
 
-        extension_hint = make_hint_label("在右侧面板选择扩展，并叠加到当前图表。", page)
-        layout.addWidget(extension_hint)
-        extension_sub_hint = make_hint_label("适合参考线、标注或自定义绘制流程。", page)
-        layout.addWidget(extension_sub_hint)
-
         self._plot_extension_target_hint = make_hint_label("", page)
         self._plot_extension_target_hint.setWordWrap(True)
         layout.addWidget(self._plot_extension_target_hint)
@@ -756,6 +781,12 @@ class ChartPage(QWidget):
 
         applied_header = QHBoxLayout()
         applied_header.addWidget(make_section_label("已加载曲线", page))
+        self._plot_extension_help_btn = ToolButton(_ICON_PLOT_EXTENSION_HELP, page)
+        self._plot_extension_help_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+        self._plot_extension_help_btn.setToolTip("绘图扩展说明")
+        self._plot_extension_help_btn.clicked.connect(self._show_plot_extension_teaching_tip)
+        self._plot_extension_help_btn.installEventFilter(ToolTipFilter(self._plot_extension_help_btn, 300, ToolTipPosition.TOP))
+        applied_header.addWidget(self._plot_extension_help_btn, 0, Qt.AlignmentFlag.AlignLeft)
         applied_header.addStretch()
         self._remove_selected_plot_extension_btn = PushButton("撤销选中", page)
         self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)

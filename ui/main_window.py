@@ -55,6 +55,8 @@ _TREE_PANEL_MAX_WIDTH = 420
 _TREE_PANEL_DEFAULT_WIDTH = 260
 _EXTENSION_PANEL_SHOW_ICON = getattr(FIF, "VIEW", FIF.SEARCH)
 _EXTENSION_PANEL_HIDE_ICON = getattr(FIF, "HIDE", FIF.CANCEL)
+_DATA_PAGE_NAV_ICON = getattr(FIF, "APPLICATION", FIF.FOLDER)
+_DIGITIZE_PAGE_NAV_ICON = getattr(FIF, "LABEL", FIF.EDIT)
 
 
 class _SharedTreePanel(QWidget):
@@ -116,8 +118,8 @@ class _SharedTreePanel(QWidget):
         self.add_dataset_btn.setToolTip("新建数据集")
         right_group.addWidget(self.add_dataset_btn)
 
-        self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
-        self.import_file_btn.setToolTip("导入文件")
+        self.import_file_btn = ToolButton(FIF.DICTIONARY_ADD, self)
+        self.import_file_btn.setToolTip("导入数据文件")
         right_group.addWidget(self.import_file_btn)
 
         self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
@@ -191,11 +193,11 @@ class MainWindow(FluentWindow):
 
         # ── 导航注册（新顺序：数据管理优先）──────────────────
         self.addSubInterface(self.home_page,     FIF.HOME,            "主页",    NavigationItemPosition.TOP)
-        self.addSubInterface(self.data_page,     FIF.FOLDER,          "数据管理", NavigationItemPosition.TOP)
+        self.addSubInterface(self.data_page,     _DATA_PAGE_NAV_ICON, "数据管理", NavigationItemPosition.TOP)
         self.addSubInterface(self.chart_page,    FIF.PIE_SINGLE,      "数据可视化",   NavigationItemPosition.TOP)
         self.addSubInterface(self.process_page,  FIF.DEVELOPER_TOOLS, "数据处理", NavigationItemPosition.TOP)
         self.addSubInterface(self.analysis_page, FIF.SEARCH,          "数据分析", NavigationItemPosition.TOP)
-        self.addSubInterface(self.digitize_page, FIF.EDIT,            "图片数据化", NavigationItemPosition.TOP)
+        self.addSubInterface(self.digitize_page, _DIGITIZE_PAGE_NAV_ICON, "图片数据化", NavigationItemPosition.TOP)
         self.addSubInterface(self.settings_page, FIF.SETTING,         "设置",    NavigationItemPosition.BOTTOM)
 
         self._tree_toggle_nav_btn = NavigationToolButton(FIF.MENU, self)

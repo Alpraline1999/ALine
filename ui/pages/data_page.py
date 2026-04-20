@@ -355,7 +355,7 @@ class DataPage(QWidget):
         source_file_action_row = QHBoxLayout(self._source_file_action_panel)
         source_file_action_row.setContentsMargins(0, 0, 0, 0)
         source_file_action_row.setSpacing(6)
-        self._btn_import_source_to_data = PrimaryPushButton(FIF.DOWNLOAD, "导入到数据集", self._source_file_action_panel)
+        self._btn_import_source_to_data = PrimaryPushButton(FIF.DICTIONARY_ADD, "导入到数据集", self._source_file_action_panel)
         self._btn_import_source_to_data.clicked.connect(self._import_current_source_file_to_dataset)
         self._btn_import_source_to_digitize = PushButton(FIF.PHOTO, "导入到数据化", self._source_file_action_panel)
         self._btn_import_source_to_digitize.clicked.connect(self._import_current_source_file_to_digitize)
@@ -594,6 +594,8 @@ class DataPage(QWidget):
         self._apply_panel_button_metrics(self._btn_choose_browser_dir, self._btn_browser_up)
         self._btn_toggle_hidden_browser.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         self._btn_refresh_browser.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+        self._btn_toggle_hidden_browser.installEventFilter(ToolTipFilter(self._btn_toggle_hidden_browser, 300, ToolTipPosition.TOP))
+        self._btn_refresh_browser.installEventFilter(ToolTipFilter(self._btn_refresh_browser, 300, ToolTipPosition.TOP))
         browser_row.addWidget(self._btn_choose_browser_dir, 1)
         browser_row.addWidget(self._btn_browser_up, 1)
         browser_row.addWidget(self._btn_toggle_hidden_browser)
@@ -703,6 +705,11 @@ class DataPage(QWidget):
 
     def _set_source_path_links_visible(self, visible: bool) -> None:
         self._source_path_panel.setVisible(visible)
+
+    @staticmethod
+    def _source_file_icon_for_path(file_path: str):
+        suffix = Path(file_path).suffix.lower()
+        return FIF.PHOTO if suffix in _SOURCE_IMAGE_SUFFIXES else FIF.DOCUMENT
 
     def _show_source_path_links(self, current_path: str, origin_path: str) -> None:
         self._set_path_link_button(self._current_source_path_button, current_path, "未记录当前路径")
@@ -827,7 +834,7 @@ class DataPage(QWidget):
                 if group_type in {"datasets", "images"} and file_path and not self._supports_group_import(group_type, file_path):
                     display_name = f"{display_name}  ·  当前模式不支持"
                 item.setText(0, display_name)
-                item.setIcon(0, FIF.DOCUMENT.icon())
+                item.setIcon(0, self._source_file_icon_for_path(file_path).icon())
                 item.setData(0, Qt.ItemDataRole.UserRole + 2, file_path)
                 item.setData(0, Qt.ItemDataRole.UserRole + 3, source_origin_path)
                 item.setToolTip(0, file_path or display_name)
@@ -854,7 +861,7 @@ class DataPage(QWidget):
             if group_type in {"datasets", "images"} and file_path and not self._supports_group_import(group_type, file_path):
                 display_name = f"{display_name}  ·  当前模式不支持"
             item.setText(0, display_name)
-            item.setIcon(0, FIF.DOCUMENT.icon())
+            item.setIcon(0, self._source_file_icon_for_path(file_path).icon())
             item.setData(0, Qt.ItemDataRole.UserRole + 2, file_path)
             item.setData(0, Qt.ItemDataRole.UserRole + 3, source_origin_path)
             item.setToolTip(0, file_path or display_name)
@@ -1150,7 +1157,7 @@ class DataPage(QWidget):
             if entry.is_dir():
                 item.setIcon(0, FIF.FOLDER.icon())
             else:
-                item.setIcon(0, FIF.DOCUMENT.icon())
+                item.setIcon(0, self._source_file_icon_for_path(str(entry)).icon())
                 if group_type is not None and not self._supports_group_import(group_type, str(entry)):
                     item.setText(0, f"{entry.name}  ·  当前模式不支持")
             self._source_browser.addTopLevelItem(item)
@@ -1406,6 +1413,8 @@ class DataPage(QWidget):
     def _refresh_management_panel(self) -> None:
         import_group = self._current_import_group()
         is_source_file_leaf = self._selected_node_kind == "source_file"
+        self._btn_to_vis.setVisible(not is_source_file_leaf)
+        self._btn_to_proc.setVisible(not is_source_file_leaf)
         self._source_file_action_panel.setVisible(bool(is_source_file_leaf))
         self._import_queue_panel.setVisible(import_group is not None)
         self._manage_bottom_spacer.setVisible(import_group is None)

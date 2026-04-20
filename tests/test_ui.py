@@ -24,11 +24,6 @@ warnings.filterwarnings(
     message=r".*QMouseEvent\.globalPos\(\) const.*deprecated.*",
     category=DeprecationWarning,
 )
-warnings.filterwarnings(
-    "ignore",
-    message=r"gc: .* uncollectable objects at shutdown.*",
-    category=ResourceWarning,
-)
 
 # 项目根路径
 _PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -180,6 +175,10 @@ class TestProjectTreeWidget(unittest.TestCase):
         self._restore()
         self._restore_assets()
         self.widget.deleteLater()
+
+    @staticmethod
+    def _icon_image(icon, size: int = 20):
+        return icon.pixmap(size, size).toImage()
 
     def test_refresh_builds_tree(self):
         self.widget.refresh()
@@ -987,7 +986,7 @@ class TestProjectTreeWidget(unittest.TestCase):
             self.widget._on_context_menu(pos)
 
         visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
-        self.assertEqual(visible_texts[:2], ["新建数据集", "新建子文件夹"])
+        self.assertEqual(visible_texts[:3], ["新建数据集", "导入数据文件...", "新建子文件夹"])
         self.assertLess(visible_texts.index("删除"), visible_texts.index("清理空子文件夹"))
         self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
 
@@ -1036,6 +1035,96 @@ class TestProjectTreeWidget(unittest.TestCase):
 
         visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
         self.assertIn("新增曲线", visible_texts)
+        self.assertNotIn("发送到可视化", visible_texts)
+
+    def test_dataset_folder_context_menu_can_import_data_file(self):
+        from models.schemas import DataSeries
+
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        target_folder = self.widget._create_child_folder(datasets_root.id, "数据导入")
+        self.assertIsNotNone(target_folder)
+
+        dialog = mock.Mock()
+        dialog.exec.return_value = True
+        dialog.get_results.return_value = [DataSeries(name="imported", x=[1.0], y=[2.0])]
+        dialog.get_target_data_file_id.return_value = None
+        dialog.get_file_name.return_value = "imported.csv"
+
+        with mock.patch("ui.widgets.project_tree.QFileDialog.getOpenFileName", return_value=("/tmp/imported.csv", "数据文件")), \
+             mock.patch.object(self.widget, "_create_source_file_import_dialog", return_value=dialog):
+            self.widget._cmd_import_data_file(target_folder.id)
+
+        node = next((item for item in self.p.tree.nodes if item.kind == "data_file" and item.name == "imported.csv"), None)
+        self.assertIsNotNone(node)
+        self.assertEqual(node.parent_id, target_folder.id)
+
+    def test_curve_context_menu_hides_chart_process_and_analysis_actions(self):
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "curve-image.png"
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+            created = self.pm.add_image(str(image_path), name="curve-image.png")
+            curve = self.pm.add_curve_to_image(created.id, [0.0, 1.0], [1.0, 2.0], name="curve-a")
+            self.assertIsNotNone(curve)
+
+            self.widget.refresh()
+            node = next((item for item in self.p.tree.nodes if item.kind == "image_work" and item.image_work_id == created.id), None)
+            self.assertIsNotNone(node)
+            image_item = self.widget._find_item(node.id)
+            self.assertIsNotNone(image_item)
+            curve_item = image_item.child(0)
+            self.assertIsNotNone(curve_item)
+            pos = self.widget._tree.visualItemRect(curve_item).center()
+            captured = {}
+
+            def _fake_exec(menu, *_args):
+                captured["actions"] = list(menu.actions())
+
+            with mock.patch("ui.widgets.project_tree.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+                self.widget._on_context_menu(pos)
+
+        visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+        self.assertEqual(visible_texts[:2], ["重命名", "删除"])
+        self.assertNotIn("发送到可视化", visible_texts)
+        self.assertNotIn("发送到处理", visible_texts)
+        self.assertNotIn("发送到分析", visible_texts)
+
+    def test_project_tree_icons_follow_updated_asset_mapping(self):
+        from qfluentwidgets import FluentIcon as FIF
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "raw.csv"
+            source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+            image_path = Path(temp_dir) / "digitize.png"
+            from PySide6.QtGui import QImage
+
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+
+            source_node = self.pm.add_source_file(str(source_path))
+            image_work = self.pm.add_image(str(image_path), name="digitize.png")
+
+        self.widget.refresh()
+        project_root = self.widget._tree.topLevelItem(0)
+        source_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "源文件")
+        digitize_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "数据化")
+        source_item = self.widget._find_item(source_node.id)
+        image_item = next((item for item in self.p.tree.nodes if item.kind == "image_work" and item.image_work_id == image_work.id), None)
+        self.assertIsNotNone(source_item)
+        self.assertIsNotNone(image_item)
+        image_tree_item = self.widget._find_item(image_item.id)
+        self.assertIsNotNone(image_tree_item)
+
+        self.assertEqual(self._icon_image(project_root.icon(0)), self._icon_image(getattr(FIF, "LIBRARY_FILL", getattr(FIF, "LIBRARY", FIF.FOLDER)).icon()))
+        self.assertEqual(self._icon_image(source_group.icon(0)), self._icon_image(getattr(FIF, "IOT", FIF.FOLDER).icon()))
+        self.assertEqual(self._icon_image(source_item.icon(0)), self._icon_image(getattr(FIF, "DOCUMENT", FIF.FOLDER).icon()))
+        self.assertEqual(self._icon_image(digitize_group.icon(0)), self._icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
+        self.assertEqual(self._icon_image(image_tree_item.icon(0)), self._icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
 
     def test_import_digitize_images_adds_images_into_target_folder(self):
         from PySide6.QtGui import QImage
@@ -1116,7 +1205,25 @@ class TestSettingsPage(unittest.TestCase):
 
         for layout in (general_layout, shortcuts_layout):
             margins = layout.contentsMargins()
-            self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (12, 12, 12, 12))
+            self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (14, 12, 14, 12))
+
+    def test_shortcut_edit_shows_focus_border_when_selected(self):
+        from ui.theme import accent_color
+
+        self.page._tabs.setCurrentIndex(1)
+        self.page.show()
+        QApplication.processEvents()
+        first_edit = next(iter(self.page._shortcut_edits.values()))
+        first_edit.setFocus()
+        QApplication.processEvents()
+
+        self.assertIn(accent_color(), first_edit.styleSheet())
+        self.assertIn("2px solid", first_edit.styleSheet())
+
+        self.page._shortcut_filter_edit.setFocus()
+        QApplication.processEvents()
+
+        self.assertIn("1px solid", first_edit.styleSheet())
 
     def test_shortcut_filter_field_is_clearable_and_emphasized(self):
         from ui.theme import accent_color
@@ -1706,6 +1813,8 @@ class TestDataPage(unittest.TestCase):
         self.assertIn("border-radius: 12px", self.page._text_preview.styleSheet())
 
     def test_source_file_selection_switches_to_preview_mode(self):
+        from qfluentwidgets import FluentIcon as FIF
+
         source_path = Path(tempfile.NamedTemporaryFile(suffix=".csv", delete=False).name)
         source_path.write_text("x,y\n1,2\n", encoding="utf-8")
         try:
@@ -1720,13 +1829,48 @@ class TestDataPage(unittest.TestCase):
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
             self.assertTrue(self.page._btn_apply_name.isEnabled())
             self.assertTrue(self.page._btn_delete_node.isEnabled())
+            self.assertTrue(self.page._btn_to_vis.isHidden())
+            self.assertTrue(self.page._btn_to_proc.isHidden())
             self.assertTrue(self.page._btn_import_source_to_data.isEnabled())
             self.assertFalse(self.page._btn_import_source_to_digitize.isEnabled())
+            self.assertEqual(
+                self.page._btn_import_source_to_data.icon().pixmap(20, 20).toImage(),
+                FIF.DICTIONARY_ADD.icon().pixmap(20, 20).toImage(),
+            )
             self.assertFalse(self.page._source_path_panel.isHidden())
             self.assertEqual(self.page._current_source_path_button.toolTip(), self.pm.get_source_file_path(asset.id))
             self.assertEqual(self.page._origin_source_path_button.toolTip(), asset.source_file_path)
         finally:
             source_path.unlink(missing_ok=True)
+
+    def test_source_file_browser_uses_photo_icon_for_images(self):
+        from qfluentwidgets import FluentIcon as FIF
+
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            image_path = temp_path / "sample.png"
+            text_path = temp_path / "sample.csv"
+            from PySide6.QtGui import QImage
+
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+            text_path.write_text("x,y\n1,2\n", encoding="utf-8")
+
+            self.page.on_tree_node_selected("folder", source_root.id)
+            self.page._external_browser_dir = temp_path
+            self.page._refresh_source_browser()
+
+            icon_map = {
+                self.page._source_browser.topLevelItem(i).text(0): self.page._source_browser.topLevelItem(i).icon(0).pixmap(20, 20).toImage()
+                for i in range(self.page._source_browser.topLevelItemCount())
+            }
+
+        self.assertEqual(icon_map["sample.png"], self.page._source_file_icon_for_path(str(image_path)).icon().pixmap(20, 20).toImage())
+        self.assertEqual(icon_map["sample.csv"], self.page._source_file_icon_for_path(str(text_path)).icon().pixmap(20, 20).toImage())
 
     def test_source_file_path_buttons_elide_long_paths_and_keep_full_tooltip(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2128,6 +2272,22 @@ class TestChartPage(unittest.TestCase):
             container_layout.indexOf(self.page._plot_extension_repeat_hint),
             container_layout.indexOf(self.page._plot_extension_applied_list),
         )
+
+    def test_plot_extension_uses_help_teaching_tip_instead_of_static_text(self):
+        from qfluentwidgets import BodyLabel
+
+        page_widget = self.page._style_tabs.widget(2).widget()
+        label_texts = [label.text() for label in page_widget.findChildren(BodyLabel) if label.text()]
+
+        self.assertNotIn("在右侧面板选择扩展，并叠加到当前图表。", label_texts)
+        self.assertNotIn("适合参考线、标注或自定义绘制流程。", label_texts)
+        self.assertIsNotNone(self.page._plot_extension_help_btn)
+
+        with mock.patch("ui.pages.chart_page.TeachingTip.make") as make_mock:
+            self.page._show_plot_extension_teaching_tip()
+
+        make_mock.assert_called_once()
+        self.assertIs(make_mock.call_args.args[1], self.page._plot_extension_help_btn)
 
     def test_extension_panel_uses_splitter_side_panel(self):
         self.page.resize(1280, 820)

@@ -1,17 +1,17 @@
-from typing import Literal
+from typing import Literal, cast
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                QFrame, QFormLayout, QKeySequenceEdit)
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     BodyLabel, SubtitleLabel, TitleLabel, SmoothScrollArea,
     LineEdit, PrimaryPushButton, InfoBar, InfoBarPosition, PlainTextEdit,
     CheckBox, TabWidget, TabCloseButtonDisplayMode, ToolTipFilter, ToolTipPosition)
 
-from ui.theme import accent_color, card_background_color, text_color, secondary_color, placeholder_color
+from ui.theme import accent_color, border_color, card_background_color, text_color, secondary_color, placeholder_color
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from core.shortcut_manager import shortcut_manager
-from core.ui_preferences import get_tree_name_display_mode, set_tree_name_display_mode
+from core.ui_preferences import TreeNameDisplayMode, get_tree_name_display_mode, set_tree_name_display_mode
 from core.ai.providers import (
     get_provider_preset,
     list_builtin_models,
@@ -60,6 +60,10 @@ class SettingsPage(QWidget):
         )
         self.setup_ui()
 
+    @staticmethod
+    def _tab_content_margins() -> tuple[int, int, int, int]:
+        return (14, 12, 14, 12)
+
     def setup_ui(self):
         tabs = TabWidget(self)
         tabs.tabBar.setAddButtonVisible(False)
@@ -83,6 +87,26 @@ class SettingsPage(QWidget):
         for widget in self.findChildren(QWidget):
             if widget.toolTip():
                 widget.installEventFilter(ToolTipFilter(widget, 400, ToolTipPosition.TOP))
+
+    def _shortcut_edit_style(self, *, focused: bool) -> str:
+        border = accent_color() if focused else border_color()
+        border_width = 2 if focused else 1
+        background = card_background_color()
+        return (
+            f"background: {background}; color: {text_color()};"
+            f" border: {border_width}px solid {border}; border-radius: 6px; padding: 3px;"
+        )
+
+    def _apply_shortcut_edit_style(self, edit: QKeySequenceEdit, *, focused: bool) -> None:
+        edit.setStyleSheet(self._shortcut_edit_style(focused=focused))
+
+    def eventFilter(self, watched, event):
+        if isinstance(watched, QKeySequenceEdit) and watched in self._shortcut_edits.values():
+            if event.type() == QEvent.Type.FocusIn:
+                self._apply_shortcut_edit_style(watched, focused=True)
+            elif event.type() == QEvent.Type.FocusOut:
+                self._apply_shortcut_edit_style(watched, focused=False)
+        return super().eventFilter(watched, event)
 
     @staticmethod
     def _apply_card_layout_metrics(layout) -> None:
@@ -108,7 +132,7 @@ class SettingsPage(QWidget):
         content.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(*self._tab_content_margins())
         outer.setWidget(content)
 
         # ── 外观设置 ──
@@ -193,7 +217,7 @@ class SettingsPage(QWidget):
         content.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(*self._tab_content_margins())
         outer.setWidget(content)
 
         self._shortcuts_card = CardWidget(content)
@@ -230,10 +254,8 @@ class SettingsPage(QWidget):
             label = f"[{definition.category}] {definition.label}"
             edit = QKeySequenceEdit(sc_content)
             edit.setKeySequence(QKeySequence(shortcut_manager.get(action)))
-            edit.setStyleSheet(
-                f"background: {card_background_color()}; color: {text_color()};"
-                f" border: 1px solid {border_color()}; border-radius: 4px; padding: 3px;"
-            )
+            self._apply_shortcut_edit_style(edit, focused=False)
+            edit.installEventFilter(self)
             row_lbl = BodyLabel(label + ":", sc_content)
             row_lbl.setStyleSheet(f"color: {text_color()};")
 
@@ -281,7 +303,7 @@ class SettingsPage(QWidget):
         content.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(content)
         layout.setSpacing(12)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(*self._tab_content_margins())
         outer.setWidget(content)
 
         # ── AI 接口配置 ──
@@ -514,7 +536,7 @@ class SettingsPage(QWidget):
                 conflicts.append(a)
         if conflicts:
             from core.shortcut_manager import shortcut_manager as sm
-            conflict_names = " / ".join(sm.LABELS.get(a, a) for a in conflicts)
+            conflict_names = " / ".join(str(sm.LABELS.get(a, a) or a) for a in conflicts)
             self._conflict_labels[changed_action].setText(f"与「{conflict_names}」冲突")
             self._conflict_labels[changed_action].setVisible(True)
             for a in conflicts:
@@ -539,11 +561,12 @@ class SettingsPage(QWidget):
 
     def _update_colors(self):
         """更新界面颜色以适应新主题"""
-        from ui.theme import card_background_color, border_color
         tc = text_color()
         pc = placeholder_color()
-        self._appearance_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
-        self._theme_label.setStyleSheet(f"color: {tc};")
+        if self._appearance_title is not None:
+            self._appearance_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
+        if self._theme_label is not None:
+            self._theme_label.setStyleSheet(f"color: {tc};")
         if self._tree_display_mode_label is not None:
             self._tree_display_mode_label.setStyleSheet(f"color: {tc};")
         if self._onboarding_label is not None:
@@ -557,27 +580,23 @@ class SettingsPage(QWidget):
         for lbl in self._shortcut_labels:
             lbl.setStyleSheet(f"color: {tc};")
         # QKeySequenceEdit 样式
-        bg = card_background_color()
-        bc = border_color()
         for edit in self._shortcut_edits.values():
-            edit.setStyleSheet(
-                f"background: {bg}; color: {tc};"
-                f" border: 1px solid {bc}; border-radius: 4px; padding: 3px;"
-            )
+            self._apply_shortcut_edit_style(edit, focused=edit.hasFocus())
         # hint label（找到快捷键卡片下方的说明标签）
-        for lbl in self._shortcuts_card.findChildren(BodyLabel):
-            ss = lbl.styleSheet()
-            if 'font-size: 11px' in ss:
-                lbl.setStyleSheet(f"color: {pc}; font-size: 11px;")
+        if self._shortcuts_card is not None:
+            for lbl in self._shortcuts_card.findChildren(BodyLabel):
+                ss = lbl.styleSheet()
+                if 'font-size: 11px' in ss:
+                    lbl.setStyleSheet(f"color: {pc}; font-size: 11px;")
         if hasattr(self, "_ai_provider_hint") and self._ai_provider_hint is not None:
             self._ai_provider_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
 
-    def _current_tree_display_mode(self) -> str:
+    def _current_tree_display_mode(self) -> TreeNameDisplayMode:
         if self._tree_display_mode_combo is None:
             return "wrap"
         idx = self._tree_display_mode_combo.currentIndex()
         if 0 <= idx < len(self._tree_display_mode_keys):
-            return self._tree_display_mode_keys[idx]
+            return "elide" if self._tree_display_mode_keys[idx] == "elide" else "wrap"
         return "wrap"
 
     def _on_tree_display_mode_changed(self, _index: int) -> None:
@@ -632,6 +651,9 @@ class SettingsPage(QWidget):
         from core.ai_client import AIConfig
 
         provider = self._current_provider_key()
+        if provider not in {"openai_compatible", "ollama"}:
+            provider = "openai_compatible"
+        provider = cast(Literal["openai_compatible", "ollama"], provider)
         preset = get_provider_preset(provider)
         return AIConfig(
             provider=provider,
