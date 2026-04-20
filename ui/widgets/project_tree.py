@@ -13,7 +13,7 @@ from math import ceil
 
 from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAbstractTextDocumentLayout, QColor, QDesktopServices, QFontMetrics, QPainter, QPalette, QPen, QPixmap, QTextDocument, QTextOption
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QFileDialog, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
 from qfluentwidgets import (
     Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip, TreeWidget,
 )
@@ -58,6 +58,7 @@ def _wrap_text_height(font, text: str, width: int) -> int:
 
 _PROJECT_ICON = getattr(FIF, "HOME", FIF.FOLDER)
 _DATA_ICON = FIF.DOCUMENT
+_SOURCE_FILE_ICON = getattr(FIF, "DOCUMENT", FIF.FOLDER)
 _DATASET_GROUP_ICON = getattr(FIF, "LIBRARY", FIF.FOLDER)
 _PICTURE_GROUP_ICON = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
 
@@ -66,6 +67,7 @@ _PICTURE_GROUP_ICON = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
 _KIND_CONFIG = {
     "folder":          (FIF.FOLDER,          None),
     "data_file":       (_DATA_ICON,         None),
+    "source_file":     (_SOURCE_FILE_ICON,  None),
     "image_work":      (FIF.PHOTO,           None),
     "picture":         (FIF.PHOTO,           None),
     "pipeline":        (FIF.DEVELOPER_TOOLS, "#0078D4"),
@@ -90,6 +92,7 @@ _KIND_CONFIG = {
 _GROUP_ICON = {
     "datasets":       _DATASET_GROUP_ICON,
     "dataset_set":    _DATASET_GROUP_ICON,
+    "source_files":   _SOURCE_FILE_ICON,
     "images":         FIF.PHOTO,
     "image_set":      FIF.PHOTO,
     "pictures":       _PICTURE_GROUP_ICON,
@@ -110,6 +113,7 @@ _GROUP_ICON = {
 # 系统文件夹不可重命名/删除
 _PROTECTED_GROUP_TYPES = frozenset({
     "datasets", "dataset_set",
+    "source_files",
     "images", "image_set",
     "pictures", "picture_set",
     "tools", "tool_set",
@@ -120,6 +124,7 @@ _PROTECTED_GROUP_TYPES = frozenset({
 
 _ROOT_GROUP_TYPES = frozenset({
     "datasets", "dataset_set",
+    "source_files",
     "images", "image_set",
     "pictures", "picture_set",
     "tools", "tool_set",
@@ -127,6 +132,7 @@ _ROOT_GROUP_TYPES = frozenset({
 
 _MANAGED_FOLDER_GROUP_TYPES = frozenset({
     "datasets",
+    "source_files",
     "images",
     "pictures",
     "analysis_result_group",
@@ -257,6 +263,7 @@ class ProjectTreeWidget(QWidget):
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
+        self._tree.setIndentation(14)
         self._tree.setWordWrap(True)
         self._tree.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._tree.setUniformRowHeights(False)
@@ -283,7 +290,7 @@ class ProjectTreeWidget(QWidget):
         self._branch_toggle_item_key: Optional[str] = None
         self._drag_source_item_key: Optional[str] = None
         self._fluent_tooltip: Optional[ToolTip] = None
-        self._name_display_mode = "wrap"
+        self._name_display_mode = "elide"
         self.set_name_display_mode(get_tree_name_display_mode())
 
     # ─────────────────────────────────────────────────────────
@@ -364,6 +371,155 @@ class ProjectTreeWidget(QWidget):
         if d:
             return d[0], d[1]
         return None
+
+    def can_rename_selected_item(self) -> bool:
+        items = self._selected_items_or_current()
+        if len(items) != 1:
+            return False
+        item = items[0]
+        self._activate_item_project(item)
+        data = self._item_role_data(item)
+        if not data:
+            return False
+        kind, node_id = data
+        if kind == "project":
+            return False
+        if kind in _SYNTHETIC_GLOBAL_KINDS:
+            return self._can_edit_global_asset(kind, node_id)
+        if kind == "folder":
+            return not self._is_protected_folder(project_manager.get_node_by_id(node_id))
+        return True
+
+    def can_delete_selected_items(self) -> bool:
+        items = self._selected_items_or_current()
+        if not items:
+            return False
+        payloads = self._batch_action_payloads(items)
+        if payloads:
+            return True
+        if len(items) != 1:
+            return False
+        item = items[0]
+        self._activate_item_project(item)
+        data = self._item_role_data(item)
+        if not data:
+            return False
+        kind, node_id = data
+        if kind == "project":
+            return False
+        if kind in _SYNTHETIC_GLOBAL_KINDS:
+            return self._can_edit_global_asset(kind, node_id)
+        if kind == "folder":
+            return not self._is_protected_folder(project_manager.get_node_by_id(node_id))
+        return True
+
+    def can_move_selected_items(self) -> bool:
+        items = self._selected_items_or_current()
+        if not items:
+            return False
+        payloads = self._batch_action_payloads(items)
+        if payloads:
+            return bool(self._common_batch_move_choices(payloads))
+        if len(items) != 1:
+            return False
+        item = items[0]
+        self._activate_item_project(item)
+        data = self._item_role_data(item)
+        if not data:
+            return False
+        kind, node_id = data
+        return bool(self._move_target_choices(kind, node_id))
+
+    def rename_selected_item(self) -> None:
+        if not self.can_rename_selected_item():
+            return
+        item = self._selected_items_or_current()[0]
+        self._activate_item_project(item)
+        data = self._item_role_data(item)
+        if not data:
+            return
+        kind, node_id = data
+        current_name = item.text(0).strip()
+        title_map = {
+            "folder": "重命名文件夹",
+            "data_file": "重命名数据文件",
+            "source_file": "重命名源文件",
+            "image_work": "重命名图像",
+            "picture": "重命名图片",
+            "analysis_result": "重命名分析结果",
+            "series": "重命名数据列",
+            "curve": "重命名曲线",
+        }
+        title = title_map.get(kind, "重命名节点")
+        new_name, ok = TextInputDialog.get_text(self._dialog_parent(), title, "名称:", text=current_name)
+        if not ok or not new_name.strip():
+            return
+        clean_name = new_name.strip()
+        if kind in _SYNTHETIC_GLOBAL_KINDS:
+            changed = self._rename_global_asset(kind, node_id, clean_name)
+            if changed:
+                self.refresh()
+                self.project_modified.emit()
+            return
+        if kind == "series":
+            changed = project_manager.rename_series(node_id, clean_name)
+        elif kind == "curve":
+            changed = project_manager.rename_curve(node_id, clean_name)
+        else:
+            changed = project_manager.rename_node(node_id, clean_name)
+        if changed:
+            self.refresh()
+            self.select_node(node_id)
+            self.project_modified.emit()
+            return
+        InfoBar.warning(
+            "重命名失败",
+            project_manager.get_last_error_message() or "名称已存在或当前节点不支持重命名",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
+
+    def delete_selected_items(self) -> None:
+        if not self.can_delete_selected_items():
+            return
+        items = self._selected_items_or_current()
+        payloads = self._batch_action_payloads(items)
+        if payloads:
+            self._cmd_delete_batch(payloads)
+            return
+        item = items[0]
+        self._activate_item_project(item)
+        data = self._item_role_data(item)
+        if not data:
+            return
+        kind, node_id = data
+        if kind in _SYNTHETIC_GLOBAL_KINDS:
+            self._cmd_delete_global(kind, node_id, item.text(0))
+            return
+        if kind in {"series", "curve"}:
+            self._cmd_delete_virtual(kind, node_id, item.text(0))
+            return
+        self._cmd_delete(node_id, item.text(0))
+
+    def move_selected_items(self) -> None:
+        if not self.can_move_selected_items():
+            return
+        items = self._selected_items_or_current()
+        payloads = self._batch_action_payloads(items)
+        if payloads:
+            choices = self._common_batch_move_choices(payloads)
+            if choices:
+                self._cmd_move_batch(payloads, choices)
+            return
+        item = items[0]
+        self._activate_item_project(item)
+        data = self._item_role_data(item)
+        if not data:
+            return
+        kind, node_id = data
+        choices = self._move_target_choices(kind, node_id)
+        if choices:
+            self._cmd_move_virtual(kind, node_id, choices)
 
     # ─────────────────────────────────────────────────────────
     # 树构建
@@ -592,10 +748,25 @@ class ProjectTreeWidget(QWidget):
         new_name = item.text(0).strip()
         if not new_name:
             return
-        item.setToolTip(0, new_name)
+        previous_name = item.toolTip(0) or item.text(0)
         self._renaming = True
-        project_manager.rename_node(node_id, new_name)
+        changed = project_manager.rename_node(node_id, new_name)
+        if not changed:
+            current_node = project_manager.get_node_by_id(node_id)
+            restored_name = getattr(current_node, "name", "") or previous_name
+            item.setText(0, restored_name)
+            item.setToolTip(0, restored_name)
+        else:
+            item.setToolTip(0, new_name)
         self._renaming = False
+        if not changed:
+            InfoBar.warning(
+                "重命名失败",
+                project_manager.get_last_error_message() or "当前节点重命名失败",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return
         if self._name_display_mode == "wrap":
             self._update_wrapped_item_size_hint_for_item(item)
             QTimer.singleShot(0, self._update_wrapped_item_size_hints)
@@ -666,10 +837,16 @@ class ProjectTreeWidget(QWidget):
             is_protected = self._is_protected_folder(node)
             managed_group_type = self._folder_collection_group(node_id)
             if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
+                if managed_group_type == "datasets":
+                    self._add_menu_action(menu, _DATA_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id))
+                if managed_group_type == "source_files":
+                    self._add_menu_action(menu, FIF.DOWNLOAD, "批量导入源文件...", lambda: self._cmd_import_source_files(node_id))
                 self._add_menu_action(menu, FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id))
                 self._add_menu_action(menu, FIF.SYNC, "清理空子文件夹", lambda: self._cmd_prune_empty_folders(node_id, scope_label=item.text(0)))
                 if managed_group_type == "pictures":
                     self._add_menu_action(menu, _PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id))
+                elif managed_group_type == "source_files":
+                    self._add_menu_action(menu, _SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id))
                 if not is_protected:
                     menu.addSeparator()
             if not is_protected:
@@ -681,6 +858,17 @@ class ProjectTreeWidget(QWidget):
             self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("data_file_to_chart", node_id))
             self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("data_file_to_process", node_id))
             self._add_menu_action(menu, FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("data_file_to_analysis", node_id))
+            menu.addSeparator()
+            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
+            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            if move_choices:
+                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+
+        elif kind == "source_file":
+            move_choices = self._move_target_choices(kind, node_id)
+            self._add_menu_action(menu, FIF.DOWNLOAD, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id))
+            self._add_menu_action(menu, FIF.PHOTO, "导入到数据化", lambda: self.node_activated.emit("source_file_to_digitize", node_id))
+            self._add_menu_action(menu, _SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True))
             menu.addSeparator()
             self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
             self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
@@ -780,10 +968,49 @@ class ProjectTreeWidget(QWidget):
             return
         folder = self._create_child_folder(parent_id, name)
         if folder is None:
+            InfoBar.warning("创建失败", project_manager.get_last_error_message() or "未能创建子文件夹", parent=self, position=InfoBarPosition.TOP)
             return
         self.refresh()
         self.select_node(folder.id)
         self.project_modified.emit()
+
+    def _cmd_add_dataset_node(self, parent_id: str) -> None:
+        from models.schemas import DataFile
+
+        name, ok = TextInputDialog.get_text(self._dialog_parent(), "新建数据集", "数据集名称:", placeholder="输入数据集名称")
+        if not ok:
+            return
+        clean_name = name.strip()
+        if not clean_name:
+            return
+        node = project_manager.add_data_file(DataFile(name=clean_name), parent_id=parent_id)
+        if node is None:
+            InfoBar.warning("创建失败", project_manager.get_last_error_message() or "未能创建新的数据集", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.refresh()
+        self.select_node(node.id)
+        self.project_modified.emit()
+
+    def _cmd_import_source_files(self, parent_id: Optional[str] = None) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self._dialog_parent(),
+            "导入源文件",
+            "",
+            "所有文件 (*.*)",
+        )
+        clean_paths = [path for path in paths if path]
+        if not clean_paths:
+            return
+        nodes = project_manager.add_source_files(clean_paths, parent_id=parent_id)
+        if not nodes:
+            InfoBar.warning("导入失败", project_manager.get_last_error_message() or "未能导入任何源文件", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.refresh()
+        self.select_node(nodes[-1].id)
+        self.project_modified.emit()
+        InfoBar.success("导入完成", f"已导入 {len(nodes)} 个源文件", parent=self, position=InfoBarPosition.TOP)
+        if len(nodes) < len(clean_paths):
+            InfoBar.warning("部分导入失败", project_manager.get_last_error_message() or "部分源文件未能导入", parent=self, position=InfoBarPosition.TOP)
 
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
         title = "重命名数据列" if kind == "series" else "重命名曲线"
@@ -797,6 +1024,8 @@ class ProjectTreeWidget(QWidget):
         if changed:
             self.refresh()
             self.project_modified.emit()
+            return
+        InfoBar.warning("重命名失败", project_manager.get_last_error_message() or "名称已存在或当前节点不支持重命名", parent=self, position=InfoBarPosition.TOP)
 
     def _cmd_prune_empty_folders(self, root_id: Optional[str] = None, *, scope_label: str = "项目树") -> None:
         removed_ids = project_manager.remove_empty_folders(root_id)
@@ -841,11 +1070,17 @@ class ProjectTreeWidget(QWidget):
             return
 
         changed = False
+        failed = 0
         for payload in payloads:
-            changed = self._move_node_to_target(str(payload["kind"]), str(payload["node_id"]), target_id) or changed
+            moved = self._move_node_to_target(str(payload["kind"]), str(payload["node_id"]), target_id)
+            changed = moved or changed
+            if not moved:
+                failed += 1
         if changed:
             self.refresh()
             self.project_modified.emit()
+        if failed:
+            InfoBar.warning("批量移动未完成", project_manager.get_last_error_message() or f"有 {failed} 项移动失败", parent=self, position=InfoBarPosition.TOP)
 
     def _cmd_delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
         box = MessageBox("确认删除", f'确定要删除「{node_name}」吗？', self._dialog_parent())
@@ -964,12 +1199,13 @@ class ProjectTreeWidget(QWidget):
             for img in p.images:
                 if img.id != current_parent_id:
                     choices.append((img.name, img.id))
-        elif kind in {"data_file", "image_work", "picture", "analysis_result"} and p.tree is not None:
+        elif kind in {"data_file", "source_file", "image_work", "picture", "analysis_result"} and p.tree is not None:
             node = p.tree.get_node(node_id)
             if node is None:
                 return []
             required_group = {
                 "data_file": "datasets",
+                "source_file": "source_files",
                 "image_work": "images",
                 "picture": "pictures",
                 "analysis_result": "analysis_result_group",
@@ -1005,6 +1241,8 @@ class ProjectTreeWidget(QWidget):
         if target_id and self._move_node_to_target(kind, node_id, target_id):
             self.refresh()
             self.project_modified.emit()
+            return
+        InfoBar.warning("移动失败", project_manager.get_last_error_message() or "目标位置已存在同名节点", parent=self, position=InfoBarPosition.TOP)
 
     def _selected_items_for_context_menu(self, anchor_item: QTreeWidgetItem) -> List[QTreeWidgetItem]:
         selected_items = [item for item in self._tree.selectedItems() if item is not None]
@@ -1104,6 +1342,13 @@ class ProjectTreeWidget(QWidget):
                     return found
             return None
         return _search(None)
+
+    def _selected_items_or_current(self) -> List[QTreeWidgetItem]:
+        items = [item for item in self._tree.selectedItems() if item is not None]
+        if items:
+            return items
+        current = self._tree.currentItem()
+        return [current] if current is not None else []
 
     def _item_key(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
         data = self._item_role_data(item)
@@ -1225,10 +1470,32 @@ class ProjectTreeWidget(QWidget):
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
             InfoBar.error("打开失败", str(folder_path), parent=self, position=InfoBarPosition.TOP)
 
+    def _open_source_file_folder(self, node_id: Optional[str], *, source_node: bool = False) -> None:
+        target_path = ""
+        if source_node and node_id:
+            node = project_manager.get_node_by_id(node_id)
+            if node is not None and getattr(node, "kind", None) == "source_file":
+                source_path = project_manager.get_source_file_path(getattr(node, "source_file_id", ""))
+                if source_path:
+                    target_path = str(Path(source_path).parent)
+        else:
+            target_path = project_manager.resolve_source_file_folder_path(node_id, create=True)
+
+        if not target_path:
+            InfoBar.warning("提示", "当前节点没有可打开的源文件夹", parent=self, position=InfoBarPosition.TOP)
+            return
+
+        folder_path = Path(target_path)
+        folder_path.mkdir(parents=True, exist_ok=True)
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
+            InfoBar.error("打开失败", str(folder_path), parent=self, position=InfoBarPosition.TOP)
+
     @staticmethod
     def _canonical_group_type(group_type: Optional[str]) -> Optional[str]:
         if group_type in {"dataset_set", "datasets"}:
             return "datasets"
+        if group_type in {"source_files"}:
+            return "source_files"
         if group_type in {"image_set", "images"}:
             return "images"
         if group_type in {"picture_set", "pictures"}:

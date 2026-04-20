@@ -46,6 +46,13 @@ def hover_color():
     return "#383838" if isDarkTheme() else "#e8f0fe"
 
 
+WORKBENCH_TOOL_PANEL_WIDTH = 340
+WORKBENCH_BUTTON_HEIGHT = 32
+WORKBENCH_BUTTON_MIN_WIDTH = 112
+WORKBENCH_INLINE_LABEL_WIDTH = 68
+WORKBENCH_WIDE_LABEL_WIDTH = 84
+
+
 def card_style_sheet():
     """统一卡片样式。"""
     return (
@@ -114,6 +121,27 @@ def make_hint_label(text: str = "", parent=None):
     lbl.setWordWrap(True)
     lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
     return lbl
+
+
+def make_inline_label(text: str, parent=None, width: int = WORKBENCH_INLINE_LABEL_WIDTH):
+    """创建统一宽度的行内标签，便于表单对齐。"""
+    from PySide6.QtCore import Qt
+    from qfluentwidgets import BodyLabel
+
+    lbl = BodyLabel(text, parent)
+    lbl.setFixedWidth(width)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    return lbl
+
+
+def apply_button_metrics(*buttons, min_width: int = 0, height: int = WORKBENCH_BUTTON_HEIGHT) -> None:
+    """统一按钮高度和最小宽度。"""
+    for button in buttons:
+        if button is None:
+            continue
+        if min_width > 0:
+            button.setMinimumWidth(min_width)
+        button.setFixedHeight(height)
 
 
 def make_hsep(parent=None):

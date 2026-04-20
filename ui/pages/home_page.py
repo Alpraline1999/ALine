@@ -38,11 +38,8 @@ class HomePage(QWidget):
         self._new_btn = None
         self._open_btn = None
         self._guide_toggle_btn = None
-        self._welcome_card = None
-        self._welcome_intro = None
-        self._welcome_steps = None
-        self._extension_status_label = None
-        self._extension_detail_btn = None
+        self._status_bar = None
+        self._extension_status_btn = None
         self._recent_scroll = None
         self._recent_items_widget = None
         self._recent_items_layout = None
@@ -88,8 +85,6 @@ class HomePage(QWidget):
         layout.addLayout(btn_layout)
         btn_layout.setAlignment(Qt.AlignCenter)
 
-        self._build_guide_cards(layout)
-
         # 最近项目
         layout.addSpacing(12)
         recent_header = QHBoxLayout()
@@ -120,7 +115,8 @@ class HomePage(QWidget):
         self._recent_items_widget.setStyleSheet("background: transparent;")
         layout.addWidget(self._recent_scroll)
 
-        layout.addStretch()
+        layout.addStretch(1)
+        self._build_bottom_status_bar(layout)
 
         # 初始应用主题颜色 & 加载最近项目
         self._apply_theme_colors()
@@ -134,28 +130,19 @@ class HomePage(QWidget):
         self.refresh_recent()
         self._onboarding_controller.schedule_auto_start()
 
-    def _build_guide_cards(self, layout: QVBoxLayout) -> None:
-        self._welcome_card = QWidget(self)
-        welcome_layout = QVBoxLayout(self._welcome_card)
-        welcome_layout.setContentsMargins(0, 0, 0, 0)
-        welcome_layout.setSpacing(10)
-        welcome_layout.addWidget(make_section_label("ALine工作台", self._welcome_card))
-        self._welcome_intro = BodyLabel("一个项目，串起数据、处理、绘图和分析。", self._welcome_card)
-        self._welcome_intro.setWordWrap(True)
-        welcome_layout.addWidget(self._welcome_intro)
-        self._welcome_steps = make_hint_label("项目树、结果和扩展状态都会跟随当前项目。", self._welcome_card)
-        welcome_layout.addWidget(self._welcome_steps)
+    def _build_bottom_status_bar(self, layout: QVBoxLayout) -> None:
+        self._status_bar = QWidget(self)
+        status_layout = QHBoxLayout(self._status_bar)
+        status_layout.setContentsMargins(0, 8, 0, 0)
+        status_layout.setSpacing(10)
 
-        status_row = QHBoxLayout()
-        self._extension_status_label = make_hint_label("", self._welcome_card)
-        status_row.addWidget(self._extension_status_label, 1)
-        self._extension_detail_btn = PushButton("详情", self._welcome_card)
-        self._extension_detail_btn.clicked.connect(self._show_extension_details)
-        status_row.addWidget(self._extension_detail_btn)
-        welcome_layout.addLayout(status_row)
-        welcome_layout.addStretch(1)
+        self._extension_status_btn = PushButton("", self._status_bar)
+        self._extension_status_btn.clicked.connect(self._show_extension_details)
+        self._extension_status_btn.setFlat(True)
+        status_layout.addWidget(self._extension_status_btn, 0, Qt.AlignLeft)
+        status_layout.addStretch(1)
 
-        layout.addWidget(self._welcome_card)
+        layout.addWidget(self._status_bar)
 
     def _apply_theme_colors(self):
         """应用当前主题颜色"""
@@ -166,12 +153,8 @@ class HomePage(QWidget):
         self._subtitle.setStyleSheet(f"font-size: 18px; color: {sc};")
         self._recent_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {tc};")
         self._no_recent.setStyleSheet(f"color: {pc}; font-size: 12px;")
-        if self._welcome_card is not None:
-            self._welcome_card.setStyleSheet("background: transparent; border: none;")
-        if self._welcome_intro is not None:
-            self._welcome_intro.setStyleSheet(f"color: {tc}; font-size: 14px; font-weight: 600;")
-        if self._welcome_steps is not None:
-            self._welcome_steps.setStyleSheet(f"color: {sc}; font-size: 11px;")
+        if self._status_bar is not None:
+            self._status_bar.setStyleSheet("background: transparent; border-top: 1px solid rgba(128,128,128,0.22);")
 
     def refresh_recent(self):
         """刷新最近项目列表"""
@@ -243,23 +226,23 @@ class HomePage(QWidget):
             )
 
     def _refresh_extension_summary(self) -> None:
-        if self._extension_status_label is None:
+        if self._extension_status_btn is None:
             return
         status = get_extension_load_status()
         registered_count = status["registered_count"]
         error_count = status["error_count"]
+        base_style = "background: transparent; border: none; padding: 0; text-align: left;"
         if error_count:
-            self._extension_status_label.setText(f"扩展：{registered_count} 项可用，{error_count} 项失败")
-            self._extension_status_label.setStyleSheet("color: #D83B01; font-size: 11px;")
+            self._extension_status_btn.setText(f"扩展：{registered_count} 项可用，{error_count} 项失败")
+            self._extension_status_btn.setStyleSheet(base_style + "color: #D83B01; font-size: 11px;")
         elif registered_count:
-            self._extension_status_label.setText(f"扩展：{registered_count} 项可用")
-            self._extension_status_label.setStyleSheet(f"color: {accent_color()}; font-size: 11px;")
+            self._extension_status_btn.setText(f"扩展：{registered_count} 项可用")
+            self._extension_status_btn.setStyleSheet(base_style + f"color: {accent_color()}; font-size: 11px;")
         else:
-            self._extension_status_label.setText("扩展：未发现可用项")
-            self._extension_status_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        if self._extension_detail_btn is not None:
-            details = status["details"]
-            self._extension_detail_btn.setEnabled(bool(details.get("loaded") or details.get("errors")))
+            self._extension_status_btn.setText("扩展：未发现可用项")
+            self._extension_status_btn.setStyleSheet(base_style + f"color: {placeholder_color()}; font-size: 11px;")
+        details = status["details"]
+        self._extension_status_btn.setEnabled(bool(details.get("loaded") or details.get("errors")))
 
     def _show_extension_details(self) -> None:
         show_extension_load_report_dialog(self, "扩展加载详情")
@@ -288,10 +271,10 @@ class HomePage(QWidget):
                 "常做的项目可以直接回到上次位置。",
             ),
             OnboardingStep(
-                lambda: self._extension_detail_btn,
+                lambda: self._extension_status_btn,
                 TeachingTipTailPosition.LEFT_BOTTOM,
                 "最后看一下扩展状态",
-                "这里能看到最近一次扫描结果，点“详情”可展开查看。",
+                "这里能看到最近一次扫描结果，点击状态文字可展开查看。",
             ),
         ]
 

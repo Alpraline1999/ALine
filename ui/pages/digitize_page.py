@@ -10,7 +10,7 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
     MessageBox, InfoBar, RoundMenu, MessageBoxBase,
     ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action)
 
-from ui.theme import text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
+from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
@@ -18,6 +18,9 @@ from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_pl
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from models.schemas import CalibrationData, DataFile, DataSeries
+
+
+_SUPPORTED_SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 
 
 class _InputDialog(MessageBoxBase):
@@ -249,21 +252,22 @@ class DigitizePage(QWidget):
         line.setStyleSheet(f"background-color: {self._border_color()};")
         toolbar_layout.addWidget(line)
 
-        self._add_image_btn = ToolButton(FIF.IMAGE_EXPORT, toolbar_widget)
-        self._add_image_btn.setToolTip("添加图片到当前项目")
-        self._add_image_btn.clicked.connect(self._on_add_image)
-        toolbar_layout.addWidget(self._add_image_btn)
+        self._tree_add_image_btn = ToolButton(FIF.IMAGE_EXPORT, toolbar_widget)
+        self._tree_add_image_btn.setToolTip("添加图片到当前项目")
+        self._tree_add_image_btn.clicked.connect(self._on_add_image)
+        toolbar_layout.addWidget(self._tree_add_image_btn)
 
-        self._add_curve_btn = ToolButton(FIF.ADD_TO, toolbar_widget)
-        self._add_curve_btn.setToolTip("添加新曲线到选中图片")
-        self._add_curve_btn.clicked.connect(self._on_add_curve)
-        toolbar_layout.addWidget(self._add_curve_btn)
+        self._tree_add_curve_btn = ToolButton(FIF.ADD_TO, toolbar_widget)
+        self._tree_add_curve_btn.setToolTip("添加新曲线到选中图片")
+        self._tree_add_curve_btn.clicked.connect(self._on_add_curve)
+        toolbar_layout.addWidget(self._tree_add_curve_btn)
 
         toolbar_layout.addStretch()
         layout.addWidget(toolbar_widget)
 
         self._shared_tree_hint = BodyLabel("图片选择与导出目标请使用共享项目树；此处不再作为第二入口。", panel)
         self._shared_tree_hint.setWordWrap(True)
+        self._shared_tree_hint.hide()
         layout.addWidget(self._shared_tree_hint)
 
         self._project_tree = TreeWidget(panel)
@@ -289,17 +293,13 @@ class DigitizePage(QWidget):
 
     def _create_right_panel(self) -> CardWidget:
         panel = CardWidget(self)
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(420)
+        self._tool_panel = panel
+        panel.setFixedWidth(WORKBENCH_TOOL_PANEL_WIDTH)
         panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
-
-        # 标题
-        title_label = make_section_label("曲线数据", panel)
-        layout.addWidget(title_label)
 
         actions_row = QHBoxLayout()
         actions_row.setContentsMargins(0, 0, 0, 0)
@@ -317,6 +317,10 @@ class DigitizePage(QWidget):
         actions_row.addWidget(self._add_curve_btn)
         actions_row.addStretch()
         layout.addLayout(actions_row)
+
+        # 标题
+        self._curve_panel_title = make_section_label("曲线数据", panel)
+        layout.addWidget(self._curve_panel_title)
 
         # 曲线数据表格（带可点击排序表头）
         self._curve_table = TableWidget(panel)
@@ -864,6 +868,7 @@ class DigitizePage(QWidget):
         export_hint = BodyLabel("默认会将新建导出结果归档到 数据集 / 数字化结果，可在共享树中改为追加到已有数据文件。", tab)
         export_hint.setWordWrap(True)
         export_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        export_hint.hide()
         layout.addWidget(export_hint)
 
         # 导出范围
@@ -2523,12 +2528,28 @@ class DigitizePage(QWidget):
             self, "选择图片", "", "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tiff);;所有文件 (*)"
         )
         if file_path:
-            image_work = project_manager.add_image(file_path)
-            self._current_image_id = image_work.id
-            self._current_curve_id = None
-            self._image_viewer.load_image(project_manager.get_image_path(image_work.id))
-            self._refresh_project_tree()
-            self.project_modified.emit()
+            self.import_source_image(file_path)
+
+    def import_source_image(self, file_path: str, *, name: Optional[str] = None) -> bool:
+        if project_manager.current_project is None:
+            InfoBar.warning(title="警告", content="请先选择一个项目", parent=self, duration=3000)
+            return False
+
+        if Path(file_path).suffix.lower() not in _SUPPORTED_SOURCE_IMAGE_SUFFIXES:
+            InfoBar.warning(title="提示", content="当前源文件不是可导入到数据化的图片格式", parent=self, duration=3000)
+            return False
+
+        try:
+            image_work = project_manager.add_image(file_path, name=name)
+        except ValueError as exc:
+            InfoBar.warning(title="导入失败", content=str(exc), parent=self, duration=3000)
+            return False
+        self._current_image_id = image_work.id
+        self._current_curve_id = None
+        self._image_viewer.load_image(project_manager.get_image_path(image_work.id))
+        self._refresh_project_tree()
+        self.project_modified.emit()
+        return True
 
     def _on_add_curve(self):
         """为当前选中图片添加新曲线"""

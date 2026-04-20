@@ -14,7 +14,7 @@ TreeNameDisplayMode = Literal["wrap", "elide"]
 class UIPreferences(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    tree_name_display_mode: TreeNameDisplayMode = "wrap"
+    tree_name_display_mode: TreeNameDisplayMode = "elide"
     home_welcome_dismissed: bool = False
     home_onboarding_completed: bool = False
     page_onboarding_completed: dict[str, bool] = Field(default_factory=dict)
@@ -81,3 +81,11 @@ def set_page_onboarding_completed(page_key: str, completed: bool) -> bool:
     prefs.page_onboarding_completed[key] = bool(completed)
     prefs.save()
     return bool(prefs.page_onboarding_completed.get(key, False))
+
+
+def reset_all_onboarding_progress() -> None:
+    prefs = UIPreferences.load()
+    prefs.home_welcome_dismissed = False
+    prefs.home_onboarding_completed = False
+    prefs.page_onboarding_completed = {}
+    prefs.save()

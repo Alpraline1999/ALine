@@ -90,13 +90,14 @@ class TestSchemas(unittest.TestCase):
 
     def test_tree_node_discriminated_union_all_kinds(self):
         from models.schemas import (
-            FolderNode, DataFileNode, ImageWorkNode,
+            FolderNode, DataFileNode, SourceFileNode, ImageWorkNode,
             PipelineNode, FigureTemplateNode, ReportTemplateNode,
             AIToolNode, ProjectTree,
         )
         nodes = [
             FolderNode(name="f"),
             DataFileNode(name="df", data_file_id="x1"),
+            SourceFileNode(name="src", source_file_id="x_src"),
             ImageWorkNode(name="img", image_work_id="x2"),
             PipelineNode(name="pipe", pipeline_id="x3"),
             FigureTemplateNode(name="fig", figure_id="x4"),
@@ -107,7 +108,7 @@ class TestSchemas(unittest.TestCase):
         data = tree.model_dump()
         tree2 = ProjectTree(**data)
         kinds = [n.kind for n in tree2.nodes]
-        self.assertEqual(kinds, ["folder", "data_file", "image_work", "pipeline",
+        self.assertEqual(kinds, ["folder", "data_file", "source_file", "image_work", "pipeline",
                                   "figure_template", "report_template", "ai_tool"])
 
     def test_project_tree_get_children(self):
@@ -230,10 +231,64 @@ class TestProjectManager(unittest.TestCase):
             if node.kind == "folder"
         }
         self.assertIn(("数据集", "datasets", None), folder_map)
+        self.assertIn(("源文件", "source_files", None), folder_map)
         self.assertIn(("数据化", "images", None), folder_map)
         self.assertIn(("图片集", "pictures", None), folder_map)
         self.assertIn(("分析结果", "analysis_result_group", None), folder_map)
-        self.assertEqual(len(folder_map), 4)
+        self.assertEqual(len(folder_map), 5)
+
+    def test_add_source_files_creates_managed_nodes_under_source_group(self):
+        p = self.pm.create_new("source_files")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "source_files.aline"
+            self.pm.save(str(project_file))
+            source_root = self.pm._find_folder_by_group_type("source_files")
+            self.assertIsNotNone(source_root)
+            target_folder = self.pm.add_folder("原始记录", parent_id=source_root.id, group_type="source_files")
+            self.assertIsNotNone(target_folder)
+
+            file_a = Path(temp_dir) / "raw_a.csv"
+            file_b = Path(temp_dir) / "raw_b.txt"
+            file_a.write_text("x,y\n1,2\n", encoding="utf-8")
+            file_b.write_text("hello", encoding="utf-8")
+
+            nodes = self.pm.add_source_files([str(file_a), str(file_b)], parent_id=target_folder.id)
+
+            self.assertEqual(len(nodes), 2)
+            self.assertEqual(len(p.source_files), 2)
+            self.assertTrue(all(node.parent_id == target_folder.id for node in nodes))
+            managed_paths = [self.pm.get_source_file_path(node.source_file_id) for node in nodes]
+            self.assertTrue(all(Path(path).exists() for path in managed_paths))
+            self.assertTrue(all("files/source_files/原始记录" in path for path in managed_paths))
+            self.assertTrue(file_a.exists())
+            self.assertTrue(file_b.exists())
+
+    def test_move_source_file_tracks_managed_storage(self):
+        p = self.pm.create_new("source_move")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "source_move.aline"
+            self.pm.save(str(project_file))
+            source_root = self.pm._find_folder_by_group_type("source_files")
+            self.assertIsNotNone(source_root)
+            folder_a = self.pm.add_folder("批次A", parent_id=source_root.id, group_type="source_files")
+            folder_b = self.pm.add_folder("批次B", parent_id=source_root.id, group_type="source_files")
+            self.assertIsNotNone(folder_a)
+            self.assertIsNotNone(folder_b)
+
+            raw_file = Path(temp_dir) / "sample.dat"
+            raw_file.write_text("raw-data", encoding="utf-8")
+            node = self.pm.add_source_file(str(raw_file), parent_id=folder_a.id)
+            self.assertIsNotNone(node)
+
+            source_asset = p.source_files[0]
+            self.assertIn("files/source_files/批次A/sample.dat", self.pm.get_source_file_path(source_asset.id))
+
+            moved = self.pm.move_node(node.id, folder_b.id, 0)
+
+            self.assertTrue(moved)
+            target_path = self.pm.get_source_file_path(source_asset.id)
+            self.assertTrue(Path(target_path).exists())
+            self.assertIn("files/source_files/批次B/sample.dat", target_path)
 
     def test_migrate_to_v3_removes_legacy_tools_folder(self):
         from models.schemas import FolderNode, ProjectTree
@@ -277,6 +332,102 @@ class TestProjectManager(unittest.TestCase):
         self.assertIsNotNone(node)
         self.assertEqual(node.kind, "data_file")
         self.assertIn(df, p.data_files)
+
+    def test_add_data_file_rejects_duplicate_name_in_same_folder(self):
+        from models.schemas import DataFile
+
+        p = self.pm.create_new("dup_df")
+        self.pm.migrate_to_v2(p)
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        first = self.pm.add_data_file(DataFile(name="same.csv"), datasets_root.id)
+        second = self.pm.add_data_file(DataFile(name="same.csv"), datasets_root.id)
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(len(p.data_files), 1)
+        self.assertIn("已存在名为", self.pm.get_last_error_message())
+
+    def test_add_source_file_rejects_duplicate_name_in_same_folder(self):
+        p = self.pm.create_new("dup_source")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "dup_source.aline"
+            self.pm.save(str(project_file))
+            source_root = self.pm._find_folder_by_group_type("source_files")
+            self.assertIsNotNone(source_root)
+
+            dir_a = Path(temp_dir) / "a"
+            dir_b = Path(temp_dir) / "b"
+            dir_a.mkdir()
+            dir_b.mkdir()
+            file_a = dir_a / "raw.csv"
+            file_b = dir_b / "raw.csv"
+            file_a.write_text("x,y\n1,2\n", encoding="utf-8")
+            file_b.write_text("x,y\n3,4\n", encoding="utf-8")
+
+            first = self.pm.add_source_file(str(file_a), parent_id=source_root.id)
+            second = self.pm.add_source_file(str(file_b), parent_id=source_root.id)
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(len(p.source_files), 1)
+        self.assertIn("已存在名为", self.pm.get_last_error_message())
+
+    def test_move_node_rejects_duplicate_target_sibling_name(self):
+        from models.schemas import DataFile
+
+        self.pm.create_new("move_conflict")
+        self.pm.migrate_to_v2()
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        folder_a = self.pm.add_folder("A", parent_id=datasets_root.id, group_type="datasets")
+        folder_b = self.pm.add_folder("B", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(folder_a)
+        self.assertIsNotNone(folder_b)
+        source = self.pm.add_data_file(DataFile(name="dup.csv"), folder_a.id)
+        target = self.pm.add_data_file(DataFile(name="dup.csv"), folder_b.id)
+
+        moved = self.pm.move_node(source.id, folder_b.id, 0)
+
+        self.assertIsNotNone(target)
+        self.assertFalse(moved)
+        self.assertIn("已存在名为", self.pm.get_last_error_message())
+
+    def test_series_and_curve_name_conflicts_are_blocked(self):
+        from models.schemas import DataFile, DataSeries
+
+        self.pm.create_new("dup_virtual")
+        self.pm.migrate_to_v2()
+
+        data_file = self.pm.add_data_file(DataFile(name="dup.csv", series=[
+            DataSeries(name="s1", x=[1.0], y=[2.0]),
+            DataSeries(name="s2", x=[2.0], y=[3.0]),
+        ]))
+        other_file = self.pm.add_data_file(DataFile(name="other.csv", series=[
+            DataSeries(name="s1", x=[4.0], y=[5.0]),
+        ]))
+        self.assertIsNotNone(data_file)
+        self.assertIsNotNone(other_file)
+
+        first_df = self.pm.get_data_file(data_file.data_file_id)
+        other_df = self.pm.get_data_file(other_file.data_file_id)
+        self.assertIsNotNone(first_df)
+        self.assertIsNotNone(other_df)
+
+        self.assertFalse(self.pm.rename_series(first_df.series[1].id, "s1"))
+        self.assertIn("数据系列", self.pm.get_last_error_message())
+        self.assertFalse(self.pm.move_series_to_data_file(other_df.series[0].id, first_df.id))
+        self.assertIn("数据系列", self.pm.get_last_error_message())
+
+        image = self.pm.add_image("fake.png", "img")
+        first_curve = self.pm.add_curve_to_image(image.id, [1.0], [2.0], name="c1")
+        second_curve = self.pm.add_curve_to_image(image.id, [2.0], [3.0], name="c2")
+
+        self.assertIsNotNone(first_curve)
+        self.assertIsNotNone(second_curve)
+        self.assertFalse(self.pm.rename_curve(second_curve.id, "c1"))
+        self.assertIn("曲线", self.pm.get_last_error_message())
 
     def test_rename_node(self):
         p = self.pm.create_new("test")
@@ -1758,7 +1909,7 @@ class TestProjectManagerV3(unittest.TestCase):
             for n in self.p.tree.nodes
             if n.kind == "folder" and getattr(n, "parent_id", None) is None
         ]
-        self.assertEqual(root_groups, ["datasets", "images", "pictures", "analysis_result_group"])
+        self.assertEqual(root_groups, ["source_files", "datasets", "pictures", "images", "analysis_result_group"])
 
     def test_rename_series(self):
         from models.schemas import DataFile, DataSeries

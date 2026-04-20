@@ -137,7 +137,7 @@ class SettingsPage(QWidget):
         self._onboarding_label.setStyleSheet(f"color: {text_color()};")
         onboarding_layout.addWidget(self._onboarding_label)
 
-        self._onboarding_hint = BodyLabel("主页引导可以在这里重新播放；数据管理、处理、可视化、分析和图片数据化页面会在首次进入时自动显示简短 TeachingTip。", content)
+        self._onboarding_hint = BodyLabel("点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数据化页面的 TeachingTip 状态。", content)
         self._onboarding_hint.setWordWrap(True)
         self._onboarding_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
         onboarding_layout.addWidget(self._onboarding_hint)

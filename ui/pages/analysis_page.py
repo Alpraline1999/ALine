@@ -35,7 +35,7 @@ from core.analysis_engine import list_report_template_placeholders, run_analysis
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from ui.theme import make_hint_label, make_section_label, make_hsep
+from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, make_hint_label, make_section_label, make_hsep
 from core.analysis_engine import run_analysis
 from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
 from core.global_assets import global_assets
@@ -182,10 +182,11 @@ class AnalysisPage(QWidget):
         self._extension_panel.set_status_context("analysis", "分析扩展")
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_analysis_extensions)
+        self._extension_panel.setMinimumWidth(self._extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._extension_panel_width)
         self._page_splitter.addWidget(self._extension_panel)
         self._page_splitter.setStretchFactor(0, 1)
         self._page_splitter.setStretchFactor(1, 0)
-        self._page_splitter.setSizes([980, self._extension_panel_width])
         self._refresh_analysis_type_choices()
         self.set_extension_panel_visible(self._extension_panel_visible)
 
@@ -244,29 +245,25 @@ class AnalysisPage(QWidget):
         self._extension_panel_visible = bool(visible)
         if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
             return
-        sizes = self._page_splitter.sizes()
         if self._extension_panel_visible:
             self._extension_panel.show()
-            total_width = max(self._page_splitter.width(), sum(sizes) or 1)
-            panel_width = max(self._extension_panel.minimumWidth(), self._extension_panel_width)
-            self._page_splitter.setSizes([max(1, total_width - panel_width), panel_width])
+            content_width = max(self.width() - self._extension_panel_width - 24, 640)
+            self._page_splitter.setSizes([content_width, self._extension_panel_width])
             return
-        if len(sizes) > 1 and sizes[1] > 0:
-            self._extension_panel_width = sizes[1]
         self._extension_panel.hide()
-        total_width = max(self._page_splitter.width(), sum(sizes) or 1)
-        self._page_splitter.setSizes([total_width, 0])
+        self._page_splitter.setSizes([1, 0])
 
     def _build_left(self) -> QWidget:
         panel = CardWidget(self)
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(380)
+        self._tool_panel = panel
+        panel.setFixedWidth(WORKBENCH_TOOL_PANEL_WIDTH)
         lv = QVBoxLayout(panel)
         lv.setContentsMargins(14, 14, 14, 14)
         lv.setSpacing(8)
 
         lv.addWidget(make_section_label("分析类型"))
         self._type_combo = ComboBox(self)
+        self._type_combo.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
         self._type_combo.addItems(self._analysis_type_labels)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         lv.addWidget(self._type_combo)
@@ -275,6 +272,7 @@ class AnalysisPage(QWidget):
         lv.addWidget(make_section_label("分析输入（从项目树中双击添加）"))
 
         self._input_hint_label = make_hint_label("双击一条数据作为当前分析输入")
+        self._input_hint_label.hide()
         lv.addWidget(self._input_hint_label)
 
         self._primary_input_label = BodyLabel("主输入: 未选择")
@@ -293,11 +291,11 @@ class AnalysisPage(QWidget):
 
         clear_row = QHBoxLayout()
         self._btn_clear_inputs = PushButton(FIF.DELETE, "清除", self)
-        self._btn_clear_inputs.setFixedHeight(32)
+        apply_button_metrics(self._btn_clear_inputs, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         self._btn_clear_inputs.clicked.connect(self._clear_inputs)
         clear_row.addWidget(self._btn_clear_inputs)
         self._btn_remove_selected_inputs = PushButton(FIF.REMOVE, "移除选中", self)
-        self._btn_remove_selected_inputs.setFixedHeight(32)
+        apply_button_metrics(self._btn_remove_selected_inputs, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         self._btn_remove_selected_inputs.clicked.connect(self._remove_selected_inputs)
         clear_row.addWidget(self._btn_remove_selected_inputs)
         lv.addLayout(clear_row)
@@ -343,28 +341,34 @@ class AnalysisPage(QWidget):
 
         run_btn = PrimaryPushButton(FIF.PLAY, "运行分析")
         run_btn.clicked.connect(self._run_analysis)
+        apply_button_metrics(run_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         lv.addWidget(run_btn)
 
         self._save_result_btn = PushButton(FIF.SAVE, "保存分析结果")
         self._save_result_btn.clicked.connect(self._save_result)
+        apply_button_metrics(self._save_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         lv.addWidget(self._save_result_btn)
 
         self._export_result_series_btn = PushButton(FIF.SHARE, "导出结果数据")
         self._export_result_series_btn.clicked.connect(self._export_result_series)
         self._export_result_series_btn.setVisible(False)
         self._export_result_series_btn.setEnabled(False)
+        apply_button_metrics(self._export_result_series_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         lv.addWidget(self._export_result_series_btn)
 
         self._export_peaks_btn = PushButton("导出波峰曲线")
         self._export_peaks_btn.clicked.connect(lambda: self._export_extrema_series("peaks", "peaks"))
+        apply_button_metrics(self._export_peaks_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         lv.addWidget(self._export_peaks_btn)
 
         self._export_valleys_btn = PushButton("导出波谷曲线")
         self._export_valleys_btn.clicked.connect(lambda: self._export_extrema_series("valleys", "valleys"))
+        apply_button_metrics(self._export_valleys_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         lv.addWidget(self._export_valleys_btn)
 
         report_btn = PushButton(FIF.DOCUMENT, "生成报告")
         report_btn.clicked.connect(self._on_generate_report)
+        apply_button_metrics(report_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         lv.addWidget(report_btn)
 
         self._report_template_label = BodyLabel("当前报告模板: 默认模板")
@@ -450,6 +454,7 @@ class AnalysisPage(QWidget):
         self._report_result_selector_layout.setContentsMargins(0, 0, 0, 0)
         self._report_result_selector_layout.setSpacing(4)
         self._report_result_selector_hint = make_hint_label("存在多个分析结果时，可按分析类型选择要渲染的结果。")
+        self._report_result_selector_hint.hide()
         self._report_result_selector_layout.addWidget(self._report_result_selector_hint)
         report_layout.addWidget(self._report_result_selector_panel)
 

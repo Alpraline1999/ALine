@@ -289,6 +289,7 @@ class Project(BaseModel):
 
     # ── v0.2 新增字段（全部带默认值，旧文件打开不报错）──
     data_files: List["DataFile"] = []
+    source_files: List["SourceFileAsset"] = []
     saved_pipelines: List["SavedPipeline"] = []
     report_templates: List["ReportTemplate"] = []
     ai_prompts: List["AIPrompt"] = []
@@ -360,6 +361,12 @@ class Project(BaseModel):
                 return df
         return None
 
+    def find_source_file(self, source_file_id: str) -> Optional["SourceFileAsset"]:
+        for source_file in self.source_files:
+            if source_file.id == source_file_id:
+                return source_file
+        return None
+
     def find_saved_pipeline(self, pipeline_id: str) -> Optional["SavedPipeline"]:
         for sp in self.saved_pipelines:
             if sp.id == pipeline_id:
@@ -409,7 +416,7 @@ class _NodeBase(BaseModel):
 #   "agent_group"            = Agents 子分组
 _GROUP_TYPE = Literal[
     "user",
-    "datasets", "images", "pictures", "tools",
+    "datasets", "source_files", "images", "pictures", "tools",
     "dataset_set", "image_set", "picture_set", "tool_set",
     "pipeline_group",
     "template_group", "figure_template_group", "report_template_group", "analysis_result_group",
@@ -425,6 +432,11 @@ class FolderNode(_NodeBase):
 class DataFileNode(_NodeBase):
     kind: Literal["data_file"] = "data_file"
     data_file_id: str = ""
+
+
+class SourceFileNode(_NodeBase):
+    kind: Literal["source_file"] = "source_file"
+    source_file_id: str = ""
 
 
 class ImageWorkNode(_NodeBase):
@@ -482,7 +494,7 @@ class AIToolNode(_NodeBase):
 
 TreeNodeUnion = Annotated[
     Union[
-        FolderNode, DataFileNode, ImageWorkNode, PictureNode,
+        FolderNode, DataFileNode, SourceFileNode, ImageWorkNode, PictureNode,
         PipelineNode, FigureTemplateNode, ReportTemplateNode, AnalysisResultNode,
         AIPromptNode, AISkillNode, AIAgentNode,
         AIToolNode,   # 保留用于读取 v0.2 旧文件
@@ -534,6 +546,19 @@ class DataFile(BaseModel):
             if s.id == series_id:
                 return s
         return None
+
+
+class SourceFileAsset(BaseModel):
+    """项目管理的原始源文件快照。"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    file_path: str = ""
+    source_file_path: str = ""
+    import_time: str = Field(default_factory=lambda: datetime.now().isoformat())
+    file_size: int = 0
+    notes: str = ""
 
 
 class SavedPipeline(BaseModel):

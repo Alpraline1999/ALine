@@ -18,11 +18,13 @@ from .pages.process_page import ProcessPage
 from .pages.analysis_page import AnalysisPage
 from .pages.settings_page import SettingsPage
 from .dialogs.fluent_dialogs import TextInputDialog
+from .dialogs.project_tree_manage_dialog import ProjectTreeManageDialog
 from .widgets.project_tree import ProjectTreeWidget
 from .widgets.ai_assistant_panel import AIAssistantPanel
 from ai.agent import ALineAgent
 from ai.command_layer import CommandDispatcher
 from core.project_manager import project_manager
+from core.ui_preferences import reset_all_onboarding_progress
 from core.ai_client import AIConfig
 from core.ai.tool_executor import execute_tool
 from core.ai.tool_registry import TOOLS
@@ -30,7 +32,7 @@ from core.shortcut_manager import ShortcutBindingSet, shortcut_manager
 
 # 页面 2-6 默认显示完整共享树，主页和设置页不显示。
 _BUSINESS_TREE_KINDS = [
-    "folder", "data_file", "image_work", "picture",
+    "folder", "data_file", "source_file", "image_work", "picture",
     "pipeline", "figure_template", "report_template", "analysis_result",
     "global_pipeline", "global_report_template",
     "global_curve_style_template", "global_plot_style", "global_plot_theme",
@@ -71,47 +73,66 @@ class _SharedTreePanel(QWidget):
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(2)
 
-        self.new_project_btn = ToolButton(FIF.ADD, self)
+        left_group = QHBoxLayout()
+        left_group.setContentsMargins(0, 0, 0, 0)
+        left_group.setSpacing(2)
+
+        self.new_project_btn = ToolButton(FIF.FOLDER_ADD, self)
         self.new_project_btn.setToolTip("新建项目")
-        toolbar.addWidget(self.new_project_btn)
+        left_group.addWidget(self.new_project_btn)
 
         self.open_project_btn = ToolButton(FIF.FOLDER, self)
         self.open_project_btn.setToolTip("打开项目")
-        toolbar.addWidget(self.open_project_btn)
+        left_group.addWidget(self.open_project_btn)
 
         self.save_project_btn = ToolButton(FIF.SAVE, self)
         self.save_project_btn.setToolTip("保存当前项目")
-        toolbar.addWidget(self.save_project_btn)
+        left_group.addWidget(self.save_project_btn)
 
         self.close_project_btn = ToolButton(FIF.CLOSE, self)
         self.close_project_btn.setToolTip("关闭当前项目")
-        toolbar.addWidget(self.close_project_btn)
+        left_group.addWidget(self.close_project_btn)
+
+        toolbar.addLayout(left_group)
+        toolbar.addStretch(1)
 
         # 中间分隔线
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFixedWidth(1)
-        toolbar.addWidget(sep)
+        self._toolbar_separator = QFrame(self)
+        self._toolbar_separator.setFrameShape(QFrame.Shape.VLine)
+        self._toolbar_separator.setFixedWidth(2)
+        toolbar.addWidget(self._toolbar_separator, 0, Qt.AlignmentFlag.AlignCenter)
 
-        toolbar.addStretch()
+        toolbar.addStretch(1)
 
-        self.add_dataset_btn = ToolButton(FIF.FOLDER_ADD, self)
+        right_group = QHBoxLayout()
+        right_group.setContentsMargins(0, 0, 0, 0)
+        right_group.setSpacing(2)
+
+        self.tree_manage_btn = ToolButton(FIF.ALIGNMENT, self)
+        self.tree_manage_btn.setToolTip("项目树管理")
+        right_group.addWidget(self.tree_manage_btn)
+
+        self.add_dataset_btn = ToolButton(FIF.ADD, self)
         self.add_dataset_btn.setToolTip("新建数据集")
-        toolbar.addWidget(self.add_dataset_btn)
+        # right_group.addWidget(self.add_dataset_btn)
+        self.add_dataset_btn.hide()
 
         self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
         self.import_file_btn.setToolTip("导入文件")
-        toolbar.addWidget(self.import_file_btn)
+        # right_group.addWidget(self.import_file_btn)
+        self.import_file_btn.hide()
 
         self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
         self.extension_toggle_btn.setToolTip("隐藏扩展面板")
         self.extension_toggle_btn.hide()
-        toolbar.addWidget(self.extension_toggle_btn)
+        right_group.addWidget(self.extension_toggle_btn)
 
         # AI 助手入口已暂停，保留隐藏按钮以兼容旧属性访问。
         self.ai_toggle_btn = ToggleToolButton(FIF.CHAT, self)
         self.ai_toggle_btn.setToolTip("显示/隐藏 AI 助手")
         self.ai_toggle_btn.hide()
+
+        toolbar.addLayout(right_group)
 
         layout.addLayout(toolbar)
 
@@ -120,9 +141,10 @@ class _SharedTreePanel(QWidget):
 
         # 安装 Fluent 风格 Tooltip
         for btn in [self.new_project_btn, self.open_project_btn, self.save_project_btn,
-                self.close_project_btn, self.add_dataset_btn, self.import_file_btn,
+            self.close_project_btn, self.tree_manage_btn, self.add_dataset_btn, self.import_file_btn,
             self.extension_toggle_btn,
                     self.ai_toggle_btn]:
+            btn.setFixedSize(32, 32)
             btn.installEventFilter(ToolTipFilter(btn, 500, ToolTipPosition.BOTTOM))
 
     def set_data_actions_visible(self, visible: bool) -> None:
@@ -212,6 +234,7 @@ class MainWindow(FluentWindow):
         self._tree_panel.open_project_btn.clicked.connect(self._open_project_from_panel)
         self._tree_panel.save_project_btn.clicked.connect(self._save_current_project_from_panel)
         self._tree_panel.close_project_btn.clicked.connect(self._close_current_project_from_panel)
+        self._tree_panel.tree_manage_btn.clicked.connect(self._open_project_tree_manage_dialog)
         self._tree_panel.add_dataset_btn.clicked.connect(self.data_page._add_dataset)
         self._tree_panel.import_file_btn.clicked.connect(self.data_page._import_file)
         self._tree_panel.extension_toggle_btn.clicked.connect(self._toggle_current_page_extension_panel)
@@ -230,6 +253,15 @@ class MainWindow(FluentWindow):
         self._shortcut_bindings.bind("open_project", self, self._open_project_from_panel, context=context)
         self._shortcut_bindings.bind("save", self, self._save_current_project_from_panel, context=context)
         self._shortcut_bindings.bind("close_project", self, self._close_current_project_from_panel, context=context)
+        self._shortcut_bindings.bind("toggle_project_tree", self, self._toggle_tree_panel, context=context)
+        self._shortcut_bindings.bind("toggle_extension_panel", self, self._toggle_current_page_extension_panel, context=context)
+        self._shortcut_bindings.bind("go_home", self, lambda: self.switchTo(self.home_page), context=context)
+        self._shortcut_bindings.bind("go_data_page", self, lambda: self.switchTo(self.data_page), context=context)
+        self._shortcut_bindings.bind("go_chart_page", self, lambda: self.switchTo(self.chart_page), context=context)
+        self._shortcut_bindings.bind("go_process_page", self, lambda: self.switchTo(self.process_page), context=context)
+        self._shortcut_bindings.bind("go_analysis_page", self, lambda: self.switchTo(self.analysis_page), context=context)
+        self._shortcut_bindings.bind("go_digitize_page", self, lambda: self.switchTo(self.digitize_page), context=context)
+        self._shortcut_bindings.bind("go_settings_page", self, lambda: self.switchTo(self.settings_page), context=context)
         self._shortcut_bindings.bind("data_add_dataset", self, self.data_page._add_dataset, context=context)
         self._shortcut_bindings.bind("data_import_file", self, self.data_page._import_file, context=context)
 
@@ -285,10 +317,15 @@ class MainWindow(FluentWindow):
 
     def _update_extension_panel_toggle_button(self, interface) -> None:
         button = self._tree_panel.extension_toggle_btn
+        show_button = self._tree_available_for_interface(interface)
         supported = self._page_supports_extension_panel(interface)
-        button.setVisible(supported)
+        button.setVisible(show_button)
         button.setEnabled(supported)
+        if not show_button:
+            return
         if not supported:
+            button.setIcon(_EXTENSION_PANEL_SHOW_ICON.icon())
+            button.setToolTip("当前页面没有扩展面板")
             return
         visible = bool(interface.is_extension_panel_visible())
         button.setIcon((_EXTENSION_PANEL_HIDE_ICON if visible else _EXTENSION_PANEL_SHOW_ICON).icon())
@@ -320,6 +357,12 @@ class MainWindow(FluentWindow):
             return
         current_page.set_extension_panel_visible(not current_page.is_extension_panel_visible())
         self._update_extension_panel_toggle_button(current_page)
+
+    def _open_project_tree_manage_dialog(self) -> None:
+        dialog = ProjectTreeManageDialog(self)
+        dialog.project_modified.connect(self._on_project_modified)
+        dialog.project_modified.connect(self._tree_panel.tree.refresh)
+        dialog.exec()
 
     def _remember_tree_panel_width(self, *_args) -> None:
         if not self._tree_panel.isVisible():
@@ -382,6 +425,7 @@ class MainWindow(FluentWindow):
             self.switchTo(page)
 
     def _replay_home_onboarding(self) -> None:
+        reset_all_onboarding_progress()
         self.switchTo(self.home_page)
         QTimer.singleShot(0, lambda: self.home_page.start_onboarding(force=True))
 
@@ -510,6 +554,23 @@ class MainWindow(FluentWindow):
         if kind in ("data_file", "series", "curve", "image_work"):
             if self._dispatch_activation_to_current_page(kind, node_id):
                 return
+        if kind in ("source_file", "source_file_to_data"):
+            self.switchTo(self.data_page)
+            self.data_page.on_tree_node_selected("source_file", node_id)
+            if kind == "source_file_to_data":
+                self.data_page._import_current_source_file_to_dataset()
+            return
+        if kind == "source_file_to_digitize":
+            source_node = project_manager.get_node_by_id(node_id)
+            source_path = ""
+            source_name = ""
+            if source_node is not None and getattr(source_node, "kind", None) == "source_file":
+                source_path = project_manager.get_source_file_path(getattr(source_node, "source_file_id", ""))
+                source_name = getattr(source_node, "name", "")
+            if source_path:
+                self.switchTo(self.digitize_page)
+                self.digitize_page.import_source_image(source_path, name=source_name)
+            return
         if kind == "image_work":
             self.switchTo(self.digitize_page)
             if hasattr(self.digitize_page, 'load_image_by_id'):

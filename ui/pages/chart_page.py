@@ -62,7 +62,7 @@ from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from ui.theme import make_hint_label, make_hsep, make_section_label
+from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, make_hint_label, make_hsep, make_inline_label, make_section_label
 
 try:
     import matplotlib
@@ -170,13 +170,15 @@ class ChartPage(QWidget):
         root.setSpacing(10)
 
         self._page_splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._page_splitter.setHandleWidth(4)
+        self._page_splitter.setHandleWidth(6)
         root.addWidget(self._page_splitter, 1)
 
         self._content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self._content_splitter.setHandleWidth(6)
 
         left_card = CardWidget(self)
+        self._tool_panel = left_card
+        left_card.setFixedWidth(WORKBENCH_TOOL_PANEL_WIDTH)
         left_layout = QVBoxLayout(left_card)
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
@@ -193,14 +195,17 @@ class ChartPage(QWidget):
         self._btn_clear = ToolButton(FIF.DELETE, left_card)
         self._btn_clear.setToolTip("清除当前画布中的所有曲线")
         self._btn_clear.clicked.connect(self._on_clear_chart)
+        self._btn_clear.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         toolbar_row.addWidget(self._btn_clear)
         self._btn_remove = ToolButton(FIF.REMOVE, left_card)
         self._btn_remove.setToolTip("移除当前选中的曲线")
         self._btn_remove.clicked.connect(self._on_remove_selected)
+        self._btn_remove.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         toolbar_row.addWidget(self._btn_remove)
         self._btn_toggle_visible = ToolButton(_ICON_HIDE, left_card)
         self._btn_toggle_visible.setToolTip("隐藏当前曲线")
         self._btn_toggle_visible.clicked.connect(self._toggle_selected_visibility)
+        self._btn_toggle_visible.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         toolbar_row.addWidget(self._btn_toggle_visible)
         toolbar_row.addStretch()
         left_layout.addLayout(toolbar_row)
@@ -223,16 +228,16 @@ class ChartPage(QWidget):
         plot_actions_layout.setVerticalSpacing(4)
         self._btn_export = PushButton(FIF.SHARE, "导出图片", self._plot_actions_bar)
         self._btn_export.clicked.connect(self._on_export_image)
+        apply_button_metrics(self._btn_export, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         plot_actions_layout.addWidget(self._btn_export, 0, 0)
         self._btn_export_to_pictures = PrimaryPushButton(_ICON_EXPORT_TO_PICTURES, "导出到图片集", self._plot_actions_bar)
         self._btn_export_to_pictures.clicked.connect(self._on_export_to_picture_group)
+        apply_button_metrics(self._btn_export_to_pictures, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         plot_actions_layout.addWidget(self._btn_export_to_pictures, 0, 1)
         plot_actions_layout.setColumnStretch(0, 1)
         plot_actions_layout.setColumnStretch(1, 1)
         left_layout.addWidget(self._plot_actions_bar)
 
-        left_card.setMinimumWidth(300)
-        left_card.setMaximumWidth(360)
         self._content_splitter.addWidget(left_card)
 
         right_card = CardWidget(self)
@@ -274,7 +279,6 @@ class ChartPage(QWidget):
         self._content_splitter.setStretchFactor(0, 0)
         self._content_splitter.setStretchFactor(1, 1)
         self._content_splitter.setSizes([340, 980])
-
         self._page_splitter.addWidget(self._content_splitter)
 
         self._extension_panel = ExtensionConfigPanel("样式扩展", "应用扩展", self)
@@ -282,10 +286,11 @@ class ChartPage(QWidget):
         self._extension_panel.reload_requested.connect(self._reload_chart_extensions)
         self._extension_panel.remove_requested.connect(self._on_chart_extension_remove_requested)
         self._extension_panel.selection_changed.connect(lambda _type_id: self._update_extension_remove_action())
+        self._extension_panel.setMinimumWidth(self._extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._extension_panel_width)
         self._page_splitter.addWidget(self._extension_panel)
         self._page_splitter.setStretchFactor(0, 1)
         self._page_splitter.setStretchFactor(1, 0)
-        self._page_splitter.setSizes([1320, self._extension_panel_width])
 
         self._refresh_curve_style_template_combo()
         self._refresh_template_combo()
@@ -348,18 +353,13 @@ class ChartPage(QWidget):
         self._extension_panel_visible = bool(visible)
         if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
             return
-        sizes = self._page_splitter.sizes()
         if self._extension_panel_visible:
             self._extension_panel.show()
-            total_width = max(self._page_splitter.width(), sum(sizes) or 1)
-            panel_width = max(self._extension_panel.minimumWidth(), self._extension_panel_width)
-            self._page_splitter.setSizes([max(1, total_width - panel_width), panel_width])
+            content_width = max(self.width() - self._extension_panel_width - 24, 760)
+            self._page_splitter.setSizes([content_width, self._extension_panel_width])
             return
-        if len(sizes) > 1 and sizes[1] > 0:
-            self._extension_panel_width = sizes[1]
         self._extension_panel.hide()
-        total_width = max(self._page_splitter.width(), sum(sizes) or 1)
-        self._page_splitter.setSizes([total_width, 0])
+        self._page_splitter.setSizes([1, 0])
 
     def _apply_preview_host_background(self) -> None:
         if self._canvas_host is None:
@@ -443,7 +443,7 @@ class ChartPage(QWidget):
         layout.addWidget(self._style_target_label)
 
         color_row = QHBoxLayout()
-        color_row.addWidget(BodyLabel("颜色:", page))
+        color_row.addWidget(make_inline_label("颜色:", page))
         self._style_color_btn = ColorPickerButton(QColor("#888888"), "", page, enableAlpha=False)
         self._style_color_btn.setToolTip("当前曲线颜色")
         self._style_color_btn.setFixedSize(32, 32)
@@ -455,7 +455,7 @@ class ChartPage(QWidget):
         self._style_reset_color_btn.setEnabled(False)
         self._style_reset_color_btn.clicked.connect(self._on_style_reset_color)
         color_row.addWidget(self._style_reset_color_btn)
-        color_row.addWidget(BodyLabel("线型:", page))
+        color_row.addWidget(make_inline_label("线型:", page))
         self._style_line_combo = ComboBox(page)
         self._style_line_combo.addItems(_STYLE_LABELS)
         self._style_line_combo.setEnabled(False)
@@ -464,14 +464,14 @@ class ChartPage(QWidget):
         layout.addLayout(color_row)
 
         metric_row = QHBoxLayout()
-        metric_row.addWidget(BodyLabel("线宽:", page))
+        metric_row.addWidget(make_inline_label("线宽:", page))
         self._style_line_width_edit = LineEdit(page)
         self._style_line_width_edit.setPlaceholderText("1.4")
         self._style_line_width_edit.setEnabled(False)
         self._style_line_width_edit.textChanged.connect(self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_line_width_edit)
         metric_row.addWidget(self._style_line_width_edit)
-        metric_row.addWidget(BodyLabel("点大小:", page))
+        metric_row.addWidget(make_inline_label("点大小:", page))
         self._style_marker_size_edit = LineEdit(page)
         self._style_marker_size_edit.setPlaceholderText("5.0")
         self._style_marker_size_edit.setEnabled(False)
@@ -482,7 +482,7 @@ class ChartPage(QWidget):
         layout.addLayout(metric_row)
 
         density_row = QHBoxLayout()
-        density_row.addWidget(BodyLabel("点间距:", page))
+        density_row.addWidget(make_inline_label("点间距:", page))
         self._style_density_edit = LineEdit(page)
         self._style_density_edit.setPlaceholderText("1")
         self._style_density_edit.setEnabled(False)
@@ -528,7 +528,7 @@ class ChartPage(QWidget):
         layout.addWidget(make_section_label("基础配置", page))
 
         x_row = QHBoxLayout()
-        x_row.addWidget(BodyLabel("X:", page))
+        x_row.addWidget(make_inline_label("X:", page))
         self._x_label_edit = LineEdit(page)
         self._x_label_edit.setPlaceholderText("X")
         self._x_label_edit.textChanged.connect(self._on_quick_config_changed)
@@ -536,7 +536,7 @@ class ChartPage(QWidget):
         layout.addLayout(x_row)
 
         y_row = QHBoxLayout()
-        y_row.addWidget(BodyLabel("Y:", page))
+        y_row.addWidget(make_inline_label("Y:", page))
         self._y_label_edit = LineEdit(page)
         self._y_label_edit.setPlaceholderText("Y")
         self._y_label_edit.textChanged.connect(self._on_quick_config_changed)
@@ -551,13 +551,13 @@ class ChartPage(QWidget):
         layout.addWidget(make_section_label("坐标轴", page))
 
         x_range_row = QHBoxLayout()
-        x_range_row.addWidget(BodyLabel("X 最小:", page))
+        x_range_row.addWidget(make_inline_label("X 最小:", page))
         self._x_min_edit = LineEdit(page)
         self._x_min_edit.setPlaceholderText("自动")
         self._x_min_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._x_min_edit)
         x_range_row.addWidget(self._x_min_edit)
-        x_range_row.addWidget(BodyLabel("最大:", page))
+        x_range_row.addWidget(make_inline_label("最大:", page))
         self._x_max_edit = LineEdit(page)
         self._x_max_edit.setPlaceholderText("自动")
         self._x_max_edit.textChanged.connect(self._on_quick_config_changed)
@@ -566,13 +566,13 @@ class ChartPage(QWidget):
         layout.addLayout(x_range_row)
 
         y_range_row = QHBoxLayout()
-        y_range_row.addWidget(BodyLabel("Y 最小:", page))
+        y_range_row.addWidget(make_inline_label("Y 最小:", page))
         self._y_min_edit = LineEdit(page)
         self._y_min_edit.setPlaceholderText("自动")
         self._y_min_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._y_min_edit)
         y_range_row.addWidget(self._y_min_edit)
-        y_range_row.addWidget(BodyLabel("最大:", page))
+        y_range_row.addWidget(make_inline_label("最大:", page))
         self._y_max_edit = LineEdit(page)
         self._y_max_edit.setPlaceholderText("自动")
         self._y_max_edit.textChanged.connect(self._on_quick_config_changed)
@@ -597,7 +597,7 @@ class ChartPage(QWidget):
         layout.addWidget(make_section_label("版式与标注", page))
 
         legend_row = QHBoxLayout()
-        legend_row.addWidget(BodyLabel("图例位置:", page))
+        legend_row.addWidget(make_inline_label("图例位置:", page))
         self._legend_pos_combo = ComboBox(page)
         self._legend_pos_combo.addItems([
             "best", "upper right", "upper left", "lower left", "lower right",
@@ -608,20 +608,20 @@ class ChartPage(QWidget):
         layout.addLayout(legend_row)
 
         font_row = QHBoxLayout()
-        font_row.addWidget(BodyLabel("字体族:", page))
+        font_row.addWidget(make_inline_label("字体族:", page))
         self._font_family_combo = ComboBox(page)
         self._font_family_combo.currentIndexChanged.connect(self._on_quick_config_changed)
         font_row.addWidget(self._font_family_combo, 1)
         layout.addLayout(font_row)
 
         font_metric_row = QHBoxLayout()
-        font_metric_row.addWidget(BodyLabel("字号:", page))
+        font_metric_row.addWidget(make_inline_label("字号:", page))
         self._font_size_edit = LineEdit(page)
         self._font_size_edit.setPlaceholderText("10")
         self._font_size_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._font_size_edit)
         font_metric_row.addWidget(self._font_size_edit)
-        font_metric_row.addWidget(BodyLabel("图例字号:", page))
+        font_metric_row.addWidget(make_inline_label("图例字号:", page))
         self._legend_font_size_edit = LineEdit(page)
         self._legend_font_size_edit.setPlaceholderText("8")
         self._legend_font_size_edit.textChanged.connect(self._on_quick_config_changed)
@@ -634,13 +634,13 @@ class ChartPage(QWidget):
         layout.addWidget(make_section_label("画布与默认样式", page))
 
         figure_size_row = QHBoxLayout()
-        figure_size_row.addWidget(BodyLabel("图宽:", page))
+        figure_size_row.addWidget(make_inline_label("图宽:", page))
         self._figure_width_edit = LineEdit(page)
         self._figure_width_edit.setPlaceholderText("7.0")
         self._figure_width_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_width_edit)
         figure_size_row.addWidget(self._figure_width_edit)
-        figure_size_row.addWidget(BodyLabel("图高:", page))
+        figure_size_row.addWidget(make_inline_label("图高:", page))
         self._figure_height_edit = LineEdit(page)
         self._figure_height_edit.setPlaceholderText("5.0")
         self._figure_height_edit.textChanged.connect(self._on_quick_config_changed)
@@ -650,7 +650,7 @@ class ChartPage(QWidget):
         layout.addLayout(figure_size_row)
 
         dpi_row = QHBoxLayout()
-        dpi_row.addWidget(BodyLabel("DPI:", page))
+        dpi_row.addWidget(make_inline_label("DPI:", page))
         self._dpi_edit = LineEdit(page)
         self._dpi_edit.setPlaceholderText("150")
         self._dpi_edit.textChanged.connect(self._on_quick_config_changed)
@@ -660,7 +660,7 @@ class ChartPage(QWidget):
         layout.addLayout(dpi_row)
 
         style_row = QHBoxLayout()
-        style_row.addWidget(BodyLabel("默认线宽:", page))
+        style_row.addWidget(make_inline_label("默认线宽:", page))
         self._plot_line_width_edit = LineEdit(page)
         self._plot_line_width_edit.setPlaceholderText("1.4")
         self._plot_line_width_edit.textChanged.connect(self._on_quick_config_changed)
@@ -670,7 +670,7 @@ class ChartPage(QWidget):
         layout.addLayout(style_row)
 
         marker_row = QHBoxLayout()
-        marker_row.addWidget(BodyLabel("默认点大小:", page))
+        marker_row.addWidget(make_inline_label("默认点大小:", page))
         self._plot_marker_size_edit = LineEdit(page)
         self._plot_marker_size_edit.setPlaceholderText("5.0")
         self._plot_marker_size_edit.textChanged.connect(self._on_quick_config_changed)
@@ -680,7 +680,7 @@ class ChartPage(QWidget):
         layout.addLayout(marker_row)
 
         grid_style_row = QHBoxLayout()
-        grid_style_row.addWidget(BodyLabel("网格透明度:", page))
+        grid_style_row.addWidget(make_inline_label("网格透明度:", page))
         self._grid_alpha_edit = LineEdit(page)
         self._grid_alpha_edit.setPlaceholderText("0.7")
         self._grid_alpha_edit.textChanged.connect(self._on_quick_config_changed)
@@ -690,7 +690,7 @@ class ChartPage(QWidget):
         layout.addLayout(grid_style_row)
 
         grid_width_row = QHBoxLayout()
-        grid_width_row.addWidget(BodyLabel("网格线宽:", page))
+        grid_width_row.addWidget(make_inline_label("网格线宽:", page))
         self._grid_line_width_edit = LineEdit(page)
         self._grid_line_width_edit.setPlaceholderText("0.5")
         self._grid_line_width_edit.textChanged.connect(self._on_quick_config_changed)
@@ -706,8 +706,12 @@ class ChartPage(QWidget):
         scroll, page, layout = self._create_style_tab_page(parent)
 
         layout.addWidget(make_section_label("绘图扩展", page))
-        layout.addWidget(make_hint_label("在右侧面板选择扩展，并叠加到当前图表。", page))
-        layout.addWidget(make_hint_label("适合参考线、标注或自定义绘制流程。", page))
+        extension_hint = make_hint_label("在右侧面板选择扩展，并叠加到当前图表。", page)
+        extension_hint.hide()
+        layout.addWidget(extension_hint)
+        extension_sub_hint = make_hint_label("适合参考线、标注或自定义绘制流程。", page)
+        extension_sub_hint.hide()
+        layout.addWidget(extension_sub_hint)
 
         self._plot_extension_target_hint = make_hint_label("", page)
         self._plot_extension_target_hint.setWordWrap(True)
@@ -723,13 +727,14 @@ class ChartPage(QWidget):
         applied_header.addWidget(self._remove_selected_plot_extension_btn)
         layout.addLayout(applied_header)
 
+        self._plot_extension_repeat_hint = make_hint_label("同一扩展可重复加载，列表会保留目标曲线和参数摘要。", page)
+        self._plot_extension_repeat_hint.hide()
+        layout.addWidget(self._plot_extension_repeat_hint)
+
         self._plot_extension_applied_list = ListWidget(page)
         self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
         layout.addWidget(self._plot_extension_applied_list, 1)
-
-        note = make_hint_label("同一扩展可重复加载，列表会保留目标曲线和参数摘要。", page)
-        layout.addWidget(note)
         self._refresh_plot_extension_list()
         return scroll
 

@@ -1,7 +1,7 @@
 """数据处理页
 
 三列布局：左侧数据选择 | 中间操作链 | 右侧效果预览
-支持非破坏性操作管道，结果可另存为新数据系列。
+支持非破坏性操作管道，结果可另存为新数据系列或数据文件。
 """
 from __future__ import annotations
 
@@ -22,14 +22,14 @@ from qfluentwidgets import (
 
 from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
 from core.shortcut_manager import ShortcutBindingSet
-from ui.theme import make_section_label, make_hsep
+from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, make_section_label, make_hsep
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.dialogs.export_flow import choose_data_export_plan
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.global_assets import global_assets
 from core.project_manager import project_manager
-from models.schemas import SavedPipeline
+from models.schemas import DataFile, DataSeries, SavedPipeline
 from processing.data_engine import apply_pipeline
 
 try:
@@ -101,6 +101,8 @@ class ProcessPage(QWidget):
         self._src_ys: List[float] = []
         self._out_xs: List[float] = []
         self._out_ys: List[float] = []
+        self._src_series_batch: List[DataSeries] = []
+        self._out_series_batch: List[DataSeries] = []
         self._ops: List[Dict[str, Any]] = []
         self._param_widgets: List[_ParamWidget] = []
         self._processing_op_labels: List[str] = list(_OP_LABELS)
@@ -152,10 +154,11 @@ class ProcessPage(QWidget):
         self._extension_panel.set_status_context("processing", "处理扩展")
         self._extension_panel.apply_requested.connect(self._on_processing_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_processing_extensions)
+        self._extension_panel.setMinimumWidth(self._extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._extension_panel_width)
         self._page_splitter.addWidget(self._extension_panel)
         self._page_splitter.setStretchFactor(0, 1)
         self._page_splitter.setStretchFactor(1, 0)
-        self._page_splitter.setSizes([980, self._extension_panel_width])
         self._refresh_processing_extensions()
         self.set_extension_panel_visible(self._extension_panel_visible)
         self._apply_preview_host_background()
@@ -196,7 +199,7 @@ class ProcessPage(QWidget):
                 "中间列表按顺序执行，右侧预览会跟随当前参数更新。",
             ),
             OnboardingStep(
-                lambda: self._save_name_edit,
+                lambda: self._save_result_button,
                 TeachingTipTailPosition.BOTTOM,
                 "确认后再写回",
                 "命名结果并选目标列后，再把数据正式写回项目。",
@@ -213,18 +216,13 @@ class ProcessPage(QWidget):
         self._extension_panel_visible = bool(visible)
         if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
             return
-        sizes = self._page_splitter.sizes()
         if self._extension_panel_visible:
             self._extension_panel.show()
-            total_width = max(self._page_splitter.width(), sum(sizes) or 1)
-            panel_width = max(self._extension_panel.minimumWidth(), self._extension_panel_width)
-            self._page_splitter.setSizes([max(1, total_width - panel_width), panel_width])
+            content_width = max(self.width() - self._extension_panel_width - 24, 640)
+            self._page_splitter.setSizes([content_width, self._extension_panel_width])
             return
-        if len(sizes) > 1 and sizes[1] > 0:
-            self._extension_panel_width = sizes[1]
         self._extension_panel.hide()
-        total_width = max(self._page_splitter.width(), sum(sizes) or 1)
-        self._page_splitter.setSizes([total_width, 0])
+        self._page_splitter.setSizes([1, 0])
 
     def _build_left(self) -> QWidget:
         panel = QWidget()
@@ -236,6 +234,7 @@ class ProcessPage(QWidget):
         lv.addWidget(make_section_label("当前输入"))
         self._shared_tree_hint = BodyLabel("请通过共享项目树选择处理输入。")
         self._shared_tree_hint.setWordWrap(True)
+        self._shared_tree_hint.hide()
         lv.addWidget(self._shared_tree_hint)
         self._src_tree = TreeWidget(self)
         self._src_tree.setHeaderHidden(True)
@@ -252,8 +251,8 @@ class ProcessPage(QWidget):
 
     def _build_middle(self) -> QWidget:
         panel = CardWidget(self)
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(380)
+        self._tool_panel = panel
+        panel.setFixedWidth(WORKBENCH_TOOL_PANEL_WIDTH)
         mv = QVBoxLayout(panel)
         mv.setContentsMargins(14, 14, 14, 14)
         mv.setSpacing(8)
@@ -269,18 +268,22 @@ class ProcessPage(QWidget):
         load_tpl_btn = ToolButton(FIF.FOLDER)
         load_tpl_btn.setToolTip("加载模板")
         load_tpl_btn.clicked.connect(self._load_pipeline_from_combo)
+        load_tpl_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         template_row.addWidget(load_tpl_btn)
         save_as_btn = ToolButton(FIF.ADD)
         save_as_btn.setToolTip("另存为模板")
         save_as_btn.clicked.connect(self._on_save_pipeline_template_as)
+        save_as_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         template_row.addWidget(save_as_btn)
         overwrite_btn = ToolButton(FIF.SAVE)
         overwrite_btn.setToolTip("覆盖当前模板")
         overwrite_btn.clicked.connect(self._overwrite_current_pipeline)
+        overwrite_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         template_row.addWidget(overwrite_btn)
         clear_ops_btn = ToolButton(FIF.DELETE)
         clear_ops_btn.setToolTip("清空操作链")
         clear_ops_btn.clicked.connect(self._clear_ops)
+        clear_ops_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         template_row.addWidget(clear_ops_btn)
         mv.addLayout(template_row)
 
@@ -295,18 +298,22 @@ class ProcessPage(QWidget):
         add_btn = ToolButton(FIF.ADD)
         add_btn.setToolTip("添加操作")
         add_btn.clicked.connect(self._add_op)
+        add_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         btn_row.addWidget(add_btn)
         del_btn = ToolButton(FIF.DELETE)
         del_btn.setToolTip("删除选中操作")
         del_btn.clicked.connect(self._remove_op)
+        del_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         btn_row.addWidget(del_btn)
         up_btn = ToolButton(FIF.UP)
         up_btn.setToolTip("上移")
         up_btn.clicked.connect(self._move_op_up)
+        up_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         btn_row.addWidget(up_btn)
         dn_btn = ToolButton(FIF.DOWN)
         dn_btn.setToolTip("下移")
         dn_btn.clicked.connect(self._move_op_down)
+        dn_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         btn_row.addWidget(dn_btn)
         mv.addLayout(btn_row)
 
@@ -325,6 +332,7 @@ class ProcessPage(QWidget):
 
         export_hint = BodyLabel("导出时会先命名，并选择或新建目标数据文件。", self)
         export_hint.setWordWrap(True)
+        export_hint.hide()
         mv.addWidget(export_hint)
 
         self._save_name_edit = LineEdit(self)
@@ -334,9 +342,10 @@ class ProcessPage(QWidget):
         self._save_target_combo.hide()
 
         mv.addWidget(make_hsep())
-        save_btn = PrimaryPushButton(FIF.SAVE, "导出为数据列")
-        save_btn.clicked.connect(self._save_result)
-        mv.addWidget(save_btn)
+        self._save_result_button = PrimaryPushButton(FIF.SAVE, "导出为数据列")
+        self._save_result_button.clicked.connect(self._save_result)
+        apply_button_metrics(self._save_result_button, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        mv.addWidget(self._save_result_button)
         self._refresh_pipeline_templates()
         self._refresh_save_targets()
         return panel
@@ -407,21 +416,53 @@ class ProcessPage(QWidget):
         if typ == "curve":
             c = next((c for img in p.images for c in img.curves if c.id == obj_id), None)
             if c:
+                self._selected_source_kind = "curve"
+                self._selected_source_node_id = obj_id
+                self._src_series_batch = [DataSeries(name=c.name, x=list(c.x_actual), y=list(c.y_actual), color=c.color, source="pyline_curve_copy", source_curve_id=c.id)]
                 self._src_xs = list(c.x_actual)
                 self._src_ys = list(c.y_actual)
                 self._selected_src_id = obj_id
+                self._current_input_label.setText(f"当前输入: {c.name}")
+                self._extension_panel.set_context("数据处理", c.name)
+                self._save_name_edit.setText(self._suggest_result_name(c.name))
         elif typ == "series":
             s = p.find_series(obj_id)
             if s:
+                self._selected_source_kind = "series"
+                self._selected_source_node_id = obj_id
+                self._src_series_batch = [s]
                 self._src_xs = list(s.x)
                 self._src_ys = list(s.y)
                 self._selected_src_id = obj_id
+                self._current_input_label.setText(f"当前输入: {s.name}")
+                self._extension_panel.set_context("数据处理", s.name)
+                self._save_name_edit.setText(self._suggest_result_name(s.name))
+        self._update_save_action_presentation()
         self._run_pipeline()
 
     def _set_source_from_tree_node(self, kind: str, node_id: str) -> bool:
+        if kind == "data_file":
+            source_series = [series for series in project_manager.get_all_series_from_node(kind, node_id) if series and series.x]
+            if not source_series:
+                return False
+            node = project_manager.get_node_by_id(node_id)
+            source_name = node.name if node is not None else source_series[0].name
+            self._src_series_batch = list(source_series)
+            self._src_xs = list(source_series[0].x)
+            self._src_ys = list(source_series[0].y)
+            self._selected_src_id = source_series[0].id
+            self._current_input_label.setText(f"当前输入: {source_name}（共 {len(source_series)} 条数据系列）")
+            self._extension_panel.set_context("数据处理", source_name)
+            self._save_name_edit.setText(self._suggest_result_name(source_name))
+            self._refresh_save_targets()
+            self._update_save_action_presentation()
+            self._run_pipeline()
+            return True
+
         series = project_manager.get_series_from_node(kind, node_id)
         if series is None or not series.x:
             return False
+        self._src_series_batch = [series]
         self._src_xs = list(series.x)
         self._src_ys = list(series.y)
         self._selected_src_id = series.id
@@ -429,8 +470,15 @@ class ProcessPage(QWidget):
         self._extension_panel.set_context("数据处理", series.name)
         self._save_name_edit.setText(self._suggest_result_name(series.name))
         self._refresh_save_targets()
+        self._update_save_action_presentation()
         self._run_pipeline()
         return True
+
+    def _is_data_file_input(self) -> bool:
+        return self._selected_source_kind == "data_file" and bool(self._src_series_batch)
+
+    def _update_save_action_presentation(self) -> None:
+        self._save_result_button.setText("导出为数据文件" if self._is_data_file_input() else "导出为数据列")
 
     # ─────────────────────────────────────────────────────────
     # 操作链管理
@@ -520,13 +568,32 @@ class ProcessPage(QWidget):
         self._run_timer.start()
 
     def _run_pipeline_now(self):
-        if not self._src_xs:
+        if not self._src_series_batch:
             return
         for op, pw in zip(self._ops, self._param_widgets):
             op["params"] = pw.get_params()
         try:
-            self._out_xs, self._out_ys = apply_pipeline(self._src_xs, self._src_ys, self._ops)
+            self._out_series_batch = []
+            for source_series in self._src_series_batch:
+                out_xs, out_ys = apply_pipeline(list(source_series.x), list(source_series.y), self._ops)
+                self._out_series_batch.append(DataSeries(
+                    name=source_series.name,
+                    x=list(out_xs),
+                    y=list(out_ys),
+                    x_label=source_series.x_label,
+                    y_label=source_series.y_label,
+                    color=source_series.color,
+                    visible=source_series.visible,
+                    source="computed",
+                    source_curve_id=source_series.source_curve_id,
+                ))
+            preview_series = self._out_series_batch[0] if self._out_series_batch else None
+            self._out_xs = list(preview_series.x) if preview_series is not None else []
+            self._out_ys = list(preview_series.y) if preview_series is not None else []
         except Exception as e:
+            self._out_series_batch = []
+            self._out_xs = []
+            self._out_ys = []
             self._stats_label.setText(f"⚠ 处理错误: {e}")
             return
         self._draw_preview()
@@ -549,14 +616,16 @@ class ProcessPage(QWidget):
             sp.set_edgecolor(fg)
         ax.grid(True, color=gc, linestyle="--", linewidth=0.5, alpha=0.6)
         _MAX_PTS = 2000
+        src_label = "原始（预览第一条）" if len(self._src_series_batch) > 1 else "原始"
+        out_label = "处理后（预览第一条）" if len(self._out_series_batch) > 1 else "处理后"
         if self._src_xs:
             sx, sy = _downsample(self._src_xs, self._src_ys, _MAX_PTS)
             ax.plot(sx, sy, color="#888888",
-                    linestyle="--", linewidth=1.0, alpha=0.6, label="原始")
+                    linestyle="--", linewidth=1.0, alpha=0.6, label=src_label)
         if self._out_xs:
             ox, oy = _downsample(self._out_xs, self._out_ys, _MAX_PTS)
             ax.plot(ox, oy, color="#0078D4",
-                    linewidth=1.5, label="处理后")
+                    linewidth=1.5, label=out_label)
         if self._src_xs or self._out_xs:
             ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
         self._canvas.draw()
@@ -580,56 +649,88 @@ class ProcessPage(QWidget):
             y_min, y_max = min(self._out_ys), max(self._out_ys)
             mean = sum(self._out_ys) / n
             std = math.sqrt(sum((v - mean) ** 2 for v in self._out_ys) / n)
+        prefix = f"共处理 {len(self._out_series_batch)} 条数据系列；预览 " if len(self._out_series_batch) > 1 else ""
         self._stats_label.setText(
-            f"输出 N={n}  Y: [{y_min:.4g}, {y_max:.4g}]  均值={mean:.4g}  σ={std:.4g}")
+            f"{prefix}输出 N={n}  Y: [{y_min:.4g}, {y_max:.4g}]  均值={mean:.4g}  σ={std:.4g}")
 
     # ─────────────────────────────────────────────────────────
     # 保存结果
     # ─────────────────────────────────────────────────────────
 
     def _save_result(self):
-        if not self._out_xs:
+        if not self._out_series_batch:
             InfoBar.warning("提示", "没有可保存的结果", parent=self, position=InfoBarPosition.TOP)
             return
         p = project_manager.current_project
         if p is None:
             InfoBar.warning("提示", "请先打开项目", parent=self, position=InfoBarPosition.TOP)
             return
-        from models.schemas import DataFile, DataSeries
 
         default_name = self._save_name_edit.text().strip() or self._suggest_result_name()
-        preferred_target_node_id = self._selected_source_node_id if self._selected_source_kind == "data_file" else None
+        preferred_target_node_id = self._selected_source_node_id if self._is_data_file_input() else None
         export_plan = choose_data_export_plan(
             self,
-            title="导出为数据列",
+            title="导出为数据文件" if self._is_data_file_input() else "导出为数据列",
             default_export_name=default_name,
             default_file_name=f"{default_name}.process",
             preferred_target_node_id=preferred_target_node_id,
             file_suffix=".process",
+            allow_append_to_existing=not self._is_data_file_input(),
+            show_export_name=not self._is_data_file_input(),
         )
         if export_plan is None:
             return
-        result_name = export_plan.export_name
-        self._save_name_edit.setText(result_name)
-        series = DataSeries(
-            name=result_name,
-            x=list(self._out_xs),
-            y=list(self._out_ys),
-            source="computed",
-        )
-        if export_plan.target_data_file_id:
-            target_file = p.find_data_file(export_plan.target_data_file_id)
-            if target_file is None or not project_manager.add_series_to_data_file(export_plan.target_data_file_id, series):
-                InfoBar.error("保存失败", "未能追加到目标数据文件", parent=self, position=InfoBarPosition.TOP)
+        if self._is_data_file_input():
+            if export_plan.target_data_file_id:
+                InfoBar.warning("提示", "整份数据文件结果只能另存为新的数据文件", parent=self, position=InfoBarPosition.TOP)
                 return
-            message = f"{series.name} -> {target_file.name}"
-        else:
-            data_file = DataFile(name=export_plan.new_data_file_name or f"{result_name}.process", series=[series])
+            data_file = DataFile(
+                name=export_plan.new_data_file_name or f"{default_name}.process",
+                series=[
+                    DataSeries(
+                        name=series.name,
+                        x=list(series.x),
+                        y=list(series.y),
+                        x_label=series.x_label,
+                        y_label=series.y_label,
+                        color=series.color,
+                        visible=series.visible,
+                        source="computed",
+                        source_curve_id=series.source_curve_id,
+                    )
+                    for series in self._out_series_batch
+                ],
+            )
             node = project_manager.add_data_file(data_file, parent_id=export_plan.new_parent_id)
             if node is None:
-                InfoBar.error("保存失败", "未能创建处理结果数据文件", parent=self, position=InfoBarPosition.TOP)
+                message = project_manager.get_last_error_message() or "未能创建处理结果数据文件"
+                InfoBar.error("保存失败", message, parent=self, position=InfoBarPosition.TOP)
                 return
-            message = f"{series.name} -> {data_file.name}"
+            message = f"{len(data_file.series)} 条数据系列 -> {data_file.name}"
+        else:
+            result_name = export_plan.export_name
+            self._save_name_edit.setText(result_name)
+            series = DataSeries(
+                name=result_name,
+                x=list(self._out_xs),
+                y=list(self._out_ys),
+                source="computed",
+            )
+            if export_plan.target_data_file_id:
+                target_file = p.find_data_file(export_plan.target_data_file_id)
+                if target_file is None or not project_manager.add_series_to_data_file(export_plan.target_data_file_id, series):
+                    message = project_manager.get_last_error_message() or "未能追加到目标数据文件"
+                    InfoBar.error("保存失败", message, parent=self, position=InfoBarPosition.TOP)
+                    return
+                message = f"{series.name} -> {target_file.name}"
+            else:
+                data_file = DataFile(name=export_plan.new_data_file_name or f"{result_name}.process", series=[series])
+                node = project_manager.add_data_file(data_file, parent_id=export_plan.new_parent_id)
+                if node is None:
+                    message = project_manager.get_last_error_message() or "未能创建处理结果数据文件"
+                    InfoBar.error("保存失败", message, parent=self, position=InfoBarPosition.TOP)
+                    return
+                message = f"{series.name} -> {data_file.name}"
 
         self._refresh_save_targets()
         self.project_modified.emit()
@@ -637,6 +738,9 @@ class ProcessPage(QWidget):
 
     def _suggest_result_name(self, source_name: Optional[str] = None) -> str:
         base_name = source_name
+        if not base_name and self._selected_source_kind == "data_file" and self._selected_source_node_id:
+            node = project_manager.get_node_by_id(self._selected_source_node_id)
+            base_name = node.name if node is not None else None
         if not base_name and self._selected_src_id:
             series = project_manager.get_series_from_node("series", self._selected_src_id)
             base_name = series.name if series is not None else None
@@ -824,8 +928,16 @@ class ProcessPage(QWidget):
         self._selected_source_node_id = obj_id
         if self._set_source_from_tree_node(data_type, obj_id):
             return
+        self._selected_src_id = None
+        self._src_series_batch = []
+        self._out_series_batch = []
+        self._src_xs = []
+        self._src_ys = []
+        self._out_xs = []
+        self._out_ys = []
         self._current_input_label.setText("当前输入: 未选择")
         self._save_name_edit.clear()
+        self._update_save_action_presentation()
         self._refresh_tree()
         if not hasattr(self, "_src_tree") or self._src_tree is None:
             return

@@ -48,12 +48,15 @@ class _DataExportDialog(QDialog):
         default_file_name: str,
         file_suffix: str,
         current_text: Optional[str],
+        show_export_name: bool,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(460)
         self._entries = list(entries)
         self._file_suffix = file_suffix
+        self._show_export_name = bool(show_export_name)
+        self._default_export_name = (default_export_name or "").strip()
         self._accepted_plan: Optional[DataExportPlan] = None
         self._last_auto_file_name = _ensure_suffix(default_file_name, file_suffix)
         self._file_name_manually_edited = False
@@ -62,14 +65,18 @@ class _DataExportDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 14)
         layout.setSpacing(10)
 
-        name_row = QHBoxLayout()
-        name_row.addWidget(BodyLabel("名称:", self))
+        self._name_container = QWidget(self)
+        name_row = QHBoxLayout(self._name_container)
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
+        name_row.addWidget(BodyLabel("名称:", self._name_container))
         self._export_name_edit = LineEdit(self)
-        self._export_name_edit.setText((default_export_name or "").strip())
+        self._export_name_edit.setText(self._default_export_name)
         self._export_name_edit.setPlaceholderText("输入导出名称")
         self._export_name_edit.textChanged.connect(self._on_export_name_changed)
         name_row.addWidget(self._export_name_edit, 1)
-        layout.addLayout(name_row)
+        layout.addWidget(self._name_container)
+        self._name_container.setVisible(self._show_export_name)
 
         target_row = QHBoxLayout()
         target_row.addWidget(BodyLabel("目标:", self))
@@ -135,14 +142,14 @@ class _DataExportDialog(QDialog):
         )
 
     def _on_accept(self) -> None:
-        export_name = self._export_name_edit.text().strip()
-        if not export_name:
-            self._export_name_edit.setFocus()
-            return
         entry = self._selected_entry()
         if entry is None:
             return
+        export_name = self._export_name_edit.text().strip() if self._show_export_name else self._default_export_name
         if entry.get("mode") == "append":
+            if not export_name:
+                self._export_name_edit.setFocus()
+                return
             self._accepted_plan = DataExportPlan(export_name=export_name, target_data_file_id=entry["data_file_id"])
             self.accept()
             return
@@ -150,6 +157,8 @@ class _DataExportDialog(QDialog):
         if not file_name:
             self._data_file_name_edit.setFocus()
             return
+        if not export_name:
+            export_name = Path(file_name).stem
         parent_id = entry.get("node_id")
         resolver = entry.get("resolver")
         if parent_id is None and callable(resolver):
@@ -429,12 +438,17 @@ def choose_data_export_plan(
     preferred_target_node_id: Optional[str] = None,
     file_suffix: str = ".data",
     create_target_options: Optional[List[DataCreateTargetOption]] = None,
+    allow_append_to_existing: bool = True,
+    show_export_name: bool = True,
 ) -> Optional[DataExportPlan]:
     project = project_manager.current_project
     if project is None or project.tree is None:
         return None
 
-    entries = _build_data_target_entries(create_target_options=create_target_options)
+    entries = _build_data_target_entries(
+        create_target_options=create_target_options,
+        allow_append_to_existing=allow_append_to_existing,
+    )
     if not entries:
         return None
     current_text = _preferred_target_label(entries, preferred_target_node_id)
@@ -446,6 +460,7 @@ def choose_data_export_plan(
         default_file_name=default_file_name,
         file_suffix=file_suffix,
         current_text=current_text,
+        show_export_name=show_export_name,
     )
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
@@ -513,19 +528,21 @@ def choose_analysis_result_save_plan(
 
 def _build_data_target_entries(
     create_target_options: Optional[List[DataCreateTargetOption]] = None,
+    allow_append_to_existing: bool = True,
 ) -> List[dict]:
     project = project_manager.current_project
     if project is None or project.tree is None:
         return []
     entries: List[dict] = []
-    for node in project.tree.nodes:
-        if node.kind == "data_file":
-            entries.append({
-                "label": f"追加到数据文件 / {_node_path_label(node.id)}",
-                "mode": "append",
-                "node_id": node.id,
-                "data_file_id": node.data_file_id,
-            })
+    if allow_append_to_existing:
+        for node in project.tree.nodes:
+            if node.kind == "data_file":
+                entries.append({
+                    "label": f"追加到数据文件 / {_node_path_label(node.id)}",
+                    "mode": "append",
+                    "node_id": node.id,
+                    "data_file_id": node.data_file_id,
+                })
     for node in project.tree.nodes:
         if node.kind == "folder" and _node_belongs_to_group(node.id, "datasets"):
             entries.append({
