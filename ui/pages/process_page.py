@@ -1005,7 +1005,8 @@ class ProcessPage(QWidget):
             self._run_pipeline()
 
     def update_theme(self):
-        if self._out_xs:
+        self._apply_preview_host_background()
+        if self._canvas is not None and self._figure is not None:
             self._draw_preview()
 
 

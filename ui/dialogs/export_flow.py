@@ -606,16 +606,15 @@ def _node_belongs_to_group(node_id: str, group_type: str) -> bool:
 
 
 def _node_path_label(node_id: str) -> str:
-    project = project_manager.current_project
-    if project is None or project.tree is None:
-        return node_id
-    parts: List[str] = []
-    current = project.tree.get_node(node_id)
-    while current is not None:
-        parts.append(current.name)
-        parent_id = getattr(current, "parent_id", None)
-        current = project.tree.get_node(parent_id) if parent_id else None
-    return " / ".join(reversed(parts)) if parts else node_id
+    label = project_manager.format_tree_path_label(node_id, separator="/", omit_root_group=True)
+    if label and label != node_id:
+        return label
+    node = project_manager.get_node_by_id(node_id)
+    if node is not None:
+        fallback_name = (getattr(node, "name", "") or "").strip()
+        if fallback_name:
+            return fallback_name
+    return label or node_id
 
 
 def _preferred_target_label(entries: List[dict], preferred_node_id: Optional[str]) -> Optional[str]:

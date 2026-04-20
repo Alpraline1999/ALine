@@ -8,7 +8,7 @@ from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     LineEdit, PrimaryPushButton, InfoBar, InfoBarPosition, PlainTextEdit,
     CheckBox, TabWidget, TabCloseButtonDisplayMode, ToolTipFilter, ToolTipPosition)
 
-from ui.theme import text_color, secondary_color, placeholder_color
+from ui.theme import accent_color, card_background_color, text_color, secondary_color, placeholder_color
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from core.shortcut_manager import shortcut_manager
 from core.ui_preferences import get_tree_name_display_mode, set_tree_name_display_mode
@@ -84,6 +84,20 @@ class SettingsPage(QWidget):
             if widget.toolTip():
                 widget.installEventFilter(ToolTipFilter(widget, 400, ToolTipPosition.TOP))
 
+    @staticmethod
+    def _apply_card_layout_metrics(layout) -> None:
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+    def _apply_shortcut_filter_style(self) -> None:
+        if self._shortcut_filter_edit is None:
+            return
+        self._shortcut_filter_edit.setFixedHeight(36)
+        self._shortcut_filter_edit.setStyleSheet(
+            f"background: {card_background_color()}; color: {text_color()};"
+            f" border: 1px solid {accent_color()}; border-radius: 8px; padding: 4px 8px;"
+        )
+
     def _build_general_tab(self) -> QWidget:
         outer = SmoothScrollArea()
         outer.setWidgetResizable(True)
@@ -93,13 +107,14 @@ class SettingsPage(QWidget):
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(content)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
         outer.setWidget(content)
 
         # ── 外观设置 ──
         self._appearance_card = CardWidget(content)
         appearance_layout = QVBoxLayout(self._appearance_card)
+        self._apply_card_layout_metrics(appearance_layout)
 
         self._appearance_title = BodyLabel("外观", self._appearance_card)
         self._appearance_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
@@ -152,6 +167,7 @@ class SettingsPage(QWidget):
         # ── 语言设置（预留）──
         self._lang_card = CardWidget(content)
         lang_layout = QVBoxLayout(self._lang_card)
+        self._apply_card_layout_metrics(lang_layout)
 
         self._lang_title = BodyLabel("语言", self._lang_card)
         self._lang_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
@@ -176,12 +192,13 @@ class SettingsPage(QWidget):
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(content)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
         outer.setWidget(content)
 
         self._shortcuts_card = CardWidget(content)
         shortcuts_layout = QVBoxLayout(self._shortcuts_card)
+        self._apply_card_layout_metrics(shortcuts_layout)
 
         self._shortcuts_title = BodyLabel("快捷键", self._shortcuts_card)
         self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
@@ -194,7 +211,10 @@ class SettingsPage(QWidget):
 
         self._shortcut_filter_edit = LineEdit(self._shortcuts_card)
         self._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如“分析”或“导出”")
+        self._shortcut_filter_edit.setClearButtonEnabled(True)
+        self._shortcut_filter_edit.setToolTip("按动作名称、分类或关键词筛选快捷键")
         self._shortcut_filter_edit.textChanged.connect(self._filter_shortcut_rows)
+        self._apply_shortcut_filter_style()
         shortcuts_layout.addWidget(self._shortcut_filter_edit)
 
         sc_content = QWidget(self._shortcuts_card)
@@ -260,13 +280,14 @@ class SettingsPage(QWidget):
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(content)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)
         outer.setWidget(content)
 
         # ── AI 接口配置 ──
         self._ai_card = CardWidget(content)
         ai_layout = QVBoxLayout(self._ai_card)
+        self._apply_card_layout_metrics(ai_layout)
 
         ai_title = BodyLabel("AI 接口", self._ai_card)
         ai_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
@@ -363,6 +384,7 @@ class SettingsPage(QWidget):
 
         self._ai_tools_card = CardWidget(content)
         ai_tools_layout = QVBoxLayout(self._ai_tools_card)
+        self._apply_card_layout_metrics(ai_tools_layout)
 
         ai_tools_title = BodyLabel("AI 工具管理", self._ai_tools_card)
         ai_tools_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
@@ -530,8 +552,7 @@ class SettingsPage(QWidget):
             self._onboarding_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
         if self._shortcuts_title:
             self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
-        if self._shortcut_filter_edit is not None:
-            self._shortcut_filter_edit.setStyleSheet(f"color: {tc};")
+        self._apply_shortcut_filter_style()
         # 快捷键行标签
         for lbl in self._shortcut_labels:
             lbl.setStyleSheet(f"color: {tc};")

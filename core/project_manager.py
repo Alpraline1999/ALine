@@ -155,6 +155,7 @@ class ProjectManager:
         parent_id: Optional[str],
         name: str,
         *,
+        node_kind: Optional[str] = None,
         exclude_node_id: Optional[str] = None,
         project: Optional[Project] = None,
     ) -> bool:
@@ -163,19 +164,140 @@ class ProjectManager:
             return self._ensure_non_empty_name(name)
         if not self._ensure_non_empty_name(name):
             return False
+        if self._has_tree_child_name_conflict(
+            parent_id,
+            name,
+            node_kind=node_kind,
+            exclude_node_id=exclude_node_id,
+            project=p,
+        ):
+            parent = p.tree.get_node(parent_id) if parent_id else None
+            scope_label = "当前层级"
+            if parent is not None and getattr(parent, "kind", None) == "folder":
+                scope_label = f"文件夹“{parent.name or '未命名文件夹'}”"
+            return self._fail_operation(
+                f"{scope_label}下已存在名为“{name.strip()}”的节点，请先重命名后再试。"
+            )
+        return True
+
+    def _has_tree_child_name_conflict(
+        self,
+        parent_id: Optional[str],
+        name: str,
+        *,
+        node_kind: Optional[str] = None,
+        exclude_node_id: Optional[str] = None,
+        project: Optional[Project] = None,
+    ) -> bool:
+        p = project or self.current_project
+        if p is None or p.tree is None:
+            return False
         normalized = self._normalize_name_key(name)
         for sibling in p.tree.get_children(parent_id):
             if exclude_node_id is not None and sibling.id == exclude_node_id:
                 continue
+            if node_kind is not None and getattr(sibling, "kind", None) != node_kind:
+                continue
             if self._normalize_name_key(getattr(sibling, "name", "")) == normalized:
-                parent = p.tree.get_node(parent_id) if parent_id else None
-                scope_label = "当前层级"
-                if parent is not None and getattr(parent, "kind", None) == "folder":
-                    scope_label = f"文件夹“{parent.name or '未命名文件夹'}”"
-                return self._fail_operation(
-                    f"{scope_label}下已存在名为“{name.strip()}”的节点，请先重命名后再试。"
-                )
-        return True
+                return True
+        return False
+
+    @staticmethod
+    def _split_name_suffix(name: str) -> tuple[str, str]:
+        clean_name = (name or "").strip()
+        if not clean_name:
+            return "", ""
+        suffixes = Path(clean_name).suffixes
+        suffix = "".join(suffixes)
+        if suffix and clean_name.endswith(suffix):
+            stem = clean_name[: -len(suffix)]
+            if stem:
+                return stem, suffix
+        return clean_name, ""
+
+    def _next_unique_tree_child_name(
+        self,
+        parent_id: Optional[str],
+        name: str,
+        *,
+        node_kind: Optional[str] = None,
+        exclude_node_id: Optional[str] = None,
+        project: Optional[Project] = None,
+    ) -> str:
+        candidate = (name or "").strip()
+        if not candidate:
+            return candidate
+        p = project or self.current_project
+        if p is None or p.tree is None:
+            return candidate
+        if not self._has_tree_child_name_conflict(
+            parent_id,
+            candidate,
+            node_kind=node_kind,
+            exclude_node_id=exclude_node_id,
+            project=p,
+        ):
+            return candidate
+        stem, suffix = self._split_name_suffix(candidate)
+        index = 1
+        while True:
+            renamed = f"{stem}_{index}{suffix}"
+            if not self._has_tree_child_name_conflict(
+                parent_id,
+                renamed,
+                node_kind=node_kind,
+                exclude_node_id=exclude_node_id,
+                project=p,
+            ):
+                return renamed
+            index += 1
+
+    def format_tree_path_label(
+        self,
+        node_id: str,
+        *,
+        separator: str = " / ",
+        omit_root_group: bool = False,
+    ) -> str:
+        p = self.current_project
+        if p is None or p.tree is None:
+            return node_id
+        parts: List[str] = []
+        current = p.tree.get_node(node_id)
+        while current is not None:
+            name = (getattr(current, "name", "") or "").strip()
+            parent_id = getattr(current, "parent_id", None)
+            canonical_group = self._canonical_group_type(getattr(current, "group_type", None))
+            is_group_root = getattr(current, "kind", None) == "folder" and parent_id is None and canonical_group is not None
+            if not (omit_root_group and is_group_root):
+                parts.append(name)
+            current = p.tree.get_node(parent_id) if parent_id else None
+        labels = [part for part in reversed(parts) if part]
+        return separator.join(labels) if labels else node_id
+
+    def format_series_origin_path_label(
+        self,
+        series_id: str,
+        *,
+        separator: str = " / ",
+        omit_root_group: bool = False,
+    ) -> str:
+        owner_kind, owner, series = self._find_series_owner(series_id)
+        if owner_kind == "data_file" and owner is not None and series is not None:
+            node = self._find_tree_linked_node("data_file", "data_file_id", owner.id)
+            base = self.format_tree_path_label(node.id, separator=separator, omit_root_group=omit_root_group) if node else (owner.name or "")
+            labels = [label for label in [base, series.name] if label]
+            return separator.join(labels)
+        if owner_kind == "dataset" and owner is not None and series is not None:
+            labels = [label for label in [getattr(owner, "name", ""), series.name] if label]
+            return separator.join(labels)
+        image, curve = self._find_curve_owner(series_id)
+        if image is not None and curve is not None:
+            node = self._find_tree_linked_node("image_work", "image_work_id", image.id)
+            base = self.format_tree_path_label(node.id, separator=separator, omit_root_group=omit_root_group) if node else (image.name or "")
+            labels = [label for label in [base, curve.name] if label]
+            return separator.join(labels)
+        return ""
 
     def _ensure_unique_series_name(
         self,
@@ -365,7 +487,7 @@ class ProjectManager:
     # 图像管理（PyLine 原有，保持完整）
     # ─────────────────────────────────────────────
 
-    def add_image(self, image_path: str, name: Optional[str] = None) -> ImageWork:
+    def add_image(self, image_path: str, name: Optional[str] = None, parent_id: Optional[str] = None) -> ImageWork:
         self._clear_last_operation_error()
         if self.current_project is None:
             raise ValueError("没有当前项目")
@@ -373,10 +495,16 @@ class ProjectManager:
         if self.current_project.tree is None:
             self.migrate_to_v2(self.current_project)
         self._ensure_project_tree_groups(self.current_project)
-        img_folder = self._find_folder_by_group_type("images")
-        parent_id = img_folder.id if img_folder else None
+        if parent_id is None:
+            img_folder = self._find_folder_by_group_type("images")
+            parent_id = img_folder.id if img_folder else None
         image_name = name or os.path.basename(image_path)
-        if not self._ensure_unique_tree_child_name(parent_id, image_name, project=self.current_project):
+        if not self._ensure_unique_tree_child_name(
+            parent_id,
+            image_name,
+            node_kind="image_work",
+            project=self.current_project,
+        ):
             raise ValueError(self.get_last_error_message())
         image_work = ImageWork(
             id=str(uuid.uuid4()),
@@ -426,6 +554,7 @@ class ProjectManager:
         if not self._ensure_unique_tree_child_name(
             image_node.parent_id if image_node is not None else None,
             new_name,
+            node_kind="image_work",
             exclude_node_id=image_node.id if image_node is not None else None,
             project=project,
         ):
@@ -507,7 +636,7 @@ class ProjectManager:
             picture_folder = self._find_folder_by_group_type("pictures")
             parent_id = picture_folder.id if picture_folder else None
         picture_name = name or os.path.basename(image_path)
-        if not self._ensure_unique_tree_child_name(parent_id, picture_name, project=p):
+        if not self._ensure_unique_tree_child_name(parent_id, picture_name, node_kind="picture", project=p):
             return None
         picture = PictureAsset(
             id=str(uuid.uuid4()),
@@ -546,6 +675,7 @@ class ProjectManager:
         if not self._ensure_unique_tree_child_name(
             picture_node.parent_id if picture_node is not None else None,
             new_name,
+            node_kind="picture",
             exclude_node_id=picture_node.id if picture_node is not None else None,
             project=project,
         ):
@@ -607,6 +737,8 @@ class ProjectManager:
         file_path: str,
         name: Optional[str] = None,
         parent_id: Optional[str] = None,
+        *,
+        auto_rename_on_conflict: bool = False,
     ) -> Optional[SourceFileNode]:
         self._clear_last_operation_error()
         p = self.current_project
@@ -623,7 +755,9 @@ class ProjectManager:
             parent_id = source_root.id if source_root else None
         source_path = Path(normalized_path)
         source_name = name or source_path.name
-        if not self._ensure_unique_tree_child_name(parent_id, source_name, project=p):
+        if auto_rename_on_conflict:
+            source_name = self._next_unique_tree_child_name(parent_id, source_name, node_kind="source_file", project=p)
+        if not self._ensure_unique_tree_child_name(parent_id, source_name, node_kind="source_file", project=p):
             return None
         asset = SourceFileAsset(
             id=str(uuid.uuid4()),
@@ -641,10 +775,20 @@ class ProjectManager:
         p.is_modified = True
         return node
 
-    def add_source_files(self, file_paths: List[str], parent_id: Optional[str] = None) -> List[SourceFileNode]:
+    def add_source_files(
+        self,
+        file_paths: List[str],
+        parent_id: Optional[str] = None,
+        *,
+        auto_rename_on_conflict: bool = False,
+    ) -> List[SourceFileNode]:
         nodes: List[SourceFileNode] = []
         for file_path in file_paths:
-            node = self.add_source_file(file_path, parent_id=parent_id)
+            node = self.add_source_file(
+                file_path,
+                parent_id=parent_id,
+                auto_rename_on_conflict=auto_rename_on_conflict,
+            )
             if node is not None:
                 nodes.append(node)
         return nodes
@@ -672,6 +816,7 @@ class ProjectManager:
         if not self._ensure_unique_tree_child_name(
             source_node.parent_id if source_node is not None else None,
             new_name,
+            node_kind="source_file",
             exclude_node_id=source_node.id if source_node is not None else None,
             project=project,
         ):
@@ -706,6 +851,20 @@ class ProjectManager:
 
     def resolve_source_file_path(self, source_file: SourceFileAsset, project: Optional[Project] = None) -> str:
         raw_path = source_file.file_path or source_file.source_file_path or ""
+        if not raw_path:
+            return ""
+        path = Path(raw_path)
+        if path.is_absolute():
+            return str(path)
+        owner = project
+        if owner is None:
+            owner, _ = self._get_source_file_owner(source_file.id)
+        if owner and owner.file_path:
+            return str((Path(owner.file_path).parent / path).resolve())
+        return str(path)
+
+    def resolve_source_file_origin_path(self, source_file: SourceFileAsset, project: Optional[Project] = None) -> str:
+        raw_path = source_file.source_file_path or source_file.file_path or ""
         if not raw_path:
             return ""
         path = Path(raw_path)
@@ -1134,7 +1293,12 @@ class ProjectManager:
         target_parent_id = self.get_analysis_result_target_folder_id(parent_id)
         if target_parent_id is None:
             target_parent_id = folder.id if folder is not None else None
-        if not self._ensure_unique_tree_child_name(target_parent_id, result.name or result.analysis_type or "分析结果", project=self.current_project):
+        if not self._ensure_unique_tree_child_name(
+            target_parent_id,
+            result.name or result.analysis_type or "分析结果",
+            node_kind="analysis_result",
+            project=self.current_project,
+        ):
             return False
         self.current_project.analyses.append(result)
         order = self.current_project.tree.get_siblings_max_order(target_parent_id) + 1  # type: ignore[union-attr]
@@ -1440,7 +1604,7 @@ class ProjectManager:
         if p.tree is None:
             self.migrate_to_v2(p)
         group_type = self._canonical_group_type(group_type)
-        if not self._ensure_unique_tree_child_name(parent_id, name, project=p):
+        if not self._ensure_unique_tree_child_name(parent_id, name, node_kind="folder", project=p):
             return None
         order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
         node = FolderNode(name=name, parent_id=parent_id, order=order, group_type=group_type)  # type: ignore[arg-type]
@@ -1456,7 +1620,13 @@ class ProjectManager:
         node = p.tree.get_node(node_id)
         if node is None:
             return False
-        if not self._ensure_unique_tree_child_name(node.parent_id, new_name, exclude_node_id=node.id, project=p):
+        if not self._ensure_unique_tree_child_name(
+            node.parent_id,
+            new_name,
+            node_kind=node.kind,
+            exclude_node_id=node.id,
+            project=p,
+        ):
             return False
         # 同步关联数据实体名称
         if node.kind == "data_file":
@@ -1589,7 +1759,7 @@ class ProjectManager:
                     continue
                 canonical_group = self._canonical_group_type(getattr(node, "group_type", None))
                 if canonical_group not in {None, "user"}:
-                    if canonical_group in _NON_REMOVABLE_FOLDER_GROUP_TYPES:
+                    if canonical_group in _NON_REMOVABLE_FOLDER_GROUP_TYPES and getattr(node, "parent_id", None) is None:
                         continue
                 if p.tree.get_children(node.id):  # type: ignore
                     continue
@@ -1638,7 +1808,13 @@ class ProjectManager:
                 if current.id == node.id:
                     return False
                 current = p.tree.get_node(current.parent_id) if current.parent_id else None
-            if not self._ensure_unique_tree_child_name(new_parent_id, node.name, exclude_node_id=node.id, project=p):
+            if not self._ensure_unique_tree_child_name(
+                new_parent_id,
+                node.name,
+                node_kind="folder",
+                exclude_node_id=node.id,
+                project=p,
+            ):
                 return False
             node.parent_id = new_parent_id
             node.order = new_order
@@ -1666,7 +1842,13 @@ class ProjectManager:
             }.get(getattr(node, "tool_type", "prompt"), "prompt_group")
             if parent_group_type not in _GROUP_TYPE_ALIASES[required_group]:
                 return False
-        if not self._ensure_unique_tree_child_name(new_parent_id, node.name, exclude_node_id=node.id, project=p):
+        if not self._ensure_unique_tree_child_name(
+            new_parent_id,
+            node.name,
+            node_kind=node.kind,
+            exclude_node_id=node.id,
+            project=p,
+        ):
             return False
         node.parent_id = new_parent_id
         node.order = new_order
@@ -1854,7 +2036,13 @@ class ProjectManager:
     # v0.2 DataFile CRUD
     # ─────────────────────────────────────────────
 
-    def add_data_file(self, df: DataFile, parent_id: Optional[str] = None) -> Optional[DataFileNode]:
+    def add_data_file(
+        self,
+        df: DataFile,
+        parent_id: Optional[str] = None,
+        *,
+        auto_rename_on_conflict: bool = False,
+    ) -> Optional[DataFileNode]:
         self._clear_last_operation_error()
         p = self.current_project
         if p is None:
@@ -1865,7 +2053,9 @@ class ProjectManager:
         if parent_id is None:
             ds_folder = self._find_folder_by_group_type("datasets") or self._find_folder_by_name("数据集")
             parent_id = ds_folder.id if ds_folder else None
-        if not self._ensure_unique_tree_child_name(parent_id, df.name, project=p):
+        if auto_rename_on_conflict:
+            df.name = self._next_unique_tree_child_name(parent_id, df.name, node_kind="data_file", project=p)
+        if not self._ensure_unique_tree_child_name(parent_id, df.name, node_kind="data_file", project=p):
             return None
         p.data_files.append(df)
         order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
@@ -2294,7 +2484,8 @@ class ProjectManager:
         source_project: Optional[Project],
         target_folder_id: Optional[str] = None,
     ) -> None:
-        source_abs = self.resolve_source_file_path(source_file, source_project)
+        origin_abs = self.resolve_source_file_origin_path(source_file, source_project)
+        source_abs = origin_abs if origin_abs and Path(origin_abs).exists() else self.resolve_source_file_path(source_file, source_project)
         if not source_abs:
             return
         source_path = Path(source_abs)
@@ -2321,7 +2512,7 @@ class ProjectManager:
             shutil.copy2(source_path, backup_path)
         rel_path = backup_path.relative_to(Path(project_file_path).parent)
         source_file.file_path = rel_path.as_posix()
-        source_file.source_file_path = str(source_path)
+        source_file.source_file_path = origin_abs or str(source_path)
         source_file.file_size = backup_path.stat().st_size
 
     def _picture_relative_subdir(self, picture: PictureAsset) -> Optional[Path]:

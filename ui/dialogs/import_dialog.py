@@ -180,6 +180,10 @@ class ImportDialog(QDialog):
         self._col_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self._col_table.verticalHeader().setVisible(False)
         self._col_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._col_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._col_table.setMouseTracking(False)
+        self._col_table.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._col_table.viewport().setMouseTracking(False)
         self._col_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for column in range(1, 1 + len(_ROLES)):
             self._col_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
@@ -222,6 +226,7 @@ class ImportDialog(QDialog):
 
             name_edit = LineEdit(self._col_table)
             name_edit.setText(self._default_variable_name(row))
+            name_edit.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             self._col_table.setCellWidget(row, 0, name_edit)
             self._name_edits.append(name_edit)
 
@@ -231,6 +236,7 @@ class ImportDialog(QDialog):
 
             for column, role in enumerate(_ROLES, start=1):
                 button = RadioButton("", self._col_table)
+                button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 container = QWidget(self._col_table)
                 container_layout = QHBoxLayout(container)
                 container_layout.setContentsMargins(0, 0, 0, 0)
@@ -274,15 +280,31 @@ class ImportDialog(QDialog):
         project = project_manager.current_project
         if project is None:
             return []
-        labels: List[str] = []
         choices: List[tuple[str, str]] = []
         for data_file in getattr(project, "data_files", []):
-            label = data_file.name.strip() or f"数据文件 {data_file.id[:8]}"
-            if label in labels:
-                label = f"{label} [{data_file.id[:8]}]"
-            labels.append(label)
+            label = self._data_file_target_label(data_file.id)
             choices.append((label, data_file.id))
         return choices
+
+    def _data_file_target_label(self, data_file_id: str) -> str:
+        project = project_manager.current_project
+        if project is None or project.tree is None:
+            return f"数据文件 {data_file_id[:8]}"
+
+        for node in getattr(project.tree, "nodes", []):
+            if getattr(node, "kind", None) != "data_file":
+                continue
+            if getattr(node, "data_file_id", None) != data_file_id:
+                continue
+            label = project_manager.format_tree_path_label(node.id, separator="/", omit_root_group=True)
+            if label:
+                return label
+            break
+
+        data_file = project.find_data_file(data_file_id)
+        if data_file is not None and data_file.name.strip():
+            return data_file.name.strip()
+        return f"数据文件 {data_file_id[:8]}"
 
     def _default_data_file_name(self) -> str:
         return Path(self._file_path).name if self._file_path else "导入数据"

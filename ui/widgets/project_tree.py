@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QTreeWidgetItem
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
 from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
+from models.schemas import DataFile
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 
 
@@ -61,6 +62,7 @@ _DATA_ICON = FIF.DOCUMENT
 _SOURCE_FILE_ICON = getattr(FIF, "DOCUMENT", FIF.FOLDER)
 _DATASET_GROUP_ICON = getattr(FIF, "LIBRARY", FIF.FOLDER)
 _PICTURE_GROUP_ICON = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
+_SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 # ── 每种 kind 的 (FluentIcon, 颜色hint) ──────────────────────────
@@ -794,10 +796,13 @@ class ProjectTreeWidget(QWidget):
 
         batch_payloads = self._batch_action_payloads(selected_items)
         if len(batch_payloads) > 1:
-            self._add_menu_action(menu, FIF.DELETE, f"删除选中 {len(batch_payloads)} 项", lambda: self._cmd_delete_batch(batch_payloads))
+            manage_entries = [
+                (FIF.DELETE, f"删除选中 {len(batch_payloads)} 项", lambda: self._cmd_delete_batch(batch_payloads)),
+            ]
             move_choices = self._common_batch_move_choices(batch_payloads)
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, f"移动选中 {len(batch_payloads)} 项...", lambda: self._cmd_move_batch(batch_payloads, move_choices))
+                manage_entries.append((FIF.SYNC, f"移动选中 {len(batch_payloads)} 项...", lambda: self._cmd_move_batch(batch_payloads, move_choices)))
+            self._append_menu_section(menu, manage_entries)
             self._append_tree_scope_actions(menu, separated=True)
             menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
@@ -812,21 +817,26 @@ class ProjectTreeWidget(QWidget):
             menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
+        import_entries: List[Tuple[object, str, object]] = []
+        manage_entries: List[Tuple[object, str, object]] = []
+
         if kind in _SYNTHETIC_GLOBAL_KINDS:
             if kind == "global_pipeline":
-                self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit(kind, node_id))
+                manage_entries.append((FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit(kind, node_id)))
             elif kind == "global_report_template":
-                self._add_menu_action(menu, FIF.DOCUMENT, "应用到分析页", lambda: self.node_activated.emit(kind, node_id))
+                manage_entries.append((FIF.DOCUMENT, "应用到分析页", lambda: self.node_activated.emit(kind, node_id)))
             elif kind == "global_curve_style_template":
-                self._add_menu_action(menu, FIF.PENCIL_INK, "应用到可视化", lambda: self.node_activated.emit(kind, node_id))
+                manage_entries.append((FIF.PENCIL_INK, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
             elif kind in ("global_plot_style", "global_plot_theme"):
-                self._add_menu_action(menu, FIF.PIE_SINGLE, "应用到可视化", lambda: self.node_activated.emit(kind, node_id))
+                manage_entries.append((FIF.PIE_SINGLE, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
             elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
-                self._add_menu_action(menu, FIF.EDIT, "在设置中查看", lambda: self.node_activated.emit(kind, node_id))
+                manage_entries.append((FIF.EDIT, "在设置中查看", lambda: self.node_activated.emit(kind, node_id)))
             if self._can_edit_global_asset(kind, node_id):
-                menu.addSeparator()
-                self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._cmd_rename_global(kind, node_id, item.text(0)))
-                self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete_global(kind, node_id, item.text(0)))
+                manage_entries.extend([
+                    (FIF.EDIT, "重命名", lambda: self._cmd_rename_global(kind, node_id, item.text(0))),
+                    (FIF.DELETE, "删除", lambda: self._cmd_delete_global(kind, node_id, item.text(0))),
+                ])
+            self._append_menu_section(menu, manage_entries)
             if menu.actions():
                 self._append_tree_scope_actions(menu, separated=True)
                 menu.exec(self._tree.viewport().mapToGlobal(pos))
@@ -838,114 +848,135 @@ class ProjectTreeWidget(QWidget):
             managed_group_type = self._folder_collection_group(node_id)
             if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
                 if managed_group_type == "datasets":
-                    self._add_menu_action(menu, _DATA_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id))
+                    import_entries.append((_DATA_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id)))
                 if managed_group_type == "source_files":
-                    self._add_menu_action(menu, FIF.DOWNLOAD, "批量导入源文件...", lambda: self._cmd_import_source_files(node_id))
-                self._add_menu_action(menu, FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id))
-                self._add_menu_action(menu, FIF.SYNC, "清理空子文件夹", lambda: self._cmd_prune_empty_folders(node_id, scope_label=item.text(0)))
+                    import_entries.append((FIF.DOWNLOAD, "批量导入源文件...", lambda: self._cmd_import_source_files(node_id)))
+                if managed_group_type == "images":
+                    import_entries.append((FIF.PHOTO, "导入图片...", lambda: self._cmd_import_digitize_images(node_id)))
+                import_entries.append((FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id)))
                 if managed_group_type == "pictures":
-                    self._add_menu_action(menu, _PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id))
+                    manage_entries.append((_PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id)))
                 elif managed_group_type == "source_files":
-                    self._add_menu_action(menu, _SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id))
-                if not is_protected:
-                    menu.addSeparator()
+                    manage_entries.append((_SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id)))
             if not is_protected:
-                self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-                self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+                manage_entries.extend([
+                    (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                    (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+                ])
+            if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
+                manage_entries.append((FIF.SYNC, "清理空子文件夹", lambda: self._cmd_prune_empty_folders(node_id, scope_label=item.text(0))))
 
         elif kind == "data_file":
             move_choices = self._move_target_choices(kind, node_id)
-            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("data_file_to_chart", node_id))
-            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("data_file_to_process", node_id))
-            self._add_menu_action(menu, FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("data_file_to_analysis", node_id))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("data_file_to_chart", node_id)),
+                (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("data_file_to_process", node_id)),
+                (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("data_file_to_analysis", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices)))
 
         elif kind == "source_file":
             move_choices = self._move_target_choices(kind, node_id)
-            self._add_menu_action(menu, FIF.DOWNLOAD, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id))
-            self._add_menu_action(menu, FIF.PHOTO, "导入到数据化", lambda: self.node_activated.emit("source_file_to_digitize", node_id))
-            self._add_menu_action(menu, _SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            import_entries.extend([
+                (FIF.DOWNLOAD, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id)),
+                (FIF.PHOTO, "导入到数据化", lambda: self.node_activated.emit("source_file_to_digitize", node_id)),
+            ])
+            manage_entries.extend([
+                (_SOURCE_FILE_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices)))
 
         elif kind == "series":
-            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("series_to_chart", node_id))
-            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("series_to_process", node_id))
-            self._add_menu_action(menu, FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("series_to_analysis", node_id))
             move_choices = self._move_target_choices(kind, node_id)
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0)))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("series_to_chart", node_id)),
+                (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("series_to_process", node_id)),
+                (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("series_to_analysis", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0))),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
+            ])
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices)))
 
         elif kind == "image_work":
             move_choices = self._move_target_choices(kind, node_id)
-            self._add_menu_action(menu, FIF.EDIT, "打开取点", lambda: self.node_activated.emit("image_work", node_id))
-            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.EDIT, "打开取点", lambda: self.node_activated.emit("image_work", node_id)),
+                (FIF.ADD, "新增曲线", lambda: self.node_activated.emit("image_work_add_curve", node_id)),
+                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices)))
 
         elif kind == "picture":
             move_choices = self._move_target_choices(kind, node_id)
-            self._add_menu_action(menu, _PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (_PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices)))
 
         elif kind == "curve":
-            self._add_menu_action(menu, FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("curve_to_chart", node_id))
-            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("curve_to_process", node_id))
-            self._add_menu_action(menu, FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("curve_to_analysis", node_id))
             move_choices = self._move_target_choices(kind, node_id)
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0)))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("curve_to_chart", node_id)),
+                (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("curve_to_process", node_id)),
+                (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("curve_to_analysis", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0))),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
+            ])
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices)))
 
         elif kind == "pipeline":
-            self._add_menu_action(menu, FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit("pipeline", node_id))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit("pipeline", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
 
         elif kind == "figure_template":
-            self._add_menu_action(menu, FIF.PIE_SINGLE, "加载到可视化", lambda: self.node_activated.emit("figure_template", node_id))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.PIE_SINGLE, "加载到可视化", lambda: self.node_activated.emit("figure_template", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
 
         elif kind == "report_template":
-            self._add_menu_action(menu, FIF.SEARCH, "加载到分析页", lambda: self.node_activated.emit("report_template", node_id))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.SEARCH, "加载到分析页", lambda: self.node_activated.emit("report_template", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
 
         elif kind == "analysis_result":
             move_choices = self._move_target_choices(kind, node_id)
-            self._add_menu_action(menu, FIF.SEARCH, "发送到分析页", lambda: self.node_activated.emit("analysis_result", node_id))
-            menu.addSeparator()
-            self._add_menu_action(menu, FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.SEARCH, "发送到分析页", lambda: self.node_activated.emit("analysis_result", node_id)),
+                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
             if move_choices:
-                self._add_menu_action(menu, FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual(kind, node_id, move_choices)))
 
         elif kind in ("ai_prompt", "ai_skill", "ai_agent", "ai_tool"):
-            self._add_menu_action(menu, FIF.EDIT, "编辑", lambda: self.node_activated.emit(kind, node_id))
-            self._add_menu_action(menu, FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0)))
+            manage_entries.extend([
+                (FIF.EDIT, "编辑", lambda: self.node_activated.emit(kind, node_id)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
+            ])
+
+        self._append_menu_section(menu, import_entries)
+        self._append_menu_section(menu, manage_entries)
 
         if menu.actions():
             self._append_tree_scope_actions(menu, separated=True)
@@ -968,7 +999,12 @@ class ProjectTreeWidget(QWidget):
             return
         folder = self._create_child_folder(parent_id, name)
         if folder is None:
-            InfoBar.warning("创建失败", project_manager.get_last_error_message() or "未能创建子文件夹", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning(
+                "创建失败",
+                project_manager.get_last_error_message() or "未能创建子文件夹",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
             return
         self.refresh()
         self.select_node(folder.id)
@@ -985,7 +1021,12 @@ class ProjectTreeWidget(QWidget):
             return
         node = project_manager.add_data_file(DataFile(name=clean_name), parent_id=parent_id)
         if node is None:
-            InfoBar.warning("创建失败", project_manager.get_last_error_message() or "未能创建新的数据集", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning(
+                "创建失败",
+                project_manager.get_last_error_message() or "未能创建新的数据集",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
             return
         self.refresh()
         self.select_node(node.id)
@@ -1001,16 +1042,66 @@ class ProjectTreeWidget(QWidget):
         clean_paths = [path for path in paths if path]
         if not clean_paths:
             return
-        nodes = project_manager.add_source_files(clean_paths, parent_id=parent_id)
+        nodes = project_manager.add_source_files(clean_paths, parent_id=parent_id, auto_rename_on_conflict=True)
         if not nodes:
-            InfoBar.warning("导入失败", project_manager.get_last_error_message() or "未能导入任何源文件", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning(
+                "导入失败",
+                project_manager.get_last_error_message() or "未能导入任何源文件",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
+
+    def _cmd_import_digitize_images(self, parent_id: Optional[str] = None) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self._dialog_parent(),
+            "导入图片到数据化",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp);;所有文件 (*)",
+        )
+        clean_paths = [path for path in paths if path]
+        if not clean_paths:
             return
+
+        imported_node_ids: List[str] = []
+        failed_paths: List[str] = []
+        for path in clean_paths:
+            if not self._supports_source_file_digitize_import(path):
+                failed_paths.append(Path(path).name)
+                continue
+            try:
+                image = project_manager.add_image(path, name=Path(path).name, parent_id=parent_id)
+            except (FileNotFoundError, ValueError):
+                failed_paths.append(Path(path).name)
+                continue
+            node_id = self._linked_tree_node_id("image_work", "image_work_id", image.id)
+            if node_id:
+                imported_node_ids.append(node_id)
+
+        if not imported_node_ids:
+            InfoBar.warning(
+                "导入失败",
+                project_manager.get_last_error_message() or "未能导入任何图片",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
         self.refresh()
-        self.select_node(nodes[-1].id)
+        self.select_node(imported_node_ids[-1])
         self.project_modified.emit()
-        InfoBar.success("导入完成", f"已导入 {len(nodes)} 个源文件", parent=self, position=InfoBarPosition.TOP)
-        if len(nodes) < len(clean_paths):
-            InfoBar.warning("部分导入失败", project_manager.get_last_error_message() or "部分源文件未能导入", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.success(
+            "导入完成",
+            f"已导入 {len(imported_node_ids)} 张图片到数据化",
+            parent=self._dialog_parent(),
+            position=InfoBarPosition.TOP,
+        )
+        if failed_paths:
+            InfoBar.warning(
+                "部分导入失败",
+                "以下图片未能导入: " + "、".join(failed_paths[:5]),
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
 
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
         title = "重命名数据列" if kind == "series" else "重命名曲线"
@@ -1025,16 +1116,31 @@ class ProjectTreeWidget(QWidget):
             self.refresh()
             self.project_modified.emit()
             return
-        InfoBar.warning("重命名失败", project_manager.get_last_error_message() or "名称已存在或当前节点不支持重命名", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.warning(
+            "重命名失败",
+            project_manager.get_last_error_message() or "名称已存在或当前节点不支持重命名",
+            parent=self._dialog_parent(),
+            position=InfoBarPosition.TOP,
+        )
 
     def _cmd_prune_empty_folders(self, root_id: Optional[str] = None, *, scope_label: str = "项目树") -> None:
         removed_ids = project_manager.remove_empty_folders(root_id)
         if not removed_ids:
-            InfoBar.success("无需清理", f"{scope_label} 中没有可移除的空文件夹", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.success(
+                "无需清理",
+                f"{scope_label} 中没有可移除的空文件夹",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
             return
         self.refresh()
         self.project_modified.emit()
-        InfoBar.success("清理完成", f"已移除 {len(removed_ids)} 个空文件夹", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.success(
+            "清理完成",
+            f"已移除 {len(removed_ids)} 个空文件夹",
+            parent=self._dialog_parent(),
+            position=InfoBarPosition.TOP,
+        )
 
     def _cmd_delete_batch(self, payloads: List[Dict[str, object]]) -> None:
         count = len(payloads)
@@ -1080,7 +1186,12 @@ class ProjectTreeWidget(QWidget):
             self.refresh()
             self.project_modified.emit()
         if failed:
-            InfoBar.warning("批量移动未完成", project_manager.get_last_error_message() or f"有 {failed} 项移动失败", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning(
+                "批量移动未完成",
+                project_manager.get_last_error_message() or f"有 {failed} 项移动失败",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
 
     def _cmd_delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
         box = MessageBox("确认删除", f'确定要删除「{node_name}」吗？', self._dialog_parent())
@@ -1449,6 +1560,213 @@ class ProjectTreeWidget(QWidget):
         menu.addAction(action)
         return action
 
+    def _append_menu_section(self, menu: RoundMenu, entries: List[Tuple[object, str, object]]) -> None:
+        visible_entries = [entry for entry in entries if entry is not None]
+        if not visible_entries:
+            return
+        if menu.actions():
+            menu.addSeparator()
+        for icon, text, callback in visible_entries:
+            self._add_menu_action(menu, icon, text, callback)
+
+    @staticmethod
+    def _supports_source_file_dataset_import(file_path: str) -> bool:
+        from ui.dialogs.import_dialog import SUPPORTED_IMPORT_SUFFIXES
+
+        return Path(file_path).suffix.lower() in set(SUPPORTED_IMPORT_SUFFIXES)
+
+    @staticmethod
+    def _supports_source_file_digitize_import(file_path: str) -> bool:
+        return Path(file_path).suffix.lower() in _SOURCE_IMAGE_SUFFIXES
+
+    def _create_source_file_import_dialog(self, file_path: str):
+        from ui.dialogs.import_dialog import ImportDialog
+
+        dialog = ImportDialog(self._dialog_parent())
+        dialog.load_file(file_path)
+        return dialog
+
+    def _lock_source_file_import_dialog_target(self, dialog, *, target_data_file_id: Optional[str]) -> None:
+        combo = getattr(dialog, "_data_file_target_combo", None)
+        keys = list(getattr(dialog, "_data_file_target_keys", []))
+        if combo is None or not keys:
+            return
+        target_index = 0
+        if target_data_file_id:
+            try:
+                target_index = keys.index(target_data_file_id)
+            except ValueError:
+                target_index = 0
+        combo.setCurrentIndex(target_index)
+        combo.setEnabled(False)
+
+    def _linked_tree_node_id(self, kind: str, attr_name: str, attr_value: str) -> Optional[str]:
+        project = project_manager.current_project
+        if project is None or project.tree is None:
+            return None
+        for node in project.tree.nodes:
+            if getattr(node, "kind", None) != kind:
+                continue
+            if getattr(node, attr_name, None) == attr_value:
+                return node.id
+        return None
+
+    def _apply_source_file_import_dialog_results(
+        self,
+        dialog,
+        *,
+        target_folder_id: Optional[str] = None,
+        target_data_file_id: Optional[str] = None,
+    ) -> Optional[str]:
+        series_list = dialog.get_results()
+        if not series_list:
+            return None
+
+        if target_data_file_id:
+            data_file = project_manager.get_data_file(target_data_file_id)
+            if data_file is None:
+                InfoBar.warning(
+                    "导入失败",
+                    "所选目标数据文件不存在",
+                    parent=self._dialog_parent(),
+                    position=InfoBarPosition.TOP,
+                )
+                return None
+            appended = 0
+            for series in series_list:
+                if project_manager.add_series_to_data_file(target_data_file_id, series):
+                    appended += 1
+            if appended != len(series_list):
+                InfoBar.warning(
+                    "导入失败",
+                    project_manager.get_last_error_message() or "部分数据系列追加失败",
+                    parent=self._dialog_parent(),
+                    position=InfoBarPosition.TOP,
+                )
+                return None
+            InfoBar.success(
+                "导入成功",
+                f"已导入 {len(series_list)} 条数据系列到数据文件 {data_file.name}",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return self._linked_tree_node_id("data_file", "data_file_id", target_data_file_id)
+
+        data_file = DataFile(name=dialog.get_file_name(), series=series_list)
+        node = project_manager.add_data_file(data_file, parent_id=target_folder_id, auto_rename_on_conflict=True)
+        if node is None:
+            InfoBar.warning(
+                "导入失败",
+                project_manager.get_last_error_message() or "未能创建新的数据文件",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return None
+        InfoBar.success(
+            "导入成功",
+            f"已导入 {len(series_list)} 条数据系列到数据文件 {data_file.name}",
+            parent=self._dialog_parent(),
+            position=InfoBarPosition.TOP,
+        )
+        return node.id
+
+    def _normalized_source_file_drop_target(self, target_item: Optional[QTreeWidgetItem]) -> Tuple[Optional[str], Optional[str]]:
+        target_data = self._item_role_data(target_item)
+        if not target_data:
+            return None, None
+        target_kind, target_id = target_data
+        if target_kind == "series":
+            parent_data = self._item_role_data(target_item.parent())
+            if parent_data and parent_data[0] == "data_file":
+                return parent_data
+        return target_kind, target_id
+
+    def _perform_source_file_drop_action(
+        self,
+        source_id: str,
+        target_item: Optional[QTreeWidgetItem],
+        *,
+        defer_view_refresh: bool = False,
+    ) -> bool:
+        target_kind, target_id = self._normalized_source_file_drop_target(target_item)
+        if not target_kind or not target_id:
+            return False
+
+        source_node = project_manager.get_node_by_id(source_id)
+        if source_node is None or getattr(source_node, "kind", None) != "source_file":
+            return False
+        source_path = project_manager.get_source_file_path(getattr(source_node, "source_file_id", ""))
+        source_asset = project_manager.get_source_file(getattr(source_node, "source_file_id", ""))
+        if not source_path:
+            return False
+
+        target_data_file_id: Optional[str] = None
+        target_folder_id: Optional[str] = None
+        if target_kind == "data_file":
+            target_node = project_manager.get_node_by_id(target_id)
+            target_data_file_id = None if target_node is None else getattr(target_node, "data_file_id", None)
+        elif target_kind == "folder":
+            target_folder_id = target_id
+
+        if target_data_file_id or (target_folder_id and self._folder_collection_group(target_folder_id) == "datasets"):
+            if not self._supports_source_file_dataset_import(source_path):
+                return False
+            try:
+                dialog = self._create_source_file_import_dialog(source_path)
+            except Exception as exc:
+                InfoBar.warning(
+                    "导入失败",
+                    f"无法读取文件: {exc}",
+                    parent=self._dialog_parent(),
+                    position=InfoBarPosition.TOP,
+                )
+                return False
+            self._lock_source_file_import_dialog_target(dialog, target_data_file_id=target_data_file_id)
+            if not dialog.exec():
+                return False
+            select_node_id = self._apply_source_file_import_dialog_results(
+                dialog,
+                target_folder_id=target_folder_id,
+                target_data_file_id=target_data_file_id,
+            )
+            if not select_node_id:
+                return False
+            if defer_view_refresh:
+                QTimer.singleShot(0, lambda node_id=select_node_id: self._finalize_drop_move(node_id))
+            else:
+                self._finalize_drop_move(select_node_id)
+            self.project_modified.emit()
+            return True
+
+        if target_folder_id and self._folder_collection_group(target_folder_id) == "images":
+            if not self._supports_source_file_digitize_import(source_path):
+                return False
+            try:
+                image = project_manager.add_image(
+                    source_path,
+                    name=source_asset.name if source_asset is not None else Path(source_path).name,
+                    parent_id=target_folder_id,
+                )
+            except ValueError as exc:
+                InfoBar.warning("导入失败", str(exc), parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+                return False
+            image_node_id = self._linked_tree_node_id("image_work", "image_work_id", image.id)
+            select_node_id = image_node_id or target_folder_id
+            InfoBar.success(
+                "导入成功",
+                f"已导入到数据化: {image.name}",
+                parent=self._dialog_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            if defer_view_refresh:
+                QTimer.singleShot(0, lambda node_id=select_node_id: self._finalize_drop_move(node_id))
+            else:
+                self._finalize_drop_move(select_node_id)
+            self.project_modified.emit()
+            return True
+
+        return False
+
     def _open_picture_folder(self, node_id: Optional[str], *, picture_node: bool = False) -> None:
         target_path = ""
         if picture_node and node_id:
@@ -1582,6 +1900,8 @@ class ProjectTreeWidget(QWidget):
         if not source_project_id or source_project_id != target_project_id:
             return False
         project_manager.set_current_project(source_project_id)
+        if source_kind == "source_file":
+            return self._perform_source_file_drop_action(source_id, target_item, defer_view_refresh=defer_view_refresh)
         target_id = self._resolve_drop_target_id(source_kind, source_id, target_item)
         if not target_id or not self._move_node_to_target(source_kind, source_id, target_id):
             return False
@@ -1609,13 +1929,7 @@ class ProjectTreeWidget(QWidget):
         self._drag_source_item_key = None
 
     def _folder_path_label(self, folder_id: str) -> str:
-        parts: List[str] = []
-        current = project_manager.get_node_by_id(folder_id)
-        while current is not None and getattr(current, "kind", None) == "folder":
-            parts.append(current.name)
-            parent_id = getattr(current, "parent_id", None)
-            current = project_manager.get_node_by_id(parent_id) if parent_id else None
-        return " / ".join(reversed(parts)) if parts else folder_id
+        return project_manager.format_tree_path_label(folder_id, separator="/", omit_root_group=True)
 
     def _current_item_key(self) -> Optional[str]:
         return self._item_key(self._tree.currentItem())

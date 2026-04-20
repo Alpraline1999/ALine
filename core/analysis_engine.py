@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.extension_api import extension_registry
@@ -49,7 +50,7 @@ def fit_curve(
     """
     try:
         import numpy as np
-        from scipy.optimize import curve_fit as _cf
+        from scipy.optimize import OptimizeWarning, curve_fit as _cf
     except ImportError:
         raise ImportError("需要 numpy 和 scipy 才能进行曲线拟合")
 
@@ -101,7 +102,13 @@ def fit_curve(
         if p0 is None:
             p0 = default_p0
         try:
-            popt, pcov = _cf(func, x, y, p0=p0, maxfev=10000)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Covariance of the parameters could not be estimated",
+                    category=OptimizeWarning,
+                )
+                popt, pcov = _cf(func, x, y, p0=p0, maxfev=10000)
         except RuntimeError as e:
             raise RuntimeError(f"拟合未收敛: {e}")
         y_fit = func(x, *popt)

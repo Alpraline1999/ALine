@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import uuid
 import warnings
 from typing import Any, Dict, List, Optional
 
@@ -15,8 +16,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
+    QLayout,
     QListWidgetItem,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -62,7 +65,7 @@ from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, make_hint_label, make_hsep, make_inline_label, make_section_label
+from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, make_hint_label, make_hsep, make_inline_label, make_section_label
 
 try:
     import matplotlib
@@ -190,6 +193,11 @@ class ChartPage(QWidget):
         self._chart_list.currentItemChanged.connect(self._on_current_changed)
         self._chart_list.customContextMenuRequested.connect(self._on_chart_list_context_menu)
         left_layout.addWidget(self._chart_list)
+
+        self._chart_path_label = BodyLabel("路径：—", left_card)
+        self._chart_path_label.setWordWrap(True)
+        self._chart_path_label.setStyleSheet("color: gray; font-size: 11px;")
+        left_layout.addWidget(self._chart_path_label)
 
         toolbar_row = QHBoxLayout()
         self._btn_clear = ToolButton(FIF.DELETE, left_card)
@@ -392,8 +400,20 @@ class ChartPage(QWidget):
                 widget.installEventFilter(ToolTipFilter(widget, 500, ToolTipPosition.TOP))
 
     @staticmethod
-    def _set_compact_edit_width(edit: LineEdit, width: int = 88) -> None:
+    def _set_compact_edit_width(edit: LineEdit, width: int = 96) -> None:
         edit.setMaximumWidth(width)
+
+    @staticmethod
+    def _set_square_tool_button(button: ToolButton) -> None:
+        button.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+
+    @staticmethod
+    def _make_style_form_label(text: str, parent: Optional[QWidget] = None, *, minimum_width: int = 0) -> BodyLabel:
+        label = BodyLabel(text, parent)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        label.setMinimumWidth(max(minimum_width, label.sizeHint().width()))
+        label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        return label
 
     def _create_style_tab_page(self, parent: QWidget) -> tuple[SmoothScrollArea, QWidget, QVBoxLayout]:
         scroll = SmoothScrollArea(parent)
@@ -403,47 +423,49 @@ class ChartPage(QWidget):
         scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
         page = QWidget(scroll)
         page.setStyleSheet("background: transparent;")
-        page.setMinimumHeight(540)
+        page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         scroll.setWidget(page)
         return scroll, page, layout
 
     def _build_curve_style_tab(self, parent: QWidget) -> QWidget:
         scroll, page, layout = self._create_style_tab_page(parent)
 
-        layout.addWidget(make_section_label("曲线样式", page))
         self._curve_style_template_label = make_hint_label("当前曲线样式未绑定全局模板。", page)
         layout.addWidget(self._curve_style_template_label)
 
         curve_template_row = QHBoxLayout()
+        curve_template_row.setContentsMargins(0, 0, 0, 0)
+        curve_template_row.setSpacing(6)
         self._curve_style_template_combo = ComboBox(page)
         self._curve_style_template_combo.currentIndexChanged.connect(self._on_curve_style_template_selected)
         curve_template_row.addWidget(self._curve_style_template_combo, 1)
         self._btn_load_curve_style_template = ToolButton(FIF.FOLDER, page)
         self._btn_load_curve_style_template.setToolTip("加载选中的全局曲线样式")
         self._btn_load_curve_style_template.clicked.connect(self._load_selected_curve_style_template)
+        self._set_square_tool_button(self._btn_load_curve_style_template)
         curve_template_row.addWidget(self._btn_load_curve_style_template)
         self._btn_save_curve_style_template = ToolButton(FIF.ADD, page)
         self._btn_save_curve_style_template.setToolTip("将当前曲线样式另存为全局样式")
         self._btn_save_curve_style_template.clicked.connect(self._on_save_curve_style_template)
+        self._set_square_tool_button(self._btn_save_curve_style_template)
         curve_template_row.addWidget(self._btn_save_curve_style_template)
         self._btn_update_curve_style_template = ToolButton(FIF.SAVE, page)
         self._btn_update_curve_style_template.setToolTip("覆盖当前全局曲线样式")
         self._btn_update_curve_style_template.clicked.connect(self._on_update_curve_style_template)
+        self._set_square_tool_button(self._btn_update_curve_style_template)
         curve_template_row.addWidget(self._btn_update_curve_style_template)
         layout.addLayout(curve_template_row)
 
         layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("当前曲线", page))
-        self._style_target_label = BodyLabel("— 未选中 —", page)
-        self._style_target_label.setWordWrap(True)
-        self._style_target_label.setStyleSheet("color: gray; font-size: 11px;")
+        self._style_target_label = make_hint_label("当前选中：未选中", page)
         layout.addWidget(self._style_target_label)
 
         color_row = QHBoxLayout()
-        color_row.addWidget(make_inline_label("颜色:", page))
+        color_row.addWidget(self._make_style_form_label("颜色:", page))
         self._style_color_btn = ColorPickerButton(QColor("#888888"), "", page, enableAlpha=False)
         self._style_color_btn.setToolTip("当前曲线颜色")
         self._style_color_btn.setFixedSize(32, 32)
@@ -454,8 +476,9 @@ class ChartPage(QWidget):
         self._style_reset_color_btn.setToolTip("恢复原始曲线颜色")
         self._style_reset_color_btn.setEnabled(False)
         self._style_reset_color_btn.clicked.connect(self._on_style_reset_color)
+        self._set_square_tool_button(self._style_reset_color_btn)
         color_row.addWidget(self._style_reset_color_btn)
-        color_row.addWidget(make_inline_label("线型:", page))
+        color_row.addWidget(self._make_style_form_label("线型:", page))
         self._style_line_combo = ComboBox(page)
         self._style_line_combo.addItems(_STYLE_LABELS)
         self._style_line_combo.setEnabled(False)
@@ -463,26 +486,30 @@ class ChartPage(QWidget):
         color_row.addWidget(self._style_line_combo, 1)
         layout.addLayout(color_row)
 
-        metric_row = QHBoxLayout()
-        metric_row.addWidget(make_inline_label("线宽:", page))
+        line_width_row = QHBoxLayout()
+        line_width_row.addWidget(self._make_style_form_label("线宽:", page))
         self._style_line_width_edit = LineEdit(page)
         self._style_line_width_edit.setPlaceholderText("1.4")
         self._style_line_width_edit.setEnabled(False)
         self._style_line_width_edit.textChanged.connect(self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_line_width_edit)
-        metric_row.addWidget(self._style_line_width_edit)
-        metric_row.addWidget(make_inline_label("点大小:", page))
+        line_width_row.addWidget(self._style_line_width_edit)
+        line_width_row.addStretch()
+        layout.addLayout(line_width_row)
+
+        marker_size_row = QHBoxLayout()
+        marker_size_row.addWidget(self._make_style_form_label("点大小:", page))
         self._style_marker_size_edit = LineEdit(page)
         self._style_marker_size_edit.setPlaceholderText("5.0")
         self._style_marker_size_edit.setEnabled(False)
         self._style_marker_size_edit.textChanged.connect(self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_marker_size_edit)
-        metric_row.addWidget(self._style_marker_size_edit)
-        metric_row.addStretch()
-        layout.addLayout(metric_row)
+        marker_size_row.addWidget(self._style_marker_size_edit)
+        marker_size_row.addStretch()
+        layout.addLayout(marker_size_row)
 
         density_row = QHBoxLayout()
-        density_row.addWidget(make_inline_label("点间距:", page))
+        density_row.addWidget(self._make_style_form_label("点间距:", page))
         self._style_density_edit = LineEdit(page)
         self._style_density_edit.setPlaceholderText("1")
         self._style_density_edit.setEnabled(False)
@@ -499,25 +526,29 @@ class ChartPage(QWidget):
         scroll, page, layout = self._create_style_tab_page(parent)
         self._plot_style_scroll = scroll
 
-        layout.addWidget(make_section_label("绘图样式", page))
         self._template_summary_label = make_hint_label("当前为临时绘图样式。", page)
         layout.addWidget(self._template_summary_label)
 
         template_row = QHBoxLayout()
+        template_row.setContentsMargins(0, 0, 0, 0)
+        template_row.setSpacing(6)
         self._template_combo = ComboBox(page)
         self._template_combo.currentIndexChanged.connect(self._on_template_selected)
         template_row.addWidget(self._template_combo, 1)
         self._btn_load_template = ToolButton(FIF.FOLDER, page)
         self._btn_load_template.setToolTip("加载当前选中的绘图样式")
         self._btn_load_template.clicked.connect(self._load_selected_plot_style)
+        self._set_square_tool_button(self._btn_load_template)
         template_row.addWidget(self._btn_load_template)
         self._btn_save_template = ToolButton(FIF.ADD, page)
         self._btn_save_template.setToolTip("将当前绘图样式另存为全局样式")
         self._btn_save_template.clicked.connect(self._on_save_template)
+        self._set_square_tool_button(self._btn_save_template)
         template_row.addWidget(self._btn_save_template)
         self._btn_update_template = ToolButton(FIF.SAVE, page)
         self._btn_update_template.setToolTip("覆盖当前已保存绘图样式")
         self._btn_update_template.clicked.connect(self._on_update_template)
+        self._set_square_tool_button(self._btn_update_template)
         template_row.addWidget(self._btn_update_template)
         layout.addLayout(template_row)
 
@@ -528,7 +559,7 @@ class ChartPage(QWidget):
         layout.addWidget(make_section_label("基础配置", page))
 
         x_row = QHBoxLayout()
-        x_row.addWidget(make_inline_label("X:", page))
+        x_row.addWidget(self._make_style_form_label("X:", page))
         self._x_label_edit = LineEdit(page)
         self._x_label_edit.setPlaceholderText("X")
         self._x_label_edit.textChanged.connect(self._on_quick_config_changed)
@@ -536,7 +567,7 @@ class ChartPage(QWidget):
         layout.addLayout(x_row)
 
         y_row = QHBoxLayout()
-        y_row.addWidget(make_inline_label("Y:", page))
+        y_row.addWidget(self._make_style_form_label("Y:", page))
         self._y_label_edit = LineEdit(page)
         self._y_label_edit.setPlaceholderText("Y")
         self._y_label_edit.textChanged.connect(self._on_quick_config_changed)
@@ -551,13 +582,13 @@ class ChartPage(QWidget):
         layout.addWidget(make_section_label("坐标轴", page))
 
         x_range_row = QHBoxLayout()
-        x_range_row.addWidget(make_inline_label("X 最小:", page))
+        x_range_row.addWidget(self._make_style_form_label("X 最小:", page))
         self._x_min_edit = LineEdit(page)
         self._x_min_edit.setPlaceholderText("自动")
         self._x_min_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._x_min_edit)
         x_range_row.addWidget(self._x_min_edit)
-        x_range_row.addWidget(make_inline_label("最大:", page))
+        x_range_row.addWidget(self._make_style_form_label("最大:", page))
         self._x_max_edit = LineEdit(page)
         self._x_max_edit.setPlaceholderText("自动")
         self._x_max_edit.textChanged.connect(self._on_quick_config_changed)
@@ -566,13 +597,13 @@ class ChartPage(QWidget):
         layout.addLayout(x_range_row)
 
         y_range_row = QHBoxLayout()
-        y_range_row.addWidget(make_inline_label("Y 最小:", page))
+        y_range_row.addWidget(self._make_style_form_label("Y 最小:", page))
         self._y_min_edit = LineEdit(page)
         self._y_min_edit.setPlaceholderText("自动")
         self._y_min_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._y_min_edit)
         y_range_row.addWidget(self._y_min_edit)
-        y_range_row.addWidget(make_inline_label("最大:", page))
+        y_range_row.addWidget(self._make_style_form_label("最大:", page))
         self._y_max_edit = LineEdit(page)
         self._y_max_edit.setPlaceholderText("自动")
         self._y_max_edit.textChanged.connect(self._on_quick_config_changed)
@@ -597,7 +628,7 @@ class ChartPage(QWidget):
         layout.addWidget(make_section_label("版式与标注", page))
 
         legend_row = QHBoxLayout()
-        legend_row.addWidget(make_inline_label("图例位置:", page))
+        legend_row.addWidget(self._make_style_form_label("图例位置:", page))
         self._legend_pos_combo = ComboBox(page)
         self._legend_pos_combo.addItems([
             "best", "upper right", "upper left", "lower left", "lower right",
@@ -608,49 +639,57 @@ class ChartPage(QWidget):
         layout.addLayout(legend_row)
 
         font_row = QHBoxLayout()
-        font_row.addWidget(make_inline_label("字体族:", page))
+        font_row.addWidget(self._make_style_form_label("字体族:", page))
         self._font_family_combo = ComboBox(page)
         self._font_family_combo.currentIndexChanged.connect(self._on_quick_config_changed)
         font_row.addWidget(self._font_family_combo, 1)
         layout.addLayout(font_row)
 
-        font_metric_row = QHBoxLayout()
-        font_metric_row.addWidget(make_inline_label("字号:", page))
+        font_size_row = QHBoxLayout()
+        font_size_row.addWidget(self._make_style_form_label("字号:", page))
         self._font_size_edit = LineEdit(page)
         self._font_size_edit.setPlaceholderText("10")
         self._font_size_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._font_size_edit)
-        font_metric_row.addWidget(self._font_size_edit)
-        font_metric_row.addWidget(make_inline_label("图例字号:", page))
+        font_size_row.addWidget(self._font_size_edit)
+        font_size_row.addStretch()
+        layout.addLayout(font_size_row)
+
+        legend_font_row = QHBoxLayout()
+        legend_font_row.addWidget(self._make_style_form_label("图例字号:", page))
         self._legend_font_size_edit = LineEdit(page)
         self._legend_font_size_edit.setPlaceholderText("8")
         self._legend_font_size_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._legend_font_size_edit)
-        font_metric_row.addWidget(self._legend_font_size_edit)
-        font_metric_row.addStretch()
-        layout.addLayout(font_metric_row)
+        legend_font_row.addWidget(self._legend_font_size_edit)
+        legend_font_row.addStretch()
+        layout.addLayout(legend_font_row)
 
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("画布与默认样式", page))
 
-        figure_size_row = QHBoxLayout()
-        figure_size_row.addWidget(make_inline_label("图宽:", page))
+        figure_width_row = QHBoxLayout()
+        figure_width_row.addWidget(self._make_style_form_label("图宽:", page))
         self._figure_width_edit = LineEdit(page)
         self._figure_width_edit.setPlaceholderText("7.0")
         self._figure_width_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_width_edit)
-        figure_size_row.addWidget(self._figure_width_edit)
-        figure_size_row.addWidget(make_inline_label("图高:", page))
+        figure_width_row.addWidget(self._figure_width_edit)
+        figure_width_row.addStretch()
+        layout.addLayout(figure_width_row)
+
+        figure_height_row = QHBoxLayout()
+        figure_height_row.addWidget(self._make_style_form_label("图高:", page))
         self._figure_height_edit = LineEdit(page)
         self._figure_height_edit.setPlaceholderText("5.0")
         self._figure_height_edit.textChanged.connect(self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_height_edit)
-        figure_size_row.addWidget(self._figure_height_edit)
-        figure_size_row.addStretch()
-        layout.addLayout(figure_size_row)
+        figure_height_row.addWidget(self._figure_height_edit)
+        figure_height_row.addStretch()
+        layout.addLayout(figure_height_row)
 
         dpi_row = QHBoxLayout()
-        dpi_row.addWidget(make_inline_label("DPI:", page))
+        dpi_row.addWidget(self._make_style_form_label("DPI:", page))
         self._dpi_edit = LineEdit(page)
         self._dpi_edit.setPlaceholderText("150")
         self._dpi_edit.textChanged.connect(self._on_quick_config_changed)
@@ -660,7 +699,7 @@ class ChartPage(QWidget):
         layout.addLayout(dpi_row)
 
         style_row = QHBoxLayout()
-        style_row.addWidget(make_inline_label("默认线宽:", page))
+        style_row.addWidget(self._make_style_form_label("默认线宽:", page))
         self._plot_line_width_edit = LineEdit(page)
         self._plot_line_width_edit.setPlaceholderText("1.4")
         self._plot_line_width_edit.textChanged.connect(self._on_quick_config_changed)
@@ -670,7 +709,7 @@ class ChartPage(QWidget):
         layout.addLayout(style_row)
 
         marker_row = QHBoxLayout()
-        marker_row.addWidget(make_inline_label("默认点大小:", page))
+        marker_row.addWidget(self._make_style_form_label("默认点大小:", page))
         self._plot_marker_size_edit = LineEdit(page)
         self._plot_marker_size_edit.setPlaceholderText("5.0")
         self._plot_marker_size_edit.textChanged.connect(self._on_quick_config_changed)
@@ -680,7 +719,7 @@ class ChartPage(QWidget):
         layout.addLayout(marker_row)
 
         grid_style_row = QHBoxLayout()
-        grid_style_row.addWidget(make_inline_label("网格透明度:", page))
+        grid_style_row.addWidget(self._make_style_form_label("网格透明度:", page))
         self._grid_alpha_edit = LineEdit(page)
         self._grid_alpha_edit.setPlaceholderText("0.7")
         self._grid_alpha_edit.textChanged.connect(self._on_quick_config_changed)
@@ -690,7 +729,7 @@ class ChartPage(QWidget):
         layout.addLayout(grid_style_row)
 
         grid_width_row = QHBoxLayout()
-        grid_width_row.addWidget(make_inline_label("网格线宽:", page))
+        grid_width_row.addWidget(self._make_style_form_label("网格线宽:", page))
         self._grid_line_width_edit = LineEdit(page)
         self._grid_line_width_edit.setPlaceholderText("0.5")
         self._grid_line_width_edit.textChanged.connect(self._on_quick_config_changed)
@@ -705,12 +744,9 @@ class ChartPage(QWidget):
     def _build_plot_extension_tab(self, parent: QWidget) -> QWidget:
         scroll, page, layout = self._create_style_tab_page(parent)
 
-        layout.addWidget(make_section_label("绘图扩展", page))
         extension_hint = make_hint_label("在右侧面板选择扩展，并叠加到当前图表。", page)
-        extension_hint.hide()
         layout.addWidget(extension_hint)
         extension_sub_hint = make_hint_label("适合参考线、标注或自定义绘制流程。", page)
-        extension_sub_hint.hide()
         layout.addWidget(extension_sub_hint)
 
         self._plot_extension_target_hint = make_hint_label("", page)
@@ -719,7 +755,7 @@ class ChartPage(QWidget):
         layout.addWidget(make_hsep(page))
 
         applied_header = QHBoxLayout()
-        applied_header.addWidget(make_section_label("已加载", page))
+        applied_header.addWidget(make_section_label("已加载曲线", page))
         applied_header.addStretch()
         self._remove_selected_plot_extension_btn = PushButton("撤销选中", page)
         self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
@@ -728,7 +764,6 @@ class ChartPage(QWidget):
         layout.addLayout(applied_header)
 
         self._plot_extension_repeat_hint = make_hint_label("同一扩展可重复加载，列表会保留目标曲线和参数摘要。", page)
-        self._plot_extension_repeat_hint.hide()
         layout.addWidget(self._plot_extension_repeat_hint)
 
         self._plot_extension_applied_list = ListWidget(page)
@@ -778,6 +813,7 @@ class ChartPage(QWidget):
         if obj_id and any(item.get("obj_id") == obj_id for item in self._chart_series):
             return False
         payload = dict(series_data)
+        payload.setdefault("curve_key", payload.get("obj_id") or str(uuid.uuid4()))
         payload.setdefault("visible", True)
         payload.setdefault("display_name", payload.get("name", ""))
         self._chart_series.append(payload)
@@ -791,8 +827,27 @@ class ChartPage(QWidget):
         return (curve.get("display_name") or curve.get("name") or "未命名曲线").strip() or "未命名曲线"
 
     @staticmethod
+    def _curve_key(curve: dict) -> str:
+        return str(curve.get("curve_key") or curve.get("obj_id") or "")
+
+    @staticmethod
     def _curve_identity(curve: dict) -> str:
-        return curve.get("obj_id") or curve.get("name", "")
+        return ChartPage._curve_key(curve) or curve.get("name", "")
+
+    def _curve_tree_path_label(self, curve: Optional[dict]) -> str:
+        if curve is None:
+            return "—"
+        obj_id = str(curve.get("obj_id") or "")
+        if obj_id:
+            path = project_manager.format_series_origin_path_label(obj_id, separator="/", omit_root_group=True)
+            if path:
+                return path
+        return "未关联项目树"
+
+    def _update_selected_curve_path_label(self, curve: Optional[dict]) -> None:
+        path = self._curve_tree_path_label(curve)
+        self._chart_path_label.setText(f"路径：{path}")
+        self._chart_path_label.setToolTip(path if path not in {"—", "未关联项目树"} else "")
 
     @staticmethod
     def _unique_style_label(base_label: str, used_labels: set[str], duplicate_suffix: str) -> str:
@@ -868,14 +923,20 @@ class ChartPage(QWidget):
     def _plot_extension_target_hint_text(self) -> str:
         selected_curve = self._selected_curve()
         if selected_curve is not None:
-            return f"当前选中：{self._curve_display_name(selected_curve)}。现在应用扩展时，会把这条曲线记录为本次加载实例的目标曲线。"
+            return (
+                f"当前选中：{self._curve_display_name(selected_curve)}\n"
+                "应用扩展时，会把这条曲线记录为本次加载实例的目标曲线。"
+            )
 
         visible_series = [curve for curve in self._chart_series if curve.get("visible", True)]
         if len(visible_series) > 1:
-            return "当前选中：未选中。当前画布存在多条曲线，建议先在“已绘图曲线”中选中目标曲线，再应用绘图扩展。"
+            return "当前选中：未选中\n当前画布存在多条曲线，建议先在“已绘图曲线”中选中目标曲线，再应用绘图扩展。"
         if len(visible_series) == 1:
-            return f"当前选中：未选中。当前只有 {self._curve_display_name(visible_series[0])} 可见，扩展会按默认逻辑处理这条曲线。"
-        return "当前选中：未选中。请先向画布添加曲线，再应用绘图扩展。"
+            return (
+                f"当前选中：未选中\n当前只有 {self._curve_display_name(visible_series[0])} 可见，"
+                "扩展会按默认逻辑处理这条曲线。"
+            )
+        return "当前选中：未选中\n请先向画布添加曲线，再应用绘图扩展。"
 
     def _build_applied_plot_extension(self, type_id: str, options: Dict[str, Any]) -> Dict[str, Any]:
         target_curve = self._selected_curve()
@@ -1543,7 +1604,7 @@ class ChartPage(QWidget):
         if curve is None:
             InfoBar.warning("提示", "请先选中一条曲线再应用样式模板", parent=self, position=InfoBarPosition.TOP)
             return
-        self._apply_curve_style(curve["name"], template.style)
+        self._apply_curve_style(self._curve_key(curve), template.style)
         self._active_curve_style_template_id = template.id
         self._active_curve_style_ref = template.id
         self._refresh_curve_style_template_combo()
@@ -1567,7 +1628,7 @@ class ChartPage(QWidget):
             return
         merged_style = dict(current_payload)
         merged_style.update(style_patch)
-        self._apply_curve_style_payload(curve["name"], merged_style)
+        self._apply_curve_style_payload(self._curve_key(curve), merged_style)
         self._active_curve_style_template_id = None
         self._active_curve_style_ref = make_plot_style_asset_key("curve_extension", type_id)
         self._refresh_curve_style_template_combo()
@@ -1577,7 +1638,7 @@ class ChartPage(QWidget):
         target_curve = curve or self._selected_curve()
         if target_curve is None:
             return None
-        overrides = self._curve_styles.get(target_curve["name"], {})
+        overrides = self._curve_styles.get(self._curve_key(target_curve), {})
         return CurveStyle(
             color=overrides.get("color") or target_curve.get("color"),
             linestyle=overrides.get("linestyle", "-"),
@@ -1596,26 +1657,26 @@ class ChartPage(QWidget):
         if target_curve is None or style is None:
             return {}
         payload = style.model_dump()
-        overrides = self._curve_styles.get(target_curve["name"], {})
+        overrides = self._curve_styles.get(self._curve_key(target_curve), {})
         for key, value in overrides.items():
             if key not in payload:
                 payload[key] = value
         return payload
 
-    def _apply_curve_style(self, curve_name: str, style: CurveStyle) -> None:
-        self._apply_curve_style_payload(curve_name, style.model_dump())
+    def _apply_curve_style(self, curve_key: str, style: CurveStyle) -> None:
+        self._apply_curve_style_payload(curve_key, style.model_dump())
 
-    def _apply_curve_style_payload(self, curve_name: str, payload: Dict[str, Any]) -> None:
-        style_dict = self._curve_styles.setdefault(curve_name, {})
+    def _apply_curve_style_payload(self, curve_key: str, payload: Dict[str, Any]) -> None:
+        style_dict = self._curve_styles.setdefault(curve_key, {})
         style_dict.update({key: value for key, value in payload.items() if key != "visible"})
         for curve in self._chart_series:
-            if curve["name"] == curve_name:
+            if self._curve_key(curve) == curve_key:
                 if "visible" in payload:
                     curve["visible"] = bool(payload.get("visible", True))
                 break
         self._refresh_chart_list()
         selected_curve = self._selected_curve()
-        if selected_curve and selected_curve["name"] == curve_name:
+        if selected_curve and self._curve_key(selected_curve) == curve_key:
             self._set_style_enabled(True, selected_curve)
 
     def _save_curve_style_template_named(self, name: str) -> bool:
@@ -1838,10 +1899,28 @@ class ChartPage(QWidget):
         self._redraw()
 
     def _selected_curve(self) -> Optional[dict]:
-        item = self._chart_list.currentItem()
+        return self._curve_from_item(self._chart_list.currentItem())
+
+    def _find_chart_curve(self, curve_key: str) -> Optional[dict]:
+        for curve in self._chart_series:
+            if self._curve_key(curve) == curve_key:
+                return curve
+        return None
+
+    def _curve_from_item(self, item) -> Optional[dict]:
         if item is None:
             return None
-        return item.data(Qt.ItemDataRole.UserRole)
+        data = item.data(Qt.ItemDataRole.UserRole)
+        curve_key = ""
+        if isinstance(data, dict):
+            curve_key = self._curve_key(data)
+        else:
+            curve_key = str(data or "")
+        if curve_key:
+            resolved = self._find_chart_curve(curve_key)
+            if resolved is not None:
+                return resolved
+        return data if isinstance(data, dict) else None
 
     def _set_curve_display_name(self, curve: dict, display_name: str) -> None:
         curve["display_name"] = display_name.strip() or curve.get("name", "")
@@ -1868,7 +1947,7 @@ class ChartPage(QWidget):
         if item is None:
             return
         self._chart_list.setCurrentItem(item)
-        curve = item.data(Qt.ItemDataRole.UserRole)
+        curve = self._curve_from_item(item)
         if curve is None:
             return
         menu = RoundMenu(parent=self)
@@ -1896,7 +1975,7 @@ class ChartPage(QWidget):
             display_name = self._curve_display_name(curve)
             label = display_name if curve.get("visible", True) else f"[隐藏] {display_name}"
             item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, curve)
+            item.setData(Qt.ItemDataRole.UserRole, self._curve_key(curve))
             if not curve.get("visible", True):
                 item.setForeground(QColor("#888888"))
             self._chart_list.addItem(item)
@@ -1914,6 +1993,9 @@ class ChartPage(QWidget):
             self._on_current_changed(current_item, None)
         else:
             self._set_style_enabled(False)
+            self._update_selected_curve_path_label(None)
+            self._refresh_plot_extension_list()
+            self._refresh_style_extension_panel()
         self._update_visibility_button()
 
     def _update_visibility_button(self) -> None:
@@ -1938,10 +2020,10 @@ class ChartPage(QWidget):
         curve = self._selected_curve()
         if curve is None:
             return
-        target_name = curve["name"]
-        self._chart_series = [item for item in self._chart_series if item["name"] != target_name]
-        self._curve_styles.pop(target_name, None)
-        if self._style_target == target_name:
+        target_key = self._curve_key(curve)
+        self._chart_series = [item for item in self._chart_series if self._curve_key(item) != target_key]
+        self._curve_styles.pop(target_key, None)
+        if self._style_target == target_key:
             self._style_target = None
         self._refresh_chart_list()
         self._redraw_now()
@@ -2067,9 +2149,8 @@ class ChartPage(QWidget):
 
         if not plot_context.skip_default_plot and axis is not None:
             for curve in visible_series:
-                name = curve["name"]
                 display_name = self._curve_display_name(curve)
-                style_overrides = self._curve_styles.get(name, {})
+                style_overrides = self._curve_styles.get(self._curve_key(curve), {})
                 color = style_overrides.get("color") or curve.get("color")
                 linestyle = style_overrides.get("linestyle", "-")
                 marker = style_overrides.get("marker", "")
@@ -2181,10 +2262,12 @@ class ChartPage(QWidget):
         self._canvas.updateGeometry()
 
     def _on_current_changed(self, current, _prev) -> None:
+        curve = self._curve_from_item(current)
         if current is None:
             self._set_style_enabled(False)
         else:
-            self._set_style_enabled(True, current.data(Qt.ItemDataRole.UserRole))
+            self._set_style_enabled(True, curve)
+        self._update_selected_curve_path_label(curve)
         self._update_visibility_button()
         self._refresh_style_extension_panel()
 
@@ -2198,10 +2281,10 @@ class ChartPage(QWidget):
         self._btn_load_curve_style_template.setEnabled(enabled)
         self._btn_save_curve_style_template.setEnabled(enabled)
         if enabled and curve:
-            name = curve["name"]
-            self._style_target = name
+            self._style_target = self._curve_key(curve)
             display_name = self._curve_display_name(curve)
-            self._style_target_label.setText(display_name[:30] + ("…" if len(display_name) > 30 else ""))
+            self._style_target_label.setText(f"当前选中：{display_name}")
+            self._style_target_label.setToolTip(display_name)
             style = self._current_curve_style(curve)
             if style is None:
                 return
@@ -2227,7 +2310,8 @@ class ChartPage(QWidget):
             self._style_density_edit.blockSignals(False)
         else:
             self._style_target = None
-            self._style_target_label.setText("— 未选中 —")
+            self._style_target_label.setText("当前选中：未选中")
+            self._style_target_label.setToolTip("")
             self._update_color_btn("#888888")
             self._style_line_width_edit.clear()
             self._style_marker_size_edit.clear()
@@ -2255,7 +2339,7 @@ class ChartPage(QWidget):
             return
         self._curve_styles.get(self._style_target, {}).pop("color", None)
         for curve in self._chart_series:
-            if curve["name"] == self._style_target:
+            if self._curve_key(curve) == self._style_target:
                 self._update_color_btn(curve.get("color") or "#888888")
                 break
         self._redraw_now()

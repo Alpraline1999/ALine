@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QEvent, Qt, Signal, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTreeWidgetItem, QAbstractItemView,
@@ -24,7 +24,7 @@ from qfluentwidgets import (
     TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit, TabCloseButtonDisplayMode,
-    TabWidget, TeachingTipTailPosition, isDarkTheme,
+    TabWidget, TeachingTipTailPosition, ToolTipFilter, ToolTipPosition, isDarkTheme,
 )
 
 from ui.theme import (
@@ -90,6 +90,7 @@ class DataPage(QWidget):
         self._preview_y_label = "Y"
         self._pending_import_paths: list[str] = []
         self._external_browser_dir: Optional[Path] = None
+        self._show_hidden_browser_entries = False
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
@@ -296,15 +297,21 @@ class DataPage(QWidget):
         manage_layout.setSpacing(10)
 
         manage_layout.addWidget(make_section_label("节点管理"))
-        self._manage_target_label = BodyLabel("当前节点: 未选择")
+        self._manage_target_label = CaptionLabel("[未选择] 节点", panel)
         self._manage_target_label.setWordWrap(True)
         self._manage_target_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         manage_layout.addWidget(self._manage_target_label)
 
-        self._manage_type_label = BodyLabel("节点类型: -", panel)
+        self._manage_type_label = CaptionLabel("", panel)
         self._manage_type_label.setWordWrap(True)
+        self._manage_type_label.hide()
         manage_layout.addWidget(self._manage_type_label)
-        self._apply_summary_label_style(self._manage_target_label, self._manage_type_label)
+        self._apply_muted_summary_label_style(self._manage_target_label, self._manage_type_label)
+
+        self._manage_help_label = CaptionLabel("数据文件、系列、图像和源文件会按当前节点能力开放管理动作。", panel)
+        self._manage_help_label.setWordWrap(True)
+        self._apply_muted_summary_label_style(self._manage_help_label)
+        manage_layout.addWidget(self._manage_help_label)
 
         name_row = QHBoxLayout()
         name_row.setContentsMargins(0, 0, 0, 0)
@@ -327,7 +334,7 @@ class DataPage(QWidget):
         self._btn_delete_node.clicked.connect(self._delete_current_node)
         self._apply_panel_button_metrics(self._btn_delete_node)
         primary_row.addWidget(self._btn_delete_node, 1)
-        self._btn_export = PushButton(FIF.SHARE, "导出数据", panel)
+        self._btn_export = PushButton("导出数据", panel)
         self._btn_export.clicked.connect(self._export_csv)
         self._apply_panel_button_metrics(self._btn_export)
         primary_row.addWidget(self._btn_export, 1)
@@ -344,6 +351,7 @@ class DataPage(QWidget):
         manage_layout.addLayout(action_row)
 
         self._source_file_action_panel = QWidget(panel)
+        self._source_file_action_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         source_file_action_row = QHBoxLayout(self._source_file_action_panel)
         source_file_action_row.setContentsMargins(0, 0, 0, 0)
         source_file_action_row.setSpacing(6)
@@ -359,12 +367,8 @@ class DataPage(QWidget):
         source_file_action_row.addWidget(self._btn_import_source_to_digitize, 1)
         manage_layout.addWidget(self._source_file_action_panel)
 
-        self._manage_help_label = CaptionLabel("数据文件、系列、图像和源文件会按当前节点能力开放管理动作。", panel)
-        self._manage_help_label.setWordWrap(True)
-        self._apply_summary_label_style(self._manage_help_label)
-        manage_layout.addWidget(self._manage_help_label)
-
         self._import_queue_panel = QWidget(panel)
+        self._import_queue_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         queue_layout = QVBoxLayout(self._import_queue_panel)
         queue_layout.setContentsMargins(0, 0, 0, 0)
         queue_layout.setSpacing(10)
@@ -402,9 +406,14 @@ class DataPage(QWidget):
         queue_layout.addLayout(import_row)
         manage_layout.addWidget(self._import_queue_panel, 1)
 
+        self._manage_bottom_spacer = QWidget(panel)
+        self._manage_bottom_spacer.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        manage_layout.addWidget(self._manage_bottom_spacer, 1)
+
         self._set_management_actions_enabled(False)
         self._source_file_action_panel.hide()
         self._import_queue_panel.hide()
+        self._manage_bottom_spacer.show()
         self._refresh_pending_source_list()
         return panel
 
@@ -571,26 +580,31 @@ class DataPage(QWidget):
         system_page = QWidget(card)
         system_layout = QVBoxLayout(system_page)
         system_layout.setContentsMargins(0, 0, 0, 0)
-        system_layout.setSpacing(10)
-
-        self._source_breadcrumb_bar = BreadcrumbBar(system_page)
-        self._source_breadcrumb_bar.currentItemChanged.connect(self._on_source_breadcrumb_changed)
-        system_layout.addWidget(self._source_breadcrumb_bar)
 
         browser_row = QHBoxLayout()
         self._btn_choose_browser_dir = PushButton("选择目录", system_page)
         self._btn_choose_browser_dir.clicked.connect(self._choose_external_browser_dir)
         self._btn_browser_up = PushButton("上一级", system_page)
         self._btn_browser_up.clicked.connect(self._go_to_external_browser_parent)
+        self._btn_toggle_hidden_browser = ToolButton(getattr(FIF, "VIEW", FIF.SEARCH), system_page)
+        self._btn_toggle_hidden_browser.clicked.connect(self._toggle_hidden_browser_entries)
         self._btn_refresh_browser = ToolButton(FIF.SYNC, system_page)
         self._btn_refresh_browser.setToolTip("刷新当前目录")
         self._btn_refresh_browser.clicked.connect(self._refresh_source_browser)
         self._apply_panel_button_metrics(self._btn_choose_browser_dir, self._btn_browser_up)
+        self._btn_toggle_hidden_browser.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         self._btn_refresh_browser.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         browser_row.addWidget(self._btn_choose_browser_dir, 1)
         browser_row.addWidget(self._btn_browser_up, 1)
+        browser_row.addWidget(self._btn_toggle_hidden_browser)
         browser_row.addWidget(self._btn_refresh_browser)
         system_layout.addLayout(browser_row)
+        system_layout.setSpacing(10)
+        self._update_hidden_browser_toggle_button()
+
+        self._source_breadcrumb_bar = BreadcrumbBar(system_page)
+        self._source_breadcrumb_bar.currentItemChanged.connect(self._on_source_breadcrumb_changed)
+        system_layout.addWidget(self._source_breadcrumb_bar)
 
         self._source_browser = TreeWidget(system_page)
         self._source_browser.setHeaderHidden(True)
@@ -630,6 +644,13 @@ class DataPage(QWidget):
                 continue
             label.setStyleSheet(style)
 
+    def _apply_muted_summary_label_style(self, *labels) -> None:
+        style = f"color: {secondary_color()}; font-size: 11px; font-weight: 400;"
+        for label in labels:
+            if label is None:
+                continue
+            label.setStyleSheet(style)
+
     def _create_path_link_button(self, parent: QWidget) -> QPushButton:
         button = QPushButton(parent)
         button.setFlat(True)
@@ -654,8 +675,19 @@ class DataPage(QWidget):
             "text-decoration: none;"
             "}"
         )
+        button.installEventFilter(ToolTipFilter(button, 300, ToolTipPosition.TOP))
         button.clicked.connect(lambda _checked=False, source=button: self._open_path_button_target(source))
         return button
+
+    def _refresh_path_link_button_text(self, button: QPushButton) -> None:
+        raw_text = str(button.property("fullText") or "")
+        empty_text = str(button.property("emptyText") or "未记录")
+        display_text = raw_text or empty_text
+        if raw_text:
+            metrics = QFontMetrics(button.font())
+            available_width = max(button.width() - 8, 24)
+            display_text = metrics.elidedText(raw_text, Qt.TextElideMode.ElideMiddle, available_width)
+        button.setText(display_text)
 
     def _open_path_button_target(self, button: QPushButton) -> None:
         self._open_path_in_folder(str(button.property("targetPath") or ""))
@@ -663,9 +695,11 @@ class DataPage(QWidget):
     def _set_path_link_button(self, button: QPushButton, file_path: str, empty_text: str = "未记录") -> None:
         target_path = file_path.strip()
         button.setProperty("targetPath", target_path)
-        button.setText(target_path or empty_text)
+        button.setProperty("fullText", target_path)
+        button.setProperty("emptyText", empty_text)
         button.setToolTip(target_path or empty_text)
         button.setEnabled(bool(target_path))
+        self._refresh_path_link_button_text(button)
 
     def _set_source_path_links_visible(self, visible: bool) -> None:
         self._source_path_panel.setVisible(visible)
@@ -679,6 +713,13 @@ class DataPage(QWidget):
         self._set_path_link_button(self._current_source_path_button, "", "未记录当前路径")
         self._set_path_link_button(self._origin_source_path_button, "", "未记录源路径")
         self._set_source_path_links_visible(False)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_current_source_path_button"):
+            self._refresh_path_link_button_text(self._current_source_path_button)
+        if hasattr(self, "_origin_source_path_button"):
+            self._refresh_path_link_button_text(self._origin_source_path_button)
 
     def _refresh_source_breadcrumbs(self, browser_dir: Optional[Path]) -> None:
         self._source_breadcrumb_bar.blockSignals(True)
@@ -1054,6 +1095,20 @@ class DataPage(QWidget):
         self._external_browser_dir = Path.home()
         return self._external_browser_dir
 
+    def _update_hidden_browser_toggle_button(self) -> None:
+        if not hasattr(self, "_btn_toggle_hidden_browser"):
+            return
+        showing_hidden = bool(self._show_hidden_browser_entries)
+        tooltip = "隐藏隐藏文件" if showing_hidden else "显示隐藏文件"
+        icon = getattr(FIF, "HIDE", FIF.CANCEL) if showing_hidden else getattr(FIF, "VIEW", FIF.SEARCH)
+        self._btn_toggle_hidden_browser.setIcon(icon.icon())
+        self._btn_toggle_hidden_browser.setToolTip(tooltip)
+
+    def _toggle_hidden_browser_entries(self) -> None:
+        self._show_hidden_browser_entries = not self._show_hidden_browser_entries
+        self._update_hidden_browser_toggle_button()
+        self._refresh_source_browser()
+
     def _pending_entry_label(self, file_path: str) -> str:
         path = Path(file_path)
         try:
@@ -1076,7 +1131,10 @@ class DataPage(QWidget):
         self._refresh_source_breadcrumbs(browser_dir)
         try:
             entries = sorted(
-                browser_dir.iterdir(),
+                (
+                    entry for entry in browser_dir.iterdir()
+                    if self._show_hidden_browser_entries or not entry.name.startswith(".")
+                ),
                 key=lambda entry: (entry.is_file(), entry.name.lower()),
             )
         except OSError as exc:
@@ -1350,10 +1408,11 @@ class DataPage(QWidget):
         is_source_file_leaf = self._selected_node_kind == "source_file"
         self._source_file_action_panel.setVisible(bool(is_source_file_leaf))
         self._import_queue_panel.setVisible(import_group is not None)
+        self._manage_bottom_spacer.setVisible(import_group is None)
 
         if not self._selected_node_kind or not self._selected_node_id:
-            self._manage_target_label.setText("当前节点: 未选择")
-            self._manage_type_label.setText("节点类型: -")
+            self._manage_target_label.setText("[未选择] 节点")
+            self._manage_type_label.setText("")
             self._manage_name_edit.clear()
             self._set_management_actions_enabled(False)
             self._btn_export.setEnabled(False)
@@ -1363,8 +1422,8 @@ class DataPage(QWidget):
             return
 
         current_name = self._current_node_name() or "未命名节点"
-        self._manage_target_label.setText(f"当前节点: {current_name}")
-        self._manage_type_label.setText(f"节点类型: {self._node_kind_label(self._selected_node_kind)}")
+        self._manage_target_label.setText(f"[{self._node_kind_label(self._selected_node_kind)}] {current_name}")
+        self._manage_type_label.setText("")
         self._manage_name_edit.setText(current_name)
         enabled = self._can_rename_current_node() or self._can_delete_current_node()
         self._manage_name_edit.setEnabled(self._can_rename_current_node())
@@ -1378,7 +1437,7 @@ class DataPage(QWidget):
             source_path = self._current_source_file_path()
             self._btn_import_source_to_data.setEnabled(bool(source_path) and self._supports_dataset_import(source_path))
             self._btn_import_source_to_digitize.setEnabled(bool(source_path) and self._supports_digitize_import(source_path))
-            self._manage_help_label.setText("源文件文件节点只支持重命名、删除，以及按文件类型直接导入到数据集或数据化。")
+            self._manage_help_label.setText("源文件节点支持重命名、删除，以及按文件类型直接导入到数据集或数据化。")
         elif import_group == "source_files":
             self._manage_help_label.setText("源文件文件夹可重命名/删除；右侧文件管理器用于浏览系统文件并导入为源文件。")
         elif import_group == "datasets":
@@ -1890,7 +1949,11 @@ class DataPage(QWidget):
             return True
 
         data_file = DataFile(name=dialog.get_file_name(), series=series_list)
-        node = project_manager.add_data_file(data_file, parent_id=self._current_dataset_parent_id())
+        node = project_manager.add_data_file(
+            data_file,
+            parent_id=self._current_dataset_parent_id(),
+            auto_rename_on_conflict=True,
+        )
         if node is None:
             if show_feedback:
                 InfoBar.error(
@@ -2013,7 +2076,11 @@ class DataPage(QWidget):
         failed_names: list[str] = []
 
         for file_path in list(self._pending_import_paths):
-            node = project_manager.add_source_file(file_path, parent_id=target_folder_id)
+            node = project_manager.add_source_file(
+                file_path,
+                parent_id=target_folder_id,
+                auto_rename_on_conflict=True,
+            )
             if node is not None:
                 completed_paths.append(file_path)
             else:
@@ -2230,7 +2297,9 @@ class DataPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def update_theme(self):
-        pass
+        self._apply_preview_host_background()
+        if self._preview_figure is not None and self._preview_canvas is not None:
+            self._draw_preview()
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树选中节点 → 显示预览。"""

@@ -1,4 +1,5 @@
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional, cast
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QFormLayout, QTableWidgetItem, QHeaderView
 from PySide6.QtCore import Qt, Signal, QSize
@@ -55,9 +56,9 @@ class DigitizePage(QWidget):
         self._left_panel = None
         self._right_panel = None
         self._right_tabs = None
-        self._image_viewer = None
+        self._image_viewer: ImageViewer = cast(ImageViewer, None)
         self._tool_buttons = []
-        self._project_tree = None
+        self._project_tree: TreeWidget = cast(TreeWidget, None)
         self._current_project_item = None
         self._current_image_item = None
         self._current_image_id = None
@@ -275,7 +276,7 @@ class DigitizePage(QWidget):
         self._project_tree.setIndentation(15)
         self._project_tree.setFont(QFont("Microsoft YaHei", 10))
         self._project_tree.setIconSize(QSize(20, 20))
-        self._project_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._project_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._project_tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self._project_tree.itemClicked.connect(self._on_tree_item_clicked)
         self._project_tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
@@ -304,9 +305,9 @@ class DigitizePage(QWidget):
         actions_row = QHBoxLayout()
         actions_row.setContentsMargins(0, 0, 0, 0)
         actions_row.setSpacing(6)
-        self._add_image_btn = FPushButton("新增图片", panel)
-        self._add_image_btn.setIcon(FIF.IMAGE_EXPORT)
-        self._add_image_btn.setToolTip("添加图片到当前项目")
+        self._add_image_btn = FPushButton("导入图片", panel)
+        self._add_image_btn.setIcon(FIF.DOWNLOAD)
+        self._add_image_btn.setToolTip("导入图片到当前项目")
         self._add_image_btn.clicked.connect(self._on_add_image)
         actions_row.addWidget(self._add_image_btn)
 
@@ -326,8 +327,8 @@ class DigitizePage(QWidget):
         self._curve_table = TableWidget(panel)
         self._curve_table.setColumnCount(2)
         self._curve_table.setHorizontalHeaderLabels(["X", "Y"])
-        self._curve_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self._curve_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._curve_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._curve_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._curve_table.horizontalHeader().setSectionsClickable(True)
         self._curve_table.horizontalHeader().sectionClicked.connect(self._on_header_sort)
         self._curve_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
@@ -335,7 +336,7 @@ class DigitizePage(QWidget):
         self._curve_table.setAlternatingRowColors(True)
         self._curve_table.setFont(QFont("Noto Sans", 9))
         self._curve_table.verticalHeader().setDefaultSectionSize(22)
-        self._curve_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._curve_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._curve_table.customContextMenuRequested.connect(self._on_curve_table_context_menu)
         layout.addWidget(self._curve_table)
 
@@ -511,8 +512,8 @@ class DigitizePage(QWidget):
         tab = QWidget()
         scroll = SmoothScrollArea(tab)
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
 
         content = QWidget()
@@ -1045,7 +1046,7 @@ class DigitizePage(QWidget):
         if _target_item is not None:
             self._project_tree.setCurrentItem(_target_item)
 
-    def _on_tool_clicked(self, tool_name: str):
+    def _on_tool_clicked(self, tool_name: Optional[str]):
         """处理工具按钮点击"""
         # 如果已经激活了同一个工具，检查是否需要完成校准
         if self._active_tool == tool_name:
@@ -1793,7 +1794,8 @@ class DigitizePage(QWidget):
         while node is not None:
             if node.kind == "folder" and getattr(node, "group_type", None) in ("datasets", "dataset_set"):
                 return True
-            node = project_manager.get_node_by_id(node.parent_id) if getattr(node, "parent_id", None) else None
+            parent_id = getattr(node, "parent_id", None)
+            node = project_manager.get_node_by_id(parent_id) if parent_id else None
         return False
 
     def _curve_to_data_series(self, curve, export_name: str | None = None) -> DataSeries:
@@ -2647,6 +2649,17 @@ class DigitizePage(QWidget):
                 return image.id
         return None
 
+    def _resolve_image_work_id(self, image_ref: str) -> Optional[str]:
+        if not image_ref:
+            return None
+        image = project_manager.get_image(image_ref)
+        if image is not None:
+            return image.id
+        node = project_manager.get_node_by_id(image_ref)
+        if node is not None and getattr(node, "kind", None) == "image_work":
+            return getattr(node, "image_work_id", None)
+        return None
+
     def load_curve_by_id(self, curve_id: str) -> None:
         """通过 Curve.id 加载所属图片并切换当前曲线。"""
         curve = project_manager.get_curve(curve_id)
@@ -2665,13 +2678,16 @@ class DigitizePage(QWidget):
 
     def load_image_by_id(self, image_work_id: str) -> None:
         """通过 ImageWork.id 加载图像到查看器（供共享树双击激活调用）。"""
-        img = project_manager.get_image(image_work_id)
+        resolved_image_id = self._resolve_image_work_id(image_work_id)
+        if resolved_image_id is None:
+            return
+        img = project_manager.get_image(resolved_image_id)
         if img is None:
             return
-        path = project_manager.get_image_path(image_work_id)
+        path = project_manager.get_image_path(resolved_image_id)
         if path:
             self._image_viewer.load_image(path)
-        self._current_image_id = image_work_id
+        self._current_image_id = resolved_image_id
         if img.curves:
             self._current_curve_id = img.curves[0].id
             self._refresh_export_name_suggestion()
@@ -2863,7 +2879,7 @@ class DigitizePage(QWidget):
             curve.x_actual[index] = x_actual
             curve.y_actual[index] = y_actual
         # 直接更新 curve_items 中对应点坐标，避免刷新整个 overlay
-        for item in self._image_viewer.get_curve_items():
+        for item in self._image_viewer.get_curves():
             if index < len(item.points):
                 item.points[index] = (new_px, new_py)
                 break
@@ -3077,7 +3093,7 @@ class DigitizePage(QWidget):
         self.project_modified.emit()
         self._status_label.setText("已清除所有点")
 
-    def _record_state(self, action_type: str, curve_id: str = None, data: dict = None):
+    def _record_state(self, action_type: str, curve_id: Optional[str] = None, data: Optional[dict[str, Any]] = None):
         """记录操作到撤销栈
 
         精细化操作记录：

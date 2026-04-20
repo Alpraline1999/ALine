@@ -14,10 +14,21 @@ import sys
 import tempfile
 import unittest
 import warnings
+import gc
 from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+warnings.filterwarnings(
+    "ignore",
+    message=r".*QMouseEvent\.globalPos\(\) const.*deprecated.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"gc: .* uncollectable objects at shutdown.*",
+    category=ResourceWarning,
+)
 
 # 项目根路径
 _PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,6 +37,7 @@ if _PROJ_ROOT not in sys.path:
 
 from PySide6.QtWidgets import QApplication, QAbstractItemView
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtTest import QTest
 
 _app: QApplication = None
 
@@ -39,7 +51,26 @@ def setUpModule():
 
 
 def tearDownModule():
-    pass
+    global _app
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in list(app.topLevelWidgets()):
+        try:
+            widget.close()
+            widget.deleteLater()
+        except RuntimeError:
+            continue
+    app.processEvents()
+    try:
+        import shiboken6
+
+        shiboken6.delete(app)
+    except Exception:
+        pass
+    _app = None
+    gc.collect()
 
 
 # ─── 辅助函数 ───────────────────────────────────────────────
@@ -61,6 +92,7 @@ def _make_project(name="ui_test"):
 _PM_MODULES = [
     "core.project_manager",
     "ai.command_layer",
+    "ui.dialogs.export_flow",
     "ui.dialogs.import_dialog",
     "ui.pages.data_page",
     "ui.pages.chart_page",
@@ -370,6 +402,42 @@ class TestProjectTreeWidget(unittest.TestCase):
         parent = self.p.tree.get_node(node.parent_id)
         self.assertIsNotNone(parent)
         self.assertEqual(getattr(parent, "group_type", None), "pictures")
+
+    def test_export_flow_path_labels_use_compact_folder_paths(self):
+        from ui.dialogs.export_flow import _build_picture_folder_entries
+
+        picture_root = self.pm._find_folder_by_group_type("pictures")
+        self.assertIsNotNone(picture_root)
+        folder_two = self.pm.add_folder("2", parent_id=picture_root.id, group_type="pictures")
+        nested_one = self.pm.add_folder("1", parent_id=folder_two.id, group_type="pictures")
+        deep_three = self.pm.add_folder("3", parent_id=nested_one.id, group_type="pictures")
+        flat_three = self.pm.add_folder("3", parent_id=folder_two.id, group_type="pictures")
+        self.assertIsNotNone(folder_two)
+        self.assertIsNotNone(nested_one)
+        self.assertIsNotNone(deep_three)
+        self.assertIsNotNone(flat_three)
+
+        labels = {
+            entry["node_id"]: entry["label"]
+            for entry in _build_picture_folder_entries()
+            if entry.get("node_id") in {deep_three.id, flat_three.id}
+        }
+
+        self.assertEqual(labels.get(deep_three.id), "2/1/3")
+        self.assertEqual(labels.get(flat_three.id), "2/3")
+
+    def test_export_flow_picture_root_label_uses_group_name(self):
+        from ui.dialogs.export_flow import _build_picture_folder_entries
+
+        picture_root = self.pm._find_folder_by_group_type("pictures")
+        self.assertIsNotNone(picture_root)
+
+        labels = {
+            entry["node_id"]: entry["label"]
+            for entry in _build_picture_folder_entries()
+        }
+
+        self.assertEqual(labels.get(picture_root.id), "图片集")
 
     def test_picture_path_tracks_picture_folder_move(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -814,6 +882,63 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertTrue(self.widget._perform_drop_move(None, target_item))
         self.assertEqual(node.parent_id, folder.id)
 
+    def test_drop_source_file_to_data_file_imports_series_without_moving_source_node(self):
+        from models.schemas import DataSeries
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "drag.csv"
+            source_path.write_text("x,y\n0,1\n1,2\n", encoding="utf-8")
+            source_node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(source_node)
+
+            self.widget.refresh()
+            source_item = self.widget._find_item(source_node.id)
+            target_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+            target_item = self.widget._find_item(target_node.id)
+
+            class _FakeDialog:
+                def exec(self):
+                    return True
+
+                def get_results(self):
+                    return [DataSeries(name="导入列", x=[0.0, 1.0], y=[1.0, 2.0])]
+
+                def get_file_name(self):
+                    return "drag.csv"
+
+            with mock.patch.object(self.widget, "_create_source_file_import_dialog", return_value=_FakeDialog()):
+                self.assertTrue(self.widget._perform_drop_move(source_item, target_item))
+
+            self.assertTrue(any(series.name == "导入列" for series in self.df.series))
+            self.assertEqual(self.pm.get_node_by_id(source_node.id).parent_id, source_node.parent_id)
+
+    def test_drop_source_file_to_images_subfolder_imports_image_into_target_folder(self):
+        from PySide6.QtGui import QImage
+
+        images_root = self.pm._find_folder_by_group_type("images")
+        self.assertIsNotNone(images_root)
+        target_folder = self.widget._create_child_folder(images_root.id, "图像归档")
+        self.assertIsNotNone(target_folder)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "managed.png"
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(source_path)))
+
+            source_node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(source_node)
+
+            self.widget.refresh()
+            source_item = self.widget._find_item(source_node.id)
+            target_item = self.widget._find_item(target_folder.id)
+
+            self.assertTrue(self.widget._perform_drop_move(source_item, target_item))
+
+            image_node = next((n for n in self.p.tree.nodes if n.kind == "image_work" and n.name == "managed.png"), None)
+            self.assertIsNotNone(image_node)
+            self.assertEqual(image_node.parent_id, target_folder.id)
+
     def test_tree_enables_drag_drop_mode(self):
         self.assertTrue(self.widget._tree.dragEnabled())
         self.assertEqual(self.widget._tree.dragDropMode(), QAbstractItemView.DragDropMode.DragDrop)
@@ -843,6 +968,125 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertIn("seperator", captured["separator_marks"])
         self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
 
+    def test_dataset_folder_context_menu_keeps_delete_above_prune_action(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        folder = self.widget._create_child_folder(datasets_root.id, "菜单顺序")
+        self.assertIsNotNone(folder)
+
+        self.widget.refresh()
+        item = self.widget._find_item(folder.id)
+        self.assertIsNotNone(item)
+        pos = self.widget._tree.visualItemRect(item).center()
+        captured = {}
+
+        def _fake_exec(menu, *_args):
+            captured["actions"] = list(menu.actions())
+
+        with mock.patch("ui.widgets.project_tree.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+            self.widget._on_context_menu(pos)
+
+        visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+        self.assertEqual(visible_texts[:2], ["新建数据集", "新建子文件夹"])
+        self.assertLess(visible_texts.index("删除"), visible_texts.index("清理空子文件夹"))
+        self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
+
+    def test_images_folder_context_menu_exposes_import_image_action(self):
+        images_root = self.pm._find_folder_by_group_type("images")
+        self.assertIsNotNone(images_root)
+
+        self.widget.refresh()
+        item = self.widget._find_item(images_root.id)
+        self.assertIsNotNone(item)
+        pos = self.widget._tree.visualItemRect(item).center()
+        captured = {}
+
+        def _fake_exec(menu, *_args):
+            captured["actions"] = list(menu.actions())
+
+        with mock.patch("ui.widgets.project_tree.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+            self.widget._on_context_menu(pos)
+
+        visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+        self.assertIn("导入图片...", visible_texts[:3])
+
+    def test_image_work_context_menu_offers_add_curve(self):
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "context-image.png"
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+            created = self.pm.add_image(str(image_path), name="context-image.png")
+
+            self.widget.refresh()
+            node = next((item for item in self.p.tree.nodes if item.kind == "image_work" and item.image_work_id == created.id), None)
+            self.assertIsNotNone(node)
+            item = self.widget._find_item(node.id)
+            self.assertIsNotNone(item)
+            pos = self.widget._tree.visualItemRect(item).center()
+            captured = {}
+
+            def _fake_exec(menu, *_args):
+                captured["actions"] = list(menu.actions())
+
+            with mock.patch("ui.widgets.project_tree.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+                self.widget._on_context_menu(pos)
+
+        visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+        self.assertIn("新增曲线", visible_texts)
+
+    def test_import_digitize_images_adds_images_into_target_folder(self):
+        from PySide6.QtGui import QImage
+
+        images_root = self.pm._find_folder_by_group_type("images")
+        self.assertIsNotNone(images_root)
+        target_folder = self.widget._create_child_folder(images_root.id, "菜单导入")
+        self.assertIsNotNone(target_folder)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "import-image.png"
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+
+            with mock.patch("ui.widgets.project_tree.QFileDialog.getOpenFileNames", return_value=([str(image_path)], "图片文件")):
+                self.widget._cmd_import_digitize_images(target_folder.id)
+
+        created = next((node for node in self.p.tree.nodes if node.kind == "image_work" and node.name == "import-image.png"), None)
+        self.assertIsNotNone(created)
+        self.assertEqual(created.parent_id, target_folder.id)
+
+    def test_source_file_context_menu_uses_import_first_then_manage(self):
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+        target_folder = self.widget._create_child_folder(source_root.id, "源文件归档")
+        self.assertIsNotNone(target_folder)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "menu.csv"
+            source_path.write_text("x,y\n0,1\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.widget.refresh()
+            item = self.widget._find_item(node.id)
+            self.assertIsNotNone(item)
+            pos = self.widget._tree.visualItemRect(item).center()
+            captured = {}
+
+            def _fake_exec(menu, *_args):
+                captured["actions"] = list(menu.actions())
+
+            with mock.patch("ui.widgets.project_tree.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+                self.widget._on_context_menu(pos)
+
+            visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+            self.assertEqual(visible_texts[:2], ["导入到数据集", "导入到数据化"])
+            self.assertLess(visible_texts.index("删除"), visible_texts.index("移动到..."))
+            self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. SettingsPage — AI 配置
@@ -865,6 +1109,22 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_theme_combo_exists(self):
         self.assertIsNotNone(self.page.theme_combo)
+
+    def test_settings_scroll_content_uses_workbench_like_margins(self):
+        general_layout = self.page._tabs.widget(0).widget().layout()
+        shortcuts_layout = self.page._tabs.widget(1).widget().layout()
+
+        for layout in (general_layout, shortcuts_layout):
+            margins = layout.contentsMargins()
+            self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (12, 12, 12, 12))
+
+    def test_shortcut_filter_field_is_clearable_and_emphasized(self):
+        from ui.theme import accent_color
+
+        self.assertTrue(self.page._shortcut_filter_edit.isClearButtonEnabled())
+        self.assertGreaterEqual(self.page._shortcut_filter_edit.height(), 36)
+        self.assertIn("筛选", self.page._shortcut_filter_edit.toolTip())
+        self.assertIn(accent_color(), self.page._shortcut_filter_edit.styleSheet())
 
     def test_settings_title_label_is_removed(self):
         self.assertIsNone(self.page._title_label)
@@ -1405,8 +1665,8 @@ class TestDataPage(unittest.TestCase):
 
         self.page.on_tree_node_selected("data_file", node.id)
 
-        self.assertIn("当前节点:", self.page._manage_target_label.text())
-        self.assertEqual(self.page._manage_type_label.text(), "节点类型: 数据文件")
+        self.assertEqual(self.page._manage_target_label.text(), f"[数据文件] {self.df.name}")
+        self.assertEqual(self.page._manage_type_label.text(), "")
         self.assertTrue(self.page._btn_apply_name.isEnabled())
         self.assertTrue(self.page._btn_delete_node.isEnabled())
         self.assertFalse(hasattr(self.page, "_btn_copy_to_data_file"))
@@ -1423,6 +1683,21 @@ class TestDataPage(unittest.TestCase):
         self.assertTrue(self.page._btn_export.icon().isNull())
         self.assertIs(self.page._btn_export.parent(), self.page._tool_panel)
         self.assertGreater(self.page._btn_export.x(), self.page._btn_delete_node.x())
+
+    def test_management_panel_without_pending_list_keeps_controls_compact_at_top(self):
+        node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
+        self.assertIsNotNone(node)
+
+        self.page.resize(1280, 820)
+        self.page.show()
+        self.page.on_tree_node_selected("data_file", node.id)
+        QApplication.processEvents()
+
+        self.assertTrue(self.page._import_queue_panel.isHidden())
+        self.assertFalse(self.page._manage_bottom_spacer.isHidden())
+        self.assertLess(self.page._manage_target_label.y(), self.page._manage_name_edit.y())
+        self.assertLess(self.page._manage_help_label.y(), self.page._manage_name_edit.y())
+        self.assertLess(self.page._btn_delete_node.y(), self.page._manage_bottom_spacer.y())
 
     def test_source_preview_widgets_use_fluent_surface_style(self):
         self.page._apply_preview_host_background()
@@ -1448,10 +1723,74 @@ class TestDataPage(unittest.TestCase):
             self.assertTrue(self.page._btn_import_source_to_data.isEnabled())
             self.assertFalse(self.page._btn_import_source_to_digitize.isEnabled())
             self.assertFalse(self.page._source_path_panel.isHidden())
-            self.assertEqual(self.page._current_source_path_button.text(), self.pm.get_source_file_path(asset.id))
-            self.assertEqual(self.page._origin_source_path_button.text(), asset.source_file_path)
+            self.assertEqual(self.page._current_source_path_button.toolTip(), self.pm.get_source_file_path(asset.id))
+            self.assertEqual(self.page._origin_source_path_button.toolTip(), asset.source_file_path)
         finally:
             source_path.unlink(missing_ok=True)
+
+    def test_source_file_path_buttons_elide_long_paths_and_keep_full_tooltip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            long_dir = Path(temp_dir) / "very_long_directory_name_for_data_page_preview" / "another_nested_directory"
+            long_dir.mkdir(parents=True)
+            source_path = long_dir / "very_long_source_file_name_for_preview.csv"
+            source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+            asset = self.pm.get_source_file(node.source_file_id)
+            self.assertIsNotNone(asset)
+
+            self.page.resize(420, 820)
+            self.page.show()
+            self.page.on_tree_node_selected("source_file", node.id)
+            QApplication.processEvents()
+
+            self.assertEqual(self.page._current_source_path_button.toolTip(), self.pm.get_source_file_path(asset.id))
+            self.assertEqual(self.page._origin_source_path_button.toolTip(), asset.source_file_path)
+            self.assertIn("…", self.page._current_source_path_button.text())
+            self.assertIn("…", self.page._origin_source_path_button.text())
+
+    def test_system_file_manager_hides_dotfiles_until_toggled(self):
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            visible_file = temp_path / "visible.csv"
+            hidden_file = temp_path / ".hidden.csv"
+            visible_file.write_text("x,y\n1,2\n", encoding="utf-8")
+            hidden_file.write_text("x,y\n3,4\n", encoding="utf-8")
+
+            self.page.resize(1280, 820)
+            self.page.show()
+            self.page.on_tree_node_selected("folder", source_root.id)
+            self.page._external_browser_dir = temp_path
+            self.page._refresh_source_browser()
+            QApplication.processEvents()
+
+            labels = [self.page._source_browser.topLevelItem(i).text(0) for i in range(self.page._source_browser.topLevelItemCount())]
+            self.assertIn("visible.csv", labels)
+            self.assertNotIn(".hidden.csv", labels)
+            self.assertLess(self.page._btn_toggle_hidden_browser.x(), self.page._btn_refresh_browser.x())
+            initial_icon_key = self.page._btn_toggle_hidden_browser.icon().cacheKey()
+
+            self.page._toggle_hidden_browser_entries()
+            QApplication.processEvents()
+
+            toggled_labels = [self.page._source_browser.topLevelItem(i).text(0) for i in range(self.page._source_browser.topLevelItemCount())]
+            self.assertIn(".hidden.csv", toggled_labels)
+            self.assertEqual(self.page._btn_toggle_hidden_browser.toolTip(), "隐藏隐藏文件")
+            self.assertNotEqual(self.page._btn_toggle_hidden_browser.icon().cacheKey(), initial_icon_key)
+
+    def test_update_theme_reapplies_preview_host_background(self):
+        if self.page._preview_figure is None or self.page._preview_canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch("ui.pages.data_page.isDarkTheme", return_value=True):
+            self.page.update_theme()
+
+        self.assertIn("#1e1e1e", self.page._plot_preview_panel.styleSheet())
+        self.assertIn("#1e1e1e", self.page._preview_canvas.styleSheet())
 
     def test_source_browser_breadcrumb_can_navigate_to_parent(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
@@ -1648,6 +1987,24 @@ class TestDataPage(unittest.TestCase):
         self.assertEqual(self.pm.get_data_file(second.data_file_id).name, "other.csv")
         self.assertEqual(self.p.tree.get_node(second.id).name, "other.csv")
 
+    def test_import_dialog_duplicate_data_file_name_auto_renames(self):
+        from models.schemas import DataFile, DataSeries
+
+        existing = self.pm.add_data_file(DataFile(name="dup.csv", series=[DataSeries(name="s0", x=[0.0], y=[1.0])]))
+        self.assertIsNotNone(existing)
+
+        dialog = mock.Mock()
+        dialog.get_results.return_value = [DataSeries(name="s1", x=[1.0], y=[2.0])]
+        dialog.get_target_data_file_id.return_value = None
+        dialog.get_file_name.return_value = "dup.csv"
+
+        changed = self.page._apply_import_dialog_results(dialog, show_feedback=False)
+
+        self.assertTrue(changed)
+        names = sorted(df.name for df in self.p.data_files)
+        self.assertIn("dup.csv", names)
+        self.assertIn("dup_1.csv", names)
+
     def test_management_disables_protected_folder_edits(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "folder" and getattr(n, "group_type", None) == "datasets"), None)
         self.assertIsNotNone(node)
@@ -1755,12 +2112,14 @@ class TestChartPage(unittest.TestCase):
 
     def test_style_tabs_use_consistent_scroll_containers(self):
         from qfluentwidgets import SmoothScrollArea
+        from PySide6.QtWidgets import QSizePolicy
 
         tab_pages = [self.page._style_tabs.widget(index) for index in range(3)]
 
         self.assertTrue(all(isinstance(tab_page, SmoothScrollArea) for tab_page in tab_pages))
         min_heights = {tab_page.widget().minimumHeight() for tab_page in tab_pages}
         self.assertEqual(len(min_heights), 1)
+        self.assertTrue(all(tab_page.widget().sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum for tab_page in tab_pages))
 
     def test_plot_extension_repeat_hint_is_directly_under_loaded_header(self):
         container_layout = self.page._style_tabs.widget(2).widget().layout()
@@ -2070,8 +2429,8 @@ class TestChartPage(unittest.TestCase):
 
             self.page._apply_curve_style_extension("ui_curve_kwargs_test")
 
-            curve_name = self.page._chart_series[0]["name"]
-            self.assertEqual(self.page._curve_styles[curve_name]["markeredgewidth"], 3.0)
+            curve_key = self.page._curve_key(self.page._chart_series[0])
+            self.assertEqual(self.page._curve_styles[curve_key]["markeredgewidth"], 3.0)
         finally:
             extension_registry.unregister_curve_style("ui_curve_kwargs_test")
 
@@ -2214,7 +2573,7 @@ class TestChartPage(unittest.TestCase):
 
             self.page._load_selected_curve_style_template()
 
-            style = self.page._curve_styles[self.s.name]
+            style = self.page._curve_styles[self.page._curve_key(self.page._chart_series[0])]
             self.assertEqual(style["color"], "#00aa00")
             self.assertEqual(style["linestyle"], "--")
             self.assertEqual(style["marker"], "o")
@@ -2372,8 +2731,9 @@ class TestChartPage(unittest.TestCase):
             self.page._extension_panel._apply_current()
 
             self.assertEqual(self.page._active_curve_style_ref, "curve_extension:chart_curve_apply")
-            self.assertEqual(self.page._curve_styles[self.s.name]["linewidth"], 3.5)
-            self.assertEqual(self.page._curve_styles[self.s.name]["marker"], "s")
+            curve_key = self.page._curve_key(self.page._chart_series[0])
+            self.assertEqual(self.page._curve_styles[curve_key]["linewidth"], 3.5)
+            self.assertEqual(self.page._curve_styles[curve_key]["marker"], "s")
         finally:
             extension_registry.unregister_plot_style("chart_plot_apply")
             extension_registry.unregister_curve_style("chart_curve_apply")
@@ -2477,6 +2837,7 @@ class TestChartPage(unittest.TestCase):
 
             self.assertEqual(selected_names[-1], "第二条曲线")
             self.assertIn("当前选中：第二条曲线", self.page._plot_extension_target_hint.text())
+            self.assertIn("\n", self.page._plot_extension_target_hint.text())
             applied = self.page._applied_plot_extensions[0]
             self.assertEqual(applied["curve_name"], "第二条曲线")
         finally:
@@ -2493,6 +2854,81 @@ class TestChartPage(unittest.TestCase):
             self.page._apply_preview_host_background()
 
         self.assertIn("#1e1e1e", self.page._canvas_host.viewport().styleSheet())
+
+    def test_chart_style_panel_keeps_compact_width_conventions(self):
+        from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH
+
+        self.assertLessEqual(self.page._style_line_width_edit.maximumWidth(), 96)
+        self.assertLessEqual(self.page._x_min_edit.maximumWidth(), 96)
+        self.assertEqual(self.page._tool_panel.minimumWidth(), WORKBENCH_TOOL_PANEL_WIDTH)
+
+    def test_chart_style_panel_uses_content_sized_labels(self):
+        from qfluentwidgets import BodyLabel
+
+        labels = {
+            label.text(): label
+            for label in self.page.findChildren(BodyLabel)
+            if label.text() in {"图例位置:", "图例字号:", "默认线宽:", "默认点大小:", "网格透明度:", "网格线宽:"}
+        }
+
+        for text in ["图例位置:", "图例字号:", "默认线宽:", "默认点大小:", "网格透明度:", "网格线宽:"]:
+            self.assertIn(text, labels)
+            self.assertEqual(labels[text].minimumWidth(), labels[text].sizeHint().width())
+
+        self.assertLess(labels["图例位置:"].minimumWidth(), labels["网格透明度:"].minimumWidth())
+
+    def test_removing_last_curve_refreshes_path_and_extension_hint(self):
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._chart_list.setCurrentRow(0)
+        QApplication.processEvents()
+
+        self.assertIn("test.csv", self.page._chart_path_label.text())
+
+        self.page._on_remove_selected()
+
+        self.assertEqual(self.page._chart_path_label.text(), "路径：—")
+        self.assertEqual(self.page._style_target_label.text(), "当前选中：未选中")
+        self.assertIn("请先向画布添加曲线", self.page._plot_extension_target_hint.text())
+
+    def test_duplicate_named_curves_show_distinct_project_tree_paths(self):
+        from models.schemas import DataFile, DataSeries
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        other = DataFile(name="other.csv", series=[DataSeries(name=self.s.name, x=[0.0, 1.0], y=[2.0, 3.0])])
+        node = self.pm.add_data_file(other)
+        self.assertIsNotNone(node)
+
+        self.page.on_tree_node_activated("series", other.series[0].id)
+        self.page._chart_list.setCurrentRow(0)
+        QApplication.processEvents()
+        first_path = self.page._chart_path_label.text()
+
+        self.page._chart_list.setCurrentRow(1)
+        QApplication.processEvents()
+        second_path = self.page._chart_path_label.text()
+
+        self.assertIn("test.csv", first_path)
+        self.assertIn("other.csv", second_path)
+        self.assertNotEqual(first_path, second_path)
+
+    def test_toggle_selected_visibility_only_affects_current_duplicate_named_curve(self):
+        from models.schemas import DataFile, DataSeries
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        other = DataFile(name="other_visible.csv", series=[DataSeries(name=self.s.name, x=[0.0, 1.0], y=[2.0, 3.0])])
+        node = self.pm.add_data_file(other)
+        self.assertIsNotNone(node)
+
+        self.page.on_tree_node_activated("series", other.series[0].id)
+        self.page._chart_list.setCurrentRow(1)
+        QApplication.processEvents()
+
+        self.page._toggle_selected_visibility()
+
+        state_by_obj_id = {curve.get("obj_id"): bool(curve.get("visible", True)) for curve in self.page._chart_series}
+        self.assertTrue(state_by_obj_id[self.s.id])
+        self.assertFalse(state_by_obj_id[other.series[0].id])
+        self.assertTrue(self.page._chart_list.item(1).text().startswith("[隐藏]"))
 
     def test_curve_display_name_only_affects_chart_list_and_legend(self):
         if self.page._figure is None:
@@ -2617,6 +3053,15 @@ class TestProcessPage(unittest.TestCase):
 
         with mock.patch("ui.pages.process_page.isDarkTheme", return_value=True):
             self.page._apply_preview_host_background()
+
+        self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
+
+    def test_process_update_theme_reapplies_preview_host_background(self):
+        if self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch("ui.pages.process_page.isDarkTheme", return_value=True):
+            self.page.update_theme()
 
         self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
 
@@ -3002,6 +3447,23 @@ class TestAnalysisPage(unittest.TestCase):
             self.page._apply_result_canvas_background(self.page._canvas)
 
         self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
+        self.assertEqual(self.page._canvas.figure.get_facecolor()[:3], (30 / 255.0, 30 / 255.0, 30 / 255.0))
+
+    def test_report_preview_follows_dark_background(self):
+        with mock.patch("ui.pages.analysis_page.isDarkTheme", return_value=True):
+            self.page._apply_report_preview_theme()
+
+        self.assertIn("#1e1e1e", self.page._report_preview.styleSheet())
+
+    def test_analysis_update_theme_reapplies_canvas_and_report_backgrounds(self):
+        if self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch("ui.pages.analysis_page.isDarkTheme", return_value=True):
+            self.page.update_theme()
+
+        self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
+        self.assertIn("#1e1e1e", self.page._report_preview.styleSheet())
 
     def test_input_role_labels_are_hidden(self):
         self.assertTrue(self.page._primary_input_label.isHidden())
@@ -3599,6 +4061,34 @@ class TestDigitizePage(unittest.TestCase):
     def test_on_tree_node_selected_image_work(self):
         self.page.on_tree_node_selected("image_work", "fake-image-id")
 
+    def test_load_image_by_id_accepts_tree_node_id(self):
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "tree-node-image.png"
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+            created = self.pm.add_image(str(image_path), name="tree-node-image.png")
+            node = next((item for item in self.p.tree.nodes if item.kind == "image_work" and item.image_work_id == created.id), None)
+            self.assertIsNotNone(node)
+
+            self.page.load_image_by_id(node.id)
+
+            self.assertEqual(self.page._current_image_id, created.id)
+
+    def test_import_source_image_accepts_supported_image_file(self):
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "import-source-image.png"
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+
+            self.assertTrue(self.page.import_source_image(str(image_path)))
+            self.assertIsNotNone(self.page._current_image_id)
+
     def test_on_tree_node_selected_folder(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "folder"), None)
         if node:
@@ -3754,6 +4244,55 @@ class TestMainWindow(unittest.TestCase):
         self.assertIs(self.win.stackedWidget.currentWidget(), self.win.data_page)
         selected_mock.assert_called_once_with("source_file", node.id)
         import_mock.assert_called_once_with()
+
+    def test_tree_duplicate_warning_uses_main_window_parent(self):
+        dataset_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(dataset_root)
+        existing_name = self.df.name
+
+        with mock.patch("ui.widgets.project_tree.TextInputDialog.get_text", return_value=(existing_name, True)), \
+             mock.patch("ui.widgets.project_tree.InfoBar.warning") as warning_mock:
+            self.win._tree_panel.tree._cmd_add_dataset_node(dataset_root.id)
+
+        warning_mock.assert_called_once()
+        self.assertIs(warning_mock.call_args.kwargs.get("parent"), self.win)
+
+    def test_tree_prune_empty_folder_feedback_uses_main_window_parent(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        empty_folder = self.pm.add_folder("empty_cleanup_ui", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(empty_folder)
+
+        with mock.patch("ui.widgets.project_tree.InfoBar.success") as success_mock:
+            self.win._tree_panel.tree._cmd_prune_empty_folders(datasets_root.id, scope_label="数据集")
+
+        success_mock.assert_called_once()
+        self.assertIs(success_mock.call_args.kwargs.get("parent"), self.win)
+
+    def test_chart_export_to_picture_group_refreshes_tree_immediately(self):
+        from ui.dialogs.export_flow import PictureExportPlan
+
+        if self.win.chart_page._figure is None:
+            self.skipTest("matplotlib unavailable")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            original_file_path = self.pm.current_project.file_path
+            try:
+                self.pm.current_project.file_path = str(Path(temp_dir) / "chart_refresh.aline")
+                export_path = str(Path(temp_dir) / "chart_refresh.png")
+                with mock.patch("ui.pages.chart_page.choose_picture_export_plan", return_value=PictureExportPlan(export_name="chart_refresh", target_folder_id=None)):
+                    with mock.patch("ui.pages.chart_page.project_manager.prepare_picture_export_path", return_value=export_path):
+                        self.win.chart_page._on_export_to_picture_group()
+                QApplication.processEvents()
+                picture = self.pm.current_project.pictures[-1]
+                picture_node = next(
+                    (node for node in self.pm.current_project.tree.nodes if node.kind == "picture" and node.picture_id == picture.id),
+                    None,
+                )
+                self.assertIsNotNone(picture_node)
+                self.assertIsNotNone(self.win._tree_panel.tree._find_item(picture_node.id))
+            finally:
+                self.pm.current_project.file_path = original_file_path
 
     def test_source_file_to_digitize_routes_to_import_source_image(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4056,7 +4595,20 @@ class TestMainWindow(unittest.TestCase):
         self.assertEqual(self.win.analysis_page._current_report_template_id, tmpl.id)
 
     def test_tree_node_activated_image_work(self):
-        self.win._on_tree_node_activated("image_work", "fake-img-id")
+        with mock.patch.object(self.win.digitize_page, "load_image_by_id") as load_mock:
+            self.win._on_tree_node_activated("image_work", "fake-img-id")
+
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.digitize_page)
+        load_mock.assert_called_once_with("fake-img-id")
+
+    def test_tree_node_activated_image_work_add_curve_routes_to_digitize(self):
+        with mock.patch.object(self.win.digitize_page, "load_image_by_id") as load_mock, \
+             mock.patch.object(self.win.digitize_page, "_on_add_curve") as add_curve_mock:
+            self.win._on_tree_node_activated("image_work_add_curve", "fake-img-id")
+
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.digitize_page)
+        load_mock.assert_called_once_with("fake-img-id")
+        add_curve_mock.assert_called_once_with()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -4445,6 +4997,61 @@ class TestImportDialogParsers(unittest.TestCase):
             restore()
             if dlg is not None:
                 dlg.deleteLater()
+
+    def test_import_dialog_existing_targets_use_project_tree_paths_for_duplicates(self):
+        from models.schemas import DataFile, DataSeries
+        from ui.dialogs.import_dialog import ImportDialog
+
+        pm, _p, _df, _s = _make_project("import_existing_paths")
+        restore = _patch_pm(pm)
+        dlg = None
+        try:
+            dataset_root = pm._find_folder_by_group_type("datasets")
+            self.assertIsNotNone(dataset_root)
+            left_folder = pm.add_folder("组A", parent_id=dataset_root.id, group_type="datasets")
+            right_folder = pm.add_folder("组B", parent_id=dataset_root.id, group_type="datasets")
+            self.assertIsNotNone(left_folder)
+            self.assertIsNotNone(right_folder)
+            left_df = DataFile(name="重复.csv", series=[DataSeries(name="a", x=[0.0], y=[1.0])])
+            right_df = DataFile(name="重复.csv", series=[DataSeries(name="b", x=[0.0], y=[2.0])])
+            pm.add_data_file(left_df, parent_id=left_folder.id)
+            pm.add_data_file(right_df, parent_id=right_folder.id)
+
+            dlg = ImportDialog()
+            choices = dlg._existing_data_file_choices()
+            labels = [label for label, _data_file_id in choices if "重复.csv" in label]
+
+            self.assertIn("组A/重复.csv", labels)
+            self.assertIn("组B/重复.csv", labels)
+        finally:
+            restore()
+            if dlg is not None:
+                dlg.deleteLater()
+
+    def test_import_dialog_name_edit_keeps_focus_when_mouse_only_moves(self):
+        from PySide6.QtCore import QEvent
+        from ui.dialogs.import_dialog import ImportDialog
+
+        dlg = ImportDialog()
+        dlg._file_path = "demo.csv"
+        dlg._raw_headers = ["time", "force", "stress"]
+        dlg._raw_rows = [[0.0, 1.0, 3.0], [1.0, 2.0, 4.0]]
+        dlg._populate_col_table()
+        dlg.show()
+        _app.processEvents()
+
+        edit = dlg._name_edits[0]
+        edit.setFocus()
+        _app.processEvents()
+        self.assertIs(dlg.focusWidget(), edit)
+
+        target_widget = dlg._col_table.cellWidget(0, 1)
+        hover_event = QEvent(QEvent.Type.HoverMove)
+        QApplication.sendEvent(target_widget, hover_event)
+        _app.processEvents()
+
+        self.assertIs(dlg.focusWidget(), edit)
+        dlg.deleteLater()
 
     def test_import_dialog_multi_y_uses_variable_names(self):
         from ui.dialogs.import_dialog import ImportDialog

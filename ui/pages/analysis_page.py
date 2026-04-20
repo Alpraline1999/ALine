@@ -31,12 +31,12 @@ from ui.dialogs.export_flow import (
     choose_analysis_result_save_plan,
     choose_data_export_plan,
 )
+from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, make_hint_label, make_section_label, make_hsep
-from core.analysis_engine import run_analysis
 from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
 from core.global_assets import global_assets
 from core.project_manager import project_manager
@@ -151,6 +151,7 @@ class AnalysisPage(QWidget):
         self._report_placeholder_entries = list_report_template_placeholders()
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
+        self._apply_report_preview_theme()
         self._setup_shortcuts()
         self._onboarding_controller = PageOnboardingController(self, "analysis", self._analysis_onboarding_steps)
 
@@ -479,6 +480,7 @@ class AnalysisPage(QWidget):
         self._report_preview = PlainTextEdit(panel)
         self._report_preview.setReadOnly(True)
         report_layout.addWidget(self._report_preview, stretch=1)
+        self._apply_report_preview_theme()
 
         self._on_report_placeholder_changed(self._report_placeholder_combo.currentIndex())
 
@@ -737,6 +739,8 @@ class AnalysisPage(QWidget):
             return
         while self._report_result_selector_layout.count() > 1:
             item = self._report_result_selector_layout.takeAt(1)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
@@ -1065,7 +1069,8 @@ class AnalysisPage(QWidget):
             self._show_result(t, selected)
         except Exception as e:
             InfoBar.error("分析失败", str(e), parent=self, position=InfoBarPosition.TOP)
-            self._set_summary_rows(self._summary_table, [("错误", str(e))])
+            if self._summary_table is not None:
+                self._set_summary_rows(self._summary_table, [("错误", str(e))])
 
     def _do_fit(self, src: tuple) -> dict:
         from core.analysis_engine import fit_curve
@@ -1239,6 +1244,15 @@ class AnalysisPage(QWidget):
             return
         background = "#1e1e1e" if isDarkTheme() else "#ffffff"
         canvas.setStyleSheet(f"background: {background};")
+        figure = getattr(canvas, "figure", None)
+        if figure is not None:
+            figure.patch.set_facecolor(background)
+            for axis in figure.axes:
+                axis.set_facecolor(background)
+        try:
+            canvas.draw_idle()
+        except Exception:
+            pass
 
     def _summary_rows(self, t: str, r: dict) -> List[tuple[str, str]]:
         if t == "curve_fit":
@@ -1295,7 +1309,8 @@ class AnalysisPage(QWidget):
         if current_view is not None:
             self._render_summary_view(current_view, t, r)
             return
-        self._set_summary_rows(self._summary_table, self._summary_rows(t, r))
+        if self._summary_table is not None:
+            self._set_summary_rows(self._summary_table, self._summary_rows(t, r))
 
     # ─────────────────────────────────────────────────────────
     # 保存分析结果
@@ -1366,8 +1381,6 @@ class AnalysisPage(QWidget):
         return folder.id if folder is not None else None
 
     def _build_analysis_output_series(self, export_name: str) -> Optional[DataSeries]:
-        from models.schemas import DataSeries
-
         if self._result is None:
             return None
         analysis_type = self._result.get("analysis_type", "analysis")
@@ -1546,6 +1559,22 @@ class AnalysisPage(QWidget):
 
     def _sync_report_editor_from_template(self) -> None:
         self._load_report_template_by_id(self._current_report_template_id)
+
+    def _apply_report_preview_theme(self) -> None:
+        dark = isDarkTheme()
+        bg = "#1e1e1e" if dark else "#ffffff"
+        fg = "#f5f5f5" if dark else "#202020"
+        border = "#3a3a3a" if dark else "#d9d9d9"
+        style = (
+            "PlainTextEdit {"
+            f"background: {bg};"
+            f"color: {fg};"
+            f"border: 1px solid {border};"
+            "border-radius: 6px;"
+            "}"
+        )
+        self._report_editor.setStyleSheet(style)
+        self._report_preview.setStyleSheet(style)
 
     def _render_report_preview(self) -> None:
         from core.analysis_engine import render_report
@@ -1794,9 +1823,10 @@ class AnalysisPage(QWidget):
 
     def _update_peak_export_buttons(self) -> None:
         is_peak_mode = self._current_analysis_type() == "peak_detect"
-        has_peak_result = bool(self._result and self._result.get("analysis_type") == "peak_detect")
-        peak_count = len(self._result.get("peaks", [])) if has_peak_result else 0
-        valley_count = len(self._result.get("valleys", [])) if has_peak_result else 0
+        result = self._result or {}
+        has_peak_result = bool(result and result.get("analysis_type") == "peak_detect")
+        peak_count = len(result.get("peaks", [])) if has_peak_result else 0
+        valley_count = len(result.get("valleys", [])) if has_peak_result else 0
         self._export_peaks_btn.setVisible(is_peak_mode)
         self._export_valleys_btn.setVisible(is_peak_mode)
         self._export_peaks_btn.setEnabled(has_peak_result and peak_count > 0)
@@ -1852,8 +1882,11 @@ class AnalysisPage(QWidget):
         if not payloads:
             project = project_manager.current_project
             for series_id in analysis.input_series_ids:
-                if project is not None and project.find_series(series_id) is not None:
+                if project is not None:
                     series = project.find_series(series_id)
+                else:
+                    series = None
+                if series is not None:
                     payloads.append({"kind": "series", "node_id": series_id, "label": series.name})
                     continue
                 curve = project_manager.get_curve(series_id)
@@ -1970,7 +2003,10 @@ class AnalysisPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def update_theme(self):
+        self._apply_report_preview_theme()
+        self._apply_result_canvas_background(self._canvas)
         for view in self._analysis_tab_views.values():
+            self._apply_result_canvas_background(view.get("canvas"))
             result = view.get("result")
             if not result:
                 continue

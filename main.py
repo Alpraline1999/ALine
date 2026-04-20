@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import MutableMapping
 
-def _infer_linux_input_method(env: dict[str, str]) -> str | None:
+def _infer_linux_input_method(env: MutableMapping[str, str]) -> str | None:
     qt_im = env.get("QT_IM_MODULE", "").strip()
     if qt_im:
         return None
@@ -26,7 +27,7 @@ def _infer_linux_input_method(env: dict[str, str]) -> str | None:
     return None
 
 
-def _configure_linux_environment(env: dict[str, str] | None = None) -> None:
+def _configure_linux_environment(env: MutableMapping[str, str] | None = None) -> None:
     target_env = os.environ if env is None else env
     if not sys.platform.startswith("linux"):
         return

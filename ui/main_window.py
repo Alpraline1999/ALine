@@ -114,13 +114,11 @@ class _SharedTreePanel(QWidget):
 
         self.add_dataset_btn = ToolButton(FIF.ADD, self)
         self.add_dataset_btn.setToolTip("新建数据集")
-        # right_group.addWidget(self.add_dataset_btn)
-        self.add_dataset_btn.hide()
+        right_group.addWidget(self.add_dataset_btn)
 
         self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
         self.import_file_btn.setToolTip("导入文件")
-        # right_group.addWidget(self.import_file_btn)
-        self.import_file_btn.hide()
+        right_group.addWidget(self.import_file_btn)
 
         self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
         self.extension_toggle_btn.setToolTip("隐藏扩展面板")
@@ -280,6 +278,7 @@ class MainWindow(FluentWindow):
         self.settings_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.digitize_page.project_modified.connect(self._on_project_modified)
         self.digitize_page.project_saved.connect(self._update_window_title)
+        self.chart_page.project_modified.connect(self._on_project_modified)
 
         # 数据管理页信号
         self.data_page.project_modified.connect(self._on_project_modified)
@@ -293,7 +292,7 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree.project_modified.connect(self._tree_panel.tree.refresh)
 
         # 页面修改后刷新树
-        for page in [self.digitize_page, self.data_page, self.process_page, self.analysis_page, self.settings_page]:
+        for page in [self.chart_page, self.digitize_page, self.data_page, self.process_page, self.analysis_page, self.settings_page]:
             page.project_modified.connect(self._tree_panel.tree.refresh)
         self.chart_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.process_page.assets_modified.connect(self._tree_panel.tree.refresh)
@@ -551,7 +550,19 @@ class MainWindow(FluentWindow):
             self._tree_panel.tree.refresh()
             self.settings_page.refresh_templates()
             return
-        if kind in ("data_file", "series", "curve", "image_work"):
+        if kind == "image_work":
+            self.switchTo(self.digitize_page)
+            if hasattr(self.digitize_page, 'load_image_by_id'):
+                self.digitize_page.load_image_by_id(node_id)
+            return
+        if kind == "image_work_add_curve":
+            self.switchTo(self.digitize_page)
+            if hasattr(self.digitize_page, 'load_image_by_id'):
+                self.digitize_page.load_image_by_id(node_id)
+            if hasattr(self.digitize_page, '_on_add_curve'):
+                self.digitize_page._on_add_curve()
+            return
+        if kind in ("data_file", "series", "curve"):
             if self._dispatch_activation_to_current_page(kind, node_id):
                 return
         if kind in ("source_file", "source_file_to_data"):
@@ -571,11 +582,7 @@ class MainWindow(FluentWindow):
                 self.switchTo(self.digitize_page)
                 self.digitize_page.import_source_image(source_path, name=source_name)
             return
-        if kind == "image_work":
-            self.switchTo(self.digitize_page)
-            if hasattr(self.digitize_page, 'load_image_by_id'):
-                self.digitize_page.load_image_by_id(node_id)
-        elif kind == "pipeline":
+        if kind == "pipeline":
             if hasattr(self.process_page, 'load_pipeline'):
                 self.process_page.load_pipeline(node_id)
             self.switchTo(self.process_page)
