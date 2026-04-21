@@ -57,7 +57,7 @@ def _wrap_text_height(font, text: str, width: int) -> int:
     return ceil(document.size().height())
 
 
-_PROJECT_ICON = getattr(FIF, "LIBRARY_FILL", getattr(FIF, "LIBRARY", FIF.FOLDER))
+_PROJECT_ICON = getattr(FIF, "ZIP_FOLDER", getattr(FIF, "LIBRARY", FIF.FOLDER))
 _DATA_ICON = FIF.DICTIONARY
 _SOURCE_FOLDER_ICON = getattr(FIF, "IOT", FIF.FOLDER)
 _SOURCE_FILE_ICON = getattr(FIF, "DOCUMENT", FIF.FOLDER)
@@ -535,7 +535,7 @@ class ProjectTreeWidget(QWidget):
     def _build_children(
         self, project, parent_id: Optional[str], parent_item: Optional[QTreeWidgetItem]
     ) -> None:
-        if project is None or project.tree is None:
+        if project is None or project.tree is None or parent_item is None:
             return
         children = project.tree.get_children(parent_id)
         for node in children:
@@ -1486,6 +1486,8 @@ class ProjectTreeWidget(QWidget):
             for i in range(count):
                 item = (self._tree.topLevelItem(i) if parent is None
                         else parent.child(i))
+                if item is None:
+                    continue
                 d = item.data(0, _ROLE)
                 if d and d[1] == node_id:
                     return item
@@ -1724,7 +1726,8 @@ class ProjectTreeWidget(QWidget):
             return None, None
         target_kind, target_id = target_data
         if target_kind == "series":
-            parent_data = self._item_role_data(target_item.parent())
+            parent_item = None if target_item is None else target_item.parent()
+            parent_data = self._item_role_data(parent_item)
             if parent_data and parent_data[0] == "data_file":
                 return parent_data
         return target_kind, target_id
@@ -1902,7 +1905,8 @@ class ProjectTreeWidget(QWidget):
             if target_kind == "data_file" and resolved_target_id != source_id:
                 return resolved_target_id
             if target_kind == "series":
-                parent_data = self._item_role_data(target_item.parent())
+                parent_item = None if target_item is None else target_item.parent()
+                parent_data = self._item_role_data(parent_item)
                 if parent_data and parent_data[0] == "data_file":
                     return self._resolve_virtual_drop_container_id(parent_data[0], parent_data[1])
             return None
@@ -1910,13 +1914,15 @@ class ProjectTreeWidget(QWidget):
             if target_kind == "image_work" and resolved_target_id != source_id:
                 return resolved_target_id
             if target_kind == "curve":
-                parent_data = self._item_role_data(target_item.parent())
+                parent_item = None if target_item is None else target_item.parent()
+                parent_data = self._item_role_data(parent_item)
                 if parent_data and parent_data[0] == "image_work":
                     return self._resolve_virtual_drop_container_id(parent_data[0], parent_data[1])
             return None
         if target_kind == "folder" and target_id != source_id:
             return target_id
-        parent_data = self._item_role_data(target_item.parent())
+        parent_item = None if target_item is None else target_item.parent()
+        parent_data = self._item_role_data(parent_item)
         if parent_data and parent_data[0] == "folder":
             return parent_data[1]
         return None
@@ -2153,6 +2159,8 @@ class ProjectTreeWidget(QWidget):
         if not data or data[0] != "project":
             return None
         try:
+            if item is None:
+                return None
             if item.childCount() == 0:
                 return None
             rect = self._tree.visualItemRect(item)

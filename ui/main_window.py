@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import Protocol, cast
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QSplitter, QVBoxLayout, QWidget
@@ -57,6 +58,27 @@ _EXTENSION_PANEL_SHOW_ICON = getattr(FIF, "VIEW", FIF.SEARCH)
 _EXTENSION_PANEL_HIDE_ICON = getattr(FIF, "HIDE", FIF.CANCEL)
 _DATA_PAGE_NAV_ICON = getattr(FIF, "APPLICATION", FIF.FOLDER)
 _DIGITIZE_PAGE_NAV_ICON = getattr(FIF, "LABEL", FIF.EDIT)
+
+
+class _TreeSelectablePage(Protocol):
+    def on_tree_node_selected(self, kind: str, node_id: str) -> None:
+        ...
+
+
+class _TreeActivatablePage(_TreeSelectablePage, Protocol):
+    def on_tree_node_activated(self, kind: str, node_id: str) -> None:
+        ...
+
+
+class _ExtensionPanelPage(Protocol):
+    def supports_extension_panel_toggle(self) -> bool:
+        ...
+
+    def is_extension_panel_visible(self) -> bool:
+        ...
+
+    def set_extension_panel_visible(self, visible: bool) -> None:
+        ...
 
 
 class _SharedTreePanel(QWidget):
@@ -243,7 +265,9 @@ class MainWindow(FluentWindow):
         self._update_tree_panel_visibility(self.home_page)
 
     def _setup_theme_watcher(self):
-        self.settings_page.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        theme_combo = self.settings_page.theme_combo
+        if theme_combo is not None:
+            theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         shortcut_manager.shortcuts_changed.connect(self.apply_shortcuts)
         self.settings_page.tree_display_mode_changed.connect(self._tree_panel.tree.set_name_display_mode)
 
@@ -328,7 +352,8 @@ class MainWindow(FluentWindow):
             button.setIcon(_EXTENSION_PANEL_SHOW_ICON.icon())
             button.setToolTip("当前页面没有扩展面板")
             return
-        visible = bool(interface.is_extension_panel_visible())
+        extension_page = cast(_ExtensionPanelPage, interface)
+        visible = bool(extension_page.is_extension_panel_visible())
         button.setIcon((_EXTENSION_PANEL_HIDE_ICON if visible else _EXTENSION_PANEL_SHOW_ICON).icon())
         button.setToolTip("隐藏扩展面板" if visible else "显示扩展面板")
 
@@ -356,7 +381,8 @@ class MainWindow(FluentWindow):
         current_page = self.stackedWidget.currentWidget()
         if not self._page_supports_extension_panel(current_page):
             return
-        current_page.set_extension_panel_visible(not current_page.is_extension_panel_visible())
+        extension_page = cast(_ExtensionPanelPage, current_page)
+        extension_page.set_extension_panel_visible(not extension_page.is_extension_panel_visible())
         self._update_extension_panel_toggle_button(current_page)
 
     def _open_project_tree_manage_dialog(self) -> None:
@@ -538,10 +564,10 @@ class MainWindow(FluentWindow):
             return False
 
         if hasattr(page, 'on_tree_node_activated'):
-            page.on_tree_node_activated(kind, node_id)
+            cast(_TreeActivatablePage, page).on_tree_node_activated(kind, node_id)
             return True
         if hasattr(page, 'on_tree_node_selected'):
-            page.on_tree_node_selected(kind, node_id)
+            cast(_TreeSelectablePage, page).on_tree_node_selected(kind, node_id)
             return True
         return False
 
@@ -650,7 +676,7 @@ class MainWindow(FluentWindow):
             return
         page = self.stackedWidget.currentWidget()
         if hasattr(page, 'on_tree_node_selected'):
-            page.on_tree_node_selected(kind, node_id)
+            cast(_TreeSelectablePage, page).on_tree_node_selected(kind, node_id)
 
     def _on_ai_toggle_btn_toggled(self, checked: bool) -> None:
         del checked

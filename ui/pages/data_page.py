@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTreeWidgetItem, QAbstractItemView,
     QFileDialog, QFrame, QLabel, QPushButton,
-    QSizePolicy, QStackedWidget,
+    QSizePolicy, QStackedWidget, QHeaderView, QTableWidgetItem,
 )
 from qfluentwidgets import (
     BreadcrumbBar,
     ComboBox,
     CardWidget, ToolButton, PushButton, PrimaryPushButton,
-    TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit,
+    TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit, TableWidget,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit, TabCloseButtonDisplayMode,
     TabWidget, TeachingTipTailPosition, ToolTipFilter, ToolTipPosition, isDarkTheme,
@@ -184,7 +184,13 @@ class DataPage(QWidget):
         return super().eventFilter(watched, event)
 
     def _install_preview_drop_targets(self) -> None:
-        targets = [self._preview_stack, self._plot_preview_panel, self._image_preview_label, self._text_preview]
+        targets = [
+            self._preview_stack,
+            self._plot_preview_panel,
+            self._image_preview_label,
+            self._text_preview,
+            self._parsed_preview_table,
+        ]
         if self._preview_canvas is not None:
             targets.append(self._preview_canvas)
         self._preview_drop_targets = tuple(targets)
@@ -229,6 +235,21 @@ class DataPage(QWidget):
             f"border: 1px solid {preview_border};"
             "border-radius: 12px;"
             "padding: 8px;"
+            "}"
+        )
+        self._parsed_preview_table.setStyleSheet(
+            "QTableView {"
+            f"background: {preview_surface};"
+            f"color: {fg};"
+            f"border: 1px solid {preview_border};"
+            "border-radius: 12px;"
+            "gridline-color: rgba(127, 127, 127, 0.25);"
+            "}"
+            "QHeaderView::section {"
+            f"background: {preview_surface};"
+            f"color: {fg};"
+            f"border: 0px; border-bottom: 1px solid {preview_border};"
+            "padding: 6px 8px;"
             "}"
         )
 
@@ -436,17 +457,17 @@ class DataPage(QWidget):
         preview_header = QHBoxLayout()
         preview_header.addWidget(make_section_label("数据预览"))
         preview_header.addStretch()
-        self._data_file_preview_controls = QWidget(self._preview_card)
-        data_file_preview_layout = QHBoxLayout(self._data_file_preview_controls)
-        data_file_preview_layout.setContentsMargins(0, 0, 0, 0)
-        data_file_preview_layout.setSpacing(6)
-        data_file_preview_layout.addWidget(CaptionLabel("预览", self._preview_card))
-        self._data_file_preview_combo = ComboBox(self._preview_card)
-        self._data_file_preview_combo.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
-        self._data_file_preview_combo.setMinimumWidth(120)
-        self._data_file_preview_combo.currentIndexChanged.connect(self._on_data_file_preview_mode_changed)
-        data_file_preview_layout.addWidget(self._data_file_preview_combo)
-        preview_header.addWidget(self._data_file_preview_controls)
+        self._source_file_preview_controls = QWidget(self._preview_card)
+        source_file_preview_layout = QHBoxLayout(self._source_file_preview_controls)
+        source_file_preview_layout.setContentsMargins(0, 0, 0, 0)
+        source_file_preview_layout.setSpacing(6)
+        source_file_preview_layout.addWidget(CaptionLabel("预览", self._preview_card))
+        self._source_file_preview_combo = ComboBox(self._preview_card)
+        self._source_file_preview_combo.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
+        self._source_file_preview_combo.setMinimumWidth(120)
+        self._source_file_preview_combo.currentIndexChanged.connect(self._on_source_file_preview_mode_changed)
+        source_file_preview_layout.addWidget(self._source_file_preview_combo)
+        preview_header.addWidget(self._source_file_preview_controls)
         self._preview_plot_type_controls = QWidget(self._preview_card)
         preview_plot_type_layout = QHBoxLayout(self._preview_plot_type_controls)
         preview_plot_type_layout.setContentsMargins(0, 0, 0, 0)
@@ -497,6 +518,17 @@ class DataPage(QWidget):
         self._text_preview.setMinimumHeight(240)
         self._preview_stack.addWidget(self._text_preview)
 
+        self._parsed_preview_table = TableWidget(self._preview_card)
+        self._parsed_preview_table.setMinimumHeight(240)
+        self._parsed_preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._parsed_preview_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._parsed_preview_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._parsed_preview_table.setAlternatingRowColors(True)
+        self._parsed_preview_table.verticalHeader().setVisible(False)
+        self._parsed_preview_table.horizontalHeader().setHighlightSections(False)
+        self._parsed_preview_table.setWordWrap(False)
+        self._preview_stack.addWidget(self._parsed_preview_table)
+
         preview_layout.addWidget(make_hsep())
 
         preview_layout.addWidget(make_section_label("统计摘要"))
@@ -530,7 +562,7 @@ class DataPage(QWidget):
         self._right_mode_stack.addWidget(self._preview_card)
         self._right_mode_stack.addWidget(self._source_manager_card)
         self._set_actions_enabled(False)
-        self._set_data_file_preview_mode_controls_visible(False)
+        self._set_source_file_preview_mode_controls_visible(False)
         self._set_preview_plot_type_controls_visible(False)
         self._set_source_path_links_visible(False)
         return panel
@@ -538,28 +570,26 @@ class DataPage(QWidget):
     def _set_preview_plot_type_controls_visible(self, visible: bool) -> None:
         self._preview_plot_type_controls.setVisible(visible)
 
-    def _set_data_file_preview_mode_controls_visible(self, visible: bool) -> None:
-        self._data_file_preview_controls.setVisible(visible)
+    def _set_source_file_preview_mode_controls_visible(self, visible: bool) -> None:
+        self._source_file_preview_controls.setVisible(visible)
 
-    def _on_data_file_preview_mode_changed(self, _index: int) -> None:
-        if self._selected_node_kind == "data_file" and self._selected_node_id:
-            self._show_data_file_preview(self._selected_node_id)
+    def _on_source_file_preview_mode_changed(self, _index: int) -> None:
+        if self._selected_node_kind == "source_file" and self._selected_node_id:
+            self._show_source_file_preview(self._selected_node_id)
 
-    def _configure_data_file_preview_modes(self, data_file: DataFile) -> None:
-        current_mode = self._data_file_preview_combo.currentText().strip() or "解析"
-        options = ["解析"]
-        if data_file.source_path.strip():
-            options.append("源文件")
-        self._data_file_preview_combo.blockSignals(True)
-        self._data_file_preview_combo.clear()
-        self._data_file_preview_combo.addItems(options)
+    def _configure_source_file_preview_modes(self, file_path: str) -> None:
+        current_mode = self._source_file_preview_combo.currentText().strip() or "解析"
+        options = ["解析", "源文件"] if self._supports_dataset_import(file_path) else ["源文件"]
+        self._source_file_preview_combo.blockSignals(True)
+        self._source_file_preview_combo.clear()
+        self._source_file_preview_combo.addItems(options)
         target_mode = current_mode if current_mode in options else "解析"
-        self._data_file_preview_combo.setCurrentIndex(options.index(target_mode))
-        self._data_file_preview_combo.blockSignals(False)
-        self._set_data_file_preview_mode_controls_visible(True)
+        self._source_file_preview_combo.setCurrentIndex(options.index(target_mode))
+        self._source_file_preview_combo.blockSignals(False)
+        self._set_source_file_preview_mode_controls_visible(len(options) > 1)
 
-    def _current_data_file_preview_mode(self) -> str:
-        mode = self._data_file_preview_combo.currentText().strip()
+    def _current_source_file_preview_mode(self) -> str:
+        mode = self._source_file_preview_combo.currentText().strip()
         return mode or "解析"
 
     def _preview_image_target_size(self) -> tuple[int, int]:
@@ -1036,10 +1066,13 @@ class DataPage(QWidget):
         self._preview_stack.setCurrentWidget(self._plot_preview_panel)
         self._draw_preview()
         self._text_preview.clear()
+        self._parsed_preview_table.clear()
+        self._parsed_preview_table.setRowCount(0)
+        self._parsed_preview_table.setColumnCount(0)
         self._image_preview_label.clear()
         self._image_preview_label.setText("选择节点后显示预览")
         self._stats_label.setText("（选择数据后显示统计信息）")
-        self._set_data_file_preview_mode_controls_visible(False)
+        self._set_source_file_preview_mode_controls_visible(False)
         self._set_preview_plot_type_controls_visible(False)
         self._hide_source_path_links()
         self._set_actions_enabled(False)
@@ -1642,7 +1675,7 @@ class DataPage(QWidget):
         """填充绘图预览和统计摘要。"""
         self._show_preview_mode()
         self._preview_image_path = None
-        self._set_data_file_preview_mode_controls_visible(False)
+        self._set_source_file_preview_mode_controls_visible(False)
         self._set_preview_plot_type_controls_visible(True)
         self._hide_source_path_links()
         n = min(len(xs), len(ys))
@@ -1665,10 +1698,10 @@ class DataPage(QWidget):
                 f"均值 = {y_mean:.4g}    标准差 = {y_std:.4g}"
             )
 
-    def _show_text_preview(self, title: str, content: str, stats_text: str, *, show_data_file_controls: bool = False) -> None:
+    def _show_text_preview(self, title: str, content: str, stats_text: str, *, show_source_file_controls: bool = False) -> None:
         self._show_preview_mode()
         self._preview_image_path = None
-        self._set_data_file_preview_mode_controls_visible(show_data_file_controls)
+        self._set_source_file_preview_mode_controls_visible(show_source_file_controls)
         self._set_preview_plot_type_controls_visible(False)
         self._hide_source_path_links()
         self._preview_xs = []
@@ -1724,6 +1757,70 @@ class DataPage(QWidget):
             stats_lines.append(f"源文件: {data_file.source_path}")
         return "\n".join(lines), "\n".join(stats_lines)
 
+    def _show_parsed_source_file_preview(
+        self,
+        file_path: str,
+        title: str,
+        stats_lines: list[str],
+        *,
+        origin_path: str = "",
+    ) -> bool:
+        from ui.dialogs.import_dialog import _parse_file_preview
+
+        try:
+            headers, rows = _parse_file_preview(file_path)
+        except Exception as exc:
+            self._show_text_preview(
+                title,
+                f"无法解析文件预览：{type(exc).__name__}: {exc}\n\n请切换到“源文件”查看原始内容。",
+                "\n".join(stats_lines),
+                show_source_file_controls=True,
+            )
+            self._show_source_path_links(file_path, origin_path)
+            return True
+
+        preview_rows = rows[:80]
+        self._show_preview_mode()
+        self._preview_image_path = None
+        self._set_source_file_preview_mode_controls_visible(True)
+        self._set_preview_plot_type_controls_visible(False)
+        self._hide_source_path_links()
+        self._preview_xs = []
+        self._preview_ys = []
+        self._preview_name = title
+        self._preview_x_label = "X"
+        self._preview_y_label = "Y"
+
+        self._parsed_preview_table.clear()
+        self._parsed_preview_table.setRowCount(len(preview_rows))
+        self._parsed_preview_table.setColumnCount(len(headers))
+        self._parsed_preview_table.setHorizontalHeaderLabels([str(header) for header in headers])
+
+        for row_index, row in enumerate(preview_rows):
+            for column_index, header in enumerate(headers):
+                value = row[column_index] if column_index < len(row) else ""
+                item = QTableWidgetItem(self._format_preview_value(value))
+                item.setToolTip(f"{header}: {item.text()}")
+                self._parsed_preview_table.setItem(row_index, column_index, item)
+
+        horizontal_header = self._parsed_preview_table.horizontalHeader()
+        horizontal_header.setStretchLastSection(False)
+        for column_index in range(len(headers)):
+            mode = QHeaderView.ResizeMode.Stretch if column_index == len(headers) - 1 else QHeaderView.ResizeMode.ResizeToContents
+            horizontal_header.setSectionResizeMode(column_index, mode)
+
+        self._parsed_preview_table.resizeRowsToContents()
+        self._preview_stack.setCurrentWidget(self._parsed_preview_table)
+
+        summary_lines = list(stats_lines)
+        summary_lines.append(f"解析列数: {len(headers)}")
+        summary_lines.append(f"预览行数: {len(preview_rows)} / {len(rows)}")
+        if len(preview_rows) < len(rows):
+            summary_lines.append("已截断表格预览，仅展示前 80 行。")
+        self._stats_label.setText("\n".join(summary_lines))
+        self._show_source_path_links(file_path, origin_path)
+        return True
+
     def _show_file_preview_from_path(
         self,
         file_path: str,
@@ -1732,19 +1829,19 @@ class DataPage(QWidget):
         *,
         origin_path: str = "",
         show_path_links: bool = False,
-        show_data_file_controls: bool = False,
+        show_source_file_controls: bool = False,
     ) -> bool:
         path = Path(file_path)
         suffix = path.suffix.lower()
 
         if suffix in _SOURCE_IMAGE_SUFFIXES:
             self._show_preview_mode()
-            self._set_data_file_preview_mode_controls_visible(show_data_file_controls)
+            self._set_source_file_preview_mode_controls_visible(show_source_file_controls)
             self._set_preview_plot_type_controls_visible(False)
             self._hide_source_path_links()
             self._preview_stack.setCurrentWidget(self._image_preview_label)
             if not self._update_preview_image_from_path(str(path)):
-                self._show_text_preview(title, f"无法加载图片预览。\n\n{file_path}", "\n".join(stats_lines), show_data_file_controls=show_data_file_controls)
+                self._show_text_preview(title, f"无法加载图片预览。\n\n{file_path}", "\n".join(stats_lines), show_source_file_controls=show_source_file_controls)
                 if show_path_links:
                     self._show_source_path_links(str(path), origin_path)
                 return True
@@ -1761,7 +1858,7 @@ class DataPage(QWidget):
             preview_text = content[:4000]
             if len(content) > 4000:
                 preview_text += "\n\n... 已截断 ..."
-            self._show_text_preview(title, preview_text, "\n".join(stats_lines), show_data_file_controls=show_data_file_controls)
+            self._show_text_preview(title, preview_text, "\n".join(stats_lines), show_source_file_controls=show_source_file_controls)
             if show_path_links:
                 self._show_source_path_links(str(path), origin_path)
             return True
@@ -1773,7 +1870,7 @@ class DataPage(QWidget):
             preview_lines.append("该文件类型暂不提供内联预览，可继续使用导入或导出动作。")
         preview_lines.append("")
         preview_lines.extend(stats_lines)
-        self._show_text_preview(title, "\n".join(preview_lines), "\n".join(stats_lines), show_data_file_controls=show_data_file_controls)
+        self._show_text_preview(title, "\n".join(preview_lines), "\n".join(stats_lines), show_source_file_controls=show_source_file_controls)
         if show_path_links:
             self._show_source_path_links(str(path), origin_path)
         return True
@@ -1781,7 +1878,7 @@ class DataPage(QWidget):
     def _show_image_preview(self, image_id: str, image_name: str) -> bool:
         self._show_preview_mode()
         self._preview_image_path = None
-        self._set_data_file_preview_mode_controls_visible(False)
+        self._set_source_file_preview_mode_controls_visible(False)
         self._set_preview_plot_type_controls_visible(False)
         self._hide_source_path_links()
         image = project_manager.get_image(image_id)
@@ -1877,30 +1974,21 @@ class DataPage(QWidget):
         if data_file is None:
             return False
         self._data_file_preview_node_id = node_id
-        self._configure_data_file_preview_modes(data_file)
+        self._set_source_file_preview_mode_controls_visible(False)
         if data_file.series:
             series = data_file.series[0]
             self._selected_type = "series"
             self._selected_id = series.id
-            if self._current_data_file_preview_mode() == "源文件" and data_file.source_path.strip():
-                stats_lines = [
-                    f"数据文件: {data_file.name}",
-                    f"系列数量: {len(data_file.series)}",
-                    f"源文件: {data_file.source_path}",
-                ]
-                self._show_file_preview_from_path(
-                    data_file.source_path,
-                    data_file.name or "数据文件",
-                    stats_lines,
-                    show_data_file_controls=True,
-                )
-                return True
-
-            preview_text, stats_text = self._build_data_file_parsed_preview(data_file)
-            self._show_text_preview(data_file.name or "数据文件", preview_text, stats_text, show_data_file_controls=True)
+            self._show_xy_preview(
+                series.x,
+                series.y,
+                series.name or data_file.name or "数据文件",
+                series.x_label or "X",
+                series.y_label or "Y",
+            )
             return True
         preview_text, stats_text = self._build_data_file_parsed_preview(data_file)
-        self._show_text_preview(data_file.name or "数据文件", preview_text, stats_text, show_data_file_controls=True)
+        self._show_text_preview(data_file.name or "数据文件", preview_text, stats_text)
         return True
 
     def _show_source_file_preview(self, node_id: str) -> bool:
@@ -1925,12 +2013,23 @@ class DataPage(QWidget):
             stats_lines.append(f"大小: {self._format_file_size(path.stat().st_size)}")
         except OSError:
             pass
+
+        self._configure_source_file_preview_modes(str(path))
+        if self._current_source_file_preview_mode() == "解析" and self._supports_dataset_import(str(path)):
+            return self._show_parsed_source_file_preview(
+                str(path),
+                node.name or path.name,
+                stats_lines,
+                origin_path=origin_path,
+            )
+
         return self._show_file_preview_from_path(
             str(path),
             node.name or path.name,
             stats_lines,
             origin_path=origin_path,
             show_path_links=True,
+            show_source_file_controls=self._supports_dataset_import(str(path)),
         )
 
     def _set_actions_enabled(self, enabled: bool):

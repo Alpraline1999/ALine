@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false, reportArgumentType=false, reportAssignmentType=false, reportCallIssue=false
 """
 ALine UI 信号测试套件
 
@@ -16,6 +17,7 @@ import unittest
 import warnings
 import gc
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -34,7 +36,7 @@ from PySide6.QtWidgets import QApplication, QAbstractItemView
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
 
-_app: QApplication = None
+_app: QApplication | None = None
 
 
 def setUpModule():
@@ -42,13 +44,13 @@ def setUpModule():
     if QApplication.instance() is None:
         _app = QApplication(sys.argv)
     else:
-        _app = QApplication.instance()
+        _app = cast(QApplication | None, QApplication.instance())
 
 
 def tearDownModule():
     global _app
 
-    app = QApplication.instance()
+    app = cast(QApplication | None, QApplication.instance())
     if app is None:
         return
     for widget in list(app.topLevelWidgets()):
@@ -1119,7 +1121,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         image_tree_item = self.widget._find_item(image_item.id)
         self.assertIsNotNone(image_tree_item)
 
-        self.assertEqual(self._icon_image(project_root.icon(0)), self._icon_image(getattr(FIF, "LIBRARY_FILL", getattr(FIF, "LIBRARY", FIF.FOLDER)).icon()))
+        self.assertEqual(self._icon_image(project_root.icon(0)), self._icon_image(getattr(FIF, "ZIP_FOLDER", getattr(FIF, "LIBRARY", FIF.FOLDER)).icon()))
         self.assertEqual(self._icon_image(source_group.icon(0)), self._icon_image(getattr(FIF, "IOT", FIF.FOLDER).icon()))
         self.assertEqual(self._icon_image(source_item.icon(0)), self._icon_image(getattr(FIF, "DOCUMENT", FIF.FOLDER).icon()))
         self.assertEqual(self._icon_image(digitize_group.icon(0)), self._icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
@@ -1650,31 +1652,32 @@ class TestDataPage(unittest.TestCase):
         self.page.on_tree_node_selected("series", self.s.id)
         self.assertFalse(self.page._preview_plot_type_controls.isHidden())
 
-    def test_data_file_preview_switches_between_parsed_and_source_modes(self):
-        data_file_node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
-        self.assertIsNotNone(data_file_node)
-
+    def test_source_file_data_preview_switches_between_parsed_and_source_modes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            source_path = Path(temp_dir) / "imported.csv"
+            source_path = Path(temp_dir) / "source-data.csv"
             source_path.write_text("raw_x,raw_y\n10,20\n30,40\n", encoding="utf-8")
-            self.df.source_path = str(source_path)
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
 
-            self.page.on_tree_node_selected("data_file", data_file_node.id)
+            self.page.on_tree_node_selected("source_file", node.id)
 
-            self.assertFalse(self.page._data_file_preview_controls.isHidden())
+            self.assertFalse(self.page._source_file_preview_controls.isHidden())
             self.assertEqual(
-                [self.page._data_file_preview_combo.itemText(index) for index in range(self.page._data_file_preview_combo.count())],
+                [self.page._source_file_preview_combo.itemText(index) for index in range(self.page._source_file_preview_combo.count())],
                 ["解析", "源文件"],
             )
-            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
-            self.assertIn("x\ts1", self.page._text_preview.toPlainText())
-            self.assertIn("1\t2", self.page._text_preview.toPlainText())
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
+            self.assertEqual(self.page._parsed_preview_table.rowCount(), 2)
+            self.assertEqual(self.page._parsed_preview_table.columnCount(), 2)
+            self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "10")
+            self.assertEqual(self.page._parsed_preview_table.item(0, 1).text(), "20")
+            self.assertIn("解析列数: 2", self.page._stats_label.text())
 
-            self.page._data_file_preview_combo.setCurrentText("源文件")
+            self.page._source_file_preview_combo.setCurrentText("源文件")
 
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
             self.assertIn("raw_x,raw_y", self.page._text_preview.toPlainText())
-            self.assertIn(str(source_path), self.page._stats_label.text())
+            self.assertEqual(self.page._current_source_path_button.toolTip(), str(source_path))
 
     def test_scaled_preview_image_uses_current_label_size(self):
         from PySide6.QtGui import QImage, QPixmap
@@ -1721,6 +1724,8 @@ class TestDataPage(unittest.TestCase):
         if node:
             self.page.on_tree_node_selected("data_file", node.id)
             self.assertEqual(self.page._selected_id, self.s.id)
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._plot_preview_panel)
+            self.assertTrue(self.page._source_file_preview_controls.isHidden())
 
     def test_import_dialog_results_preserve_source_path_on_new_data_file(self):
         from models.schemas import DataSeries
@@ -1878,13 +1883,18 @@ class TestDataPage(unittest.TestCase):
             self.page.on_tree_node_selected("source_file", node.id)
 
             self.assertIs(self.page._right_mode_stack.currentWidget(), self.page._preview_card)
-            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
             self.assertTrue(self.page._btn_apply_name.isEnabled())
             self.assertTrue(self.page._btn_delete_node.isEnabled())
             self.assertTrue(self.page._btn_to_vis.isHidden())
             self.assertTrue(self.page._btn_to_proc.isHidden())
             self.assertTrue(self.page._btn_import_source_to_data.isEnabled())
             self.assertFalse(self.page._btn_import_source_to_digitize.isEnabled())
+            self.assertFalse(self.page._source_file_preview_controls.isHidden())
+            self.assertEqual(
+                [self.page._source_file_preview_combo.itemText(index) for index in range(self.page._source_file_preview_combo.count())],
+                ["解析", "源文件"],
+            )
             self.assertEqual(
                 self.page._btn_import_source_to_data.icon().pixmap(20, 20).toImage(),
                 FIF.DOWNLOAD.icon().pixmap(20, 20).toImage(),
