@@ -234,13 +234,13 @@ class HomePage(QWidget):
         base_style = "background: transparent; border: none; padding: 0; text-align: left;"
         if error_count:
             self._extension_status_btn.setText(f"扩展：{registered_count} 项可用，{error_count} 项失败")
-            self._extension_status_btn.setStyleSheet(base_style + "color: #D83B01; font-size: 11px;")
+            self._extension_status_btn.setStyleSheet(base_style + "color: #D83B01; font-size: 12px;")
         elif registered_count:
             self._extension_status_btn.setText(f"扩展：{registered_count} 项可用")
-            self._extension_status_btn.setStyleSheet(base_style + f"color: {accent_color()}; font-size: 11px;")
+            self._extension_status_btn.setStyleSheet(base_style + f"color: {accent_color()}; font-size: 12px;")
         else:
             self._extension_status_btn.setText("扩展：未发现可用项")
-            self._extension_status_btn.setStyleSheet(base_style + f"color: {placeholder_color()}; font-size: 11px;")
+            self._extension_status_btn.setStyleSheet(base_style + f"color: {placeholder_color()}; font-size: 12px;")
         details = status["details"]
         self._extension_status_btn.setEnabled(bool(details.get("loaded") or details.get("errors")))
 
