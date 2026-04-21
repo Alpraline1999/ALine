@@ -114,11 +114,11 @@ class _SharedTreePanel(QWidget):
         self.tree_manage_btn.setToolTip("项目树管理")
         right_group.addWidget(self.tree_manage_btn)
 
-        self.add_dataset_btn = ToolButton(FIF.ADD, self)
+        self.add_dataset_btn = ToolButton(FIF.DICTIONARY_ADD, self)
         self.add_dataset_btn.setToolTip("新建数据集")
         right_group.addWidget(self.add_dataset_btn)
 
-        self.import_file_btn = ToolButton(FIF.DICTIONARY_ADD, self)
+        self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
         self.import_file_btn.setToolTip("导入数据文件")
         right_group.addWidget(self.import_file_btn)
 
@@ -563,6 +563,13 @@ class MainWindow(FluentWindow):
                 self.digitize_page.load_image_by_id(node_id)
             if hasattr(self.digitize_page, '_on_add_curve'):
                 self.digitize_page._on_add_curve()
+            return
+        if kind == "curve_export_to_data_file":
+            self.switchTo(self.digitize_page)
+            if hasattr(self.digitize_page, 'load_curve_by_id'):
+                self.digitize_page.load_curve_by_id(node_id)
+            if hasattr(self.digitize_page, '_on_export_to_data_file'):
+                self.digitize_page._on_export_to_data_file()
             return
         if kind in ("data_file", "series", "curve"):
             if self._dispatch_activation_to_current_page(kind, node_id):

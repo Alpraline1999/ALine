@@ -1059,7 +1059,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertIsNotNone(node)
         self.assertEqual(node.parent_id, target_folder.id)
 
-    def test_curve_context_menu_hides_chart_process_and_analysis_actions(self):
+    def test_curve_context_menu_offers_export_and_chart_actions_only(self):
         from PySide6.QtGui import QImage
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1088,8 +1088,7 @@ class TestProjectTreeWidget(unittest.TestCase):
                 self.widget._on_context_menu(pos)
 
         visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
-        self.assertEqual(visible_texts[:2], ["重命名", "删除"])
-        self.assertNotIn("发送到可视化", visible_texts)
+        self.assertEqual(visible_texts[:4], ["导出为数据列", "发送到可视化", "重命名", "删除"])
         self.assertNotIn("发送到处理", visible_texts)
         self.assertNotIn("发送到分析", visible_texts)
 
@@ -1124,7 +1123,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertEqual(self._icon_image(source_group.icon(0)), self._icon_image(getattr(FIF, "IOT", FIF.FOLDER).icon()))
         self.assertEqual(self._icon_image(source_item.icon(0)), self._icon_image(getattr(FIF, "DOCUMENT", FIF.FOLDER).icon()))
         self.assertEqual(self._icon_image(digitize_group.icon(0)), self._icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
-        self.assertEqual(self._icon_image(image_tree_item.icon(0)), self._icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
+        self.assertEqual(self._icon_image(image_tree_item.icon(0)), self._icon_image(getattr(FIF, "PHOTO", FIF.PHOTO).icon()))
 
     def test_import_digitize_images_adds_images_into_target_folder(self):
         from PySide6.QtGui import QImage
@@ -1624,11 +1623,8 @@ class TestDataPage(unittest.TestCase):
         self.assertEqual(self.page._tool_panel.maximumWidth(), WORKBENCH_TOOL_PANEL_WIDTH)
         self.assertEqual(self.page._content_splitter.count(), 2)
 
-    def test_preview_uses_plot_canvas_and_switches_plot_type(self):
-        node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
-        self.assertIsNotNone(node)
-
-        self.page.on_tree_node_selected("data_file", node.id)
+    def test_series_preview_uses_plot_canvas_and_switches_plot_type(self):
+        self.page.on_tree_node_selected("series", self.s.id)
 
         if self.page._preview_figure is None or self.page._preview_canvas is None:
             self.skipTest("matplotlib unavailable")
@@ -1651,11 +1647,52 @@ class TestDataPage(unittest.TestCase):
         self.page.on_tree_node_selected("folder", pictures_root.id)
         self.assertTrue(self.page._preview_plot_type_controls.isHidden())
 
+        self.page.on_tree_node_selected("series", self.s.id)
+        self.assertFalse(self.page._preview_plot_type_controls.isHidden())
+
+    def test_data_file_preview_switches_between_parsed_and_source_modes(self):
         data_file_node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
         self.assertIsNotNone(data_file_node)
 
-        self.page.on_tree_node_selected("data_file", data_file_node.id)
-        self.assertFalse(self.page._preview_plot_type_controls.isHidden())
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "imported.csv"
+            source_path.write_text("raw_x,raw_y\n10,20\n30,40\n", encoding="utf-8")
+            self.df.source_path = str(source_path)
+
+            self.page.on_tree_node_selected("data_file", data_file_node.id)
+
+            self.assertFalse(self.page._data_file_preview_controls.isHidden())
+            self.assertEqual(
+                [self.page._data_file_preview_combo.itemText(index) for index in range(self.page._data_file_preview_combo.count())],
+                ["解析", "源文件"],
+            )
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertIn("x\ts1", self.page._text_preview.toPlainText())
+            self.assertIn("1\t2", self.page._text_preview.toPlainText())
+
+            self.page._data_file_preview_combo.setCurrentText("源文件")
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertIn("raw_x,raw_y", self.page._text_preview.toPlainText())
+            self.assertIn(str(source_path), self.page._stats_label.text())
+
+    def test_scaled_preview_image_uses_current_label_size(self):
+        from PySide6.QtGui import QImage, QPixmap
+
+        image = QImage(1200, 300, QImage.Format.Format_RGB32)
+        image.fill(Qt.GlobalColor.white)
+        pixmap = QPixmap.fromImage(image)
+
+        self.page.resize(1280, 920)
+        self.page.show()
+        self.page._preview_stack.setCurrentWidget(self.page._image_preview_label)
+        QApplication.processEvents()
+
+        target_width, target_height = self.page._preview_image_target_size()
+        scaled = self.page._scaled_preview_image_pixmap(pixmap)
+
+        self.assertGreater(target_height, 320)
+        self.assertTrue(scaled.width() == target_width or scaled.height() == target_height)
 
     def test_preview_host_follows_dark_background(self):
         if self.page._preview_figure is None or self.page._preview_canvas is None:
@@ -1684,6 +1721,21 @@ class TestDataPage(unittest.TestCase):
         if node:
             self.page.on_tree_node_selected("data_file", node.id)
             self.assertEqual(self.page._selected_id, self.s.id)
+
+    def test_import_dialog_results_preserve_source_path_on_new_data_file(self):
+        from models.schemas import DataSeries
+
+        dialog = mock.Mock()
+        dialog.get_results.return_value = [DataSeries(name="imported", x=[1.0], y=[2.0])]
+        dialog.get_target_data_file_id.return_value = None
+        dialog.get_file_name.return_value = "imported.csv"
+        dialog.get_source_path.return_value = "/tmp/imported.csv"
+
+        self.assertTrue(self.page._apply_import_dialog_results(dialog, show_feedback=False))
+
+        created = next((df for df in self.p.data_files if df.name == "imported.csv"), None)
+        self.assertIsNotNone(created)
+        self.assertEqual(created.source_path, "/tmp/imported.csv")
 
     def test_on_tree_node_selected_folder(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "folder"), None)
@@ -1835,7 +1887,7 @@ class TestDataPage(unittest.TestCase):
             self.assertFalse(self.page._btn_import_source_to_digitize.isEnabled())
             self.assertEqual(
                 self.page._btn_import_source_to_data.icon().pixmap(20, 20).toImage(),
-                FIF.DICTIONARY_ADD.icon().pixmap(20, 20).toImage(),
+                FIF.DOWNLOAD.icon().pixmap(20, 20).toImage(),
             )
             self.assertFalse(self.page._source_path_panel.isHidden())
             self.assertEqual(self.page._current_source_path_button.toolTip(), self.pm.get_source_file_path(asset.id))
@@ -4268,6 +4320,15 @@ class TestDigitizePage(unittest.TestCase):
         self.assertIn("SEM", self.page._export_name_edit.text())
         self.assertIn("曲线1", self.page._export_name_edit.text())
 
+    def test_export_tab_hides_target_text_and_uses_compact_labels(self):
+        from PySide6.QtWidgets import QSizePolicy
+
+        self.assertTrue(self.page._export_target_label.isHidden())
+        self.assertEqual(self.page._export_scope_label.minimumWidth(), self.page._export_scope_label.sizeHint().width())
+        self.assertEqual(self.page._export_format_label.minimumWidth(), self.page._export_format_label.sizeHint().width())
+        self.assertEqual(self.page._export_scope_label.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Minimum)
+        self.assertEqual(self.page._export_format_label.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Minimum)
+
     def test_export_to_data_file_does_not_create_digitize_result_folder_by_default(self):
         from ui.dialogs.export_flow import DataExportPlan
 
@@ -4769,6 +4830,27 @@ class TestMainWindow(unittest.TestCase):
         self.assertIs(self.win.stackedWidget.currentWidget(), self.win.digitize_page)
         load_mock.assert_called_once_with("fake-img-id")
         add_curve_mock.assert_called_once_with()
+
+    def test_tree_panel_uses_updated_dataset_action_icons(self):
+        from qfluentwidgets import FluentIcon as FIF
+
+        self.assertEqual(
+            self.win._tree_panel.add_dataset_btn.icon().pixmap(20, 20).toImage(),
+            FIF.DICTIONARY_ADD.icon().pixmap(20, 20).toImage(),
+        )
+        self.assertEqual(
+            self.win._tree_panel.import_file_btn.icon().pixmap(20, 20).toImage(),
+            FIF.DOWNLOAD.icon().pixmap(20, 20).toImage(),
+        )
+
+    def test_tree_node_activated_curve_export_routes_to_digitize_export(self):
+        with mock.patch.object(self.win.digitize_page, "load_curve_by_id") as load_mock, \
+             mock.patch.object(self.win.digitize_page, "_on_export_to_data_file") as export_mock:
+            self.win._on_tree_node_activated("curve_export_to_data_file", "curve-id")
+
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.digitize_page)
+        load_mock.assert_called_once_with("curve-id")
+        export_mock.assert_called_once_with()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

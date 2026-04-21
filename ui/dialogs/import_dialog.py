@@ -456,6 +456,9 @@ class ImportDialog(QDialog):
     def get_target_data_file_id(self) -> Optional[str]:
         return self._target_data_file_id
 
+    def get_source_path(self) -> str:
+        return self._file_path
+
     def get_file_name(self) -> str:
         return self._data_file_name_edit.text().strip() or self._default_data_file_name()
 

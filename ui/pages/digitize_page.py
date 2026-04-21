@@ -866,15 +866,10 @@ class DigitizePage(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        export_hint = BodyLabel("默认会将新建导出结果归档到 数据集 / 数字化结果，可在共享树中改为追加到已有数据文件。", tab)
-        export_hint.setWordWrap(True)
-        export_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        export_hint.hide()
-        layout.addWidget(export_hint)
-
         # 导出范围
         scope_row = QHBoxLayout()
-        scope_row.addWidget(BodyLabel("导出范围:", tab))
+        self._export_scope_label = self._make_export_row_label("导出范围:", tab)
+        scope_row.addWidget(self._export_scope_label)
         self._export_scope_combo = ComboBox(tab)
         self._export_scope_combo.addItems(["当前曲线", "全部曲线"])
         self._export_scope_combo.currentIndexChanged.connect(lambda: self._refresh_export_name_suggestion())
@@ -882,7 +877,8 @@ class DigitizePage(QWidget):
         layout.addLayout(scope_row)
 
         name_row = QHBoxLayout()
-        name_row.addWidget(BodyLabel("结果名称:", tab))
+        self._export_name_label = self._make_export_row_label("结果名称:", tab)
+        name_row.addWidget(self._export_name_label)
         self._export_name_edit = LineEdit(tab)
         self._export_name_edit.setPlaceholderText("不填写时自动生成")
         name_row.addWidget(self._export_name_edit)
@@ -890,7 +886,8 @@ class DigitizePage(QWidget):
 
         # 格式
         fmt_row = QHBoxLayout()
-        fmt_row.addWidget(BodyLabel("文件格式:", tab))
+        self._export_format_label = self._make_export_row_label("文件格式:", tab)
+        fmt_row.addWidget(self._export_format_label)
         self._export_fmt_combo = ComboBox(tab)
         self._export_fmt_combo.addItems(["CSV (.csv)", "Excel (.xlsx)", "JSON (.json)", "文本 (.txt)"])
         fmt_row.addWidget(self._export_fmt_combo)
@@ -911,9 +908,8 @@ class DigitizePage(QWidget):
         clipboard_btn.clicked.connect(self._on_export_to_clipboard)
         layout.addWidget(clipboard_btn)
 
-        self._export_target_label = BodyLabel("导出目标: 共享树中选择数据文件或数据目录")
-        self._export_target_label.setWordWrap(True)
-        layout.addWidget(self._export_target_label)
+        self._export_target_label = BodyLabel("导出目标: 共享树中选择数据文件或数据目录", tab)
+        self._export_target_label.hide()
 
         export_data_btn = PrimaryPushButton("导出为数据列", tab)
         export_data_btn.clicked.connect(self._on_export_to_data_file)
@@ -930,6 +926,13 @@ class DigitizePage(QWidget):
     def _selection_background_color(self):
         from qfluentwidgets import isDarkTheme
         return "#3d5a80" if isDarkTheme() else "#b8d4f0"
+
+    @staticmethod
+    def _make_export_row_label(text: str, parent: QWidget) -> BodyLabel:
+        label = BodyLabel(text, parent)
+        label.setMinimumWidth(label.sizeHint().width())
+        label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        return label
 
     def _update_curve_table(self):
         """更新曲线数据表格 - 显示选中曲线的实时数据"""

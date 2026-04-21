@@ -64,6 +64,9 @@ _SOURCE_FILE_ICON = getattr(FIF, "DOCUMENT", FIF.FOLDER)
 _DATASET_GROUP_ICON = getattr(FIF, "LIBRARY", FIF.FOLDER)
 _DIGITIZE_GROUP_ICON = getattr(FIF, "LABEL", FIF.PHOTO)
 _PICTURE_GROUP_ICON = getattr(FIF, "PHOTO", FIF.PHOTO)
+_NEW_DATASET_ACTION_ICON = getattr(FIF, "DICTIONARY_ADD", FIF.ADD)
+_IMPORT_DATA_ACTION_ICON = getattr(FIF, "DOWNLOAD", FIF.DOWNLOAD)
+_OPEN_DIGITIZE_ACTION_ICON = getattr(FIF, "LABEL", FIF.EDIT)
 _SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
@@ -72,7 +75,7 @@ _KIND_CONFIG = {
     "folder":          (FIF.FOLDER,          None),
     "data_file":       (_DATA_ICON,         None),
     "source_file":     (_SOURCE_FILE_ICON,  None),
-    "image_work":      (_DIGITIZE_GROUP_ICON, None),
+    "image_work":      (FIF.PHOTO,          None),
     "picture":         (FIF.PHOTO,           None),
     "pipeline":        (FIF.DEVELOPER_TOOLS, "#0078D4"),
     "figure_template": (FIF.PIE_SINGLE,      "#107C10"),
@@ -850,8 +853,8 @@ class ProjectTreeWidget(QWidget):
             managed_group_type = self._folder_collection_group(node_id)
             if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
                 if managed_group_type == "datasets":
-                    import_entries.append((_DATA_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id)))
-                    import_entries.append((FIF.DICTIONARY_ADD, "导入数据文件...", lambda: self._cmd_import_data_file(node_id)))
+                    import_entries.append((_NEW_DATASET_ACTION_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id)))
+                    import_entries.append((_IMPORT_DATA_ACTION_ICON, "导入数据文件...", lambda: self._cmd_import_data_file(node_id)))
                 if managed_group_type == "source_files":
                     import_entries.append((FIF.DOWNLOAD, "批量导入源文件...", lambda: self._cmd_import_source_files(node_id)))
                 if managed_group_type == "images":
@@ -884,7 +887,7 @@ class ProjectTreeWidget(QWidget):
         elif kind == "source_file":
             move_choices = self._move_target_choices(kind, node_id)
             import_entries.extend([
-                (FIF.DICTIONARY_ADD, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id)),
+                (_IMPORT_DATA_ACTION_ICON, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id)),
                 (FIF.PHOTO, "导入到数据化", lambda: self.node_activated.emit("source_file_to_digitize", node_id)),
             ])
             manage_entries.extend([
@@ -911,7 +914,7 @@ class ProjectTreeWidget(QWidget):
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
                 (FIF.ADD, "新增曲线", lambda: self.node_activated.emit("image_work_add_curve", node_id)),
-                (FIF.EDIT, "打开取点", lambda: self.node_activated.emit("image_work", node_id)),
+                (_OPEN_DIGITIZE_ACTION_ICON, "打开取点", lambda: self.node_activated.emit("image_work", node_id)),
                 # (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id)),
                 (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
@@ -932,6 +935,8 @@ class ProjectTreeWidget(QWidget):
         elif kind == "curve":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
+                (_IMPORT_DATA_ACTION_ICON, "导出为数据列", lambda: self.node_activated.emit("curve_export_to_data_file", node_id)),
+                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("curve_to_chart", node_id)),
                 (FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0))),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
             ])
@@ -1688,7 +1693,14 @@ class ProjectTreeWidget(QWidget):
             )
             return self._linked_tree_node_id("data_file", "data_file_id", target_data_file_id)
 
-        data_file = DataFile(name=dialog.get_file_name(), series=series_list)
+        source_path = dialog.get_source_path() if hasattr(dialog, "get_source_path") else ""
+        if not isinstance(source_path, str):
+            source_path = ""
+        data_file = DataFile(
+            name=dialog.get_file_name(),
+            source_path=source_path,
+            series=series_list,
+        )
         node = project_manager.add_data_file(data_file, parent_id=target_folder_id, auto_rename_on_conflict=True)
         if node is None:
             InfoBar.warning(
