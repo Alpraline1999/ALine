@@ -894,6 +894,63 @@ class TestDataEngine(unittest.TestCase):
         finally:
             extension_registry.unregister_processing("test_scale")
 
+    def test_pairwise_compute_auto_aligns_and_warns(self):
+        from processing.data_engine import apply_pipeline_to_lines
+
+        lines, warnings = apply_pipeline_to_lines(
+            [
+                {"name": "left", "x": [0.0, 1.0, 2.0], "y": [1.0, 3.0, 5.0]},
+                {"name": "right", "x": [0.0, 0.5, 1.0, 1.5, 2.0], "y": [1.0, 2.0, 3.0, 4.0, 5.0]},
+            ],
+            [{"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "n": 3}}],
+        )
+
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["x"], [0.0, 1.0, 2.0])
+        self.assertEqual(lines[0]["y"], [0.0, 0.0, 0.0])
+        self.assertTrue(warnings)
+
+    def test_custom_processing_extension_receives_lines(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+        from processing.data_engine import align_lines_to_common_x, apply_pipeline_to_lines
+
+        def _mean(xs, ys, params, lines=None):
+            aligned_lines, warnings = align_lines_to_common_x(lines or [], params)
+            point_count = len(aligned_lines[0].get("x", [])) if aligned_lines else 0
+            averaged = []
+            for index in range(point_count):
+                averaged.append(sum(line["y"][index] for line in aligned_lines) / len(aligned_lines))
+            return {
+                "name": "mean",
+                "x": aligned_lines[0].get("x", []),
+                "y": averaged,
+                "warnings": warnings,
+            }
+
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="test_mean",
+                name="测试均值",
+                handler=_mean,
+                line_mode="multi",
+                min_lines=2,
+            )
+        )
+        try:
+            lines, warnings = apply_pipeline_to_lines(
+                [
+                    {"name": "a", "x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0]},
+                    {"name": "b", "x": [0.0, 0.5, 1.0, 1.5, 2.0], "y": [0.0, 1.0, 2.0, 3.0, 4.0]},
+                ],
+                [{"type": "test_mean", "params": {"align_mode": "auto", "n": 3}}],
+            )
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["name"], "mean")
+            self.assertEqual(lines[0]["y"], [1.0, 3.0, 5.0])
+            self.assertTrue(warnings)
+        finally:
+            extension_registry.unregister_processing("test_mean")
+
 
 # ══════════════════════════════════════════════════════════════════
 # 4. core/analysis_engine.py
@@ -1077,6 +1134,36 @@ class TestAnalysisEngine(unittest.TestCase):
             self.assertEqual(result["scale"], 3)
         finally:
             extension_registry.unregister_analysis("test_span")
+
+    def test_custom_analysis_extension_receives_lines_list(self):
+        from core.analysis_engine import run_analysis
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        def _summary(inputs, params, lines_list=None):
+            return {
+                "analysis_type": "test_lines_list",
+                "input_count": len(lines_list or []),
+                "primary_name": (lines_list or [{}])[0].get("name", ""),
+                "flag": params.get("flag", ""),
+            }
+
+        extension_registry.register_analysis(
+            AnalysisExtension(type="test_lines_list", name="测试多输入", handler=_summary)
+        )
+        try:
+            result = run_analysis(
+                "test_lines_list",
+                [
+                    {"x": [0.0, 1.0], "y": [1.0, 2.0], "name": "main"},
+                    {"x": [0.0, 1.0], "y": [2.0, 3.0], "name": "other"},
+                ],
+                {"flag": "ok"},
+            )
+            self.assertEqual(result["input_count"], 2)
+            self.assertEqual(result["primary_name"], "main")
+            self.assertEqual(result["flag"], "ok")
+        finally:
+            extension_registry.unregister_analysis("test_lines_list")
 
     def test_extension_registry_loads_directory_module(self):
         from core.analysis_engine import run_analysis

@@ -10,7 +10,7 @@ import math
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.extension_api import extension_registry
+from core.extension_api import extension_registry, invoke_analysis_extension_handler
 
 # ─────────────────────────────────────────────────────────────
 # 曲线拟合
@@ -456,7 +456,7 @@ def run_analysis(
         return result
     custom_analysis = extension_registry.get_analysis(analysis_type)
     if custom_analysis is not None:
-        return custom_analysis.handler(normalized_inputs, params)
+        return invoke_analysis_extension_handler(custom_analysis.handler, normalized_inputs, params)
     raise ValueError(f"未知分析类型: {analysis_type}")
 
 

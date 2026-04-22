@@ -146,17 +146,20 @@ class ExtensionConfigField:
 class ProcessingExtension:
     type: str
     name: str
-    handler: Callable[[List[float], List[float], Dict[str, Any]], XY]
+    handler: Callable[..., Any]
     description: str = ""
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
+    line_mode: str = "single"
+    min_lines: int = 1
+    max_lines: Optional[int] = None
 
 
 @dataclass(frozen=True)
 class AnalysisExtension:
     type: str
     name: str
-    handler: Callable[[List[Dict[str, Any]], Dict[str, Any]], Dict[str, Any]]
+    handler: Callable[..., Any]
     description: str = ""
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
@@ -547,8 +550,69 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "description": extension.description,
         "default_options": dict(getattr(extension, "default_options", {}) or {}),
         "config_fields": config_fields,
+        "line_mode": str(getattr(extension, "line_mode", "single") or "single"),
+        "min_lines": int(getattr(extension, "min_lines", 1) or 1),
+        "max_lines": getattr(extension, "max_lines", None),
         "report_placeholders": [dict(item) for item in getattr(extension, "report_placeholders", []) or [] if isinstance(item, dict)],
     }
+
+
+def _invoke_handler_with_optional_payload(
+    handler: Callable[..., Any],
+    base_args: Tuple[Any, ...],
+    optional_arg_name: str,
+    optional_payload: Any,
+) -> Any:
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        return handler(*base_args)
+
+    parameters = list(signature.parameters.values())
+    named_parameter = signature.parameters.get(optional_arg_name)
+    accepts_named = (
+        (named_parameter is not None and named_parameter.kind != inspect.Parameter.POSITIONAL_ONLY)
+        or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters)
+    )
+    if accepts_named:
+        return handler(*base_args, **{optional_arg_name: copy.deepcopy(optional_payload)})
+
+    positional_params = [
+        param for param in parameters
+        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in parameters) or len(positional_params) >= len(base_args) + 1:
+        return handler(*base_args, copy.deepcopy(optional_payload))
+    return handler(*base_args)
+
+
+def invoke_processing_extension_handler(
+    handler: Callable[..., Any],
+    xs: List[float],
+    ys: List[float],
+    params: Dict[str, Any],
+    lines: List[Dict[str, Any]],
+) -> Any:
+    return _invoke_handler_with_optional_payload(
+        handler,
+        (list(xs), list(ys), dict(params)),
+        "lines",
+        list(lines or []),
+    )
+
+
+def invoke_analysis_extension_handler(
+    handler: Callable[..., Any],
+    inputs: List[Dict[str, Any]],
+    params: Dict[str, Any],
+) -> Any:
+    normalized_inputs = [dict(item or {}) for item in inputs]
+    return _invoke_handler_with_optional_payload(
+        handler,
+        (normalized_inputs, dict(params)),
+        "lines_list",
+        normalized_inputs,
+    )
 
 
 def plot_extension_uses_context_api(handler: Callable[..., Any]) -> bool:

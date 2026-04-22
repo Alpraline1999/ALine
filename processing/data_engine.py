@@ -11,8 +11,10 @@
   {"type": "integral",   "params": {"cumulative": True}}
   {"type": "transform",  "params": {"x_expr": "", "y_expr": "y * 1.0"}}
   {"type": "filter",     "params": {"cutoff": 0.1, "order": 4, "mode": "low"}}  # Butterworth low/high pass
+  {"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "resample_mode": "count", "n": 200}}
 
 apply_pipeline(xs, ys, ops) → (xs_new, ys_new)
+apply_pipeline_to_lines(lines, ops) → (processed_lines, warnings)
 """
 from __future__ import annotations
 
@@ -20,23 +22,79 @@ import cmath
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.extension_api import extension_registry
+from core.extension_api import extension_registry, invoke_processing_extension_handler
 
 
 XY = Tuple[List[float], List[float]]
+PipelineLine = Dict[str, Any]
+PipelineResult = Tuple[List[PipelineLine], List[str]]
 
 
 def apply_pipeline(xs: List[float], ys: List[float], ops: List[Dict[str, Any]]) -> XY:
     """按顺序执行操作列表，返回新的 (xs, ys)；原始数据不变。"""
-    x, y = list(xs), list(ys)
-    for op in ops:
-        x, y = apply_operation(x, y, op)
-    return x, y
+    lines, _warnings = apply_pipeline_to_lines([
+        {"x": list(xs), "y": list(ys), "name": ""},
+    ], ops)
+    if not lines:
+        return [], []
+    return list(lines[0].get("x", []) or []), list(lines[0].get("y", []) or [])
 
 
 def apply_operation(xs: List[float], ys: List[float], op: Dict[str, Any]) -> XY:
+    lines, _warnings = apply_operation_to_lines([
+        {"x": list(xs), "y": list(ys), "name": ""},
+    ], op)
+    if not lines:
+        return [], []
+    return list(lines[0].get("x", []) or []), list(lines[0].get("y", []) or [])
+
+
+def apply_pipeline_to_lines(lines: List[PipelineLine], ops: List[Dict[str, Any]]) -> PipelineResult:
+    working_lines = _normalize_pipeline_lines(lines)
+    _validate_pipeline_multiline_conflicts(working_lines, ops)
+    warnings: List[str] = []
+    for op in ops:
+        working_lines, op_warnings = apply_operation_to_lines(working_lines, op)
+        warnings.extend(op_warnings)
+    return working_lines, warnings
+
+
+def apply_operation_to_lines(lines: List[PipelineLine], op: Dict[str, Any]) -> PipelineResult:
+    working_lines = _normalize_pipeline_lines(lines)
+    if not working_lines:
+        return [], []
+
     t = op.get("type", "")
-    p = op.get("params", {})
+    p = dict(op.get("params", {}) or {})
+    if t == "pairwise_compute":
+        return _op_pairwise_compute(working_lines, p)
+
+    custom_op = extension_registry.get_processing(t)
+    if custom_op is not None:
+        if _processing_extension_line_mode(custom_op) == "multi":
+            _validate_multiline_processing_extension(custom_op, working_lines)
+            return _apply_multiline_processing_extension(custom_op, working_lines, p)
+
+        processed_lines: List[PipelineLine] = []
+        for line in working_lines:
+            nx, ny = invoke_processing_extension_handler(
+                custom_op.handler,
+                list(line.get("x", []) or []),
+                list(line.get("y", []) or []),
+                p,
+                working_lines,
+            )
+            processed_lines.append(_merge_line_payload(line, {"x": nx, "y": ny}))
+        return processed_lines, []
+
+    processed_lines = []
+    for line in working_lines:
+        nx, ny = _apply_builtin_operation(list(line.get("x", []) or []), list(line.get("y", []) or []), t, p)
+        processed_lines.append(_merge_line_payload(line, {"x": nx, "y": ny}))
+    return processed_lines, []
+
+
+def _apply_builtin_operation(xs: List[float], ys: List[float], t: str, p: Dict[str, Any]) -> XY:
     if t == "crop":
         return _op_crop(xs, ys, p)
     if t == "smooth":
@@ -55,10 +113,318 @@ def apply_operation(xs: List[float], ys: List[float], op: Dict[str, Any]) -> XY:
         return _op_transform(xs, ys, p)
     if t == "filter":
         return _op_filter(xs, ys, p)
-    custom_op = extension_registry.get_processing(t)
-    if custom_op is not None:
-        return custom_op.handler(list(xs), list(ys), dict(p))
     return xs, ys
+
+
+def _normalize_pipeline_lines(lines: List[PipelineLine]) -> List[PipelineLine]:
+    normalized: List[PipelineLine] = []
+    for index, item in enumerate(lines or []):
+        if isinstance(item, dict):
+            payload = dict(item)
+            xs = list(payload.get("x", []) or [])
+            ys = list(payload.get("y", []) or [])
+            payload["x"] = xs
+            payload["y"] = ys
+            payload["name"] = str(payload.get("name", f"line_{index + 1}") or f"line_{index + 1}")
+        else:
+            xs = list(getattr(item, "x", []) or [])
+            ys = list(getattr(item, "y", []) or [])
+            payload = {
+                "name": str(getattr(item, "name", f"line_{index + 1}") or f"line_{index + 1}"),
+                "x": xs,
+                "y": ys,
+            }
+        normalized.append(payload)
+    return normalized
+
+
+def _merge_line_payload(base: PipelineLine, update: Dict[str, Any]) -> PipelineLine:
+    merged = dict(base or {})
+    for key, value in dict(update or {}).items():
+        if key in {"warnings", "lines"}:
+            continue
+        merged[key] = value
+    merged["x"] = list(merged.get("x", []) or [])
+    merged["y"] = list(merged.get("y", []) or [])
+    merged["name"] = str(merged.get("name", "") or "")
+    return merged
+
+
+def _processing_extension_line_mode(extension: Any) -> str:
+    mode = str(getattr(extension, "line_mode", "single") or "single").strip().lower()
+    return mode if mode in {"single", "multi"} else "single"
+
+
+def _validate_pipeline_multiline_conflicts(lines: List[PipelineLine], ops: List[Dict[str, Any]]) -> None:
+    multiline_ops: List[str] = []
+    for op in ops or []:
+        t = str(op.get("type", "") or "")
+        if t == "pairwise_compute":
+            if len(lines) != 2:
+                raise ValueError("双曲线计算需要恰好选择两条输入曲线")
+            multiline_ops.append("双曲线计算")
+            continue
+        custom_op = extension_registry.get_processing(t)
+        if custom_op is None or _processing_extension_line_mode(custom_op) != "multi":
+            continue
+        _validate_multiline_processing_extension(custom_op, lines)
+        multiline_ops.append(custom_op.name or t)
+    if len(multiline_ops) > 1:
+        raise ValueError("当前处理链包含多个多曲线步骤，请仅保留一个多曲线处理工具以避免冲突")
+
+
+def _validate_multiline_processing_extension(extension: Any, lines: List[PipelineLine]) -> None:
+    count = len(lines)
+    min_lines = max(1, int(getattr(extension, "min_lines", 1) or 1))
+    max_lines = getattr(extension, "max_lines", None)
+    if count < min_lines:
+        raise ValueError(f"{extension.name} 至少需要 {min_lines} 条输入曲线")
+    if max_lines is not None and count > int(max_lines):
+        raise ValueError(f"{extension.name} 最多支持 {int(max_lines)} 条输入曲线")
+
+
+def _apply_multiline_processing_extension(
+    extension: Any,
+    lines: List[PipelineLine],
+    params: Dict[str, Any],
+) -> PipelineResult:
+    primary = lines[0]
+    result = invoke_processing_extension_handler(
+        extension.handler,
+        list(primary.get("x", []) or []),
+        list(primary.get("y", []) or []),
+        params,
+        lines,
+    )
+    return _normalize_multiline_extension_result(result, primary)
+
+
+def _normalize_multiline_extension_result(result: Any, template_line: PipelineLine) -> PipelineResult:
+    warnings: List[str] = []
+    payload = result
+    if isinstance(result, dict) and "lines" in result:
+        warnings = _normalize_warning_messages(result.get("warnings", []))
+        payload = result.get("lines", [])
+    elif isinstance(result, dict):
+        warnings = _normalize_warning_messages(result.get("warnings", []))
+        payload = [
+            {
+                key: value
+                for key, value in result.items()
+                if key not in {"warnings", "lines"}
+            }
+        ]
+    return _normalize_processing_output_lines(payload, template_line), warnings
+
+
+def _normalize_processing_output_lines(payload: Any, template_line: PipelineLine) -> List[PipelineLine]:
+    if _looks_like_xy(payload):
+        xs, ys = payload
+        return [_merge_line_payload(template_line, {"x": list(xs), "y": list(ys)})]
+
+    if isinstance(payload, list):
+        normalized_lines: List[PipelineLine] = []
+        for index, item in enumerate(payload):
+            base = template_line if index == 0 else {"name": f"{template_line.get('name', 'result')}#{index + 1}"}
+            if _looks_like_xy(item):
+                xs, ys = item
+                normalized_lines.append(_merge_line_payload(base, {"x": list(xs), "y": list(ys)}))
+                continue
+            if isinstance(item, dict):
+                normalized_lines.append(_merge_line_payload(base, item))
+                continue
+            raise ValueError("多曲线处理扩展返回结果格式无效")
+        return normalized_lines
+
+    raise ValueError("多曲线处理扩展返回结果格式无效")
+
+
+def _normalize_warning_messages(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        text = raw.strip()
+        return [text] if text else []
+    if isinstance(raw, (list, tuple)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    text = str(raw).strip()
+    return [text] if text else []
+
+
+def _looks_like_xy(payload: Any) -> bool:
+    return (
+        isinstance(payload, (list, tuple))
+        and len(payload) == 2
+        and not isinstance(payload[0], dict)
+        and not isinstance(payload[1], dict)
+    )
+
+
+def align_lines_to_common_x(
+    lines: List[PipelineLine],
+    params: Optional[Dict[str, Any]] = None,
+) -> PipelineResult:
+    prepared_lines = [_sorted_line_payload(line) for line in _normalize_pipeline_lines(lines)]
+    if len(prepared_lines) < 2:
+        return prepared_lines, []
+    if _lines_share_same_x(prepared_lines):
+        return prepared_lines, []
+
+    options = dict(params or {})
+    align_mode = str(options.get("align_mode", "auto") or "auto").strip().lower()
+    if align_mode == "strict":
+        raise ValueError("输入曲线 X 坐标未对齐，请先重采样，或将对齐方式改为自动重采样")
+
+    grid = _build_alignment_grid(prepared_lines, options)
+    aligned_lines = []
+    for line in prepared_lines:
+        aligned_lines.append(_merge_line_payload(line, {
+            "x": list(grid),
+            "y": [_interp_linear(x_value, list(line.get("x", []) or []), list(line.get("y", []) or [])) for x_value in grid],
+        }))
+
+    description = _describe_alignment_mode(options, len(grid))
+    warnings = [f"输入曲线 X 坐标未对齐，已在重叠区间内按{description}自动重采样。"]
+    return aligned_lines, warnings
+
+
+def _sorted_line_payload(line: PipelineLine) -> PipelineLine:
+    xs, ys = _sorted_unique_xy(list(line.get("x", []) or []), list(line.get("y", []) or []))
+    return _merge_line_payload(line, {"x": xs, "y": ys})
+
+
+def _lines_share_same_x(lines: List[PipelineLine]) -> bool:
+    if len(lines) < 2:
+        return True
+    base_x = list(lines[0].get("x", []) or [])
+    for line in lines[1:]:
+        current_x = list(line.get("x", []) or [])
+        if len(current_x) != len(base_x):
+            return False
+        for left, right in zip(base_x, current_x):
+            if not math.isclose(left, right, rel_tol=0.0, abs_tol=1e-9):
+                return False
+    return True
+
+
+def _build_alignment_grid(lines: List[PipelineLine], params: Dict[str, Any]) -> List[float]:
+    starts = [float(line["x"][0]) for line in lines if len(line.get("x", []) or []) >= 2]
+    ends = [float(line["x"][-1]) for line in lines if len(line.get("x", []) or []) >= 2]
+    if not starts or not ends:
+        raise ValueError("自动对齐至少需要每条曲线包含两个有效采样点")
+    x_start = max(starts)
+    x_end = min(ends)
+    if x_end - x_start <= 1e-12:
+        raise ValueError("输入曲线没有足够的重叠区间，无法执行自动对齐")
+
+    resample_mode = str(params.get("resample_mode", params.get("mode", "count")) or "count").strip().lower()
+    if resample_mode == "spacing":
+        step = float(params.get("step", params.get("spacing", 0.0)) or 0.0)
+        if step <= 0:
+            step = _recommended_alignment_spacing(lines)
+        if step <= 0:
+            raise ValueError("无法推断有效的自动对齐重采样间距")
+        grid = [x_start]
+        next_x = x_start + step
+        while next_x < x_end - 1e-12:
+            grid.append(next_x)
+            next_x += step
+        if not math.isclose(grid[-1], x_end, rel_tol=0.0, abs_tol=1e-12):
+            grid.append(x_end)
+        return grid
+
+    n_points = int(params.get("n", 0) or 0)
+    if n_points < 2:
+        n_points = max(len(line.get("x", []) or []) for line in lines)
+    n_points = max(2, n_points)
+    return [x_start + index * (x_end - x_start) / (n_points - 1) for index in range(n_points)]
+
+
+def _recommended_alignment_spacing(lines: List[PipelineLine]) -> float:
+    spacings = [
+        spacing
+        for line in lines
+        for spacing in [_estimate_sample_spacing(list(line.get("x", []) or []))]
+        if spacing is not None and spacing > 0
+    ]
+    return min(spacings) if spacings else 0.0
+
+
+def _describe_alignment_mode(params: Dict[str, Any], point_count: int) -> str:
+    resample_mode = str(params.get("resample_mode", params.get("mode", "count")) or "count").strip().lower()
+    if resample_mode == "spacing":
+        step = float(params.get("step", params.get("spacing", 0.0)) or 0.0)
+        return f"固定间距({step:g})"
+    return f"固定点数({point_count}点)"
+
+
+def _interp_linear(x_value: float, xs: List[float], ys: List[float]) -> float:
+    if not xs:
+        return 0.0
+    if x_value <= xs[0]:
+        return ys[0]
+    if x_value >= xs[-1]:
+        return ys[-1]
+    lo, hi = 0, len(xs) - 1
+    while lo + 1 < hi:
+        mid = (lo + hi) // 2
+        if xs[mid] <= x_value:
+            lo = mid
+        else:
+            hi = mid
+    span = xs[hi] - xs[lo]
+    if not span:
+        return ys[lo]
+    ratio = (x_value - xs[lo]) / span
+    return ys[lo] + ratio * (ys[hi] - ys[lo])
+
+
+def _op_pairwise_compute(lines: List[PipelineLine], p: Dict[str, Any]) -> PipelineResult:
+    if len(lines) != 2:
+        raise ValueError("双曲线计算需要恰好选择两条输入曲线")
+    aligned_lines, warnings = align_lines_to_common_x(lines, p)
+    primary, secondary = aligned_lines
+    operator = str(p.get("operator", "subtract") or "subtract").strip().lower()
+    result_y = _pairwise_compute_values(
+        list(primary.get("y", []) or []),
+        list(secondary.get("y", []) or []),
+        operator,
+    )
+    name = _pairwise_result_name(primary, secondary, operator)
+    result_line = _merge_line_payload(primary, {
+        "name": str(p.get("result_name", name) or name),
+        "x": list(primary.get("x", []) or []),
+        "y": result_y,
+    })
+    return [result_line], warnings
+
+
+def _pairwise_compute_values(primary: List[float], secondary: List[float], operator: str) -> List[float]:
+    if operator == "add":
+        return [left + right for left, right in zip(primary, secondary)]
+    if operator == "subtract":
+        return [left - right for left, right in zip(primary, secondary)]
+    if operator == "multiply":
+        return [left * right for left, right in zip(primary, secondary)]
+    if operator == "divide":
+        return [left / right if abs(right) > 1e-12 else 0.0 for left, right in zip(primary, secondary)]
+    if operator == "abs_diff":
+        return [abs(left - right) for left, right in zip(primary, secondary)]
+    raise ValueError(f"未知双曲线计算方式: {operator}")
+
+
+def _pairwise_result_name(primary: PipelineLine, secondary: PipelineLine, operator: str) -> str:
+    left_name = str(primary.get("name", "主曲线") or "主曲线")
+    right_name = str(secondary.get("name", "副曲线") or "副曲线")
+    symbols = {
+        "add": "+",
+        "subtract": "-",
+        "multiply": "*",
+        "divide": "/",
+        "abs_diff": "|Δ|",
+    }
+    symbol = symbols.get(operator, operator)
+    return f"{left_name} {symbol} {right_name}"
 
 
 def _op_crop(xs: List[float], ys: List[float], p: dict) -> XY:
