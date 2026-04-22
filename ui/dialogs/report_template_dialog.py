@@ -39,7 +39,7 @@ class ReportTemplateDialog(QDialog):
         self._result = result or {}
         self._template_id = template_id
         self._template_ids: list[Optional[str]] = [None]
-        self._placeholder_entries = list_report_template_placeholders()
+        self._placeholder_entries = list_report_template_placeholders(self._result)
         self._setup_ui()
         self._load_template_list()
         self._on_preview()
@@ -63,8 +63,6 @@ class ReportTemplateDialog(QDialog):
         placeholder_row = QHBoxLayout()
         placeholder_row.addWidget(BodyLabel("占位符:", self))
         self._placeholder_combo = ComboBox(self)
-        for entry in self._placeholder_entries:
-            self._placeholder_combo.addItem(f"{entry['label']} · {entry['token']}")
         self._placeholder_combo.currentIndexChanged.connect(self._on_placeholder_changed)
         placeholder_row.addWidget(self._placeholder_combo, 1)
         self._insert_placeholder_btn = PushButton(FIF.ADD, "插入占位符", self)
@@ -120,7 +118,7 @@ class ReportTemplateDialog(QDialog):
         btn_row.addWidget(btn_close)
         root.addLayout(btn_row)
 
-        self._on_placeholder_changed(self._placeholder_combo.currentIndex())
+        self._refresh_placeholder_entries()
 
     def _load_template_list(self):
         self._tmpl_combo.blockSignals(True)
@@ -162,6 +160,26 @@ class ReportTemplateDialog(QDialog):
         if 0 <= index < len(self._placeholder_entries):
             return self._placeholder_entries[index]
         return None
+
+    def _refresh_placeholder_entries(self) -> None:
+        current_token = None
+        current_entry = self._selected_placeholder_entry() if hasattr(self, "_placeholder_combo") else None
+        if current_entry is not None:
+            current_token = current_entry.get("token")
+
+        self._placeholder_entries = list_report_template_placeholders(self._result)
+        self._placeholder_combo.blockSignals(True)
+        self._placeholder_combo.clear()
+        for entry in self._placeholder_entries:
+            self._placeholder_combo.addItem(f"{entry['label']} · {entry['token']}")
+        if self._placeholder_entries:
+            target_index = next(
+                (index for index, entry in enumerate(self._placeholder_entries) if entry.get("token") == current_token),
+                0,
+            )
+            self._placeholder_combo.setCurrentIndex(target_index)
+        self._placeholder_combo.blockSignals(False)
+        self._on_placeholder_changed(self._placeholder_combo.currentIndex())
 
     def _on_placeholder_changed(self, _idx: int) -> None:
         entry = self._selected_placeholder_entry()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
@@ -22,6 +23,35 @@ from models.schemas import DataSeries
 
 _ROLES = ["X 轴", "Y 轴", "Y 误差棒", "X 误差棒", "跳过"]
 SUPPORTED_IMPORT_SUFFIXES = (".csv", ".txt", ".dat", ".tsv", ".xlsx", ".xls", ".json", ".npy", ".npz")
+_TEXT_PREVIEW_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "latin-1")
+
+
+@dataclass
+class PreviewParseResult:
+    headers: List[str]
+    rows: List[List[float]]
+    total_rows: int
+    detected_format: str
+    column_types: List[str] = field(default_factory=list)
+    encoding: str = ""
+    delimiter: str = ""
+    has_header: bool = False
+    skipped_rows: int = 0
+    applied_skip_rows: int = 0
+    header_warning: str = ""
+    sheet_names: List[str] = field(default_factory=list)
+    selected_sheet: str = ""
+    row_offset: int = 0
+    row_limit: int = 80
+
+
+@dataclass
+class TextPreviewPage:
+    content: str
+    total_lines: int
+    encoding: str
+    line_offset: int
+    line_limit: int
 
 
 class ImportDialog(QDialog):
@@ -35,12 +65,24 @@ class ImportDialog(QDialog):
         self._import_completed = False
 
         self._file_path: str = ""
+        self._preferred_file_name: str = ""
         self._raw_headers: List[str] = []
         self._raw_rows: List[List[float]] = []  # 全量数据行
         self._target_data_file_id: Optional[str] = None
         self._last_auto_data_file_name = ""
 
         self._setup_ui()
+
+    def set_default_file_name(self, name: str) -> None:
+        clean_name = str(name or "").strip()
+        old_auto_name = self._default_data_file_name()
+        self._preferred_file_name = clean_name
+        new_auto_name = self._default_data_file_name()
+        if hasattr(self, "_data_file_name_edit"):
+            current_name = self._data_file_name_edit.text().strip()
+            if not current_name or current_name in {old_auto_name, self._last_auto_data_file_name}:
+                self._data_file_name_edit.setText(new_auto_name)
+        self._last_auto_data_file_name = new_auto_name
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
@@ -307,6 +349,8 @@ class ImportDialog(QDialog):
         return f"数据文件 {data_file_id[:8]}"
 
     def _default_data_file_name(self) -> str:
+        if self._preferred_file_name:
+            return self._preferred_file_name
         return Path(self._file_path).name if self._file_path else "导入数据"
 
     def _refresh_data_file_target_choices(self) -> None:
@@ -477,9 +521,403 @@ def _parse_file_preview(file_path: str):
     return _parse_csv(file_path)
 
 
+def analyze_file_preview(
+    file_path: str,
+    *,
+    row_offset: int = 0,
+    row_limit: int = 80,
+    skip_rows: int = 0,
+    sheet_name: str = "",
+) -> PreviewParseResult:
+    suffix = Path(file_path).suffix.lower()
+    safe_offset = max(0, int(row_offset))
+    safe_limit = max(1, int(row_limit))
+    safe_skip_rows = max(0, int(skip_rows))
+    if suffix in (".xlsx", ".xls"):
+        return _analyze_excel_preview(
+            file_path,
+            row_offset=safe_offset,
+            row_limit=safe_limit,
+            skip_rows=safe_skip_rows,
+            sheet_name=sheet_name,
+        )
+    if suffix == ".json":
+        return _analyze_json_preview(file_path, row_offset=safe_offset, row_limit=safe_limit, skip_rows=safe_skip_rows)
+    if suffix in (".npy", ".npz"):
+        return _analyze_npy_preview(file_path, row_offset=safe_offset, row_limit=safe_limit, skip_rows=safe_skip_rows)
+    return _analyze_csv_preview(file_path, row_offset=safe_offset, row_limit=safe_limit, skip_rows=safe_skip_rows)
+
+
+def get_excel_sheet_names(file_path: str) -> List[str]:
+    suffix = Path(file_path).suffix.lower()
+    if suffix not in {".xlsx", ".xls"}:
+        return []
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        return [str(name) for name in workbook.sheetnames]
+    finally:
+        workbook.close()
+
+
+def read_text_preview_page(
+    file_path: str,
+    *,
+    line_offset: int = 0,
+    line_limit: int = 80,
+) -> TextPreviewPage:
+    encoding = _detect_text_encoding(file_path)
+    safe_offset = max(0, int(line_offset))
+    safe_limit = max(1, int(line_limit))
+    lines: List[str] = []
+    total_lines = 0
+    with open(file_path, encoding=encoding, errors="replace", newline="") as handle:
+        for raw_line in handle:
+            if safe_offset <= total_lines < safe_offset + safe_limit:
+                lines.append(raw_line.rstrip("\r\n"))
+            total_lines += 1
+    return TextPreviewPage(
+        content="\n".join(lines),
+        total_lines=total_lines,
+        encoding=encoding,
+        line_offset=safe_offset,
+        line_limit=safe_limit,
+    )
+
+
+def _detect_text_encoding(file_path: str) -> str:
+    for encoding in _TEXT_PREVIEW_ENCODINGS:
+        try:
+            with open(file_path, encoding=encoding, newline="") as handle:
+                for _ in range(32):
+                    if handle.readline() == "":
+                        break
+            return encoding
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("无法识别文本编码，请尝试转换为 UTF-8 后重试")
+
+
+def _iter_filtered_text_lines(file_path: str, encoding: str, *, skip_rows: int = 0):
+    skipped = 0
+    with open(file_path, encoding=encoding, newline="") as handle:
+        for raw_line in handle:
+            line = raw_line.rstrip("\r\n")
+            if not line.strip():
+                continue
+            if line.lstrip().startswith(("#", "%", "!", "/")):
+                continue
+            if skipped < skip_rows:
+                skipped += 1
+                continue
+            yield line
+
+
+def _detect_delimiter(lines: List[str]):
+    joined = "\n".join(lines[:5])
+    if "\t" in joined:
+        return "\t"
+    comma_score = sum(line.count(",") for line in lines[:5])
+    semicolon_score = sum(line.count(";") for line in lines[:5])
+    if comma_score == 0 and semicolon_score == 0:
+        return None
+    return "," if comma_score >= semicolon_score else ";"
+
+
+def _describe_delimiter(delimiter) -> str:
+    if delimiter == "\t":
+        return "Tab"
+    if delimiter == ",":
+        return "逗号 (,)"
+    if delimiter == ";":
+        return "分号 (;)"
+    return "空白字符"
+
+
+def _split_text_fields(line: str, delimiter):
+    if delimiter is None:
+        return re.split(r"\s+", line.strip())
+    return line.split(delimiter)
+
+
+def _looks_like_numeric_row(values: List[str]) -> bool:
+    try:
+        [float(value.strip()) for value in values if value.strip()]
+        return True
+    except ValueError:
+        return False
+
+
+def _build_column_types(rows: List[List[float]], ncols: int) -> List[str]:
+    seen = [False] * ncols
+    has_fraction = [False] * ncols
+    for row in rows:
+        if len(row) != ncols:
+            continue
+        for column_index, value in enumerate(row):
+            seen[column_index] = True
+            if not float(value).is_integer():
+                has_fraction[column_index] = True
+    result: List[str] = []
+    for column_index in range(ncols):
+        if not seen[column_index]:
+            result.append("空列")
+        elif has_fraction[column_index]:
+            result.append("浮点数")
+        else:
+            result.append("整数")
+    return result
+
+
+def _update_column_type_flags(seen: List[bool], has_fraction: List[bool], row: List[float]) -> None:
+    for column_index, value in enumerate(row):
+        seen[column_index] = True
+        if not float(value).is_integer():
+            has_fraction[column_index] = True
+
+
+def _column_types_from_flags(seen: List[bool], has_fraction: List[bool]) -> List[str]:
+    result: List[str] = []
+    for column_index in range(len(seen)):
+        if not seen[column_index]:
+            result.append("空列")
+        elif has_fraction[column_index]:
+            result.append("浮点数")
+        else:
+            result.append("整数")
+    return result
+
+
+def _iter_excel_non_empty_rows(worksheet, *, skip_rows: int = 0):
+    skipped = 0
+    for row in worksheet.iter_rows(values_only=True):
+        values = list(row)
+        if any(value not in (None, "") for value in values):
+            if skipped < skip_rows:
+                skipped += 1
+                continue
+            yield values
+
+
+def _coerce_excel_numeric_row(row) -> Optional[List[float]]:
+    values: List[float] = []
+    for value in row:
+        if value in (None, ""):
+            continue
+        try:
+            values.append(float(value))
+        except (TypeError, ValueError):
+            return None
+    return values or None
+
+
+def _analyze_csv_preview(file_path: str, *, row_offset: int, row_limit: int, skip_rows: int) -> PreviewParseResult:
+    encoding = _detect_text_encoding(file_path)
+    sample_lines: List[str] = []
+    for line in _iter_filtered_text_lines(file_path, encoding, skip_rows=skip_rows):
+        sample_lines.append(line)
+        if len(sample_lines) >= 5:
+            break
+    if not sample_lines:
+        raise ValueError("文件为空，或可解析内容为空")
+
+    delimiter = _detect_delimiter(sample_lines)
+    first_fields = _split_text_fields(sample_lines[0], delimiter)
+    has_header = False if skip_rows > 0 else not _looks_like_numeric_row(first_fields)
+    start_index = 1 if has_header else 0
+
+    length_counts: dict[int, int] = {}
+    invalid_rows = 0
+    for line_index, line in enumerate(_iter_filtered_text_lines(file_path, encoding, skip_rows=skip_rows)):
+        if line_index < start_index:
+            continue
+        parts = _split_text_fields(line, delimiter)
+        try:
+            row = [float(value) for value in parts if value.strip()]
+        except ValueError:
+            invalid_rows += 1
+            continue
+        if not row:
+            continue
+        length_counts[len(row)] = length_counts.get(len(row), 0) + 1
+
+    if not length_counts:
+        raise ValueError("未找到可导入的数值行，请检查编码、分隔符或表头设置")
+
+    ncols = max(length_counts, key=lambda column_count: (length_counts[column_count], column_count))
+    headers = [value.strip().strip('"\'') for value in first_fields]
+    header_warning = ""
+    if has_header and (len(headers) != ncols or any(not header for header in headers)):
+        header_warning = "表头缺项或错误"
+    if not has_header or header_warning:
+        headers = [f"col_{index}" for index in range(ncols)]
+
+    rows: List[List[float]] = []
+    seen_types = [False] * ncols
+    has_fraction = [False] * ncols
+    total_rows = 0
+    for line_index, line in enumerate(_iter_filtered_text_lines(file_path, encoding, skip_rows=skip_rows)):
+        if line_index < start_index:
+            continue
+        parts = _split_text_fields(line, delimiter)
+        try:
+            row = [float(value) for value in parts if value.strip()]
+        except ValueError:
+            continue
+        if not row or len(row) != ncols:
+            continue
+        _update_column_type_flags(seen_types, has_fraction, row)
+        if row_offset <= total_rows < row_offset + row_limit:
+            rows.append(row)
+        total_rows += 1
+
+    return PreviewParseResult(
+        headers=headers,
+        rows=rows,
+        total_rows=total_rows,
+        detected_format="文本表格",
+        column_types=_column_types_from_flags(seen_types, has_fraction),
+        encoding=encoding,
+        delimiter=_describe_delimiter(delimiter),
+        has_header=has_header,
+        skipped_rows=invalid_rows,
+        applied_skip_rows=skip_rows,
+        header_warning=header_warning,
+        row_offset=row_offset,
+        row_limit=row_limit,
+    )
+
+
+def _analyze_excel_preview(
+    file_path: str,
+    *,
+    row_offset: int,
+    row_limit: int,
+    skip_rows: int,
+    sheet_name: str,
+) -> PreviewParseResult:
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        sheet_names = [str(name) for name in workbook.sheetnames]
+        if not sheet_names:
+            raise ValueError("Excel 工作簿中没有可用工作表")
+        selected_sheet = sheet_name if sheet_name in sheet_names else sheet_names[0]
+        worksheet = workbook[selected_sheet]
+
+        row_iterator = _iter_excel_non_empty_rows(worksheet, skip_rows=skip_rows)
+        try:
+            first_row = next(row_iterator)
+        except StopIteration as exc:
+            raise ValueError(f"工作表“{selected_sheet}”为空") from exc
+
+        first_values = [str(value).strip() if value is not None else "" for value in first_row]
+        has_header = False if skip_rows > 0 else not _looks_like_numeric_row(first_values)
+        length_counts: dict[int, int] = {}
+        invalid_rows = 0
+
+        for row_index, row in enumerate(_iter_excel_non_empty_rows(worksheet, skip_rows=skip_rows)):
+            if has_header and row_index == 0:
+                continue
+            numeric_row = _coerce_excel_numeric_row(row)
+            if numeric_row is None:
+                invalid_rows += 1
+                continue
+            length_counts[len(numeric_row)] = length_counts.get(len(numeric_row), 0) + 1
+
+        if not length_counts:
+            raise ValueError(f"工作表“{selected_sheet}”中未找到可导入的数值数据")
+
+        ncols = max(length_counts, key=lambda column_count: (length_counts[column_count], column_count))
+        raw_headers = [str(value).strip() if value not in (None, "") else "" for value in first_row]
+        header_warning = ""
+        if has_header and (len(raw_headers) != ncols or any(not header for header in raw_headers)):
+            header_warning = "表头缺项或错误"
+        headers = raw_headers
+        if not has_header or header_warning:
+            headers = [f"col_{index}" for index in range(ncols)]
+
+        rows: List[List[float]] = []
+        seen_types = [False] * ncols
+        has_fraction = [False] * ncols
+        total_rows = 0
+        for row_index, row in enumerate(_iter_excel_non_empty_rows(worksheet, skip_rows=skip_rows)):
+            if has_header and row_index == 0:
+                continue
+            numeric_row = _coerce_excel_numeric_row(row)
+            if numeric_row is None or len(numeric_row) != ncols:
+                continue
+            _update_column_type_flags(seen_types, has_fraction, numeric_row)
+            if row_offset <= total_rows < row_offset + row_limit:
+                rows.append(numeric_row)
+            total_rows += 1
+
+        return PreviewParseResult(
+            headers=headers,
+            rows=rows,
+            total_rows=total_rows,
+            detected_format="Excel",
+            column_types=_column_types_from_flags(seen_types, has_fraction),
+            encoding="OpenXML",
+            delimiter="工作表结构",
+            has_header=has_header,
+            skipped_rows=invalid_rows,
+            applied_skip_rows=skip_rows,
+            header_warning=header_warning,
+            sheet_names=sheet_names,
+            selected_sheet=selected_sheet,
+            row_offset=row_offset,
+            row_limit=row_limit,
+        )
+    finally:
+        workbook.close()
+
+
+def _analyze_json_preview(file_path: str, *, row_offset: int, row_limit: int, skip_rows: int) -> PreviewParseResult:
+    headers, rows = _parse_json(file_path)
+    safe_skip_rows = min(max(0, skip_rows), len(rows))
+    available_rows = rows[safe_skip_rows:]
+    ncols = len(headers)
+    return PreviewParseResult(
+        headers=headers,
+        rows=available_rows[row_offset: row_offset + row_limit],
+        total_rows=len(available_rows),
+        detected_format="JSON",
+        column_types=_build_column_types(rows, ncols),
+        encoding="utf-8",
+        delimiter="键结构",
+        has_header=True,
+        applied_skip_rows=safe_skip_rows,
+        row_offset=row_offset,
+        row_limit=row_limit,
+    )
+
+
+def _analyze_npy_preview(file_path: str, *, row_offset: int, row_limit: int, skip_rows: int) -> PreviewParseResult:
+    headers, rows = _parse_npy(file_path)
+    safe_skip_rows = min(max(0, skip_rows), len(rows))
+    available_rows = rows[safe_skip_rows:]
+    ncols = len(headers)
+    return PreviewParseResult(
+        headers=headers,
+        rows=available_rows[row_offset: row_offset + row_limit],
+        total_rows=len(available_rows),
+        detected_format="NumPy",
+        column_types=_build_column_types(rows, ncols),
+        encoding="二进制数组",
+        delimiter="数组列",
+        has_header=True,
+        applied_skip_rows=safe_skip_rows,
+        row_offset=row_offset,
+        row_limit=row_limit,
+    )
+
+
 def _parse_csv(file_path: str):
     raw_lines: List[str] = []
-    for enc in ("utf-8-sig", "utf-8", "gbk", "latin-1"):
+    for enc in _TEXT_PREVIEW_ENCODINGS:
         try:
             with open(file_path, encoding=enc, newline="") as f:
                 raw_lines = f.readlines()
@@ -491,15 +929,10 @@ def _parse_csv(file_path: str):
     if not data_lines:
         raise ValueError("文件为空")
 
-    sep = "\t" if "\t" in "\n".join(data_lines[:5]) else (
-        "," if data_lines[0].count(",") >= data_lines[0].count(";") else ";"
-        if ";" in data_lines[0] else None
-    )
+    sep = _detect_delimiter(data_lines[:5])
 
     def split(line):
-        if sep is None:
-            return re.split(r"\s+", line.strip())
-        return line.split(sep)
+        return _split_text_fields(line, sep)
 
     headers: Optional[List[str]] = None
     start = 0

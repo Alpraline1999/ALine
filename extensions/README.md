@@ -1,69 +1,104 @@
 # ALine 扩展使用说明
 
-ALine 会在启动时自动加载 `extensions/*.py`。当前支持 5 类扩展：
+ALine 启动时会自动扫描扩展文件。当前只支持 3 类扩展：
 
 - `ProcessingExtension`: `(xs, ys, params) -> (xs, ys)`
 - `AnalysisExtension`: `(inputs, params) -> result_dict`
-- `PlotExtension`: 兼容旧签名 `(axis, series, options)`，推荐使用新签名 `(plot_context, options)`
-- `PlotStyleExtension`: `(figure_state_dict, options) -> figure_state_dict`
-- `CurveStyleExtension`: `(curve_style_dict, options) -> curve_style_dict`
+- `PlotExtension`: 推荐使用 `(plot_context, options)`；旧式 `(axis, plotted_series, options)` 仍兼容
 
-## 1. 目录约定
+`PlotStyleExtension` 和 `CurveStyleExtension` 已不再支持。曲线透明度等样式参数现在直接由界面内置表单管理，不再通过扩展注入。
 
-- 扩展文件放在当前工作区的 `extensions` 目录。
+## 1. 加载模型
+
+- 仓库内置扩展位于当前工作区的 `extensions` 目录；打包后会随程序一起分发。
+- 设置页可以控制“是否加载内置扩展”，并支持按扩展文件逐项禁用。
+- 外部扩展仍然支持，默认扫描目录为 `~/.config/aline/extensions`。
 - 文件名建议使用 `snake_case.py`。
 - 以下划线开头的 Python 文件不会被自动加载。
-- 不再维护单独的 JSON 示例文件。示例配置统一写在每个扩展的 `default_options` 里，界面中的“重置配置”会回填这份默认 JSON。
+- 每个扩展文件都必须导出 `register_extensions(registry)`。
 
-当前仓库自带 5 个纯 Python 示例：
+当前仓库自带的内置示例包括：
 
-- `processing_scale_demo.py`: 处理扩展，演示倍率缩放和基线偏移
-- `analysis_peak_span_demo.py`: 分析扩展，返回峰谷跨度和样本数
-- `plot_reference_line_demo.py`: 详细的 matplotlib 上下文式绘图扩展示例
-- `plot_style_presentation_demo.py`: 绘图样式扩展，统一线宽、点大小和网格
-- `curve_style_highlight_demo.py`: 曲线样式扩展，突出当前选中曲线
+- `processing_kalman_filter_demo.py`: 处理扩展，演示卡尔曼滤波
+- `analysis_spectrum_demo.py`: 分析扩展，返回频谱结果、主频和可绘制曲线
+- `plot_reference_line_demo.py`: 绘图扩展，添加参考线和注释
+- `plot_arrow_annotation_demo.py`: 绘图扩展，绘制箭头标注
+- `plot_rectangle_annotation_demo.py`: 绘图扩展，绘制矩形框
+- `plot_circle_annotation_demo.py`: 绘图扩展，绘制圆形框
+- `plot_text_annotation_demo.py`: 绘图扩展，绘制文字说明
+- `plot_science_style_demo.py`: 绘图扩展，套用 Science 风格图幅
+- `plot_polar_projection_demo.py`: 绘图扩展，将曲线改绘为极坐标图
 
-修改 `extensions/*.py` 后，不需要重启应用。处理页、分析页、图表页右侧扩展面板都有“重载扩展”按钮，点击即可重新扫描。
+修改扩展文件后通常不需要重启应用。处理页、分析页和可视化页都提供“重载扩展”入口，可重新扫描当前 builtin 与外部扩展目录。
 
 ## 2. 入口函数
 
-每个扩展文件都必须导出：
+每个扩展文件都必须定义：
 
 ```python
 def register_extensions(registry):
     ...
 ```
 
-ALine 会把 `ExtensionRegistry` 实例传给这个函数，由扩展自行完成注册。
+ALine 会将 `ExtensionRegistry` 实例传给这个函数，由扩展自行完成注册。
 
 ## 3. 配置如何进入扩展
 
-扩展面板里的 JSON 会在应用时原样传给处理函数：
+- 处理扩展 / 分析扩展：界面 JSON 作为 `params` 传入
+- 绘图扩展：界面 JSON 作为 `options` 传入
 
-- 处理扩展 / 分析扩展：作为 `params`
-- 绘图扩展 / 绘图样式扩展 / 曲线样式扩展：作为 `options`
+建议同时提供：
 
-为了让界面正确展示字段说明，建议同时提供：
+- `default_options`: 面板默认配置
+- `config_fields`: 字段说明，用于在界面中展示配置提示
 
-- `default_options`: 默认配置
-- `config_fields`: 字段描述列表
-
-扩展面板会按 `key: field_type; 可选/必选; description` 的格式展示这些字段，因此示例里不再依赖 `label`。
-
-字段描述结构如下：
+字段描述结构示例：
 
 ```python
 ExtensionConfigField(
-    key="factor",
-    description="把当前 Y 值乘以这个倍率。",
+    key="window",
+    description="平滑窗口长度。",
     field_type="number",
     required=False,
-    default=2.0,
-    choices=(),
+    default=7,
 )
 ```
 
-## 4. PlotExtensionContext 速览
+## 4. AnalysisExtension 结果约定
+
+分析扩展除了返回摘要字段外，还可以约定一些通用键，让分析页和报告模板自动消费：
+
+- 普通标量字段：例如 `dominant_frequency`、`dominant_amplitude`
+- 这些字段会自动出现在报告模板占位符列表中，可直接写成 `{{dominant_frequency}}` 或 `{{dominant_frequency:.2f}}`
+- 以下划线开头的字段会被视为内部字段，不进入摘要列表和动态占位符
+- `_plot_series`: 供分析页直接绘图的曲线列表
+- `x_label` / `y_label` / `plot_title`: 自定义结果图的坐标轴标题和图标题
+
+`_plot_series` 的典型结构如下：
+
+```python
+{
+    "analysis_type": "spectrum_analysis",
+    "dominant_frequency": 12.5,
+    "dominant_amplitude": 3.4,
+    "x_label": "频率 (Hz)",
+    "y_label": "幅值",
+    "plot_title": "频谱分析",
+    "_plot_series": [
+        {
+            "name": "频谱",
+            "x": [0.0, 1.0, 2.0],
+            "y": [0.2, 3.4, 1.1],
+            "color": "#0078D4",
+            "line_width": 1.6,
+        }
+    ],
+}
+```
+
+分析页会优先绘制 `_plot_series` 中的数据；导出“分析曲线”时会导出其中第一条曲线。
+
+## 5. PlotExtensionContext 速览
 
 推荐为 `PlotExtension` 使用上下文签名：
 
@@ -72,78 +107,61 @@ def handler(plot_context, options):
     ...
 ```
 
-`plot_context` 会提供这些常用字段：
+`plot_context` 常用字段包括：
 
 - `figure` / `canvas`: 当前 matplotlib Figure 与画布
-- `axis` / `axes`: 当前主轴与 Figure 中全部轴
-- `visible_series`: 还未绘制前的可见曲线源数据
+- `axis` / `axes`: 当前主轴与 Figure 内全部轴
+- `visible_series`: 默认绘制前的可见曲线源数据
 - `plotted_series`: 默认绘制后得到的曲线摘要
 - `figure_state`: 当前绘图状态字典
-- `plot_style_extras`: 样式扩展附加到图表页的额外 matplotlib 参数
 - `theme_colors`: 当前主题下的背景色、前景色、网格色
 - `phase`: `before_plot` 或 `after_plot`
-- `skip_default_plot`: 设为 `True` 可跳过默认折线绘制
+- `skip_default_plot`: 设为 `True` 可跳过默认曲线绘制
 - `skip_default_formatting`: 设为 `True` 可跳过默认坐标轴格式化
 - `skip_default_layout`: 设为 `True` 可跳过默认布局调整
 
-这允许扩展在 `before_plot` 阶段放置参考区域、额外轴或自定义底图，也可以在 `after_plot` 阶段对已经画出的曲线做标注、统计摘要或二次装饰。
+如果扩展希望以“最小覆盖”方式修改当前图表样式，而不是直接硬改 matplotlib 对象，可使用以下补丁方法：
 
-## 5. 详细 Matplotlib 示例
+- `patch_figure_state({...})`: 覆盖 `FigureState` 中的字段，例如 `x_label`、`legend_pos`、`line_width`
+- `patch_plot_style({...})`: 覆盖 `plot_style_extras` 中的附加样式，例如 `tick_params`、`legend_kwargs`
+- `patch_selected_curve_style({...})`: 覆盖当前选中曲线的样式字段
+- `patch_curve_style(curve_identity, {...})`: 覆盖指定曲线的样式字段
 
-`plot_reference_line_demo.py` 是当前最完整的绘图扩展示例。它演示了 4 件事：
+这些补丁会与界面设置按“后操作覆盖先操作、且仅覆盖被修改参数”的规则合并。适合做 Science 风格、极坐标模式等需要和设置面板共同工作的绘图扩展。
 
-- 在 `before_plot` 阶段基于当前可见曲线计算均值，并绘制水平参考线
-- 可选地绘制一段半透明参考带
-- 在 `after_plot` 阶段找到最高点并添加注释
-- 把统计摘要追加到标题中，同时保留 matplotlib 原生接口的兼容写法
+这允许扩展在 `before_plot` 阶段放置参考区域、底图或额外轴，也允许在 `after_plot` 阶段补充注释、标记和统计信息。
 
-核心写法类似这样：
-
-```python
-def draw_reference_overlay(plot_context, options):
-    axis = plot_context.axis
-    points = _visible_points(plot_context.visible_series)
-    if not points:
-        return
-
-    mean_level = sum(point[2] for point in points) / len(points)
-
-    if plot_context.phase == "before_plot":
-        axis.axhline(mean_level, color="#C23B22", linestyle="--")
-        return
-
-    if plot_context.phase == "after_plot":
-        peak_name, peak_x, peak_y = max(points, key=lambda item: item[2])
-        axis.annotate(f"峰值: {peak_name}", xy=(peak_x, peak_y), xytext=(10, 12), textcoords="offset points")
-```
-
-如果你要做 `subplot`、`inset axes`、`colorbar`、极坐标或完全自绘整张图，也建议沿用这个上下文签名。
-
-## 6. 最小可运行示例
+## 6. 最小示例
 
 ```python
-from core.extension_api import ExtensionConfigField, ProcessingExtension
+from core.extension_api import AnalysisExtension, ExtensionConfigField
 
 
-def scale_y(xs, ys, params):
-    factor = float(params.get("factor", 1.0))
-    return list(xs), [float(value) * factor for value in ys]
+def spectrum(inputs, params):
+    xs = [0.0, 1.0, 2.0]
+    ys = [0.2, 3.4, 1.1]
+    return {
+        "analysis_type": "demo_spectrum",
+        "source_name": inputs[0].get("name", ""),
+        "dominant_frequency": 1.0,
+        "_plot_series": [{"name": "频谱", "x": xs, "y": ys}],
+    }
 
 
 def register_extensions(registry):
-    registry.register_processing(
-        ProcessingExtension(
-            type="scale_y",
-            name="Y 倍率缩放",
-            handler=scale_y,
-            description="按给定倍率缩放 Y 值。",
-            default_options={"factor": 2.0},
+    registry.register_analysis(
+        AnalysisExtension(
+            type="demo_spectrum",
+            name="示例频谱分析",
+            handler=spectrum,
+            description="返回一个带自定义占位符和结果曲线的分析结果。",
+            default_options={"window": 7},
             config_fields=[
                 ExtensionConfigField(
-                    key="factor",
-                    description="把当前 Y 值乘以这个倍率。",
+                    key="window",
+                    description="频谱窗口长度。",
                     field_type="number",
-                    default=2.0,
+                    default=7,
                 )
             ],
         )
@@ -152,14 +170,15 @@ def register_extensions(registry):
 
 ## 7. 调试建议
 
-- 扩展没有出现在界面里时，先检查文件是否位于 `extensions` 目录。
-- 再检查是否实现了 `register_extensions(registry)`。
-- 最后检查 `type` 是否唯一；重复的 `type` 会覆盖旧扩展。
-- 如果扩展面板 JSON 解析失败，界面会提示配置必须是合法 JSON 对象。
-- 如果是绘图扩展，优先确认 `phase` 是否符合你的绘制时机。
+- 扩展未出现在界面中时，先检查文件是否位于 builtin `extensions` 目录或默认外部目录 `~/.config/aline/extensions`。
+- 确认文件中实现了 `register_extensions(registry)`。
+- 确认 `type` 唯一；重复的 `type` 会覆盖已有扩展。
+- 如果扩展面板 JSON 解析失败，界面会提示必须是合法 JSON 对象。
+- 如果分析结果希望参与报告模板，返回字段应是标量，且键名不要以下划线开头。
+- 如果分析结果希望直接绘图，确保 `_plot_series` 中每条曲线都提供等长的 `x` 和 `y`。
 
 ## 8. 程序化调用
 
 - 手动加载目录：`extension_registry.load_from_directory("./extensions")`
-- 处理扩展：`processing.data_engine.apply_operation(..., {"type": "scale_y", "params": {"factor": 2}})`
-- 分析扩展：`core.analysis_engine.run_analysis("peak_span", inputs, params)`
+- 处理扩展：`processing.data_engine.apply_operation(..., {"type": "kalman_filter", "params": {...}})`
+- 分析扩展：`core.analysis_engine.run_analysis("spectrum_analysis", inputs, params)`

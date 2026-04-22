@@ -19,6 +19,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1147,6 +1148,139 @@ class TestAnalysisEngine(unittest.TestCase):
             finally:
                 extension_registry.unregister_processing("helper_shift")
 
+    def test_load_configured_extensions_combines_builtin_and_external_directories(self):
+        from core.extension_api import (
+            default_extensions_directory,
+            extension_registry,
+            load_configured_extensions,
+        )
+        from core.extension_settings import set_external_extensions_directory
+
+        extension_registry.clear()
+        try:
+            with tempfile.TemporaryDirectory() as builtin_dir, tempfile.TemporaryDirectory() as external_dir, tempfile.TemporaryDirectory() as config_dir:
+                builtin_path = Path(builtin_dir) / "builtin_extension.py"
+                external_path = Path(external_dir) / "external_extension.py"
+                config_path = Path(config_dir) / "extension_settings.json"
+
+                builtin_path.write_text(textwrap.dedent(
+                    """
+                    from core.extension_api import ProcessingExtension
+
+                    def _builtin(xs, ys, params):
+                        return list(xs), [value + 1 for value in ys]
+
+                    def register_extensions(registry):
+                        registry.register_processing(
+                            ProcessingExtension(type='shared_probe', name='内置探针', handler=_builtin)
+                        )
+                    """
+                ), encoding="utf-8")
+                external_path.write_text(textwrap.dedent(
+                    """
+                    from core.extension_api import AnalysisExtension, ProcessingExtension
+
+                    def _external(xs, ys, params):
+                        return list(xs), [value + 2 for value in ys]
+
+                    def _summary(inputs, params):
+                        return {'analysis_type': 'external_probe', 'count': len(inputs)}
+
+                    def register_extensions(registry):
+                        registry.register_processing(
+                            ProcessingExtension(type='shared_probe', name='外部探针', handler=_external)
+                        )
+                        registry.register_analysis(
+                            AnalysisExtension(type='external_probe', name='外部分析', handler=_summary)
+                        )
+                    """
+                ), encoding="utf-8")
+
+                with mock.patch("core.extension_settings._CONFIG_PATH", config_path):
+                    set_external_extensions_directory(external_dir)
+                    report = load_configured_extensions(builtin_dir)
+
+                self.assertEqual(report["errors"], [])
+                self.assertEqual(len(report["loaded"]), 2)
+                self.assertEqual(extension_registry.get_processing("shared_probe").name, "外部探针")
+                self.assertIsNotNone(extension_registry.get_analysis("external_probe"))
+        finally:
+            extension_registry.clear()
+            extension_registry.load_from_directory(default_extensions_directory())
+
+    def test_load_configured_extensions_respects_builtin_extension_settings(self):
+        from core.extension_api import (
+            default_extensions_directory,
+            extension_registry,
+            list_builtin_extension_specs,
+            load_configured_extensions,
+        )
+        from core.extension_settings import set_builtin_extension_settings, set_external_extensions_directory
+
+        extension_registry.clear()
+        try:
+            with tempfile.TemporaryDirectory() as builtin_dir, tempfile.TemporaryDirectory() as external_dir, tempfile.TemporaryDirectory() as config_dir:
+                config_path = Path(config_dir) / "extension_settings.json"
+
+                (Path(builtin_dir) / "builtin_enabled.py").write_text(textwrap.dedent(
+                    """
+                    from core.extension_api import ProcessingExtension
+
+                    def _enabled(xs, ys, params):
+                        return list(xs), [value + 1 for value in ys]
+
+                    def register_extensions(registry):
+                        registry.register_processing(
+                            ProcessingExtension(type='builtin_enabled', name='启用内置扩展', handler=_enabled)
+                        )
+                    """
+                ), encoding="utf-8")
+                (Path(builtin_dir) / "builtin_disabled.py").write_text(textwrap.dedent(
+                    """
+                    from core.extension_api import ProcessingExtension
+
+                    def _disabled(xs, ys, params):
+                        return list(xs), [value + 2 for value in ys]
+
+                    def register_extensions(registry):
+                        registry.register_processing(
+                            ProcessingExtension(type='builtin_disabled', name='禁用内置扩展', handler=_disabled)
+                        )
+                    """
+                ), encoding="utf-8")
+                (Path(external_dir) / "external_extension.py").write_text(textwrap.dedent(
+                    """
+                    from core.extension_api import AnalysisExtension
+
+                    def _summary(inputs, params):
+                        return {'analysis_type': 'external_summary', 'count': len(inputs)}
+
+                    def register_extensions(registry):
+                        registry.register_analysis(
+                            AnalysisExtension(type='external_summary', name='外部分析', handler=_summary)
+                        )
+                    """
+                ), encoding="utf-8")
+
+                with mock.patch("core.extension_settings._CONFIG_PATH", config_path):
+                    set_external_extensions_directory(external_dir)
+                    set_builtin_extension_settings(True, ["builtin_disabled"])
+                    report = load_configured_extensions(builtin_dir)
+                    specs = list_builtin_extension_specs(builtin_dir)
+
+                self.assertEqual(report["errors"], [])
+                self.assertEqual(len(report["loaded"]), 2)
+                self.assertIsNotNone(extension_registry.get_processing("builtin_enabled"))
+                self.assertIsNone(extension_registry.get_processing("builtin_disabled"))
+                self.assertIsNotNone(extension_registry.get_analysis("external_summary"))
+                self.assertEqual(
+                    {item["id"]: item["enabled"] for item in specs},
+                    {"builtin_disabled": False, "builtin_enabled": True},
+                )
+        finally:
+            extension_registry.clear()
+            extension_registry.load_from_directory(default_extensions_directory())
+
     def test_extension_registry_exposes_last_load_report(self):
         from core.extension_api import (
             extension_registry,
@@ -1225,12 +1359,68 @@ class TestAnalysisEngine(unittest.TestCase):
             try:
                 self.assertEqual(len(processing_details["loaded"]), 1)
                 self.assertEqual(processing_details["loaded"][0]["categories"], ["processing"])
+                self.assertEqual(processing_details["loaded"][0]["source"], "builtin")
                 self.assertEqual(len(analysis_details["errors"]), 1)
                 self.assertIn("analysis", analysis_details["errors"][0]["categories"])
+                self.assertEqual(analysis_details["errors"][0]["source"], "builtin")
                 self.assertEqual(processing_status["registered_count"], 1)
+                self.assertEqual(processing_status["source_summary"]["loaded_extension_counts"]["builtin"], 1)
                 self.assertEqual(analysis_status["error_count"], 1)
             finally:
                 extension_registry.unregister_processing("processing_probe")
+
+    def test_extension_load_report_shows_builtin_and_external_sources(self):
+        from core.extension_api import extension_registry, format_extension_load_report
+
+        with tempfile.TemporaryDirectory() as builtin_dir, tempfile.TemporaryDirectory() as external_dir:
+            builtin_path = Path(builtin_dir) / "builtin_probe.py"
+            external_path = Path(external_dir) / "external_probe.py"
+            broken_path = Path(external_dir) / "broken_analysis.py"
+
+            builtin_path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import ProcessingExtension
+
+                def _noop(xs, ys, params):
+                    return list(xs), list(ys)
+
+                def register_extensions(registry):
+                    registry.register_processing(
+                        ProcessingExtension(type='builtin_probe', name='内置探针', handler=_noop)
+                    )
+                """
+            ), encoding="utf-8")
+            external_path.write_text(textwrap.dedent(
+                """
+                from core.extension_api import AnalysisExtension
+
+                def _analyze(inputs, params):
+                    return {"analysis_type": "external_probe", "value": 1}
+
+                def register_extensions(registry):
+                    registry.register_analysis(
+                        AnalysisExtension(type='external_probe', name='外部探针', handler=_analyze)
+                    )
+                """
+            ), encoding="utf-8")
+            broken_path.write_text("raise RuntimeError('external boom')\n", encoding="utf-8")
+
+            extension_registry.clear()
+            extension_registry.load_from_sources(
+                file_paths=[builtin_path],
+                directories=[external_dir],
+                file_source_kind="builtin",
+                directory_source_kind="external",
+            )
+            report = format_extension_load_report()
+            try:
+                self.assertIn("已注册扩展: 2（内置 1 / 外部 1）", report)
+                self.assertIn("builtin_probe.py [内置]", report)
+                self.assertIn("external_probe.py [外部]", report)
+                self.assertIn("broken_analysis.py [外部]", report)
+            finally:
+                extension_registry.unregister_processing("builtin_probe")
+                extension_registry.unregister_analysis("external_probe")
 
     def test_reload_builtin_extensions_replaces_previous_registry_entries(self):
         from core.extension_api import default_extensions_directory, extension_registry, reload_builtin_extensions
@@ -1282,11 +1472,13 @@ class TestAnalysisEngine(unittest.TestCase):
 
         directory = default_extensions_directory()
         expected = {
-            "processing_scale_demo.py": ("processing", "demo_processing_scale", {"factor", "baseline"}),
-            "analysis_peak_span_demo.py": ("analysis", "demo_analysis_peak_span", {"unit"}),
+            "processing_kalman_filter_demo.py": ("processing", "kalman_filter", {"process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
+            "analysis_spectrum_demo.py": ("analysis", "spectrum_analysis", {"sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
             "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
-            "plot_style_presentation_demo.py": ("plot_style", "demo_plot_style_presentation", {"grid", "grid_alpha", "line_width", "marker_size"}),
-            "curve_style_highlight_demo.py": ("curve_style", "demo_curve_style_highlight", {"color", "linestyle", "linewidth", "marker", "alpha", "markevery"}),
+            "plot_arrow_annotation_demo.py": ("plot", "plot_arrow_annotation", {"coordinate_mode", "start_x", "start_y", "end_x", "end_y", "text"}),
+            "plot_rectangle_annotation_demo.py": ("plot", "plot_rectangle_annotation", {"coordinate_mode", "x", "y", "width", "height", "edge_color"}),
+            "plot_circle_annotation_demo.py": ("plot", "plot_circle_annotation", {"coordinate_mode", "center_x", "center_y", "radius", "edge_color"}),
+            "plot_text_annotation_demo.py": ("plot", "plot_text_annotation", {"coordinate_mode", "x", "y", "text", "color"}),
         }
 
         registry = ExtensionRegistry()
@@ -1299,8 +1491,6 @@ class TestAnalysisEngine(unittest.TestCase):
             "processing": registry.get_processing,
             "analysis": registry.get_analysis,
             "plot": registry.get_plot,
-            "plot_style": registry.get_plot_style,
-            "curve_style": registry.get_curve_style,
         }
 
         self.assertEqual(sorted(path.name for path in directory.glob("*.json")), [])
@@ -2187,6 +2377,58 @@ class TestRenderReport(unittest.TestCase):
         from core.analysis_engine import render_report
         r = render_report("Peaks: {{peak_count}}", {"count": 5})
         self.assertIn("5", r)
+
+    def test_custom_scalar_placeholder_can_be_rendered(self):
+        from core.analysis_engine import render_report
+
+        rendered = render_report(
+            "主频: {{dominant_frequency:.2f}} Hz",
+            {"analysis_type": "spectrum_analysis", "dominant_frequency": 12.3456},
+        )
+
+        self.assertIn("12.35", rendered)
+
+    def test_placeholder_list_includes_custom_scalar_keys(self):
+        from core.analysis_engine import list_report_template_placeholders
+
+        placeholders = list_report_template_placeholders(
+            {"analysis_type": "spectrum_analysis", "dominant_frequency": 12.5}
+        )
+
+        self.assertTrue(any(item["token"] == "{{dominant_frequency}}" for item in placeholders))
+
+    def test_builtin_placeholder_groups_are_not_all_common(self):
+        from core.analysis_engine import list_report_template_placeholders
+
+        placeholders = list_report_template_placeholders()
+        group_by_token = {item["token"]: item["group"] for item in placeholders}
+
+        self.assertEqual(group_by_token["{{date}}"], "通用")
+        self.assertEqual(group_by_token["{{r2}}"], "曲线拟合")
+        self.assertEqual(group_by_token["{{peak_count}}"], "峰值检测")
+        self.assertEqual(group_by_token["{{mae}}"], "误差比较")
+
+    def test_placeholder_list_includes_declared_extension_fields_before_run(self):
+        from core.analysis_engine import list_report_template_placeholders
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="declared_placeholder_probe",
+                name="声明占位符探针",
+                handler=lambda inputs, params: {"analysis_type": "declared_placeholder_probe", "dominant_frequency": 9.9},
+                report_placeholders=[
+                    {"key": "dominant_frequency", "label": "主频", "description": "主频字段"},
+                ],
+            )
+        )
+        try:
+            placeholders = list_report_template_placeholders()
+            entry = next((item for item in placeholders if item["token"] == "{{dominant_frequency}}"), None)
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["group"], "声明占位符探针")
+        finally:
+            extension_registry.unregister_analysis("declared_placeholder_probe")
 
 
 # ══════════════════════════════════════════════════════════════════

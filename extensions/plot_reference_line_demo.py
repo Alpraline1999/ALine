@@ -105,7 +105,7 @@ def register_extensions(registry):
     registry.register_plot(
         PlotExtension(
             type="demo_plot_reference_line",
-            name="示例·参考线与峰值标注",
+            name="峰值标注",
             handler=draw_reference_overlay,
             description="演示 PlotExtensionContext 的 before_plot/after_plot 两阶段绘制能力。",
             default_options={

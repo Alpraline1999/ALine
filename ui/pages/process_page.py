@@ -20,7 +20,7 @@ from qfluentwidgets import (
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
 )
 
-from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
+from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, make_section_label, make_hsep
 from ui.dialogs.fluent_dialogs import TextInputDialog
@@ -90,6 +90,7 @@ def _downsample(xs: list, ys: list, max_pts: int = 2000):
 class ProcessPage(QWidget):
     """数据处理页：非破坏性操作管道。"""
 
+    extensions_reloaded = Signal()
     project_modified = Signal()  # 操作链保存等操作导致项目修改时发出
     assets_modified = Signal()   # 全局 Pipeline 模板变更时发出
 
@@ -794,7 +795,7 @@ class ProcessPage(QWidget):
         self._processing_op_types = list(_OP_TYPES)
         self._processing_op_hints = dict(_OP_HINTS)
         for extension in extension_registry.list_processing():
-            self._processing_op_labels.append(f"扩展 · {extension.name}")
+            self._processing_op_labels.append(f"[扩展]{extension.name}")
             self._processing_op_types.append(extension.type)
             self._processing_op_hints[extension.type] = extension.description or f"自定义处理扩展：{extension.name}"
         if hasattr(self, "_add_op_combo"):
@@ -814,8 +815,9 @@ class ProcessPage(QWidget):
         )
 
     def _reload_processing_extensions(self) -> None:
-        report = reload_builtin_extensions()
+        report = reload_configured_extensions()
         self._refresh_processing_extensions()
+        self.extensions_reloaded.emit()
         if report.get("errors"):
             InfoBar.warning(
                 "重载完成",
@@ -836,7 +838,7 @@ class ProcessPage(QWidget):
             return _OP_TYPE_TO_LABEL[op_type]
         extension = extension_registry.get_processing(op_type)
         if extension is not None:
-            return f"扩展 · {extension.name}"
+            return f"[扩展]{extension.name}"
         return op_type or "?"
 
     def _default_params_for_processing_type(self, op_type: str) -> Dict[str, Any]:
@@ -854,7 +856,7 @@ class ProcessPage(QWidget):
         self._processing_extension_options[type_id] = dict(options)
         self._set_add_op_combo_type(type_id)
         self._add_operation_to_chain(type_id, options)
-        InfoBar.success("已添加", f"扩展 {self._op_label_for_type(type_id)} 已加入操作链", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.success("已添加", f"{self._op_label_for_type(type_id)} 已加入操作链", parent=self, position=InfoBarPosition.TOP)
 
     def _refresh_pipeline_templates(self) -> None:
         current_id = self._current_pipeline_id

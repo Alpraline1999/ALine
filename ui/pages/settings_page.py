@@ -1,7 +1,7 @@
 from typing import Literal, cast
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
-                               QFrame, QFormLayout, QKeySequenceEdit)
+                               QFileDialog, QFrame, QFormLayout, QKeySequenceEdit)
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     BodyLabel, SubtitleLabel, TitleLabel, SmoothScrollArea,
@@ -25,6 +25,7 @@ class SettingsPage(QWidget):
     shortcuts_changed = Signal()  # 快捷键保存后发出
     tree_display_mode_changed = Signal(str)
     ai_panel_visibility_changed = Signal(bool)
+    extensions_reloaded = Signal()
     project_modified = Signal()
     assets_modified = Signal()
     replay_onboarding_requested = Signal()
@@ -37,6 +38,19 @@ class SettingsPage(QWidget):
         self._tree_display_mode_combo = None
         self._tree_display_mode_keys = ["wrap", "elide"]
         self._appearance_title = None
+        self._extension_card = None
+        self._extension_title = None
+        self._extension_hint = None
+        self._external_extensions_dir_label = None
+        self._external_extensions_dir_edit = None
+        self._browse_external_extensions_dir_btn = None
+        self._builtin_extensions_enabled_checkbox = None
+        self._builtin_extension_list_label = None
+        self._builtin_extension_empty_hint = None
+        self._builtin_extension_options_widget = None
+        self._builtin_extension_options_layout = None
+        self._builtin_extension_checkboxes: dict[str, CheckBox] = {}
+        self._save_extension_settings_btn = None
         self._onboarding_label = None
         self._onboarding_hint = None
         self._replay_onboarding_btn = None
@@ -80,6 +94,7 @@ class SettingsPage(QWidget):
         root_layout.addWidget(tabs)
 
         self._load_ai_config()
+        self._load_extension_settings()
         self._refresh_ai_tools_panel()
         self._install_tooltip_filters()
 
@@ -187,6 +202,61 @@ class SettingsPage(QWidget):
         appearance_layout.addLayout(onboarding_layout)
 
         layout.addWidget(self._appearance_card)
+
+        self._extension_card = CardWidget(content)
+        extension_layout = QVBoxLayout(self._extension_card)
+        self._apply_card_layout_metrics(extension_layout)
+
+        self._extension_title = BodyLabel("扩展", self._extension_card)
+        self._extension_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
+        extension_layout.addWidget(self._extension_title)
+
+        self._extension_hint = BodyLabel(
+            "内置扩展会随程序一起分发。这里可以统一关闭内置扩展，或单独停用指定内置扩展；外部扩展仍会从配置目录自动扫描。",
+            self._extension_card,
+        )
+        self._extension_hint.setWordWrap(True)
+        self._extension_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        extension_layout.addWidget(self._extension_hint)
+
+        external_dir_row = QHBoxLayout()
+        self._external_extensions_dir_label = BodyLabel("外部扩展目录", self._extension_card)
+        self._external_extensions_dir_label.setStyleSheet(f"color: {text_color()};")
+        external_dir_row.addWidget(self._external_extensions_dir_label)
+        self._external_extensions_dir_edit = LineEdit(self._extension_card)
+        self._external_extensions_dir_edit.setPlaceholderText("~/.config/aline/extensions")
+        external_dir_row.addWidget(self._external_extensions_dir_edit, 1)
+        self._browse_external_extensions_dir_btn = PushButton("浏览", self._extension_card)
+        self._browse_external_extensions_dir_btn.clicked.connect(self._choose_external_extensions_directory)
+        external_dir_row.addWidget(self._browse_external_extensions_dir_btn)
+        extension_layout.addLayout(external_dir_row)
+
+        self._builtin_extensions_enabled_checkbox = CheckBox("启动时加载内置扩展", self._extension_card)
+        self._builtin_extensions_enabled_checkbox.stateChanged.connect(self._on_builtin_extensions_enabled_changed)
+        extension_layout.addWidget(self._builtin_extensions_enabled_checkbox)
+
+        self._builtin_extension_list_label = BodyLabel("内置扩展项", self._extension_card)
+        self._builtin_extension_list_label.setStyleSheet(f"color: {text_color()};")
+        extension_layout.addWidget(self._builtin_extension_list_label)
+
+        self._builtin_extension_empty_hint = BodyLabel("当前未发现内置扩展。", self._extension_card)
+        self._builtin_extension_empty_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        extension_layout.addWidget(self._builtin_extension_empty_hint)
+
+        self._builtin_extension_options_widget = QWidget(self._extension_card)
+        self._builtin_extension_options_layout = QVBoxLayout(self._builtin_extension_options_widget)
+        self._builtin_extension_options_layout.setContentsMargins(0, 0, 0, 0)
+        self._builtin_extension_options_layout.setSpacing(6)
+        extension_layout.addWidget(self._builtin_extension_options_widget)
+
+        extension_btn_row = QHBoxLayout()
+        self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", self._extension_card)
+        self._save_extension_settings_btn.clicked.connect(self._save_extension_settings)
+        extension_btn_row.addWidget(self._save_extension_settings_btn)
+        extension_btn_row.addStretch()
+        extension_layout.addLayout(extension_btn_row)
+
+        layout.addWidget(self._extension_card)
 
         # ── 语言设置（预留）──
         self._lang_card = CardWidget(content)
@@ -573,6 +643,16 @@ class SettingsPage(QWidget):
             self._onboarding_label.setStyleSheet(f"color: {tc};")
         if self._onboarding_hint is not None:
             self._onboarding_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
+        if self._extension_title is not None:
+            self._extension_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
+        if self._extension_hint is not None:
+            self._extension_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
+        if self._external_extensions_dir_label is not None:
+            self._external_extensions_dir_label.setStyleSheet(f"color: {tc};")
+        if self._builtin_extension_list_label is not None:
+            self._builtin_extension_list_label.setStyleSheet(f"color: {tc};")
+        if self._builtin_extension_empty_hint is not None:
+            self._builtin_extension_empty_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
         if self._shortcuts_title:
             self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
         self._apply_shortcut_filter_style()
@@ -602,6 +682,116 @@ class SettingsPage(QWidget):
     def _on_tree_display_mode_changed(self, _index: int) -> None:
         mode = set_tree_name_display_mode(self._current_tree_display_mode())
         self.tree_display_mode_changed.emit(mode)
+
+    def _clear_builtin_extension_options(self) -> None:
+        self._builtin_extension_checkboxes.clear()
+        if self._builtin_extension_options_layout is None:
+            return
+        while self._builtin_extension_options_layout.count() > 0:
+            item = self._builtin_extension_options_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _rebuild_builtin_extension_options(self, specs: list[dict], disabled_extension_ids: list[str]) -> None:
+        self._clear_builtin_extension_options()
+        if self._builtin_extension_empty_hint is not None:
+            self._builtin_extension_empty_hint.setVisible(not specs)
+        if self._builtin_extension_options_layout is None:
+            return
+
+        disabled_markers = {str(item).strip() for item in disabled_extension_ids}
+        load_builtin = bool(
+            self._builtin_extensions_enabled_checkbox is not None
+            and self._builtin_extensions_enabled_checkbox.isChecked()
+        )
+        for spec in specs:
+            spec_id = str(spec.get("id") or "").strip()
+            if not spec_id:
+                continue
+            category_labels = [str(item).strip() for item in spec.get("category_labels", []) if str(item).strip()]
+            checkbox_name = str(spec.get("name") or spec_id)
+            category_prefix = " / ".join(category_labels) if category_labels else "扩展"
+            checkbox_label = f"{category_prefix}·{checkbox_name}"
+            checkbox = CheckBox(checkbox_label, self._builtin_extension_options_widget)
+            checkbox.setChecked(spec_id not in disabled_markers)
+            checkbox.setEnabled(load_builtin)
+            tooltip_lines = [str(spec.get("file_name") or "")]
+            type_ids = [str(item).strip() for item in spec.get("type_ids", []) if str(item).strip()]
+            if type_ids:
+                tooltip_lines.append(f"类型: {', '.join(type_ids)}")
+            load_error = str(spec.get("load_error") or "").strip()
+            if load_error:
+                tooltip_lines.append(f"探测失败: {load_error}")
+            checkbox.setToolTip("\n".join(line for line in tooltip_lines if line))
+            self._builtin_extension_checkboxes[spec_id] = checkbox
+            self._builtin_extension_options_layout.addWidget(checkbox)
+
+    def _on_builtin_extensions_enabled_changed(self) -> None:
+        enabled = bool(
+            self._builtin_extensions_enabled_checkbox is not None
+            and self._builtin_extensions_enabled_checkbox.isChecked()
+        )
+        for checkbox in self._builtin_extension_checkboxes.values():
+            checkbox.setEnabled(enabled)
+
+    def _load_extension_settings(self) -> None:
+        from core.extension_api import list_builtin_extension_specs
+        from core.extension_settings import get_builtin_extension_settings, get_external_extensions_directory
+
+        load_builtin, disabled_extension_ids = get_builtin_extension_settings()
+        if self._builtin_extensions_enabled_checkbox is not None:
+            self._builtin_extensions_enabled_checkbox.blockSignals(True)
+            self._builtin_extensions_enabled_checkbox.setChecked(load_builtin)
+            self._builtin_extensions_enabled_checkbox.blockSignals(False)
+        if self._external_extensions_dir_edit is not None:
+            self._external_extensions_dir_edit.setText(str(get_external_extensions_directory()))
+        self._rebuild_builtin_extension_options(list_builtin_extension_specs(), disabled_extension_ids)
+        self._on_builtin_extensions_enabled_changed()
+
+    def _choose_external_extensions_directory(self) -> None:
+        current_path = self._external_extensions_dir_edit.text().strip() if self._external_extensions_dir_edit is not None else ""
+        chosen = QFileDialog.getExistingDirectory(self, "选择外部扩展目录", current_path or "")
+        if chosen and self._external_extensions_dir_edit is not None:
+            self._external_extensions_dir_edit.setText(chosen)
+
+    def _save_extension_settings(self) -> None:
+        from core.extension_api import reload_configured_extensions
+        from core.extension_settings import set_builtin_extension_settings, set_external_extensions_directory
+
+        load_builtin = bool(
+            self._builtin_extensions_enabled_checkbox is not None
+            and self._builtin_extensions_enabled_checkbox.isChecked()
+        )
+        disabled_extension_ids = [
+            spec_id for spec_id, checkbox in self._builtin_extension_checkboxes.items()
+            if not checkbox.isChecked()
+        ]
+
+        external_dir = self._external_extensions_dir_edit.text().strip() if self._external_extensions_dir_edit is not None else ""
+        try:
+            set_external_extensions_directory(external_dir)
+        except ValueError as exc:
+            InfoBar.error("扩展设置保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        set_builtin_extension_settings(load_builtin, disabled_extension_ids)
+        report = reload_configured_extensions()
+        self._load_extension_settings()
+        self.extensions_reloaded.emit()
+        if report.get("errors"):
+            InfoBar.warning(
+                "扩展设置已保存",
+                f"已加载 {len(report.get('loaded', []))} 个扩展，{len(report.get('errors', []))} 个失败",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return
+        InfoBar.success(
+            "扩展设置已保存",
+            f"已重新加载 {len(report.get('loaded', []))} 个扩展",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
 
     # ── AI 配置方法 ──────────────────────────────────────────
 

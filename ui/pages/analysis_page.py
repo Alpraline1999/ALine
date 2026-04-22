@@ -6,17 +6,18 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional, Set
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QStringListModel
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QListWidgetItem, QSplitter,
+    QApplication, QAbstractItemView, QCompleter, QFileDialog, QHBoxLayout, QHeaderView, QListWidgetItem, QSplitter,
     QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
     Action,
-    BodyLabel, CaptionLabel, ComboBox, FluentIcon as FIF,
+    BodyLabel, CaptionLabel, ComboBox, EditableComboBox, FluentIcon as FIF,
     CardWidget,
     InfoBar, InfoBarPosition, LineEdit,
     ListWidget, PlainTextEdit, PrimaryPushButton, PushButton, TableWidget,
@@ -37,7 +38,7 @@ from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, make_hint_label, make_section_label, make_hsep
-from core.extension_api import build_extension_entry, extension_registry, reload_builtin_extensions
+from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 
@@ -121,6 +122,7 @@ class _SelectableResultList(ListWidget):
 class AnalysisPage(QWidget):
     """数据分析页 — 通过共享项目树选择分析数据。"""
 
+    extensions_reloaded = Signal()
     project_modified = Signal()
 
     # 由 main_window 框架路由的节点类型
@@ -146,6 +148,8 @@ class AnalysisPage(QWidget):
         self._analysis_tab_keys: List[str] = []
         self._report_result_selectors: Dict[str, ComboBox] = {}
         self._report_result_selector_keys: Dict[str, List[Optional[str]]] = {}
+        self._report_placeholder_completer: Optional[QCompleter] = None
+        self._report_placeholder_search_model: Optional[QStringListModel] = None
         self._selected_tree_kind: Optional[str] = None
         self._selected_tree_node_id: Optional[str] = None
         self._report_placeholder_entries = list_report_template_placeholders()
@@ -337,6 +341,13 @@ class AnalysisPage(QWidget):
         lv.addWidget(self._corr_method_label)
         lv.addWidget(self._corr_method_combo)
 
+        self._extension_params_label = BodyLabel("扩展参数 JSON:")
+        self._extension_params_edit = PlainTextEdit(self)
+        self._extension_params_edit.setPlaceholderText('{\n  "option": "value"\n}')
+        self._extension_params_edit.setMinimumHeight(160)
+        lv.addWidget(self._extension_params_label)
+        lv.addWidget(self._extension_params_edit)
+
         lv.addStretch()
         lv.addWidget(make_hsep())
 
@@ -434,9 +445,8 @@ class AnalysisPage(QWidget):
         report_layout.addLayout(template_row)
 
         placeholder_row = QHBoxLayout()
-        self._report_placeholder_combo = ComboBox(panel)
-        for entry in self._report_placeholder_entries:
-            self._report_placeholder_combo.addItem(f"{entry['label']} · {entry['token']}")
+        self._report_placeholder_combo = EditableComboBox(panel)
+        self._configure_report_placeholder_combo()
         self._report_placeholder_combo.currentIndexChanged.connect(self._on_report_placeholder_changed)
         placeholder_row.addWidget(self._report_placeholder_combo, 1)
         self._btn_insert_report_placeholder = PushButton(FIF.ADD, "插入占位符", panel)
@@ -482,10 +492,10 @@ class AnalysisPage(QWidget):
         report_layout.addWidget(self._report_preview, stretch=1)
         self._apply_report_preview_theme()
 
-        self._on_report_placeholder_changed(self._report_placeholder_combo.currentIndex())
+        self._refresh_report_placeholder_choices()
 
         self._result_tabs.addTab(result_tab, "分析结果")
-        self._result_tabs.addTab(report_tab, "报告模板")
+        self._result_tabs.addTab(report_tab, "生成报告")
         rv.addWidget(self._result_tabs, stretch=1)
         self._refresh_report_template_combo()
         self._sync_report_editor_from_template()
@@ -610,6 +620,8 @@ class AnalysisPage(QWidget):
                 rows.append((prefix or "结果", "{}"))
                 return
             for key, item in value.items():
+                if str(key).startswith("_"):
+                    continue
                 label = f"{prefix}.{key}" if prefix else str(key)
                 self._flatten_json_summary(rows, item, label)
             return
@@ -618,6 +630,10 @@ class AnalysisPage(QWidget):
                 rows.append((prefix or "结果", "[]"))
                 return
             if all(not isinstance(item, (dict, list)) for item in value):
+                if len(value) > 12:
+                    preview = ", ".join(self._format_summary_value(item) for item in value[:5])
+                    rows.append((prefix or "结果", f"{preview} ...（共 {len(value)} 项）"))
+                    return
                 rows.append((prefix or "结果", ", ".join(self._format_summary_value(item) for item in value)))
                 return
             for index, item in enumerate(value):
@@ -667,13 +683,55 @@ class AnalysisPage(QWidget):
     def _analysis_extension_entries(self) -> List[dict]:
         return [build_extension_entry(extension) for extension in extension_registry.list_analysis()]
 
+    def _parse_extension_analysis_options_text(self, text: Optional[str] = None) -> Dict[str, Any]:
+        raw_text = text if text is not None else self._extension_params_edit.toPlainText()
+        clean_text = str(raw_text or "").strip()
+        if not clean_text:
+            return {}
+        try:
+            data = json.loads(clean_text)
+        except Exception as exc:
+            raise ValueError(f"扩展参数不是合法 JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("扩展参数必须是 JSON 对象")
+        return data
+
+    def _current_extension_analysis_options(self, analysis_type: Optional[str] = None, *, raise_on_error: bool = False) -> Dict[str, Any]:
+        type_id = analysis_type or self._current_analysis_type()
+        if type_id in _TYPE_IDS:
+            return {}
+        if type_id == self._current_analysis_type():
+            try:
+                options = self._parse_extension_analysis_options_text()
+            except ValueError:
+                if raise_on_error:
+                    raise
+                return dict(self._analysis_extension_options.get(type_id, {}))
+            self._analysis_extension_options[type_id] = dict(options)
+            return dict(options)
+        return dict(self._analysis_extension_options.get(type_id, {}))
+
+    def _sync_extension_params_editor(self, analysis_type: Optional[str] = None) -> None:
+        type_id = analysis_type or self._current_analysis_type()
+        options: Dict[str, Any] = {}
+        if type_id not in _TYPE_IDS:
+            if type_id in self._analysis_extension_options:
+                options = dict(self._analysis_extension_options.get(type_id, {}))
+            else:
+                extension = extension_registry.get_analysis(type_id)
+                options = dict(getattr(extension, "default_options", {}) or {}) if extension is not None else {}
+                self._analysis_extension_options[type_id] = dict(options)
+        self._extension_params_edit.blockSignals(True)
+        self._extension_params_edit.setPlainText(json.dumps(dict(options), ensure_ascii=False, indent=2) if options else "{}")
+        self._extension_params_edit.blockSignals(False)
+
     def _refresh_analysis_type_choices(self) -> None:
         current_type = self._current_analysis_type() if hasattr(self, "_type_combo") else None
         self._analysis_type_labels = list(_TYPE_LABELS)
         self._analysis_type_ids = list(_TYPE_IDS)
         self._analysis_label_map = {type_id: label for label, type_id in _ANALYSIS_TYPES}
         for extension in extension_registry.list_analysis():
-            self._analysis_type_labels.append(extension.name)
+            self._analysis_type_labels.append(f"[扩展]{extension.name}")
             self._analysis_type_ids.append(extension.type)
             self._analysis_label_map[extension.type] = extension.name
         self._type_combo.blockSignals(True)
@@ -690,16 +748,20 @@ class AnalysisPage(QWidget):
             current_type=current_type if extension_registry.get_analysis(current_type or "") else None,
         )
         self._on_type_changed(self._type_combo.currentIndex())
+        self._refresh_report_placeholder_choices()
 
     def _on_analysis_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
         self._analysis_extension_options[type_id] = dict(options)
         if type_id in self._analysis_type_ids:
             self._type_combo.setCurrentIndex(self._analysis_type_ids.index(type_id))
+        self._sync_extension_params_editor(type_id)
         InfoBar.success("已应用", f"当前分析类型已切换为 {self._analysis_type_label(type_id)}", parent=self, position=InfoBarPosition.TOP)
 
     def _reload_analysis_extensions(self) -> None:
-        report = reload_builtin_extensions()
+        report = reload_configured_extensions()
         self._refresh_analysis_type_choices()
+        self._refresh_report_placeholder_choices()
+        self.extensions_reloaded.emit()
         if report.get("errors"):
             InfoBar.warning(
                 "重载完成",
@@ -780,11 +842,15 @@ class AnalysisPage(QWidget):
                     previous_key = previous_keys[previous_index]
             combo_index = keys.index(previous_key) if previous_key in keys else (1 if len(keys) > 1 else 0)
             combo.setCurrentIndex(combo_index)
-            combo.currentIndexChanged.connect(self._render_report_preview)
+            combo.currentIndexChanged.connect(self._on_report_result_selection_changed)
             row_layout.addWidget(combo, 1)
             self._report_result_selector_layout.addWidget(row)
             self._report_result_selectors[analysis_type] = combo
             self._report_result_selector_keys[analysis_type] = keys
+
+    def _on_report_result_selection_changed(self, _index: int) -> None:
+        self._refresh_report_placeholder_choices()
+        self._render_report_preview()
 
     def _selected_report_results(self) -> List[Dict[str, Any]]:
         candidates = self._report_result_candidates_by_type()
@@ -990,6 +1056,7 @@ class AnalysisPage(QWidget):
         is_fit  = t == "curve_fit"
         is_peak = t == "peak_detect"
         is_corr = t == "correlation"
+        is_extension = t not in _TYPE_IDS
         for w in [self._fit_model_label, self._fit_model_combo]:
             w.setVisible(is_fit)
         for w in [self._peak_height_label, self._peak_height_edit,
@@ -999,6 +1066,10 @@ class AnalysisPage(QWidget):
             w.setVisible(is_peak)
         for w in [self._corr_method_label, self._corr_method_combo]:
             w.setVisible(is_corr)
+        for w in [self._extension_params_label, self._extension_params_edit]:
+            w.setVisible(is_extension)
+        if is_extension:
+            self._sync_extension_params_editor(t)
         if self._requires_pair_input():
             self._input_hint_label.setText("按顺序双击两条数据加入分析输入列表")
         else:
@@ -1065,7 +1136,7 @@ class AnalysisPage(QWidget):
                 self._result = self._do_error_compare(selected[0], selected[1])
             else:
                 inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
-                self._result = run_analysis(t, inputs, self._analysis_extension_options.get(t, {}))
+                self._result = run_analysis(t, inputs, self._current_extension_analysis_options(t, raise_on_error=True))
             self._show_result(t, selected)
         except Exception as e:
             InfoBar.error("分析失败", str(e), parent=self, position=InfoBarPosition.TOP)
@@ -1159,6 +1230,7 @@ class AnalysisPage(QWidget):
         else:
             self._draw_result(t, selected, r)
             self._write_summary(t, r)
+        self._refresh_report_placeholder_choices()
         self._update_peak_export_buttons()
 
     def _render_result_view(self, view: Dict[str, Any], t: str, selected: list, r: dict) -> None:
@@ -1235,6 +1307,32 @@ class AnalysisPage(QWidget):
             ax.axhline(mean, color="#D13438", linestyle="--", linewidth=1,
                        label=f"均值={mean:.4g}")
             ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
+
+        else:
+            custom_series = list(r.get("_plot_series", []) or [])
+            palette = ["#0078D4", "#D13438", "#107C10", "#8764B8"]
+            plotted = False
+            for index, series in enumerate(custom_series):
+                xs = list(series.get("x", []) or [])
+                ys = list(series.get("y", []) or [])
+                if not xs or not ys or len(xs) != len(ys):
+                    continue
+                ax.plot(
+                    xs,
+                    ys,
+                    color=str(series.get("color") or palette[index % len(palette)]),
+                    linewidth=float(series.get("line_width", 1.6)),
+                    label=str(series.get("name") or f"结果曲线 {index + 1}"),
+                )
+                plotted = True
+            if plotted:
+                if r.get("x_label"):
+                    ax.set_xlabel(str(r.get("x_label")), color=fg)
+                if r.get("y_label"):
+                    ax.set_ylabel(str(r.get("y_label")), color=fg)
+                if r.get("plot_title"):
+                    ax.set_title(str(r.get("plot_title")), color=fg)
+                ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
 
         canvas.draw()
 
@@ -1384,6 +1482,18 @@ class AnalysisPage(QWidget):
         if self._result is None:
             return None
         analysis_type = self._result.get("analysis_type", "analysis")
+        custom_series = list(self._result.get("_plot_series", []) or [])
+        if custom_series:
+            first_series = dict(custom_series[0])
+            xs = list(first_series.get("x", []) or [])
+            ys = list(first_series.get("y", []) or [])
+            if xs and ys and len(xs) == len(ys):
+                return DataSeries(
+                    name=export_name,
+                    x=xs,
+                    y=ys,
+                    source="computed",
+                )
         if analysis_type == "curve_fit" and "fit_x" in self._result:
             return DataSeries(
                 name=export_name,
@@ -1416,6 +1526,8 @@ class AnalysisPage(QWidget):
 
     def _analysis_output_export_button_text(self) -> str:
         analysis_type = self._result.get("analysis_type", "") if self._result else ""
+        if self._result and self._result.get("_plot_series"):
+            return "导出分析曲线"
         return {
             "curve_fit": "导出拟合曲线",
             "error_compare": "导出误差曲线",
@@ -1543,14 +1655,106 @@ class AnalysisPage(QWidget):
             return self._report_placeholder_entries[index]
         return None
 
+    def _configure_report_placeholder_combo(self) -> None:
+        search_model = QStringListModel(self)
+        completer = QCompleter(self._report_placeholder_combo)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        completer.setModel(search_model)
+        completer.activated.connect(lambda value: self._select_report_placeholder_entry_by_text(str(value)))
+        self._report_placeholder_combo.setCompleter(completer)
+        self._report_placeholder_completer = completer
+        self._report_placeholder_search_model = search_model
+        self._report_placeholder_combo.setPlaceholderText("输入通用项、工具名或占位符筛选")
+
+    @staticmethod
+    def _report_placeholder_group(entry: Dict[str, Any]) -> str:
+        return str(entry.get("group") or "通用").strip() or "通用"
+
+    def _report_placeholder_group_prefix(self, entry: Dict[str, Any]) -> str:
+        return f"[{self._report_placeholder_group(entry)}]"
+
+    def _report_placeholder_display_text(self, entry: Dict[str, Any]) -> str:
+        label = str(entry.get("label") or entry.get("token") or "占位符").strip() or "占位符"
+        return f"{self._report_placeholder_group_prefix(entry)}{label} · {entry['token']}"
+
+    def _refresh_report_placeholder_completer(self) -> None:
+        if self._report_placeholder_search_model is None:
+            return
+        self._report_placeholder_search_model.setStringList(
+            [self._report_placeholder_display_text(entry) for entry in self._report_placeholder_entries]
+        )
+
+    def _select_report_placeholder_entry_by_text(self, text: str) -> None:
+        clean_text = str(text or "").strip()
+        if not clean_text:
+            return
+        target_index = next(
+            (
+                index
+                for index, entry in enumerate(self._report_placeholder_entries)
+                if self._report_placeholder_display_text(entry) == clean_text or entry.get("token") == clean_text
+            ),
+            -1,
+        )
+        if target_index < 0:
+            target_index = next(
+                (
+                    index
+                    for index, entry in enumerate(self._report_placeholder_entries)
+                    if clean_text.casefold() in self._report_placeholder_display_text(entry).casefold()
+                ),
+                -1,
+            )
+        if target_index >= 0 and self._report_placeholder_combo.currentIndex() != target_index:
+            self._report_placeholder_combo.setCurrentIndex(target_index)
+
+    def _select_report_placeholder_entry_from_editor_text(self) -> None:
+        if not hasattr(self, "_report_placeholder_combo"):
+            return
+        self._select_report_placeholder_entry_by_text(self._report_placeholder_combo.currentText())
+
+    def _refresh_report_placeholder_choices(self, result: Optional[Dict[str, Any]] = None) -> None:
+        current_token = None
+        current_entry = self._selected_report_placeholder_entry() if hasattr(self, "_report_placeholder_combo") else None
+        if current_entry is not None:
+            current_token = current_entry.get("token")
+
+        if result is None:
+            selected_results = self._selected_report_results() if hasattr(self, "_report_result_selectors") else []
+            computed_result = self._build_report_render_context(selected_results)
+            result = computed_result if computed_result else (self._result if isinstance(self._result, dict) else None)
+
+        self._report_placeholder_entries = list_report_template_placeholders(result)
+        if not hasattr(self, "_report_placeholder_combo"):
+            return
+
+        self._report_placeholder_combo.blockSignals(True)
+        self._report_placeholder_combo.clear()
+        for entry in self._report_placeholder_entries:
+            self._report_placeholder_combo.addItem(self._report_placeholder_display_text(entry))
+        if self._report_placeholder_entries:
+            target_index = next(
+                (index for index, entry in enumerate(self._report_placeholder_entries) if entry.get("token") == current_token),
+                0,
+            )
+            self._report_placeholder_combo.setCurrentIndex(target_index)
+        self._report_placeholder_combo.blockSignals(False)
+        self._refresh_report_placeholder_completer()
+        self._on_report_placeholder_changed(self._report_placeholder_combo.currentIndex())
+
     def _on_report_placeholder_changed(self, _index: int) -> None:
         entry = self._selected_report_placeholder_entry()
         if entry is None:
             self._report_placeholder_hint.setText("")
             return
-        self._report_placeholder_hint.setText(f"{entry['token']}：{entry['description']}")
+        self._report_placeholder_hint.setText(
+            f"{self._report_placeholder_group_prefix(entry)}{entry['token']}：{entry['description']}"
+        )
 
     def _insert_selected_report_placeholder(self) -> None:
+        self._select_report_placeholder_entry_from_editor_text()
         entry = self._selected_report_placeholder_entry()
         if entry is None:
             return
@@ -1582,11 +1786,8 @@ class AnalysisPage(QWidget):
         content = self._report_editor.toPlainText()
         selected_results = self._selected_report_results()
         render_context = self._build_report_render_context(selected_results)
+        self._refresh_report_placeholder_choices(render_context)
         rendered = render_report(content, render_context)
-        if len(selected_results) > 1 and "{{multi_result_sections}}" not in content:
-            extra_sections = str(render_context.get("multi_result_sections", "")).strip()
-            if extra_sections:
-                rendered = f"{rendered.rstrip()}\n\n{extra_sections}"
         self._report_preview.setPlainText(rendered)
 
     def _find_report_template_by_name(self, name: str) -> Optional[str]:
@@ -1664,6 +1865,11 @@ class AnalysisPage(QWidget):
                 return f"峰值={len(result.get('peaks', []) or [])}，波谷={len(result.get('valleys', []) or [])}"
             if analysis_type == "error_compare":
                 return f"MAE={result.get('mae', 0):.6f}，RMSE={result.get('rmse', 0):.6f}"
+            if analysis_type == "spectrum_analysis":
+                return (
+                    f"主频={result.get('dominant_frequency', 0):.6g} Hz，"
+                    f"主峰幅值={result.get('dominant_amplitude', 0):.6g}"
+                )
             return "-"
 
         def _params_table(result: Dict[str, Any]) -> Optional[str]:
@@ -1795,7 +2001,7 @@ class AnalysisPage(QWidget):
         elif analysis_type == "correlation":
             params["corr_method"] = self._corr_method_combo.currentText().strip().lower()
         elif analysis_type not in _TYPE_IDS:
-            params["extension_options"] = dict(self._analysis_extension_options.get(analysis_type, {}))
+            params["extension_options"] = self._current_extension_analysis_options(analysis_type)
         return params
 
     def _restore_analysis_params(self, params: Dict[str, Any]) -> None:
@@ -1820,6 +2026,7 @@ class AnalysisPage(QWidget):
                     saved_options=self._analysis_extension_options,
                     current_type=analysis_type,
                 )
+            self._sync_extension_params_editor(analysis_type)
 
     def _update_peak_export_buttons(self) -> None:
         is_peak_mode = self._current_analysis_type() == "peak_detect"

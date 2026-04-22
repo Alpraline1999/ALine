@@ -1127,6 +1127,56 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertEqual(self._icon_image(digitize_group.icon(0)), self._icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
         self.assertEqual(self._icon_image(image_tree_item.icon(0)), self._icon_image(getattr(FIF, "PHOTO", FIF.PHOTO).icon()))
 
+    def test_project_tree_child_folders_use_plain_folder_icon(self):
+        from qfluentwidgets import FluentIcon as FIF
+
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        images_root = self.pm._find_folder_by_group_type("images")
+        self.assertIsNotNone(source_root)
+        self.assertIsNotNone(datasets_root)
+        self.assertIsNotNone(images_root)
+
+        source_child = self.pm.add_folder("源子文件夹", parent_id=source_root.id, group_type="source_files")
+        dataset_child = self.pm.add_folder("数据子文件夹", parent_id=datasets_root.id, group_type="datasets")
+        image_child = self.pm.add_folder("图像子文件夹", parent_id=images_root.id, group_type="images")
+        self.assertIsNotNone(source_child)
+        self.assertIsNotNone(dataset_child)
+        self.assertIsNotNone(image_child)
+
+        self.widget.refresh()
+
+        source_child_item = self.widget._find_item(source_child.id)
+        dataset_child_item = self.widget._find_item(dataset_child.id)
+        image_child_item = self.widget._find_item(image_child.id)
+        self.assertIsNotNone(source_child_item)
+        self.assertIsNotNone(dataset_child_item)
+        self.assertIsNotNone(image_child_item)
+
+        expected_icon = self._icon_image(FIF.FOLDER.icon())
+        self.assertEqual(self._icon_image(source_child_item.icon(0)), expected_icon)
+        self.assertEqual(self._icon_image(dataset_child_item.icon(0)), expected_icon)
+        self.assertEqual(self._icon_image(image_child_item.icon(0)), expected_icon)
+
+    def test_project_tree_image_source_file_uses_photo_icon(self):
+        from qfluentwidgets import FluentIcon as FIF
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "source-image.png"
+            image = QImage(16, 16, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(image_path)))
+
+            node = self.pm.add_source_file(str(image_path))
+            self.assertIsNotNone(node)
+
+        self.widget.refresh()
+
+        image_source_item = self.widget._find_item(node.id)
+        self.assertIsNotNone(image_source_item)
+        self.assertEqual(self._icon_image(image_source_item.icon(0)), self._icon_image(FIF.PHOTO.icon()))
+
     def test_import_digitize_images_adds_images_into_target_folder(self):
         from PySide6.QtGui import QImage
 
@@ -1200,6 +1250,12 @@ class TestSettingsPage(unittest.TestCase):
     def test_theme_combo_exists(self):
         self.assertIsNotNone(self.page.theme_combo)
 
+    def test_extension_controls_exist(self):
+        self.assertIsNotNone(self.page._builtin_extensions_enabled_checkbox)
+        self.assertIsNotNone(self.page._external_extensions_dir_edit)
+        self.assertIsNotNone(self.page._save_extension_settings_btn)
+        self.assertIsInstance(self.page._builtin_extension_checkboxes, dict)
+
     def test_settings_scroll_content_uses_workbench_like_margins(self):
         general_layout = self.page._tabs.widget(0).widget().layout()
         shortcuts_layout = self.page._tabs.widget(1).widget().layout()
@@ -1261,6 +1317,45 @@ class TestSettingsPage(unittest.TestCase):
         self.page._ai_timeout_edit.setText("30")
         self.page._save_ai_config()
 
+    def test_save_extension_settings_persists_and_reloads_extensions(self):
+        received = []
+        self.page.extensions_reloaded.connect(lambda: received.append(True))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "extension_settings.json"
+            external_dir = Path(temp_dir) / "external_extensions"
+            builtin_specs = [
+                {
+                    "id": "demo_plot_reference_line",
+                    "file_name": "plot_reference_line_demo.py",
+                    "name": "圆形框",
+                    "category_labels": ["绘图扩展"],
+                    "type_ids": ["demo_plot_reference_line"],
+                    "load_error": "",
+                }
+            ]
+            with mock.patch("core.extension_settings._CONFIG_PATH", config_path), \
+                 mock.patch("core.extension_api.list_builtin_extension_specs", return_value=builtin_specs), \
+                 mock.patch(
+                     "core.extension_api.reload_configured_extensions",
+                     return_value={"loaded": ["builtin:demo_plot_reference_line"], "errors": []},
+                 ) as reload_mock:
+                self.page._load_extension_settings()
+                self.assertEqual(
+                    self.page._builtin_extension_checkboxes["demo_plot_reference_line"].text(),
+                    "绘图扩展·圆形框",
+                )
+                self.page._external_extensions_dir_edit.setText(str(external_dir))
+                self.page._builtin_extension_checkboxes["demo_plot_reference_line"].setChecked(False)
+                self.page._save_extension_settings()
+
+            self.assertEqual(received, [True])
+            self.assertTrue(config_path.exists())
+            config_text = config_path.read_text(encoding="utf-8")
+            self.assertIn("demo_plot_reference_line", config_text)
+            self.assertIn(str(external_dir), config_text)
+            reload_mock.assert_called_once()
+
     def test_provider_changed_to_ollama(self):
         # Ollama 也允许填写 API key（服务端代理场景）
         self.page._ai_provider_combo.setCurrentIndex(0)
@@ -1319,6 +1414,11 @@ class TestHomePage(unittest.TestCase):
                     return_value={
                         "registered_count": 3,
                         "error_count": 1,
+                        "source_summary": {
+                            "loaded_extension_counts": {"builtin": 2, "external": 1},
+                            "loaded_file_counts": {"builtin": 1, "external": 1},
+                            "error_file_counts": {"builtin": 0, "external": 1},
+                        },
                         "details": {
                             "loaded": [{"path": "ok.py"}],
                             "errors": [{"path": "bad.py", "message": "boom", "categories": ["processing"]}],
@@ -1328,7 +1428,8 @@ class TestHomePage(unittest.TestCase):
                     page = HomePage()
                 try:
                     self.assertIsNone(page._guide_toggle_btn)
-                    self.assertEqual(page._extension_status_btn.text(), "扩展：3 项可用，1 项失败")
+                    self.assertEqual(page._extension_status_btn.text(), "扩展：3 项可用（内置 2 / 外部 1），1 项失败")
+                    self.assertIn("可用扩展：内置 2，外部 1", page._extension_status_btn.toolTip())
                     self.assertTrue(page._extension_status_btn.isEnabled())
                     self.assertIsNotNone(page._status_bar)
                 finally:
@@ -1507,12 +1608,17 @@ class TestExtensionConfigPanel(unittest.TestCase):
                 "label": "处理扩展",
                 "registered_count": 2,
                 "error_count": 1,
+                "source_summary": {
+                    "loaded_extension_counts": {"builtin": 1, "external": 1},
+                    "loaded_file_counts": {"builtin": 1, "external": 1},
+                    "error_file_counts": {"builtin": 0, "external": 1},
+                },
                 "details": {"loaded": [{"path": "ok.py"}], "errors": [{"path": "bad.py"}]},
             },
         ):
             panel.set_status_context("processing", "处理扩展")
 
-        self.assertEqual(panel._status_label.text(), "处理扩展 2 项可用，1 项失败。")
+        self.assertEqual(panel._status_label.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败。")
         self.assertTrue(panel._status_detail_btn.isEnabled())
         panel.deleteLater()
 
@@ -1671,13 +1777,387 @@ class TestDataPage(unittest.TestCase):
             self.assertEqual(self.page._parsed_preview_table.columnCount(), 2)
             self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "10")
             self.assertEqual(self.page._parsed_preview_table.item(0, 1).text(), "20")
-            self.assertIn("解析列数: 2", self.page._stats_label.text())
+            self.assertIn("列数: 2", self.page._stats_label.text())
 
             self.page._source_file_preview_combo.setCurrentText("源文件")
 
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
             self.assertIn("raw_x,raw_y", self.page._text_preview.toPlainText())
             self.assertEqual(self.page._current_source_path_button.toolTip(), str(source_path))
+
+    def test_source_file_parsed_preview_shows_metadata_and_custom_row_limit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "source-metadata.csv"
+            source_path.write_text("x;y\n1;2.5\n3;4\n5;6\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("source_file", node.id)
+            self.page._source_file_row_limit_edit.setText("2")
+            self.page._on_source_file_row_limit_changed()
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
+            self.assertEqual(self.page._parsed_preview_table.rowCount(), 2)
+            self.assertIn("编码:", self.page._stats_label.text())
+            self.assertIn("分隔: 分号 (;)" , self.page._stats_label.text())
+            self.assertIn("表头: 自动识别", self.page._stats_label.text())
+            self.assertNotIn("列类型:", self.page._stats_label.text())
+            self.assertNotIn("当前显示", self.page._stats_label.text())
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "x · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "y · 浮点数")
+            self.assertEqual(self.page._source_file_page_label.text(), "1 - 2 / 3")
+
+    def test_source_file_skip_rows_disables_header_detection(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "skip-header.csv"
+            source_path.write_text("meta,info\nx,y\n1,2\n3,4\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("source_file", node.id)
+            self.page._source_file_skip_rows_edit.setText("1")
+            self.page._on_source_file_skip_rows_changed()
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
+            self.assertEqual(self.page._parsed_preview_table.rowCount(), 2)
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "col_0 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_1 · 整数")
+            self.assertIn("表头: 跳过1行", self.page._stats_label.text())
+            self.assertIn("无效行: 1", self.page._stats_label.text())
+
+    def test_source_file_auto_header_missing_is_reported_in_invalid_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "no-header.csv"
+            source_path.write_text("1,2\n3,4\n5,6\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("source_file", node.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
+            self.assertIn("表头: 自动识别", self.page._stats_label.text())
+            self.assertIn("无效行: 0（缺少表头）", self.page._stats_label.text())
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "col_0 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_1 · 整数")
+
+    def test_source_file_header_issue_is_reported_in_invalid_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "bad-header.csv"
+            source_path.write_text("x,\n1,2\n3,4\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("source_file", node.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
+            self.assertIn("表头: 自动识别", self.page._stats_label.text())
+            self.assertIn("无效行: 0（表头缺项或错误）", self.page._stats_label.text())
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "col_0 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_1 · 整数")
+
+    def test_source_file_parsed_preview_remains_fully_horizontally_scrollable_when_narrow(self):
+        from PySide6.QtGui import QFontMetrics
+        from PySide6.QtWidgets import QHeaderView
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "wide-header.csv"
+            headers = [f"column_{index}_very_long_header_name" for index in range(1, 13)]
+            row_a = [str(index) for index in range(1, 13)]
+            row_b = [str(index * 10) for index in range(1, 13)]
+            source_path.write_text(
+                ",".join(headers) + "\n" + ",".join(row_a) + "\n" + ",".join(row_b) + "\n",
+                encoding="utf-8",
+            )
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.resize(360, 820)
+            self.page.show()
+            self.page.on_tree_node_selected("source_file", node.id)
+            QApplication.processEvents()
+
+            table = self.page._parsed_preview_table
+            header = table.horizontalHeader()
+            last_column = table.columnCount() - 1
+            last_header_text = table.horizontalHeaderItem(last_column).text()
+            last_header_text_width = QFontMetrics(header.font()).horizontalAdvance(last_header_text)
+
+            self.assertGreater(table.horizontalScrollBar().maximum(), 0)
+            self.assertEqual(header.sectionResizeMode(last_column), QHeaderView.ResizeMode.ResizeToContents)
+            self.assertGreaterEqual(header.sectionSize(last_column), last_header_text_width - 6)
+
+            table.horizontalScrollBar().setValue(table.horizontalScrollBar().maximum())
+            QApplication.processEvents()
+            last_rect = table.visualItemRect(table.item(0, last_column))
+            self.assertLessEqual(last_rect.right(), table.viewport().width())
+
+    def test_source_file_parse_failure_shows_reason(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "failed.csv"
+            source_path.write_text("name,value\nfoo,bar\nhello,world\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("source_file", node.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertIn("无法解析文件预览", self.page._text_preview.toPlainText())
+            self.assertIn("解析状态: 失败", self.page._stats_label.text())
+            self.assertIn("失败原因:", self.page._stats_label.text())
+
+    def test_source_file_excel_preview_supports_sheet_selection(self):
+        import openpyxl
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "sheet-preview.xlsx"
+            workbook = openpyxl.Workbook()
+            sheet_a = workbook.active
+            sheet_a.title = "SheetA"
+            sheet_a.append(["x", "y"])
+            sheet_a.append([1, 2])
+            sheet_b = workbook.create_sheet("SheetB")
+            sheet_b.append(["x", "y"])
+            sheet_b.append([10, 20])
+            workbook.save(source_path)
+            workbook.close()
+
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("source_file", node.id)
+
+            self.assertFalse(self.page._source_file_sheet_combo.isHidden())
+            self.assertEqual(
+                [self.page._source_file_sheet_combo.itemText(index) for index in range(self.page._source_file_sheet_combo.count())],
+                ["SheetA", "SheetB"],
+            )
+            self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "1")
+
+            self.page._source_file_sheet_combo.setCurrentText("SheetB")
+
+            self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "10")
+            self.assertIn("工作表: SheetB", self.page._stats_label.text())
+
+    def test_source_file_preview_state_is_remembered_per_node(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path_a = Path(temp_dir) / "node-a.csv"
+            source_path_b = Path(temp_dir) / "node-b.csv"
+            source_path_a.write_text("x,y\n10,20\n30,40\n50,60\n70,80\n", encoding="utf-8")
+            source_path_b.write_text("x,y\n1,2\n3,4\n", encoding="utf-8")
+            node_a = self.pm.add_source_file(str(source_path_a))
+            node_b = self.pm.add_source_file(str(source_path_b))
+            self.assertIsNotNone(node_a)
+            self.assertIsNotNone(node_b)
+
+            self.page.on_tree_node_selected("source_file", node_a.id)
+            self.page._source_file_preview_combo.setCurrentText("源文件")
+            self.page._source_file_row_limit_edit.setText("2")
+            self.page._on_source_file_row_limit_changed()
+            self.page._source_file_skip_rows_edit.setText("3")
+            self.page._on_source_file_skip_rows_changed()
+            self.page._source_file_next_page_btn.click()
+
+            self.assertIn("30,40", self.page._text_preview.toPlainText())
+            self.assertEqual(self.page._source_file_page_label.text(), "3 - 4 / 5")
+
+            self.page.on_tree_node_selected("source_file", node_b.id)
+            self.page.on_tree_node_selected("source_file", node_a.id)
+
+            self.assertEqual(self.page._source_file_preview_combo.currentText(), "源文件")
+            self.assertEqual(self.page._source_file_row_limit_edit.text(), "2")
+            self.assertEqual(self.page._source_file_skip_rows_edit.text(), "3")
+            self.assertEqual(self.page._source_file_page_label.text(), "3 - 4 / 5")
+            self.assertIn("30,40", self.page._text_preview.toPlainText())
+
+    def test_source_file_pagination_supports_first_last_and_jump_line(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "paged.csv"
+            source_path.write_text("x,y\n1,10\n2,20\n3,30\n4,40\n5,50\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+
+            self.page.on_tree_node_selected("source_file", node.id)
+            self.page._source_file_row_limit_edit.setText("2")
+            self.page._on_source_file_row_limit_changed()
+
+            self.page._source_file_last_page_btn.click()
+            self.assertEqual(self.page._source_file_page_label.text(), "5 - 5 / 5")
+
+            self.page._source_file_first_page_btn.click()
+            self.assertEqual(self.page._source_file_page_label.text(), "1 - 2 / 5")
+
+            self.page._source_file_jump_line_edit.setText("4")
+            self.page._jump_to_source_file_page()
+            self.assertEqual(self.page._source_file_page_label.text(), "3 - 4 / 5")
+
+    def test_plot_type_is_remembered_per_node(self):
+        data_file_node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
+        self.assertIsNotNone(data_file_node)
+
+        self.page.on_tree_node_selected("data_file", data_file_node.id)
+        self.page._preview_type_combo.setCurrentText("柱状")
+
+        self.page.on_tree_node_selected("series", self.s.id)
+        self.page._preview_type_combo.setCurrentText("散点")
+
+        self.page.on_tree_node_selected("data_file", data_file_node.id)
+        self.assertEqual(self.page._preview_type_combo.currentText(), "柱状")
+
+        self.page.on_tree_node_selected("series", self.s.id)
+        self.assertEqual(self.page._preview_type_combo.currentText(), "散点")
+
+    def test_folder_browser_directory_is_remembered_per_node(self):
+        dataset_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(dataset_root)
+        folder_a = self.pm.add_folder("批次A", parent_id=dataset_root.id, group_type="datasets")
+        folder_b = self.pm.add_folder("批次B", parent_id=dataset_root.id, group_type="datasets")
+        self.assertIsNotNone(folder_a)
+        self.assertIsNotNone(folder_b)
+
+        with tempfile.TemporaryDirectory() as dir_a, tempfile.TemporaryDirectory() as dir_b:
+            self.page.on_tree_node_selected("folder", folder_a.id)
+            self.page._external_browser_dir = Path(dir_a)
+            self.page._remember_current_external_browser_dir()
+
+            self.page.on_tree_node_selected("folder", folder_b.id)
+            self.page._external_browser_dir = Path(dir_b)
+            self.page._remember_current_external_browser_dir()
+
+            self.page.on_tree_node_selected("folder", folder_a.id)
+            self.assertEqual(self.page._external_browser_dir, Path(dir_a))
+
+            self.page.on_tree_node_selected("folder", folder_b.id)
+            self.assertEqual(self.page._external_browser_dir, Path(dir_b))
+
+    def test_pending_source_file_can_be_renamed_before_import(self):
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "raw-source.csv"
+            source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+
+            self.page.on_tree_node_selected("folder", source_root.id)
+            self.page._append_source_files_to_pending([str(source_path)])
+
+            item = self.page._pending_source_list.topLevelItem(0)
+            self.assertIsNotNone(item)
+            self.assertTrue(bool(item.flags() & Qt.ItemFlag.ItemIsEditable))
+
+            item.setText(0, "renamed-source.csv")
+            self.page._on_pending_source_item_changed(item, 0)
+            self.page._import_pending_files_as_source_files()
+
+        imported = next(
+            (node for node in self.p.tree.nodes if node.kind == "source_file" and node.name == "renamed-source.csv"),
+            None,
+        )
+        self.assertIsNotNone(imported)
+
+    def test_pending_import_lists_are_isolated_by_group(self):
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        images_root = self.pm._find_folder_by_group_type("images")
+        self.assertIsNotNone(source_root)
+        self.assertIsNotNone(datasets_root)
+        self.assertIsNotNone(images_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "source.csv"
+            dataset_path = Path(temp_dir) / "dataset.csv"
+            source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+            dataset_path.write_text("x,y\n3,4\n", encoding="utf-8")
+
+            self.page.on_tree_node_selected("folder", source_root.id)
+            self.page._append_source_files_to_pending([str(source_path)])
+            self.assertEqual(self.page._pending_source_list.topLevelItemCount(), 1)
+
+            self.page.on_tree_node_selected("folder", datasets_root.id)
+            self.assertEqual(self.page._pending_source_list.topLevelItemCount(), 0)
+            self.page._append_source_files_to_pending([str(dataset_path)])
+            self.assertEqual(self.page._pending_source_list.topLevelItemCount(), 1)
+
+            self.page.on_tree_node_selected("folder", images_root.id)
+            self.assertEqual(self.page._pending_source_list.topLevelItemCount(), 0)
+
+            self.page.on_tree_node_selected("folder", source_root.id)
+            self.assertEqual(self.page._pending_source_list.topLevelItemCount(), 1)
+            self.assertEqual(
+                self.page._pending_source_list.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole),
+                str(source_path.resolve()),
+            )
+
+            self.page.on_tree_node_selected("folder", datasets_root.id)
+            self.assertEqual(self.page._pending_source_list.topLevelItemCount(), 1)
+            self.assertEqual(
+                self.page._pending_source_list.topLevelItem(0).data(0, Qt.ItemDataRole.UserRole),
+                str(dataset_path.resolve()),
+            )
+
+    def test_pending_dataset_file_rename_is_used_as_default_import_name(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "raw-dataset.csv"
+            source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+
+            self.page.on_tree_node_selected("folder", datasets_root.id)
+            self.page._append_source_files_to_pending([str(source_path)])
+
+            item = self.page._pending_source_list.topLevelItem(0)
+            self.assertIsNotNone(item)
+            self.assertTrue(bool(item.flags() & Qt.ItemFlag.ItemIsEditable))
+            item.setText(0, "renamed-dataset")
+            self.page._on_pending_source_item_changed(item, 0)
+
+            normalized = str(source_path.resolve())
+            dialog = self.page._create_import_dialog(
+                str(source_path),
+                default_file_name=self.page._pending_import_names[normalized],
+            )
+            try:
+                self.assertEqual(dialog.get_file_name(), "renamed-dataset")
+            finally:
+                dialog.deleteLater()
+
+    def test_pending_digitize_file_rename_is_used_on_import(self):
+        from PySide6.QtGui import QImage
+
+        images_root = self.pm._find_folder_by_group_type("images")
+        self.assertIsNotNone(images_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "raw-image.png"
+            image = QImage(18, 18, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(source_path)))
+
+            self.page.on_tree_node_selected("folder", images_root.id)
+            self.page._append_source_files_to_pending([str(source_path)])
+
+            item = self.page._pending_source_list.topLevelItem(0)
+            self.assertIsNotNone(item)
+            self.assertTrue(bool(item.flags() & Qt.ItemFlag.ItemIsEditable))
+            item.setText(0, "renamed-image.png")
+            self.page._on_pending_source_item_changed(item, 0)
+
+            self.page._import_pending_files_for_current_group()
+
+            imported = next((image_work for image_work in self.p.images if image_work.name == "renamed-image.png"), None)
+            self.assertIsNotNone(imported)
+
+    def test_import_dialog_accepts_whitespace_delimited_source_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "whitespace.dat"
+            source_path.write_text("1 2\n3 4\n5 6\n", encoding="utf-8")
+
+            dialog = self.page._create_import_dialog(str(source_path))
+            try:
+                self.assertEqual(dialog._raw_headers, ["col_0", "col_1"])
+                self.assertEqual(dialog._raw_rows, [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+            finally:
+                dialog.deleteLater()
 
     def test_scaled_preview_image_uses_current_label_size(self):
         from PySide6.QtGui import QImage, QPixmap
@@ -1783,7 +2263,7 @@ class TestDataPage(unittest.TestCase):
             self.page.on_tree_node_selected("image_work", node.id)
 
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._image_preview_label)
-            self.assertIn("图像名称: sample-image", self.page._stats_label.text())
+            self.assertIn("图像名称: sample-image", self.page._stats_title_label.text())
         finally:
             temp_path.unlink(missing_ok=True)
 
@@ -1955,6 +2435,27 @@ class TestDataPage(unittest.TestCase):
             self.assertEqual(self.page._origin_source_path_button.toolTip(), asset.source_file_path)
             self.assertIn("…", self.page._current_source_path_button.text())
             self.assertIn("…", self.page._origin_source_path_button.text())
+            self.assertLess(self.page._current_source_path_button.width(), self.page._source_path_panel.width())
+            self.assertLess(self.page._origin_source_path_button.width(), self.page._source_path_panel.width())
+
+    def test_source_file_path_buttons_do_not_elide_short_paths_on_first_show(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            source_path = Path(temp_dir) / "a.csv"
+            source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+
+            node = self.pm.add_source_file(str(source_path))
+            self.assertIsNotNone(node)
+            asset = self.pm.get_source_file(node.source_file_id)
+            self.assertIsNotNone(asset)
+
+            self.page.resize(1280, 820)
+            self.page.show()
+            self.page.on_tree_node_selected("source_file", node.id)
+            QApplication.processEvents()
+
+            self.assertEqual(self.page._current_source_path_button.text(), self.pm.get_source_file_path(asset.id))
+            self.assertEqual(self.page._origin_source_path_button.text(), asset.source_file_path)
+            self.assertLess(self.page._current_source_path_button.width(), self.page._source_path_panel.width())
 
     def test_system_file_manager_hides_dotfiles_until_toggled(self):
         source_root = self.pm._find_folder_by_group_type("source_files")
@@ -2325,7 +2826,9 @@ class TestChartPage(unittest.TestCase):
         self.assertTrue(all(isinstance(tab_page, SmoothScrollArea) for tab_page in tab_pages))
         min_heights = {tab_page.widget().minimumHeight() for tab_page in tab_pages}
         self.assertEqual(len(min_heights), 1)
-        self.assertTrue(all(tab_page.widget().sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum for tab_page in tab_pages))
+        vertical_policies = [tab_page.widget().sizePolicy().verticalPolicy() for tab_page in tab_pages]
+        self.assertEqual(vertical_policies[:2], [QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum])
+        self.assertEqual(vertical_policies[2], QSizePolicy.Policy.Expanding)
 
     def test_plot_extension_repeat_hint_is_directly_under_loaded_header(self):
         container_layout = self.page._style_tabs.widget(2).widget().layout()
@@ -2553,7 +3056,7 @@ class TestChartPage(unittest.TestCase):
             self.page._refresh_style_extension_panel()
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
-            self.assertIn("绘图扩展 · UI 参考线", selector_items)
+            self.assertIn("UI 参考线", selector_items)
         finally:
             extension_registry.unregister_plot("ui_plot_extension_test")
             self.page._refresh_style_extension_panel()
@@ -2629,60 +3132,155 @@ class TestChartPage(unittest.TestCase):
             extension_registry.unregister_plot("ui_plot_extension_context_test")
             self.page._plot_extension_options.pop("ui_plot_extension_context_test", None)
 
-    def test_curve_style_extension_preserves_extra_plot_kwargs(self):
-        from core.extension_api import CurveStyleExtension, extension_registry
+    def test_plot_extension_style_patch_uses_latest_operation_per_field(self):
+        from core.extension_api import PlotExtension, extension_registry
 
-        def _style_patch(style, options):
-            style.update({"markeredgewidth": options.get("markeredgewidth", 2.5)})
-            return style
+        def _style_patch(context, options):
+            if context.phase != "before_plot":
+                return
+            context.patch_figure_state({
+                "line_width": float(options.get("line_width", 4.0)),
+                "legend_font_size": int(options.get("legend_font_size", 12)),
+            })
 
-        extension_registry.register_curve_style(
-            CurveStyleExtension(
-                type="ui_curve_kwargs_test",
-                name="UI 曲线扩展",
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_style_patch_order",
+                name="样式覆盖顺序",
                 handler=_style_patch,
-                default_options={"markeredgewidth": 2.5},
+                default_options={"line_width": 4.0, "legend_font_size": 12},
             )
         )
         try:
             self.page.on_tree_node_activated("series", self.s.id)
-            self.page._chart_list.setCurrentRow(0)
-            self.page._curve_style_extension_options["ui_curve_kwargs_test"] = {"markeredgewidth": 3.0}
+            self.page._plot_line_width_edit.setText("2.0")
+            self.page._on_quick_config_changed()
 
-            self.page._apply_curve_style_extension("ui_curve_kwargs_test")
+            self.page._on_chart_extension_apply("chart_plot_style_patch_order", {"line_width": 4.0, "legend_font_size": 12})
 
-            curve_key = self.page._curve_key(self.page._chart_series[0])
-            self.assertEqual(self.page._curve_styles[curve_key]["markeredgewidth"], 3.0)
+            axis = self.page._figure.axes[0]
+            self.assertAlmostEqual(axis.lines[0].get_linewidth(), 4.0)
+
+            self.page._plot_line_width_edit.setText("2.6")
+            self.page._on_quick_config_changed()
+            self.page._redraw_now()
+
+            axis = self.page._figure.axes[0]
+            legend = axis.get_legend()
+            self.assertAlmostEqual(axis.lines[0].get_linewidth(), 2.6)
+            self.assertIsNotNone(legend)
+            self.assertAlmostEqual(legend.get_texts()[0].get_fontsize(), 12)
         finally:
-            extension_registry.unregister_curve_style("ui_curve_kwargs_test")
+            extension_registry.unregister_plot("chart_plot_style_patch_order")
+            self.page._plot_extension_options.pop("chart_plot_style_patch_order", None)
+            self.page._applied_plot_extensions = [
+                entry for entry in self.page._applied_plot_extensions
+                if entry.get("type") != "chart_plot_style_patch_order"
+            ]
+            self.page._refresh_style_extension_panel()
 
-    def test_plot_style_extension_preserves_extra_plot_config(self):
-        from core.extension_api import PlotStyleExtension, extension_registry
+    def test_plot_extension_style_patch_preserves_other_nested_style_fields_on_manual_update(self):
+        from matplotlib.colors import to_rgba
+        from core.extension_api import PlotExtension, extension_registry
 
-        def _style_patch(state, options):
-            state.update({
-                "legend_kwargs": {"title": options.get("title", "Demo")},
-                "line_defaults": {"solid_capstyle": options.get("capstyle", "round")},
+        def _style_patch(context, _options):
+            if context.phase != "before_plot":
+                return
+            context.patch_plot_style({
+                "legend_kwargs": {
+                    "frameon": True,
+                    "facecolor": "#ffeecc",
+                    "edgecolor": "#333333",
+                }
             })
-            return state
 
-        extension_registry.register_plot_style(
-            PlotStyleExtension(
-                type="ui_plot_style_kwargs_test",
-                name="UI 绘图样式扩展",
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_style_patch_nested",
+                name="样式最小覆盖",
                 handler=_style_patch,
-                default_options={"title": "Legend", "capstyle": "round"},
+                default_options={},
             )
         )
         try:
-            self.page._plot_style_extension_options["ui_plot_style_kwargs_test"] = {"title": "Legend", "capstyle": "projecting"}
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page._on_chart_extension_apply("chart_plot_style_patch_nested", {})
 
-            self.page._apply_plot_style_extension("ui_plot_style_kwargs_test")
+            self.page._apply_advanced_config({"legend_kwargs": {"facecolor": "#ccffee"}})
 
-            self.assertEqual(self.page._plot_style_extras["legend_kwargs"]["title"], "Legend")
-            self.assertEqual(self.page._plot_style_extras["line_defaults"]["solid_capstyle"], "projecting")
+            legend = self.page._figure.axes[0].get_legend()
+            self.assertIsNotNone(legend)
+            self.assertTrue(legend.get_frame().get_visible())
+            expected_rgb = tuple(round(value, 3) for value in to_rgba("#ccffee")[:3])
+            actual_rgb = tuple(round(value, 3) for value in legend.get_frame().get_facecolor()[:3])
+            self.assertEqual(actual_rgb, expected_rgb)
         finally:
-            extension_registry.unregister_plot_style("ui_plot_style_kwargs_test")
+            extension_registry.unregister_plot("chart_plot_style_patch_nested")
+            self.page._plot_extension_options.pop("chart_plot_style_patch_nested", None)
+            self.page._applied_plot_extensions = [
+                entry for entry in self.page._applied_plot_extensions
+                if entry.get("type") != "chart_plot_style_patch_nested"
+            ]
+            self.page._refresh_style_extension_panel()
+
+    def test_builtin_science_plot_extension_applies_labels_and_legend_frame(self):
+        from core.extension_api import reload_configured_extensions
+
+        reload_configured_extensions()
+        self.page._refresh_style_extension_panel()
+        self.page.on_tree_node_activated("series", self.s.id)
+
+        self.page._on_chart_extension_apply(
+            "demo_plot_science_style",
+            {
+                "x_label": "时间",
+                "y_label": "幅值",
+                "axis_label_size": 13,
+                "tick_label_size": 9,
+                "legend_frame": True,
+                "legend_location": "upper left",
+                "line_width": 1.8,
+            },
+        )
+
+        axis = self.page._figure.axes[0]
+        legend = axis.get_legend()
+        self.assertEqual(axis.get_xlabel(), "时间")
+        self.assertEqual(axis.get_ylabel(), "幅值")
+        self.assertAlmostEqual(axis.lines[0].get_linewidth(), 1.8)
+        self.assertIsNotNone(legend)
+        self.assertTrue(legend.get_frame().get_visible())
+
+    def test_builtin_polar_plot_extension_draws_polar_axis(self):
+        from core.extension_api import reload_configured_extensions
+
+        reload_configured_extensions()
+        self.page._refresh_style_extension_panel()
+        self.page.on_tree_node_activated("series", self.s.id)
+
+        self.page._on_chart_extension_apply(
+            "demo_plot_polar_projection",
+            {
+                "theta_unit": "degree",
+                "title": "极坐标预览",
+                "show_legend": True,
+            },
+        )
+
+        axis = self.page._figure.axes[0]
+        self.assertEqual(axis.name, "polar")
+        self.assertEqual(axis.get_title(), "极坐标预览")
+        self.assertGreaterEqual(len(axis.lines), 1)
+
+    def test_curve_style_opacity_is_exposed_and_clamped(self):
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._chart_list.setCurrentRow(0)
+
+        self.assertTrue(self.page._style_opacity_edit.isEnabled())
+        self.page._style_opacity_edit.setText("1.7")
+
+        curve_key = self.page._curve_key(self.page._chart_series[0])
+        self.assertEqual(self.page._curve_styles[curve_key]["alpha"], 1.0)
 
     def test_style_tabs_hide_add_and_close_buttons(self):
         from qfluentwidgets import TabCloseButtonDisplayMode
@@ -2819,148 +3417,112 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._figure_state.theme, "ACS")
         self.assertEqual(self.page._template_combo.currentText(), "显式加载模板")
 
-    def test_chart_style_extensions_appear_in_selectors_and_panel(self):
-        from core.extension_api import CurveStyleExtension, PlotStyleExtension, extension_registry
+    def test_chart_extension_panel_entries_are_consistent_across_tabs(self):
+        from core.extension_api import PlotExtension, extension_registry
 
-        extension_registry.register_plot_style(
-            PlotStyleExtension(
-                type="chart_plot_selector",
-                name="绘图扩展选择",
-                handler=lambda state, options: {"theme": "扩展绘图"},
-                description="覆盖图表绘图样式",
-                default_options={"line_width": 2.4},
-            )
-        )
-        extension_registry.register_curve_style(
-            CurveStyleExtension(
-                type="chart_curve_selector",
-                name="曲线扩展选择",
-                handler=lambda style, options: {"marker": "d"},
-                description="覆盖当前曲线样式",
-                default_options={"marker": "d"},
-            )
-        )
-        try:
-            self.page._refresh_template_combo()
-            self.page._refresh_curve_style_template_combo()
-
-            plot_items = [self.page._template_combo.itemText(i) for i in range(self.page._template_combo.count())]
-            curve_items = [self.page._curve_style_template_combo.itemText(i) for i in range(self.page._curve_style_template_combo.count())]
-            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-
-            self.assertIn("扩展 · 绘图扩展选择", plot_items)
-            self.assertIn("扩展 · 曲线扩展选择", curve_items)
-            self.assertIn("曲线扩展选择", selector_items)
-
-            self.page._style_tabs.setCurrentIndex(1)
-            QApplication.processEvents()
-            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-            self.assertIn("样式扩展 · 绘图扩展选择", selector_items)
-        finally:
-            extension_registry.unregister_plot_style("chart_plot_selector")
-            extension_registry.unregister_curve_style("chart_curve_selector")
-            self.page._refresh_template_combo()
-            self.page._refresh_curve_style_template_combo()
-
-    def test_plot_style_and_plot_extensions_are_split_across_tabs(self):
-        from core.extension_api import PlotExtension, PlotStyleExtension, extension_registry
-
-        extension_registry.register_plot_style(
-            PlotStyleExtension(
-                type="chart_plot_style_split",
-                name="绘图样式拆分",
-                handler=lambda state, options: state,
-                description="只应出现在绘图样式扩展页。",
-            )
-        )
         extension_registry.register_plot(
             PlotExtension(
                 type="chart_plot_extension_split",
                 name="绘图扩展拆分",
                 handler=lambda context, options: None,
-                description="只应出现在绘图扩展页。",
+                description="应在所有标签对应的侧栏中可见。",
             )
         )
         try:
-            self.page._style_tabs.setCurrentIndex(1)
-            QApplication.processEvents()
-            plot_style_items = [
-                self.page._extension_panel._selector.itemText(i)
-                for i in range(self.page._extension_panel._selector.count())
-            ]
+            self.page._refresh_style_extension_panel()
+            selector_snapshots = []
+            for index in range(self.page._style_tabs.count()):
+                self.page._style_tabs.setCurrentIndex(index)
+                QApplication.processEvents()
+                selector_snapshots.append([
+                    self.page._extension_panel._selector.itemText(i)
+                    for i in range(self.page._extension_panel._selector.count())
+                ])
 
-            self.page._style_tabs.setCurrentIndex(2)
-            QApplication.processEvents()
-            plot_extension_items = [
-                self.page._extension_panel._selector.itemText(i)
-                for i in range(self.page._extension_panel._selector.count())
-            ]
-
-            self.assertIn("样式扩展 · 绘图样式拆分", plot_style_items)
-            self.assertNotIn("绘图扩展 · 绘图扩展拆分", plot_style_items)
-            self.assertIn("绘图扩展 · 绘图扩展拆分", plot_extension_items)
-            self.assertNotIn("样式扩展 · 绘图样式拆分", plot_extension_items)
+            self.assertTrue(selector_snapshots)
+            for items in selector_snapshots:
+                self.assertIn("绘图扩展拆分", items)
+                self.assertEqual(items, selector_snapshots[0])
         finally:
-            extension_registry.unregister_plot_style("chart_plot_style_split")
             extension_registry.unregister_plot("chart_plot_extension_split")
             self.page._refresh_style_extension_panel()
 
-    def test_chart_style_extension_panel_applies_plot_and_curve_styles(self):
-        from core.extension_api import CurveStyleExtension, PlotStyleExtension, extension_registry
+    def test_chart_extension_panel_applies_plot_extension_from_any_tab(self):
+        from core.extension_api import PlotExtension, extension_registry
 
-        extension_registry.register_plot_style(
-            PlotStyleExtension(
-                type="chart_plot_apply",
+        def _draw(axis, series, options):
+            axis.axhline(float(options.get("y", 0.0)), color="#D13438")
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_apply_any_tab",
                 name="绘图扩展应用",
-                handler=lambda state, options: {
-                    "theme": "扩展绘图",
-                    "line_width": float(options.get("line_width", 1.0)),
-                },
-                description="调整绘图线宽",
-                default_options={"line_width": 3.2},
-            )
-        )
-        extension_registry.register_curve_style(
-            CurveStyleExtension(
-                type="chart_curve_apply",
-                name="曲线扩展应用",
-                handler=lambda style, options: {
-                    "linewidth": float(options.get("linewidth", 1.0)),
-                    "marker": options.get("marker", "s"),
-                },
-                description="调整当前曲线样式",
-                default_options={"linewidth": 2.8, "marker": "d"},
+                handler=_draw,
+                description="在任意标签页都应可通过侧栏应用。",
+                default_options={"y": 3.2},
             )
         )
         try:
             self.page.on_tree_node_activated("series", self.s.id)
 
-            self.page._style_tabs.setCurrentIndex(1)
-            QApplication.processEvents()
-            plot_selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-            self.page._extension_panel._selector.setCurrentIndex(plot_selector_items.index("样式扩展 · 绘图扩展应用"))
-            self.page._extension_panel._editor.setPlainText('{"line_width": 4.5}')
-            self.page._extension_panel._apply_current()
-
-            self.assertEqual(self.page._applied_plot_style_ref, "extension:chart_plot_apply")
-            self.assertEqual(self.page._figure_state.line_width, 4.5)
-
             self.page._style_tabs.setCurrentIndex(0)
             QApplication.processEvents()
-            curve_selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-            self.page._extension_panel._selector.setCurrentIndex(curve_selector_items.index("曲线扩展应用"))
-            self.page._extension_panel._editor.setPlainText('{"linewidth": 3.5, "marker": "s"}')
+            plot_selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
+            self.page._extension_panel._selector.setCurrentIndex(plot_selector_items.index("绘图扩展应用"))
+            self.page._extension_panel._editor.setPlainText('{"y": 4.5}')
             self.page._extension_panel._apply_current()
 
-            self.assertEqual(self.page._active_curve_style_ref, "curve_extension:chart_curve_apply")
-            curve_key = self.page._curve_key(self.page._chart_series[0])
-            self.assertEqual(self.page._curve_styles[curve_key]["linewidth"], 3.5)
-            self.assertEqual(self.page._curve_styles[curve_key]["marker"], "s")
+            self.assertEqual(len(self.page._applied_plot_extensions), 1)
+            self.assertEqual(self.page._applied_plot_extensions[0]["type"], "chart_plot_apply_any_tab")
+            axis = self.page._figure.axes[0]
+            self.assertTrue(any(list(line.get_ydata()) == [4.5, 4.5] for line in axis.lines))
         finally:
-            extension_registry.unregister_plot_style("chart_plot_apply")
-            extension_registry.unregister_curve_style("chart_curve_apply")
-            self.page._refresh_template_combo()
-            self.page._refresh_curve_style_template_combo()
+            extension_registry.unregister_plot("chart_plot_apply_any_tab")
+            self.page._plot_extension_options.pop("chart_plot_apply_any_tab", None)
+            self.page._refresh_style_extension_panel()
+
+    def test_plot_extension_applied_list_height_is_not_locked_to_loaded_count(self):
+        from PySide6.QtWidgets import QSizePolicy
+        from core.extension_api import PlotExtension, extension_registry
+
+        def _draw(axis, series, options):
+            axis.axhline(float(options.get("y", 0.0)), color="#D13438")
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_dynamic_height",
+                name="动态高度绘图扩展",
+                handler=_draw,
+                default_options={"y": 1.0},
+            )
+        )
+        try:
+            self.page.on_tree_node_activated("series", self.s.id)
+            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
+            self.page._extension_panel._selector.setCurrentIndex(selector_items.index("动态高度绘图扩展"))
+            self.page._extension_panel._editor.setPlainText('{"y": 1.0}')
+            self.page._extension_panel._apply_current()
+            first_min_height = self.page._plot_extension_applied_list.minimumHeight()
+            first_max_height = self.page._plot_extension_applied_list.maximumHeight()
+
+            self.page._extension_panel._editor.setPlainText('{"y": 2.0}')
+            self.page._extension_panel._apply_current()
+            second_min_height = self.page._plot_extension_applied_list.minimumHeight()
+            second_max_height = self.page._plot_extension_applied_list.maximumHeight()
+
+            self.assertEqual(self.page._plot_extension_applied_list.count(), 2)
+            self.assertGreaterEqual(second_min_height, first_min_height)
+            self.assertEqual(first_max_height, 16777215)
+            self.assertEqual(second_max_height, 16777215)
+            self.assertEqual(
+                self.page._plot_extension_applied_list.sizePolicy().verticalPolicy(),
+                QSizePolicy.Policy.Expanding,
+            )
+        finally:
+            extension_registry.unregister_plot("chart_plot_dynamic_height")
+            self.page._plot_extension_options.pop("chart_plot_dynamic_height", None)
+            self.page._applied_plot_extensions = []
+            self.page._refresh_style_extension_panel()
 
     def test_plot_extension_can_be_removed_after_apply(self):
         from core.extension_api import PlotExtension, extension_registry
@@ -3497,7 +4059,7 @@ class TestProcessPage(unittest.TestCase):
             combo_items = [self.page._add_op_combo.itemText(i) for i in range(self.page._add_op_combo.count())]
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
-            self.assertIn("扩展 · UI 缩放测试", combo_items)
+            self.assertIn("[扩展]UI 缩放测试", combo_items)
             self.assertIn("UI 缩放测试", selector_items)
         finally:
             extension_registry.unregister_processing("ui_scale_test")
@@ -3888,7 +4450,7 @@ class TestAnalysisPage(unittest.TestCase):
             combo_items = [self.page._type_combo.itemText(i) for i in range(self.page._type_combo.count())]
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
-            self.assertIn("UI 跨度选择", combo_items)
+            self.assertIn("[扩展]UI 跨度选择", combo_items)
             self.assertIn("UI 跨度选择", selector_items)
         finally:
             extension_registry.unregister_analysis("ui_span_selector")
@@ -3935,6 +4497,140 @@ class TestAnalysisPage(unittest.TestCase):
             extension_registry.unregister_analysis("ui_span_run")
             self.page._refresh_analysis_type_choices()
 
+    def test_analysis_extension_can_run_with_left_json_params_editor(self):
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        def _span(inputs, params):
+            values = list(inputs[0].get("y", []))
+            return {
+                "analysis_type": "ui_span_left_json",
+                "source_name": inputs[0].get("name", ""),
+                "span": (max(values) - min(values)) if values else 0.0,
+                "scale": params.get("scale", 1),
+            }
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_span_left_json",
+                name="UI 左侧参数执行",
+                handler=_span,
+                default_options={"scale": 2},
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            combo_items = [self.page._type_combo.itemText(i) for i in range(self.page._type_combo.count())]
+            self.assertIn("[扩展]UI 左侧参数执行", combo_items)
+
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_span_left_json"))
+            self.assertFalse(self.page._extension_params_edit.isHidden())
+            self.assertIn('"scale": 2', self.page._extension_params_edit.toPlainText())
+            self.page._extension_params_edit.setPlainText('{"scale": 6}')
+
+            self.page._selected_inputs = [{"kind": "series", "node_id": self.s.id, "label": self.s.name}]
+            self.page._get_selected_data = lambda: [([0.0, 1.0], [2.0, 6.0], "demo")]
+            self.page._run_analysis()
+
+            self.assertEqual(self.page._result["analysis_type"], "ui_span_left_json")
+            self.assertEqual(self.page._result["scale"], 6)
+            self.assertEqual(self.page._current_analysis_params()["extension_options"], {"scale": 6})
+        finally:
+            extension_registry.unregister_analysis("ui_span_left_json")
+            self.page._refresh_analysis_type_choices()
+
+    def test_analysis_extension_can_render_custom_plot_series_and_custom_placeholders(self):
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        if self.page._figure is None:
+            self.skipTest("matplotlib unavailable")
+
+        def _spectrum(inputs, params):
+            return {
+                "analysis_type": "ui_spectrum_plot",
+                "source_name": inputs[0].get("name", ""),
+                "dominant_frequency": 12.5,
+                "dominant_amplitude": 3.4,
+                "x_label": "频率 (Hz)",
+                "y_label": "幅值",
+                "plot_title": "自定义频谱",
+                "_plot_series": [
+                    {"name": "频谱", "x": [0.0, 1.0, 2.0], "y": [0.2, 3.4, 1.1], "color": "#0078D4"}
+                ],
+            }
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_spectrum_plot",
+                name="UI 频谱绘图",
+                handler=_spectrum,
+                description="返回一条可直接绘制的频谱曲线。",
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_spectrum_plot"))
+            self.page._selected_inputs = [{"kind": "series", "node_id": self.s.id, "label": self.s.name}]
+            self.page._get_selected_data = lambda: [([0.0, 0.1, 0.2], [1.0, 0.2, 0.1], "demo")]
+
+            self.page._run_analysis()
+
+            placeholder_items = [
+                self.page._report_placeholder_combo.itemText(i)
+                for i in range(self.page._report_placeholder_combo.count())
+            ]
+            self.assertTrue(any("{{dominant_frequency}}" in item for item in placeholder_items))
+
+            axis = self.page._figure.axes[0]
+            self.assertEqual(len(axis.lines), 1)
+            self.assertEqual(axis.get_xlabel(), "频率 (Hz)")
+            self.assertEqual(axis.get_ylabel(), "幅值")
+            self.assertEqual(axis.get_title(), "自定义频谱")
+
+            exported = self.page._build_analysis_output_series("导出频谱")
+            self.assertIsNotNone(exported)
+            self.assertEqual(exported.x, [0.0, 1.0, 2.0])
+            self.assertEqual(exported.y, [0.2, 3.4, 1.1])
+
+            self.page._report_editor.setPlainText("主频 {{dominant_frequency:.1f}} Hz")
+            self.page._render_report_preview()
+            self.assertIn("12.5", self.page._report_preview.toPlainText())
+        finally:
+            extension_registry.unregister_analysis("ui_spectrum_plot")
+            self.page._refresh_analysis_type_choices()
+
+    def test_analysis_extension_declared_placeholders_appear_before_run_and_support_search(self):
+        from qfluentwidgets import EditableComboBox
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_declared_placeholder_search",
+                name="UI 声明占位符",
+                handler=lambda inputs, params: {
+                    "analysis_type": "ui_declared_placeholder_search",
+                    "dominant_frequency": 7.5,
+                },
+                report_placeholders=[
+                    {"key": "dominant_frequency", "label": "主频", "description": "主频字段"},
+                ],
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page._refresh_report_placeholder_choices()
+
+            items = [
+                self.page._report_placeholder_combo.itemText(i)
+                for i in range(self.page._report_placeholder_combo.count())
+            ]
+
+            self.assertTrue(any("[UI 声明占位符]主频" in item and "{{dominant_frequency}}" in item for item in items))
+            self.assertIsInstance(self.page._report_placeholder_combo, EditableComboBox)
+            self.assertIsNotNone(self.page._report_placeholder_combo.completer())
+        finally:
+            extension_registry.unregister_analysis("ui_declared_placeholder_search")
+            self.page._refresh_analysis_type_choices()
+
     def test_analysis_page_loads_registered_extensions_on_init(self):
         from core.extension_api import AnalysisExtension, extension_registry
         from ui.pages.analysis_page import AnalysisPage
@@ -3951,7 +4647,7 @@ class TestAnalysisPage(unittest.TestCase):
         try:
             combo_items = [page._type_combo.itemText(i) for i in range(page._type_combo.count())]
             selector_items = [page._extension_panel._selector.itemText(i) for i in range(page._extension_panel._selector.count())]
-            self.assertIn("初始化分析扩展", combo_items)
+            self.assertIn("[扩展]初始化分析扩展", combo_items)
             self.assertIn("初始化分析扩展", selector_items)
         finally:
             page.deleteLater()
@@ -4128,7 +4824,7 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIn("统计结果A", preview)
         self.assertNotIn("拟合结果A", preview)
 
-    def test_report_preview_preserves_blank_lines_for_multi_result_sections(self):
+    def test_report_preview_does_not_append_multi_result_sections_without_placeholder(self):
         with mock.patch(
             "ui.pages.analysis_page.choose_analysis_result_save_plan",
             side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "统计结果A"),
@@ -4161,6 +4857,44 @@ class TestAnalysisPage(unittest.TestCase):
 
         preview = self.page._report_preview.toPlainText()
         self.assertTrue(preview.startswith("\n前言\n\n正文\n"))
+        self.assertEqual(preview.count("前言"), 1)
+        self.assertEqual(preview.count("正文"), 1)
+        self.assertNotIn("### 拟合结果A", preview)
+        self.assertNotIn("### 统计结果A", preview)
+
+    def test_report_preview_preserves_blank_lines_when_multi_result_sections_placeholder_present(self):
+        with mock.patch(
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "统计结果A"),
+        ):
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page._type_combo.setCurrentIndex(0)
+            self.page._run_analysis()
+            self.page._save_result()
+            self.page._type_combo.setCurrentIndex(2)
+            self.page._run_analysis()
+            self.page._save_result()
+
+        self.page._report_editor.setPlainText("\n前言\n\n正文\n\n{{multi_result_sections}}\n")
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._on_generate_report()
+
+        curve_fit_combo = self.page._report_result_selectors["curve_fit"]
+        statistics_combo = self.page._report_result_selectors["statistics"]
+
+        def _select_combo_text(combo, text):
+            for index in range(combo.count()):
+                if combo.itemText(index) == text:
+                    combo.setCurrentIndex(index)
+                    return
+            self.fail(f"未找到结果选项: {text}")
+
+        _select_combo_text(curve_fit_combo, "拟合结果A")
+        _select_combo_text(statistics_combo, "统计结果A")
+        self.page._render_report_preview()
+
+        preview = self.page._report_preview.toPlainText()
+        self.assertTrue(preview.startswith("\n前言\n\n正文\n\n"))
         self.assertEqual(preview.count("前言"), 1)
         self.assertEqual(preview.count("正文"), 1)
         self.assertIn("### 拟合结果A", preview)
@@ -4524,6 +5258,13 @@ class TestMainWindow(unittest.TestCase):
                 self.assertIsNotNone(self.win._tree_panel.tree._find_item(picture_node.id))
             finally:
                 self.pm.current_project.file_path = original_file_path
+
+    def test_page_project_modified_refreshes_tree(self):
+        with mock.patch.object(self.win._tree_panel.tree, "refresh") as refresh_mock:
+            self.win.data_page.project_modified.emit()
+            QApplication.processEvents()
+
+        refresh_mock.assert_called()
 
     def test_source_file_to_digitize_routes_to_import_source_image(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5587,6 +6328,16 @@ class TestReportTemplateDialog(unittest.TestCase):
         self.dialog._insert_selected_placeholder()
 
         self.assertIn(target_text, self.dialog._editor.toPlainText())
+
+    def test_placeholder_selector_includes_custom_result_fields(self):
+        dialog = self._report_dialog_module.ReportTemplateDialog(
+            result={"analysis_type": "spectrum_analysis", "dominant_frequency": 9.81}
+        )
+        try:
+            items = [dialog._placeholder_combo.itemText(i) for i in range(dialog._placeholder_combo.count())]
+            self.assertTrue(any("{{dominant_frequency}}" in item for item in items))
+        finally:
+            dialog.deleteLater()
 
 
 if __name__ == "__main__":

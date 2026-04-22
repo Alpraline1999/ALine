@@ -231,17 +231,35 @@ class HomePage(QWidget):
         status = get_extension_load_status()
         registered_count = status["registered_count"]
         error_count = status["error_count"]
+        source_summary = status.get("source_summary") or {}
+        loaded_counts = dict(source_summary.get("loaded_extension_counts") or {})
+        error_file_counts = dict(source_summary.get("error_file_counts") or {})
+        builtin_count = int(loaded_counts.get("builtin", 0) or 0)
+        external_count = int(loaded_counts.get("external", 0) or 0)
+        source_suffix = (
+            f"（内置 {builtin_count} / 外部 {external_count}）"
+            if builtin_count + external_count > 0
+            else ""
+        )
         base_style = "background: transparent; border: none; padding: 0; text-align: left;"
         if error_count:
-            self._extension_status_btn.setText(f"扩展：{registered_count} 项可用，{error_count} 项失败")
+            self._extension_status_btn.setText(f"扩展：{registered_count} 项可用{source_suffix}，{error_count} 项失败")
             self._extension_status_btn.setStyleSheet(base_style + "color: #D83B01; font-size: 12px;")
         elif registered_count:
-            self._extension_status_btn.setText(f"扩展：{registered_count} 项可用")
+            self._extension_status_btn.setText(f"扩展：{registered_count} 项可用{source_suffix}")
             self._extension_status_btn.setStyleSheet(base_style + f"color: {accent_color()}; font-size: 12px;")
         else:
             self._extension_status_btn.setText("扩展：未发现可用项")
             self._extension_status_btn.setStyleSheet(base_style + f"color: {placeholder_color()}; font-size: 12px;")
         details = status["details"]
+        tooltip_lines = []
+        if builtin_count + external_count > 0:
+            tooltip_lines.append(f"可用扩展：内置 {builtin_count}，外部 {external_count}")
+        builtin_error_count = int(error_file_counts.get("builtin", 0) or 0)
+        external_error_count = int(error_file_counts.get("external", 0) or 0)
+        if builtin_error_count + external_error_count > 0:
+            tooltip_lines.append(f"失败文件：内置 {builtin_error_count}，外部 {external_error_count}")
+        self._extension_status_btn.setToolTip("\n".join(tooltip_lines))
         self._extension_status_btn.setEnabled(bool(details.get("loaded") or details.get("errors")))
 
     def _show_extension_details(self) -> None:

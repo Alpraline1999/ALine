@@ -655,6 +655,8 @@ class ProjectTreeWidget(QWidget):
             item.setIcon(0, icon_fif.icon())
         else:
             cfg = _KIND_CONFIG.get(node.kind, (FIF.DOCUMENT, None))
+            if node.kind == "source_file":
+                cfg = (self._source_file_icon(node), cfg[1])
             icon_fif, _color_hint = cfg
             if icon_fif is not None:
                 item.setIcon(0, icon_fif.icon())
@@ -1542,9 +1544,18 @@ class ProjectTreeWidget(QWidget):
         return window if isinstance(window, QWidget) else self
 
     def _folder_icon(self, node, group_type: Optional[str]):
+        if getattr(node, "parent_id", None) is not None:
+            return FIF.FOLDER
         if group_type:
             return _GROUP_ICON.get(group_type, FIF.FOLDER)
         return FIF.FOLDER
+
+    def _source_file_icon(self, node):
+        source_file_id = getattr(node, "source_file_id", "")
+        source_path = project_manager.get_source_file_path(source_file_id)
+        if source_path and self._supports_source_file_digitize_import(source_path):
+            return FIF.PHOTO
+        return _SOURCE_FILE_ICON
 
     def _tooltip_item_at_event(self, event) -> Optional[QTreeWidgetItem]:
         if hasattr(event, "position"):

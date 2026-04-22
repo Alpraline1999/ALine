@@ -300,11 +300,15 @@ class MainWindow(FluentWindow):
         self.home_page.project_opened.connect(self._on_project_opened)
         self.home_page.quick_start_requested.connect(self._on_home_quick_start_requested)
         self.settings_page.replay_onboarding_requested.connect(self._replay_home_onboarding)
+        self.settings_page.extensions_reloaded.connect(self._on_extensions_reloaded)
         self.settings_page.project_modified.connect(self._on_project_modified)
         self.settings_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.digitize_page.project_modified.connect(self._on_project_modified)
         self.digitize_page.project_saved.connect(self._update_window_title)
         self.chart_page.project_modified.connect(self._on_project_modified)
+        self.chart_page.extensions_reloaded.connect(self._on_extensions_reloaded)
+        self.process_page.extensions_reloaded.connect(self._on_extensions_reloaded)
+        self.analysis_page.extensions_reloaded.connect(self._on_extensions_reloaded)
 
         # 数据管理页信号
         self.data_page.project_modified.connect(self._on_project_modified)
@@ -322,6 +326,24 @@ class MainWindow(FluentWindow):
             page.project_modified.connect(self._tree_panel.tree.refresh)
         self.chart_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.process_page.assets_modified.connect(self._tree_panel.tree.refresh)
+
+    def _on_extensions_reloaded(self) -> None:
+        from core.extension_api import extension_registry
+
+        self.home_page._refresh_extension_summary()
+        self.process_page._refresh_processing_extensions()
+        self.analysis_page._refresh_analysis_type_choices()
+
+        plot_types = {extension.type for extension in extension_registry.list_plot()}
+        self.chart_page._plot_extension_options = {
+            key: value for key, value in self.chart_page._plot_extension_options.items() if key in plot_types
+        }
+        self.chart_page._applied_plot_extensions = [
+            entry for entry in self.chart_page._applied_plot_extensions if entry.get("type") in plot_types
+        ]
+        self.chart_page._refresh_curve_style_template_combo()
+        self.chart_page._refresh_template_combo(self.chart_page._applied_plot_style_ref)
+        self.chart_page._refresh_style_extension_panel()
 
     # ─────────────────────────────────────────────────────────
     # FluentWindow.switchTo 覆盖

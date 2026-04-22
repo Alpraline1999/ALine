@@ -464,43 +464,153 @@ def run_analysis(
 # 报告渲染（v0.3）
 # ─────────────────────────────────────────────────────────────
 
+_BUILTIN_ANALYSIS_LABELS = {
+    "curve_fit": "曲线拟合",
+    "peak_detect": "峰值检测",
+    "statistics": "统计分析",
+    "correlation": "相关性分析",
+    "error_compare": "误差比较",
+}
+
+
 _REPORT_TEMPLATE_PLACEHOLDERS: List[Dict[str, str]] = [
-    {"token": "{{date}}", "label": "日期", "description": "当前日期时间"},
-    {"token": "{{result_count}}", "label": "结果数量", "description": "当前报告上下文中的结果数量"},
-    {"token": "{{result_names}}", "label": "结果名称", "description": "当前结果名称列表"},
-    {"token": "{{analysis_type}}", "label": "分析类型", "description": "分析类型名称"},
-    {"token": "{{source_name}}", "label": "数据来源", "description": "结果对应的数据来源名称"},
-    {"token": "{{name1}}", "label": "主数据名称", "description": "主输入数据名称"},
-    {"token": "{{name2}}", "label": "对比数据名称", "description": "双输入分析中的对比数据名称"},
-    {"token": "{{model}}", "label": "拟合模型", "description": "拟合分析使用的模型名"},
-    {"token": "{{equation}}", "label": "拟合方程", "description": "拟合结果方程"},
-    {"token": "{{r2}}", "label": "R²", "description": "拟合优度，默认保留 4 位小数"},
-    {"token": "{{r2:.4f}}", "label": "R² 自定义精度", "description": "示例格式，支持按需修改小数位数"},
-    {"token": "{{n}}", "label": "样本数", "description": "统计分析中的数据点数量"},
-    {"token": "{{y_mean}}", "label": "Y 均值", "description": "Y 值均值"},
-    {"token": "{{y_std}}", "label": "Y 标准差", "description": "Y 值标准差"},
-    {"token": "{{x_min}}", "label": "X 最小值", "description": "X 范围下界"},
-    {"token": "{{x_max}}", "label": "X 最大值", "description": "X 范围上界"},
-    {"token": "{{y_min}}", "label": "Y 最小值", "description": "Y 范围下界"},
-    {"token": "{{y_max}}", "label": "Y 最大值", "description": "Y 范围上界"},
-    {"token": "{{r}}", "label": "相关系数", "description": "相关性分析中的 r 值"},
-    {"token": "{{mae}}", "label": "MAE", "description": "误差分析中的平均绝对误差"},
-    {"token": "{{rmse}}", "label": "RMSE", "description": "误差分析中的均方根误差"},
-    {"token": "{{mean_error}}", "label": "平均误差", "description": "误差分析中的平均误差"},
-    {"token": "{{max_abs_error}}", "label": "最大绝对误差", "description": "误差分析中的最大绝对误差"},
-    {"token": "{{relative_mae}}", "label": "相对平均误差", "description": "误差分析中的相对平均误差"},
-    {"token": "{{peak_count}}", "label": "峰值个数", "description": "峰值检测结果中的峰值数量"},
-    {"token": "{{valley_count}}", "label": "波谷个数", "description": "峰值检测结果中的波谷数量"},
-    {"token": "{{table:analysis_results}}", "label": "结果概览表", "description": "多结果概览 Markdown 表格"},
-    {"token": "{{multi_result_sections}}", "label": "多结果详情", "description": "多结果模式下的分节摘要"},
-    {"token": "{{table:params}}", "label": "拟合参数表", "description": "拟合参数 Markdown 表格"},
-    {"token": "{{table:peaks}}", "label": "峰值表", "description": "峰值列表 Markdown 表格"},
-    {"token": "{{table:valleys}}", "label": "波谷表", "description": "波谷列表 Markdown 表格"},
+    {"token": "{{date}}", "group": "通用", "label": "日期", "description": "当前日期时间"},
+    {"token": "{{result_count}}", "group": "通用", "label": "结果数量", "description": "当前报告上下文中的结果数量"},
+    {"token": "{{result_names}}", "group": "通用", "label": "结果名称", "description": "当前结果名称列表"},
+    {"token": "{{analysis_type}}", "group": "通用", "label": "分析类型", "description": "分析类型名称"},
+    {"token": "{{source_name}}", "group": "通用", "label": "数据来源", "description": "结果对应的数据来源名称"},
+    {"token": "{{table:analysis_results}}", "group": "通用", "label": "结果概览表", "description": "多结果概览 Markdown 表格"},
+    {"token": "{{multi_result_sections}}", "group": "通用", "label": "多结果详情", "description": "多结果模式下的分节摘要"},
+    {"token": "{{model}}", "group": "曲线拟合", "label": "拟合模型", "description": "拟合分析使用的模型名"},
+    {"token": "{{equation}}", "group": "曲线拟合", "label": "拟合方程", "description": "拟合结果方程"},
+    {"token": "{{r2}}", "group": "曲线拟合", "label": "R²", "description": "拟合优度，默认保留 4 位小数"},
+    {"token": "{{r2:.4f}}", "group": "曲线拟合", "label": "R² 自定义精度", "description": "示例格式，支持按需修改小数位数"},
+    {"token": "{{table:params}}", "group": "曲线拟合", "label": "拟合参数表", "description": "拟合参数 Markdown 表格"},
+    {"token": "{{peak_count}}", "group": "峰值检测", "label": "峰值个数", "description": "峰值检测结果中的峰值数量"},
+    {"token": "{{valley_count}}", "group": "峰值检测", "label": "波谷个数", "description": "峰值检测结果中的波谷数量"},
+    {"token": "{{table:peaks}}", "group": "峰值检测", "label": "峰值表", "description": "峰值列表 Markdown 表格"},
+    {"token": "{{table:valleys}}", "group": "峰值检测", "label": "波谷表", "description": "波谷列表 Markdown 表格"},
+    {"token": "{{n}}", "group": "统计分析", "label": "样本数", "description": "统计分析中的数据点数量"},
+    {"token": "{{y_mean}}", "group": "统计分析", "label": "Y 均值", "description": "Y 值均值"},
+    {"token": "{{y_std}}", "group": "统计分析", "label": "Y 标准差", "description": "Y 值标准差"},
+    {"token": "{{x_min}}", "group": "统计分析", "label": "X 最小值", "description": "X 范围下界"},
+    {"token": "{{x_max}}", "group": "统计分析", "label": "X 最大值", "description": "X 范围上界"},
+    {"token": "{{y_min}}", "group": "统计分析", "label": "Y 最小值", "description": "Y 范围下界"},
+    {"token": "{{y_max}}", "group": "统计分析", "label": "Y 最大值", "description": "Y 范围上界"},
+    {"token": "{{name1}}", "group": "相关性分析", "label": "主数据名称", "description": "双输入分析中的主输入数据名称"},
+    {"token": "{{name2}}", "group": "相关性分析", "label": "对比数据名称", "description": "双输入分析中的对比数据名称"},
+    {"token": "{{r}}", "group": "相关性分析", "label": "相关系数", "description": "相关性分析中的 r 值"},
+    {"token": "{{mae}}", "group": "误差比较", "label": "MAE", "description": "误差分析中的平均绝对误差"},
+    {"token": "{{rmse}}", "group": "误差比较", "label": "RMSE", "description": "误差分析中的均方根误差"},
+    {"token": "{{mean_error}}", "group": "误差比较", "label": "平均误差", "description": "误差分析中的平均误差"},
+    {"token": "{{max_abs_error}}", "group": "误差比较", "label": "最大绝对误差", "description": "误差分析中的最大绝对误差"},
+    {"token": "{{relative_mae}}", "group": "误差比较", "label": "相对平均误差", "description": "误差分析中的相对平均误差"},
 ]
 
 
-def list_report_template_placeholders() -> List[Dict[str, str]]:
-    return [dict(item) for item in _REPORT_TEMPLATE_PLACEHOLDERS]
+def _is_placeholder_scalar(value: Any) -> bool:
+    return isinstance(value, (str, int, float, bool)) and not isinstance(value, complex)
+
+
+def _normalize_report_placeholder_token(value: Any) -> str:
+    clean_value = str(value or "").strip()
+    if not clean_value:
+        return ""
+    if clean_value.startswith("{{") and clean_value.endswith("}}"):
+        return clean_value
+    clean_value = clean_value.strip("{} ")
+    return f"{{{{{clean_value}}}}}" if clean_value else ""
+
+
+def _placeholder_key_from_token(token: str) -> str:
+    clean_token = str(token or "").strip()
+    if clean_token.startswith("{{") and clean_token.endswith("}}"):
+        clean_token = clean_token[2:-2]
+    if ":" in clean_token:
+        clean_token = clean_token.split(":", 1)[0]
+    return clean_token.strip()
+
+
+def _analysis_extension_report_placeholders() -> List[Dict[str, str]]:
+    entries: List[Dict[str, str]] = []
+    for extension in sorted(extension_registry.list_analysis(), key=lambda item: item.name.casefold()):
+        for raw_item in list(getattr(extension, "report_placeholders", []) or []):
+            if isinstance(raw_item, str):
+                token = _normalize_report_placeholder_token(raw_item)
+                label = _placeholder_key_from_token(token)
+                description = f"{extension.name} 结果字段 {label}"
+            elif isinstance(raw_item, dict):
+                token = _normalize_report_placeholder_token(raw_item.get("token") or raw_item.get("key"))
+                label = str(raw_item.get("label") or raw_item.get("key") or _placeholder_key_from_token(token)).strip()
+                description = str(raw_item.get("description") or f"{extension.name} 结果字段 {_placeholder_key_from_token(token)}").strip()
+            else:
+                continue
+            if not token:
+                continue
+            entries.append({
+                "token": token,
+                "group": extension.name,
+                "label": label or _placeholder_key_from_token(token),
+                "description": description,
+            })
+    return entries
+
+
+def _dynamic_placeholder_group(context: Dict[str, Any]) -> str:
+    analysis_type = str(context.get("analysis_type") or "").strip()
+    extension = extension_registry.get_analysis(analysis_type)
+    if extension is not None:
+        return extension.name
+    return _BUILTIN_ANALYSIS_LABELS.get(analysis_type, "通用")
+
+
+def _dynamic_report_template_placeholders(result: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
+    if not isinstance(result, dict):
+        return []
+
+    reserved_tokens = {
+        item["token"] for item in _REPORT_TEMPLATE_PLACEHOLDERS + _analysis_extension_report_placeholders()
+    }
+    contexts = [result]
+    primary = result.get("_primary_result")
+    if isinstance(primary, dict) and primary is not result:
+        contexts.append(primary)
+
+    entries: List[Dict[str, str]] = []
+    seen_keys: set[str] = set()
+    for context in contexts:
+        for key in sorted(context.keys(), key=str.casefold):
+            if key.startswith("_") or key in seen_keys:
+                continue
+            token = f"{{{{{key}}}}}"
+            value = context.get(key)
+            if token in reserved_tokens or not _is_placeholder_scalar(value):
+                continue
+            seen_keys.add(key)
+            entries.append({
+                "token": token,
+                "group": _dynamic_placeholder_group(context),
+                "label": key,
+                "description": f"扩展结果字段 {key}",
+            })
+    return entries
+
+
+def list_report_template_placeholders(result: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
+    merged: List[Dict[str, str]] = []
+    seen_tokens: set[str] = set()
+    for source_entries in (
+        [dict(item) for item in _REPORT_TEMPLATE_PLACEHOLDERS],
+        _analysis_extension_report_placeholders(),
+        _dynamic_report_template_placeholders(result),
+    ):
+        for entry in source_entries:
+            token = str(entry.get("token") or "").strip()
+            if not token or token in seen_tokens:
+                continue
+            seen_tokens.add(token)
+            merged.append(dict(entry))
+    return merged
 
 def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> str:
     """将 Markdown 报告模板中的占位符替换为实际分析结果。
@@ -550,6 +660,8 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
         "peak_detect": "峰值检测",
         "statistics": "统计分析",
         "correlation": "相关性分析",
+        "error_compare": "误差比较",
+        "spectrum_analysis": "频谱分析",
     }
     subs = {
         "date": now,
@@ -626,6 +738,37 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
         content = content.replace("{{table:valleys}}", "\n".join(rows))
     else:
         content = content.replace("{{table:valleys}}", "_（无波谷数据）_")
+
+    def _format_generic_placeholder(value: Any, fmt_spec: Optional[str] = None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, int) and not isinstance(value, bool):
+            return format(value, fmt_spec) if fmt_spec else str(value)
+        if isinstance(value, float):
+            if fmt_spec:
+                try:
+                    return format(value, fmt_spec)
+                except Exception:
+                    return str(value)
+            return f"{value:.6g}"
+        if isinstance(value, (list, tuple)) and all(not isinstance(item, (dict, list, tuple, set)) for item in value):
+            return ", ".join(_format_generic_placeholder(item) for item in value)
+        return str(value)
+
+    def _replace_generic_placeholder(match):
+        key = match.group(1)
+        fmt_spec = match.group(2)
+        if key.startswith("_"):
+            return ""
+        if isinstance(context, dict) and key in context:
+            return _format_generic_placeholder(context.get(key), fmt_spec)
+        if isinstance(r, dict) and key in r:
+            return _format_generic_placeholder(r.get(key), fmt_spec)
+        return ""
+
+    content = re.sub(r"\{\{([a-zA-Z_][a-zA-Z0-9_]*)(?::([^}]+))?\}\}", _replace_generic_placeholder, content)
 
     # 清理未替换的占位符
     content = re.sub(r"\{\{[^}]+\}\}", "_（N/A）_", content)

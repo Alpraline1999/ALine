@@ -95,6 +95,10 @@ _icon_dir = os.path.join(_root, "assets")
 if os.path.isdir(_icon_dir):
     _datas.append((_icon_dir, "assets"))
 
+_extensions_dir = os.path.join(_root, "extensions")
+if os.path.isdir(_extensions_dir):
+    _datas.append((_extensions_dir, "extensions"))
+
 
 # ─── 排除不需要打包的模块 ─────────────────────────────────────────
 _excludes = [

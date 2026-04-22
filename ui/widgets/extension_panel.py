@@ -17,6 +17,8 @@ from qfluentwidgets import (
     PushButton,
     SmoothScrollArea,
     SubtitleLabel,
+    ToolTipFilter,
+    ToolTipPosition,
     ToolButton,
 )
 
@@ -70,6 +72,11 @@ class ExtensionConfigPanel(QWidget):
         self._section_dividers.append(divider)
         layout.addWidget(divider)
 
+    @staticmethod
+    def _install_fluent_tip(widget: ToolButton, text: str, position=ToolTipPosition.TOP) -> None:
+        widget.setToolTip(text)
+        widget.installEventFilter(ToolTipFilter(widget, 300, position))
+
     def _setup_ui(self, title: str) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -91,7 +98,7 @@ class ExtensionConfigPanel(QWidget):
         self._selector.currentIndexChanged.connect(self._on_selection_changed)
         selector_row.addWidget(self._selector, 1)
         self._reload_btn = ToolButton(getattr(FIF, "SYNC", FIF.UPDATE), card)
-        self._reload_btn.setToolTip("重载扩展")
+        self._install_fluent_tip(self._reload_btn, "重载扩展")
         self._reload_btn.clicked.connect(lambda checked=False: self.reload_requested.emit())
         selector_row.addWidget(self._reload_btn)
         layout.addLayout(selector_row)
@@ -152,11 +159,11 @@ class ExtensionConfigPanel(QWidget):
         self._remove_btn.hide()
         btn_row.addWidget(self._remove_btn)
         self._reset_btn = ToolButton(getattr(FIF, "SYNC", FIF.UPDATE), card)
-        self._reset_btn.setToolTip("重置配置")
+        self._install_fluent_tip(self._reset_btn, "重置配置")
         self._reset_btn.clicked.connect(self._reset_current)
         btn_row.addWidget(self._reset_btn)
         self._clear_btn = ToolButton(FIF.DELETE, card)
-        self._clear_btn.setToolTip("清空配置")
+        self._install_fluent_tip(self._clear_btn, "清空配置")
         self._clear_btn.clicked.connect(lambda: self._editor.setPlainText("{}"))
         btn_row.addWidget(self._clear_btn)
         layout.addLayout(btn_row)
@@ -286,10 +293,19 @@ class ExtensionConfigPanel(QWidget):
         label = status["label"]
         registered_count = status["registered_count"]
         error_count = status["error_count"]
+        source_summary = status.get("source_summary") or {}
+        loaded_counts = dict(source_summary.get("loaded_extension_counts") or {})
+        builtin_count = int(loaded_counts.get("builtin", 0) or 0)
+        external_count = int(loaded_counts.get("external", 0) or 0)
+        source_suffix = (
+            f"（内置 {builtin_count} / 外部 {external_count}）"
+            if builtin_count + external_count > 0
+            else ""
+        )
         if error_count:
-            self._status_label.setText(f"{label} {registered_count} 项可用，{error_count} 项失败。")
+            self._status_label.setText(f"{label} {registered_count} 项可用{source_suffix}，{error_count} 项失败。")
         elif registered_count:
-            self._status_label.setText(f"{label} {registered_count} 项可用。")
+            self._status_label.setText(f"{label} {registered_count} 项可用{source_suffix}。")
         else:
             self._status_label.setText(f"{label} 暂无可用项。")
         has_details = bool(status["details"].get("loaded") or status["details"].get("errors"))

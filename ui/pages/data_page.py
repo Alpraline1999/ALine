@@ -5,23 +5,25 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import math
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QEvent, Qt, Signal, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontMetrics, QIntValidator, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTreeWidgetItem, QAbstractItemView,
-    QFileDialog, QFrame, QLabel, QPushButton,
+    QFileDialog, QFrame, QLabel, QMenu,
     QSizePolicy, QStackedWidget, QHeaderView, QTableWidgetItem,
 )
 from qfluentwidgets import (
+    Action,
     BreadcrumbBar,
     ComboBox,
     CardWidget, ToolButton, PushButton, PrimaryPushButton,
-    TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit, TableWidget,
+    TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit, RoundMenu, TableWidget, HyperlinkButton,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit, TabCloseButtonDisplayMode,
     TabWidget, TeachingTipTailPosition, ToolTipFilter, ToolTipPosition, isDarkTheme,
@@ -69,6 +71,24 @@ _TEXT_PREVIEW_SUFFIXES = {".csv", ".txt", ".dat", ".tsv", ".json", ".md", ".log"
 _TABULAR_PREVIEW_SUFFIXES = {".xlsx", ".xls", ".npy", ".npz"}
 
 
+@dataclass
+class _NodePreviewState:
+    source_preview_mode: str = "解析"
+    plot_type: str = "折线"
+    row_limit: int = 80
+    skip_rows: int = 0
+    row_offset: int = 0
+    selected_sheet: str = ""
+    external_browser_dir: str = ""
+    last_source_path: str = ""
+
+
+@dataclass
+class _PendingImportQueueState:
+    paths: list[str] = field(default_factory=list)
+    names: dict[str, str] = field(default_factory=dict)
+
+
 class DataPage(QWidget):
     """数据管理页：统一管理图像提取曲线和导入数据集。"""
 
@@ -89,10 +109,18 @@ class DataPage(QWidget):
         self._preview_x_label = "X"
         self._preview_y_label = "Y"
         self._pending_import_paths: list[str] = []
+        self._pending_import_names: dict[str, str] = {}
+        self._pending_import_states: dict[str, _PendingImportQueueState] = {
+            "source_files": _PendingImportQueueState(),
+            "datasets": _PendingImportQueueState(),
+            "images": _PendingImportQueueState(),
+        }
         self._external_browser_dir: Optional[Path] = None
         self._show_hidden_browser_entries = False
         self._data_file_preview_node_id: Optional[str] = None
         self._preview_image_path: Optional[str] = None
+        self._node_preview_states: dict[str, _NodePreviewState] = {}
+        self._current_source_preview_total_rows = 0
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
@@ -238,20 +266,10 @@ class DataPage(QWidget):
             "}"
         )
         self._parsed_preview_table.setStyleSheet(
-            "QTableView {"
-            f"background: {preview_surface};"
-            f"color: {fg};"
-            f"border: 1px solid {preview_border};"
-            "border-radius: 12px;"
-            "gridline-color: rgba(127, 127, 127, 0.25);"
-            "}"
-            "QHeaderView::section {"
-            f"background: {preview_surface};"
-            f"color: {fg};"
-            f"border: 0px; border-bottom: 1px solid {preview_border};"
-            "padding: 6px 8px;"
-            "}"
+            self._parsed_preview_table.styleSheet()
         )
+        self._parsed_preview_table.setBorderVisible(True)
+        self._parsed_preview_table.setBorderRadius(12)
 
     # ── 左侧面板 ─────────────────────────────────────────────
 
@@ -408,7 +426,11 @@ class DataPage(QWidget):
         self._pending_source_list.setHeaderHidden(True)
         self._pending_source_list.setMinimumHeight(260)
         self._pending_source_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._pending_source_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._pending_source_list.itemSelectionChanged.connect(self._refresh_pending_source_controls)
+        self._pending_source_list.customContextMenuRequested.connect(self._show_pending_source_context_menu)
+        self._pending_source_list.itemDoubleClicked.connect(self._begin_rename_pending_source_item)
+        self._pending_source_list.itemChanged.connect(self._on_pending_source_item_changed)
         queue_layout.addWidget(self._pending_source_list, 1)
 
         pending_row = QHBoxLayout()
@@ -477,10 +499,70 @@ class DataPage(QWidget):
         self._preview_type_combo.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
         self._preview_type_combo.setMinimumWidth(120)
         self._preview_type_combo.addItems(["折线", "散点", "折线+点", "柱状", "阶梯"])
-        self._preview_type_combo.currentIndexChanged.connect(self._draw_preview)
+        self._preview_type_combo.currentIndexChanged.connect(self._on_preview_plot_type_changed)
         preview_plot_type_layout.addWidget(self._preview_type_combo)
         preview_header.addWidget(self._preview_plot_type_controls)
         preview_layout.addLayout(preview_header)
+
+        self._source_file_detail_controls = QWidget(self._preview_card)
+        source_file_detail_layout = QHBoxLayout(self._source_file_detail_controls)
+        source_file_detail_layout.setContentsMargins(0, 0, 0, 0)
+        source_file_detail_layout.setSpacing(6)
+        self._source_file_sheet_label = CaptionLabel("工作表", self._preview_card)
+        source_file_detail_layout.addWidget(self._source_file_sheet_label)
+        self._source_file_sheet_combo = ComboBox(self._preview_card)
+        self._source_file_sheet_combo.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
+        self._source_file_sheet_combo.setMinimumWidth(140)
+        self._source_file_sheet_combo.currentIndexChanged.connect(self._on_source_file_sheet_changed)
+        source_file_detail_layout.addWidget(self._source_file_sheet_combo)
+        source_file_detail_layout.addWidget(CaptionLabel("显示行数", self._preview_card))
+        self._source_file_row_limit_edit = LineEdit(self._preview_card)
+        self._source_file_row_limit_edit.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
+        self._source_file_row_limit_edit.setFixedWidth(84)
+        self._source_file_row_limit_edit.setPlaceholderText("80")
+        self._source_file_row_limit_edit.setText("80")
+        self._source_file_row_limit_edit.setValidator(QIntValidator(1, 2000, self._source_file_row_limit_edit))
+        self._source_file_row_limit_edit.editingFinished.connect(self._on_source_file_row_limit_changed)
+        source_file_detail_layout.addWidget(self._source_file_row_limit_edit)
+        self._source_file_skip_rows_label = CaptionLabel("跳过行数", self._preview_card)
+        source_file_detail_layout.addWidget(self._source_file_skip_rows_label)
+        self._source_file_skip_rows_edit = LineEdit(self._preview_card)
+        self._source_file_skip_rows_edit.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
+        self._source_file_skip_rows_edit.setFixedWidth(84)
+        self._source_file_skip_rows_edit.setPlaceholderText("0")
+        self._source_file_skip_rows_edit.setText("0")
+        self._source_file_skip_rows_edit.setValidator(QIntValidator(0, 999999, self._source_file_skip_rows_edit))
+        self._source_file_skip_rows_edit.editingFinished.connect(self._on_source_file_skip_rows_changed)
+        source_file_detail_layout.addWidget(self._source_file_skip_rows_edit)
+        self._source_file_first_page_btn = ToolButton(FIF.LEFT_ARROW, self._preview_card)
+        self._source_file_first_page_btn.clicked.connect(self._show_first_source_file_page)
+        self._source_file_first_page_btn.installEventFilter(ToolTipFilter(self._source_file_first_page_btn, 300, ToolTipPosition.TOP))
+        self._source_file_first_page_btn.setToolTip("首页")
+        source_file_detail_layout.addWidget(self._source_file_first_page_btn)
+        self._source_file_prev_page_btn = PushButton("上一页", self._preview_card)
+        self._source_file_next_page_btn = PushButton("下一页", self._preview_card)
+        apply_button_metrics(self._source_file_prev_page_btn, self._source_file_next_page_btn, min_width=72)
+        self._source_file_prev_page_btn.clicked.connect(self._show_previous_source_file_page)
+        self._source_file_next_page_btn.clicked.connect(self._show_next_source_file_page)
+        source_file_detail_layout.addWidget(self._source_file_prev_page_btn)
+        self._source_file_jump_line_edit = LineEdit(self._preview_card)
+        self._source_file_jump_line_edit.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
+        self._source_file_jump_line_edit.setFixedWidth(92)
+        self._source_file_jump_line_edit.setPlaceholderText("跳转行")
+        self._source_file_jump_line_edit.setValidator(QIntValidator(1, 999999999, self._source_file_jump_line_edit))
+        self._source_file_jump_line_edit.editingFinished.connect(self._jump_to_source_file_page)
+        source_file_detail_layout.addWidget(self._source_file_jump_line_edit)
+        source_file_detail_layout.addWidget(self._source_file_next_page_btn)
+        self._source_file_last_page_btn = ToolButton(FIF.RIGHT_ARROW, self._preview_card)
+        self._source_file_last_page_btn.clicked.connect(self._show_last_source_file_page)
+        self._source_file_last_page_btn.installEventFilter(ToolTipFilter(self._source_file_last_page_btn, 300, ToolTipPosition.TOP))
+        self._source_file_last_page_btn.setToolTip("尾页")
+        source_file_detail_layout.addWidget(self._source_file_last_page_btn)
+        self._source_file_page_label = CaptionLabel("0 - 0 / 0", self._preview_card)
+        self._source_file_page_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        source_file_detail_layout.addWidget(self._source_file_page_label)
+        source_file_detail_layout.addStretch()
+        preview_layout.addWidget(self._source_file_detail_controls)
 
         self._preview_stack = QStackedWidget(self._preview_card)
         preview_layout.addWidget(self._preview_stack, stretch=3)
@@ -527,42 +609,61 @@ class DataPage(QWidget):
         self._parsed_preview_table.verticalHeader().setVisible(False)
         self._parsed_preview_table.horizontalHeader().setHighlightSections(False)
         self._parsed_preview_table.setWordWrap(False)
+        self._parsed_preview_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._preview_stack.addWidget(self._parsed_preview_table)
 
         preview_layout.addWidget(make_hsep())
 
-        preview_layout.addWidget(make_section_label("统计摘要"))
-        self._stats_label = BodyLabel("（选择数据后显示统计信息）")
+        self._summary_footer = QWidget(self._preview_card)
+        summary_footer_layout = QVBoxLayout(self._summary_footer)
+        summary_footer_layout.setContentsMargins(0, 0, 0, 0)
+        summary_footer_layout.setSpacing(4)
+
+        self._stats_title_label = BodyLabel("（选择数据后显示统计信息）", self._summary_footer)
+        self._stats_title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._apply_summary_label_style(self._stats_title_label)
+        summary_footer_layout.addWidget(self._stats_title_label)
+
+        self._stats_label = CaptionLabel("", self._summary_footer)
         self._stats_label.setWordWrap(True)
         self._stats_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._apply_summary_label_style(self._stats_label)
-        preview_layout.addWidget(self._stats_label)
+        self._apply_muted_summary_label_style(self._stats_label)
+        summary_footer_layout.addWidget(self._stats_label)
 
-        self._source_path_panel = QWidget(self._preview_card)
+        self._source_path_panel = QWidget(self._summary_footer)
         source_path_layout = QVBoxLayout(self._source_path_panel)
         source_path_layout.setContentsMargins(0, 0, 0, 0)
-        source_path_layout.setSpacing(6)
+        source_path_layout.setSpacing(4)
 
         current_path_row = QHBoxLayout()
         current_path_row.setContentsMargins(0, 0, 0, 0)
-        current_path_row.addWidget(make_inline_label("当前路径:", self._source_path_panel, width=72))
+        self._current_source_path_prefix = CaptionLabel("当前路径:", self._source_path_panel)
+        self._apply_muted_summary_label_style(self._current_source_path_prefix)
+        current_path_row.addWidget(self._current_source_path_prefix)
         self._current_source_path_button = self._create_path_link_button(self._source_path_panel)
-        current_path_row.addWidget(self._current_source_path_button, 1)
+        current_path_row.addWidget(self._current_source_path_button, 0)
+        current_path_row.addStretch(1)
         source_path_layout.addLayout(current_path_row)
 
         origin_path_row = QHBoxLayout()
         origin_path_row.setContentsMargins(0, 0, 0, 0)
-        origin_path_row.addWidget(make_inline_label("源路径:", self._source_path_panel, width=72))
+        self._origin_source_path_prefix = CaptionLabel("源路径:", self._source_path_panel)
+        self._apply_muted_summary_label_style(self._origin_source_path_prefix)
+        origin_path_row.addWidget(self._origin_source_path_prefix)
         self._origin_source_path_button = self._create_path_link_button(self._source_path_panel)
-        origin_path_row.addWidget(self._origin_source_path_button, 1)
+        origin_path_row.addWidget(self._origin_source_path_button, 0)
+        origin_path_row.addStretch(1)
         source_path_layout.addLayout(origin_path_row)
-        preview_layout.addWidget(self._source_path_panel)
+
+        summary_footer_layout.addWidget(self._source_path_panel)
+        preview_layout.addWidget(self._summary_footer)
 
         self._source_manager_card = self._build_source_manager_card(panel)
         self._right_mode_stack.addWidget(self._preview_card)
         self._right_mode_stack.addWidget(self._source_manager_card)
         self._set_actions_enabled(False)
         self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
         self._set_preview_plot_type_controls_visible(False)
         self._set_source_path_links_visible(False)
         return panel
@@ -573,24 +674,224 @@ class DataPage(QWidget):
     def _set_source_file_preview_mode_controls_visible(self, visible: bool) -> None:
         self._source_file_preview_controls.setVisible(visible)
 
+    def _set_source_file_detail_controls_visible(self, visible: bool) -> None:
+        self._source_file_detail_controls.setVisible(visible)
+
+    def _set_source_file_sheet_controls_visible(self, visible: bool) -> None:
+        self._source_file_sheet_label.setVisible(visible)
+        self._source_file_sheet_combo.setVisible(visible)
+
+    def _set_source_file_skip_rows_enabled(self, enabled: bool) -> None:
+        self._source_file_skip_rows_label.setEnabled(enabled)
+        self._source_file_skip_rows_edit.setEnabled(enabled)
+
+    @staticmethod
+    def _preview_numeric_input_value(line_edit: LineEdit, *, minimum: int, fallback: int) -> int:
+        text = line_edit.text().strip()
+        try:
+            value = int(text)
+        except ValueError:
+            value = fallback
+        return max(minimum, value)
+
+    @staticmethod
+    def _set_preview_numeric_input_value(line_edit: LineEdit, value: int) -> None:
+        line_edit.blockSignals(True)
+        line_edit.setText(str(value))
+        line_edit.blockSignals(False)
+
+    def _set_preview_summary(self, summary_lines: list[str]) -> None:
+        normalized_lines = [line.strip() for line in summary_lines if line and line.strip()]
+        title = normalized_lines[0] if normalized_lines else "（选择数据后显示统计信息）"
+        details = normalized_lines[1:]
+        self._stats_title_label.setText(title)
+        self._stats_label.setText("  ·  ".join(details) if details else "（暂无更多摘要信息）")
+
+    def _preview_state_for_node(self, node_id: Optional[str]) -> _NodePreviewState:
+        if not node_id:
+            return _NodePreviewState()
+        return self._node_preview_states.setdefault(node_id, _NodePreviewState())
+
+    def _restore_plot_type_for_node(self, node_id: Optional[str]) -> None:
+        plot_type = self._preview_state_for_node(node_id).plot_type
+        if not plot_type:
+            return
+        self._preview_type_combo.blockSignals(True)
+        try:
+            for index in range(self._preview_type_combo.count()):
+                if self._preview_type_combo.itemText(index) == plot_type:
+                    self._preview_type_combo.setCurrentIndex(index)
+                    break
+        finally:
+            self._preview_type_combo.blockSignals(False)
+
+    def _restore_source_file_detail_state(self, node_id: Optional[str]) -> _NodePreviewState:
+        state = self._preview_state_for_node(node_id)
+        self._set_preview_numeric_input_value(self._source_file_row_limit_edit, max(1, state.row_limit))
+        self._set_preview_numeric_input_value(self._source_file_skip_rows_edit, max(0, state.skip_rows))
+        return state
+
+    def _configure_source_file_sheet_options(self, sheet_names: list[str], preferred_sheet: str = "") -> str:
+        options = [sheet for sheet in sheet_names if sheet]
+        target_sheet = preferred_sheet if preferred_sheet in options else (options[0] if options else "")
+        self._source_file_sheet_combo.blockSignals(True)
+        self._source_file_sheet_combo.clear()
+        if options:
+            self._source_file_sheet_combo.addItems(options)
+            self._source_file_sheet_combo.setCurrentIndex(options.index(target_sheet))
+        self._source_file_sheet_combo.blockSignals(False)
+        self._set_source_file_sheet_controls_visible(bool(options))
+        return target_sheet
+
+    def _update_source_file_page_controls(self, total_rows: int, row_offset: int, row_limit: int, *, visible: bool) -> None:
+        self._current_source_preview_total_rows = max(0, total_rows)
+        self._set_source_file_detail_controls_visible(visible)
+        if not visible:
+            self._source_file_page_label.setText("0 - 0 / 0")
+            self._source_file_first_page_btn.setEnabled(False)
+            self._source_file_prev_page_btn.setEnabled(False)
+            self._source_file_next_page_btn.setEnabled(False)
+            self._source_file_last_page_btn.setEnabled(False)
+            self._source_file_jump_line_edit.setEnabled(False)
+            return
+        if total_rows <= 0:
+            start = 0
+            end = 0
+        else:
+            start = row_offset + 1
+            end = min(row_offset + row_limit, total_rows)
+        self._source_file_page_label.setText(f"{start} - {end} / {total_rows}")
+        self._source_file_first_page_btn.setEnabled(row_offset > 0)
+        self._source_file_prev_page_btn.setEnabled(row_offset > 0)
+        self._source_file_next_page_btn.setEnabled(total_rows > row_offset + row_limit)
+        self._source_file_last_page_btn.setEnabled(total_rows > row_offset + row_limit)
+        self._source_file_jump_line_edit.setEnabled(total_rows > 0)
+
     def _on_source_file_preview_mode_changed(self, _index: int) -> None:
         if self._selected_node_kind == "source_file" and self._selected_node_id:
+            state = self._preview_state_for_node(self._selected_node_id)
+            state.source_preview_mode = self._current_source_file_preview_mode()
+            state.row_offset = 0
             self._show_source_file_preview(self._selected_node_id)
 
-    def _configure_source_file_preview_modes(self, file_path: str) -> None:
-        current_mode = self._source_file_preview_combo.currentText().strip() or "解析"
+    def _on_source_file_sheet_changed(self, _index: int) -> None:
+        if self._selected_node_kind == "source_file" and self._selected_node_id:
+            state = self._preview_state_for_node(self._selected_node_id)
+            state.selected_sheet = self._source_file_sheet_combo.currentText().strip()
+            state.row_offset = 0
+            self._show_source_file_preview(self._selected_node_id)
+
+    def _on_source_file_row_limit_changed(self) -> None:
+        if self._selected_node_kind == "source_file" and self._selected_node_id:
+            state = self._preview_state_for_node(self._selected_node_id)
+            value = self._preview_numeric_input_value(
+                self._source_file_row_limit_edit,
+                minimum=1,
+                fallback=max(1, state.row_limit),
+            )
+            self._set_preview_numeric_input_value(self._source_file_row_limit_edit, value)
+            state.row_limit = value
+            state.row_offset = 0
+            self._show_source_file_preview(self._selected_node_id)
+
+    def _on_source_file_skip_rows_changed(self) -> None:
+        if self._selected_node_kind == "source_file" and self._selected_node_id:
+            state = self._preview_state_for_node(self._selected_node_id)
+            value = self._preview_numeric_input_value(
+                self._source_file_skip_rows_edit,
+                minimum=0,
+                fallback=max(0, state.skip_rows),
+            )
+            self._set_preview_numeric_input_value(self._source_file_skip_rows_edit, value)
+            state.skip_rows = value
+            state.row_offset = 0
+            self._show_source_file_preview(self._selected_node_id)
+
+    def _show_previous_source_file_page(self) -> None:
+        if self._selected_node_kind != "source_file" or not self._selected_node_id:
+            return
+        state = self._preview_state_for_node(self._selected_node_id)
+        state.row_offset = max(0, state.row_offset - max(1, state.row_limit))
+        self._show_source_file_preview(self._selected_node_id)
+
+    def _show_first_source_file_page(self) -> None:
+        if self._selected_node_kind != "source_file" or not self._selected_node_id:
+            return
+        state = self._preview_state_for_node(self._selected_node_id)
+        state.row_offset = 0
+        self._show_source_file_preview(self._selected_node_id)
+
+    def _show_next_source_file_page(self) -> None:
+        if self._selected_node_kind != "source_file" or not self._selected_node_id:
+            return
+        state = self._preview_state_for_node(self._selected_node_id)
+        if self._current_source_preview_total_rows <= 0:
+            return
+        next_offset = state.row_offset + max(1, state.row_limit)
+        if next_offset >= self._current_source_preview_total_rows:
+            return
+        state.row_offset = next_offset
+        self._show_source_file_preview(self._selected_node_id)
+
+    def _show_last_source_file_page(self) -> None:
+        if self._selected_node_kind != "source_file" or not self._selected_node_id:
+            return
+        state = self._preview_state_for_node(self._selected_node_id)
+        if self._current_source_preview_total_rows <= 0:
+            return
+        page_size = max(1, state.row_limit)
+        state.row_offset = ((self._current_source_preview_total_rows - 1) // page_size) * page_size
+        self._show_source_file_preview(self._selected_node_id)
+
+    def _jump_to_source_file_page(self) -> None:
+        if self._selected_node_kind != "source_file" or not self._selected_node_id:
+            return
+        if self._current_source_preview_total_rows <= 0:
+            return
+        state = self._preview_state_for_node(self._selected_node_id)
+        target_line = self._preview_numeric_input_value(
+            self._source_file_jump_line_edit,
+            minimum=1,
+            fallback=1,
+        )
+        target_line = min(target_line, self._current_source_preview_total_rows)
+        self._set_preview_numeric_input_value(self._source_file_jump_line_edit, target_line)
+        page_size = max(1, state.row_limit)
+        state.row_offset = ((target_line - 1) // page_size) * page_size
+        self._show_source_file_preview(self._selected_node_id)
+
+    def _configure_source_file_preview_modes(self, file_path: str, preferred_mode: str = "解析") -> None:
         options = ["解析", "源文件"] if self._supports_dataset_import(file_path) else ["源文件"]
         self._source_file_preview_combo.blockSignals(True)
         self._source_file_preview_combo.clear()
         self._source_file_preview_combo.addItems(options)
-        target_mode = current_mode if current_mode in options else "解析"
+        target_mode = preferred_mode if preferred_mode in options else ("解析" if "解析" in options else options[0])
         self._source_file_preview_combo.setCurrentIndex(options.index(target_mode))
         self._source_file_preview_combo.blockSignals(False)
         self._set_source_file_preview_mode_controls_visible(len(options) > 1)
+        self._set_source_file_skip_rows_enabled(target_mode == "解析")
 
     def _current_source_file_preview_mode(self) -> str:
         mode = self._source_file_preview_combo.currentText().strip()
         return mode or "解析"
+
+    def _on_preview_plot_type_changed(self, _index: int) -> None:
+        if self._selected_node_id:
+            self._preview_state_for_node(self._selected_node_id).plot_type = self._preview_type_combo.currentText().strip() or "折线"
+        self._draw_preview()
+
+    def _remember_current_external_browser_dir(self) -> None:
+        if self._selected_node_kind != "folder" or not self._selected_node_id or self._external_browser_dir is None:
+            return
+        self._preview_state_for_node(self._selected_node_id).external_browser_dir = str(self._external_browser_dir)
+
+    def _restore_external_browser_dir_for_node(self, node_id: Optional[str]) -> None:
+        state = self._preview_state_for_node(node_id)
+        if not state.external_browser_dir:
+            return
+        candidate = Path(state.external_browser_dir)
+        if candidate.exists() and candidate.is_dir():
+            self._external_browser_dir = candidate
 
     def _preview_image_target_size(self) -> tuple[int, int]:
         rect = self._image_preview_label.contentsRect()
@@ -755,12 +1056,16 @@ class DataPage(QWidget):
                 continue
             label.setStyleSheet(style)
 
-    def _create_path_link_button(self, parent: QWidget) -> QPushButton:
-        button = QPushButton(parent)
+    def _create_path_link_button(self, parent: QWidget) -> HyperlinkButton:
+        button = HyperlinkButton(parent)
         button.setFlat(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFixedHeight(WORKBENCH_BUTTON_HEIGHT)
-        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        font = button.font()
+        font.setPointSize(8)
+        font.setWeight(QFont.Weight.Normal)
+        button.setFont(font)
         button.setStyleSheet(
             "QPushButton {"
             f"color: {accent_color()};"
@@ -768,7 +1073,6 @@ class DataPage(QWidget):
             "border: none;"
             "padding: 0;"
             "text-align: left;"
-            "font-weight: 500;"
             "text-decoration: underline;"
             "}"
             "QPushButton:hover {"
@@ -783,20 +1087,46 @@ class DataPage(QWidget):
         button.clicked.connect(lambda _checked=False, source=button: self._open_path_button_target(source))
         return button
 
-    def _refresh_path_link_button_text(self, button: QPushButton) -> None:
+    def _refresh_path_link_button_text(self, button: HyperlinkButton) -> None:
         raw_text = str(button.property("fullText") or "")
         empty_text = str(button.property("emptyText") or "未记录")
         display_text = raw_text or empty_text
+        metrics = QFontMetrics(button.font())
         if raw_text:
-            metrics = QFontMetrics(button.font())
-            available_width = max(button.width() - 8, 24)
+            available_width = self._path_link_available_width(button)
             display_text = metrics.elidedText(raw_text, Qt.TextElideMode.ElideMiddle, available_width)
         button.setText(display_text)
+        button.setFixedWidth(max(metrics.horizontalAdvance(display_text) + 6, 24))
 
-    def _open_path_button_target(self, button: QPushButton) -> None:
+    def _path_link_available_width(self, button: HyperlinkButton) -> int:
+        raw_text = str(button.property("fullText") or "")
+        metrics = QFontMetrics(button.font())
+        full_text_width = max(metrics.horizontalAdvance(raw_text) + 6, 24)
+        panel_width = self._source_path_panel.width() if hasattr(self, "_source_path_panel") else 0
+        if panel_width <= 0:
+            return full_text_width
+
+        if button is self._current_source_path_button:
+            prefix_width = self._current_source_path_prefix.sizeHint().width()
+        else:
+            prefix_width = self._origin_source_path_prefix.sizeHint().width()
+
+        return max(panel_width - prefix_width - 24, 24)
+
+    def _refresh_source_path_link_buttons(self) -> None:
+        if hasattr(self, "_source_path_panel"):
+            layout = self._source_path_panel.layout()
+            if layout is not None:
+                layout.activate()
+        if hasattr(self, "_current_source_path_button"):
+            self._refresh_path_link_button_text(self._current_source_path_button)
+        if hasattr(self, "_origin_source_path_button"):
+            self._refresh_path_link_button_text(self._origin_source_path_button)
+
+    def _open_path_button_target(self, button: HyperlinkButton) -> None:
         self._open_path_in_folder(str(button.property("targetPath") or ""))
 
-    def _set_path_link_button(self, button: QPushButton, file_path: str, empty_text: str = "未记录") -> None:
+    def _set_path_link_button(self, button: HyperlinkButton, file_path: str, empty_text: str = "未记录") -> None:
         target_path = file_path.strip()
         button.setProperty("targetPath", target_path)
         button.setProperty("fullText", target_path)
@@ -817,6 +1147,7 @@ class DataPage(QWidget):
         self._set_path_link_button(self._current_source_path_button, current_path, "未记录当前路径")
         self._set_path_link_button(self._origin_source_path_button, origin_path, "未记录源路径")
         self._set_source_path_links_visible(True)
+        self._refresh_source_path_link_buttons()
 
     def _hide_source_path_links(self) -> None:
         self._set_path_link_button(self._current_source_path_button, "", "未记录当前路径")
@@ -825,10 +1156,7 @@ class DataPage(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if hasattr(self, "_current_source_path_button"):
-            self._refresh_path_link_button_text(self._current_source_path_button)
-        if hasattr(self, "_origin_source_path_button"):
-            self._refresh_path_link_button_text(self._origin_source_path_button)
+        self._refresh_source_path_link_buttons()
         if self._preview_image_path and self._preview_stack.currentWidget() is self._image_preview_label:
             self._update_preview_image_from_path(self._preview_image_path)
 
@@ -872,6 +1200,7 @@ class DataPage(QWidget):
 
     def _navigate_external_browser_to(self, target_path: Path) -> None:
         self._external_browser_dir = target_path
+        self._remember_current_external_browser_dir()
         self._refresh_source_browser()
 
     def _open_path_in_folder(self, file_path: str) -> None:
@@ -1071,8 +1400,12 @@ class DataPage(QWidget):
         self._parsed_preview_table.setColumnCount(0)
         self._image_preview_label.clear()
         self._image_preview_label.setText("选择节点后显示预览")
-        self._stats_label.setText("（选择数据后显示统计信息）")
+        self._set_preview_summary(["（选择数据后显示统计信息）"])
         self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
+        self._set_source_file_skip_rows_enabled(True)
+        self._set_source_file_sheet_controls_visible(False)
+        self._source_file_page_label.setText("0 - 0 / 0")
         self._set_preview_plot_type_controls_visible(False)
         self._hide_source_path_links()
         self._set_actions_enabled(False)
@@ -1226,13 +1559,40 @@ class DataPage(QWidget):
         self._update_hidden_browser_toggle_button()
         self._refresh_source_browser()
 
-    def _pending_entry_label(self, file_path: str) -> str:
+    def _pending_entry_label(self, file_path: str, display_name: str = "") -> str:
         path = Path(file_path)
+        return display_name.strip() or self._pending_import_names.get(str(path), "").strip() or path.name
+
+    def _pending_queue_state(self, group_type: Optional[str] = None) -> Optional[_PendingImportQueueState]:
+        key = group_type or self._current_import_group()
+        if key not in self._pending_import_states:
+            return None
+        return self._pending_import_states[key]
+
+    def _load_pending_import_state(self, group_type: Optional[str] = None) -> None:
+        state = self._pending_queue_state(group_type)
+        if state is None:
+            self._pending_import_paths = []
+            self._pending_import_names = {}
+            return
+        self._pending_import_paths = list(state.paths)
+        self._pending_import_names = dict(state.names)
+
+    def _save_pending_import_state(self, group_type: Optional[str] = None) -> None:
+        state = self._pending_queue_state(group_type)
+        if state is None:
+            return
+        state.paths = list(self._pending_import_paths)
+        state.names = dict(self._pending_import_names)
+
+    def _pending_entry_tooltip(self, file_path: str) -> str:
+        path = Path(file_path)
+        details = [f"路径: {path}"]
         try:
-            size_text = self._format_file_size(path.stat().st_size)
+            details.append(f"大小: {self._format_file_size(path.stat().st_size)}")
         except OSError:
-            size_text = "-"
-        return f"{path.name}  ·  {size_text}"
+            pass
+        return "\n".join(details)
 
     def _refresh_source_browser(self) -> None:
         browser_dir = self._ensure_external_browser_dir()
@@ -1307,19 +1667,64 @@ class DataPage(QWidget):
                 result.append(str(file_path))
         return result
 
+    def _begin_rename_pending_source_item(self, item, _column: int = 0) -> None:
+        if item is None or self._current_import_group() is None:
+            return
+        self._pending_source_list.editItem(item, 0)
+
+    def _show_pending_source_context_menu(self, pos) -> None:
+        if self._current_import_group() is None:
+            return
+        item = self._pending_source_list.itemAt(pos)
+        if item is None:
+            return
+        self._pending_source_list.setCurrentItem(item)
+        file_path = str(item.data(0, Qt.ItemDataRole.UserRole) or "").strip()
+        menu = RoundMenu(parent=self)
+        rename_action = Action(FIF.EDIT, "重命名导入名", self)
+        rename_action.triggered.connect(lambda: self._begin_rename_pending_source_item(item, 0))
+        menu.addAction(rename_action)
+        remove_action = Action(FIF.DELETE, "移除", self)
+        remove_action.triggered.connect(lambda: self._remove_pending_source_files([file_path]))
+        menu.addAction(remove_action)
+        menu.exec(self._pending_source_list.viewport().mapToGlobal(pos))
+
+    def _on_pending_source_item_changed(self, item, column: int) -> None:
+        if item is None or column != 0:
+            return
+        file_path = str(item.data(0, Qt.ItemDataRole.UserRole) or "").strip()
+        if not file_path:
+            return
+        clean_name = item.text(0).strip() or Path(file_path).name
+        self._pending_import_names[file_path] = clean_name
+        if item.text(0).strip() != clean_name:
+            self._pending_source_list.blockSignals(True)
+            item.setText(0, clean_name)
+            self._pending_source_list.blockSignals(False)
+        item.setToolTip(0, self._pending_entry_tooltip(file_path))
+        self._save_pending_import_state()
+
     def _refresh_pending_source_list(self) -> None:
         valid_paths: list[str] = []
+        valid_names: dict[str, str] = {}
+        self._pending_source_list.blockSignals(True)
         self._pending_source_list.clear()
         for file_path in self._pending_import_paths:
             path = Path(file_path)
             if not path.exists() or not path.is_file():
                 continue
             valid_paths.append(str(path))
-            item = QTreeWidgetItem([self._pending_entry_label(str(path))])
+            display_name = self._pending_entry_label(str(path), self._pending_import_names.get(str(path), path.name))
+            valid_names[str(path)] = display_name
+            item = QTreeWidgetItem([display_name])
             item.setData(0, Qt.ItemDataRole.UserRole, str(path))
-            item.setToolTip(0, str(path))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            item.setToolTip(0, self._pending_entry_tooltip(str(path)))
             self._pending_source_list.addTopLevelItem(item)
+        self._pending_source_list.blockSignals(False)
         self._pending_import_paths = valid_paths
+        self._pending_import_names = valid_names
+        self._save_pending_import_state()
         self._refresh_pending_source_controls()
 
     def _refresh_pending_source_controls(self) -> None:
@@ -1341,11 +1746,17 @@ class DataPage(QWidget):
 
         if has_items:
             if group_type == "source_files":
-                self._pending_source_hint.setText(f"当前共 {len(self._pending_import_paths)} 个外部文件待导入为源文件。")
+                self._pending_source_hint.setText(
+                    f"当前共 {len(self._pending_import_paths)} 个外部文件待导入为源文件；可双击或右键重命名导入名。"
+                )
             elif group_type == "datasets":
-                self._pending_source_hint.setText(f"当前共 {len(self._pending_import_paths)} 个待导入文件，将导入到数据集。")
+                self._pending_source_hint.setText(
+                    f"当前共 {len(self._pending_import_paths)} 个待导入文件，将导入到数据集；可双击或右键重命名导入名。"
+                )
             elif group_type == "images":
-                self._pending_source_hint.setText(f"当前共 {len(self._pending_import_paths)} 个待导入文件，将导入到数据化。")
+                self._pending_source_hint.setText(
+                    f"当前共 {len(self._pending_import_paths)} 个待导入文件，将导入到数据化；可双击或右键重命名导入名。"
+                )
             else:
                 self._pending_source_hint.setText(f"当前共 {len(self._pending_import_paths)} 个待导入文件。")
         else:
@@ -1367,6 +1778,7 @@ class DataPage(QWidget):
             if normalized in self._pending_import_paths:
                 continue
             self._pending_import_paths.append(normalized)
+            self._pending_import_names[normalized] = Path(normalized).name
             added += 1
         self._refresh_pending_source_list()
         return added
@@ -1378,6 +1790,8 @@ class DataPage(QWidget):
             for file_path in self._pending_import_paths
             if file_path not in to_remove
         ]
+        for file_path in to_remove:
+            self._pending_import_names.pop(file_path, None)
         self._refresh_pending_source_list()
 
     def _add_current_source_file_to_pending(self) -> None:
@@ -1403,6 +1817,7 @@ class DataPage(QWidget):
         if not self._pending_import_paths:
             return
         self._pending_import_paths = []
+        self._pending_import_names.clear()
         self._refresh_pending_source_list()
 
     def _choose_external_browser_dir(self) -> None:
@@ -1411,6 +1826,7 @@ class DataPage(QWidget):
         if not chosen:
             return
         self._external_browser_dir = Path(chosen)
+        self._remember_current_external_browser_dir()
         self._refresh_source_browser()
 
     def _go_to_external_browser_parent(self) -> None:
@@ -1418,6 +1834,7 @@ class DataPage(QWidget):
         if current_dir is None or current_dir.parent == current_dir:
             return
         self._external_browser_dir = current_dir.parent
+        self._remember_current_external_browser_dir()
         self._refresh_source_browser()
 
     def _on_source_browser_item_activated(self, item, _column: int) -> None:
@@ -1428,6 +1845,7 @@ class DataPage(QWidget):
         path = Path(str(file_path))
         if entry_type == "dir":
             self._external_browser_dir = path
+            self._remember_current_external_browser_dir()
             self._refresh_source_browser()
             return
         self._append_source_files_to_pending([str(path)])
@@ -1435,22 +1853,25 @@ class DataPage(QWidget):
     def _show_source_file_manager(self) -> None:
         self._show_source_manager_mode()
         group_type = self._current_import_group()
+        group_key = group_type or ""
         target_name = self._current_node_name() or "未命名节点"
+        self._load_pending_import_state(group_type)
+        self._refresh_pending_source_list()
         group_label = {
             "datasets": "数据集",
             "images": "数据化",
             "source_files": "源文件",
-        }.get(group_type, "-")
+        }.get(group_key, "-")
         self._source_manager_target_label.setText(f"导入目标: {group_label} / {target_name}")
         if group_type == "datasets":
             self._source_browser_tabs.setCurrentIndex(0)
-            self._stats_label.setText("在这里浏览系统文件并导入到当前数据集文件夹。")
+            self._set_preview_summary(["文件管理", "在这里浏览系统文件并导入到当前数据集文件夹。"])
         elif group_type == "images":
             self._source_browser_tabs.setCurrentIndex(0)
-            self._stats_label.setText("在这里浏览系统图片并导入到当前数据化文件夹。")
+            self._set_preview_summary(["文件管理", "在这里浏览系统图片并导入到当前数据化文件夹。"])
         else:
             self._source_browser_tabs.setCurrentIndex(1)
-            self._stats_label.setText("在这里浏览系统文件并导入为当前源文件文件夹下的源文件节点。")
+            self._set_preview_summary(["文件管理", "在这里浏览系统文件并导入为当前源文件文件夹下的源文件节点。"])
         self._refresh_source_manager_tab_state()
         self._refresh_project_source_browser()
         self._refresh_source_browser()
@@ -1676,6 +2097,7 @@ class DataPage(QWidget):
         self._show_preview_mode()
         self._preview_image_path = None
         self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
         self._set_preview_plot_type_controls_visible(True)
         self._hide_source_path_links()
         n = min(len(xs), len(ys))
@@ -1693,15 +2115,20 @@ class DataPage(QWidget):
             y_mean = sum(ys[:n]) / n
             y_var  = sum((v - y_mean)**2 for v in ys[:n]) / n
             y_std  = math.sqrt(y_var)
-            self._stats_label.setText(
-                f"N = {n}    X: [{x_min:.4g}, {x_max:.4g}]    Y: [{y_min:.4g}, {y_max:.4g}]\n"
-                f"均值 = {y_mean:.4g}    标准差 = {y_std:.4g}"
-            )
+            self._set_preview_summary([
+                name or "数据预览",
+                f"N = {n}",
+                f"X: [{x_min:.4g}, {x_max:.4g}]",
+                f"Y: [{y_min:.4g}, {y_max:.4g}]",
+                f"均值 = {y_mean:.4g}",
+                f"标准差 = {y_std:.4g}",
+            ])
 
-    def _show_text_preview(self, title: str, content: str, stats_text: str, *, show_source_file_controls: bool = False) -> None:
+    def _show_text_preview(self, title: str, content: str, stats_text: str | list[str], *, show_source_file_controls: bool = False) -> None:
         self._show_preview_mode()
         self._preview_image_path = None
         self._set_source_file_preview_mode_controls_visible(show_source_file_controls)
+        self._set_source_file_detail_controls_visible(False)
         self._set_preview_plot_type_controls_visible(False)
         self._hide_source_path_links()
         self._preview_xs = []
@@ -1711,7 +2138,8 @@ class DataPage(QWidget):
         self._preview_y_label = "Y"
         self._text_preview.setPlainText(content.strip())
         self._preview_stack.setCurrentWidget(self._text_preview)
-        self._stats_label.setText(stats_text)
+        summary_lines = stats_text if isinstance(stats_text, list) else [line for line in stats_text.splitlines() if line.strip()]
+        self._set_preview_summary(summary_lines or [title])
 
     @staticmethod
     def _format_preview_value(value) -> str:
@@ -1765,24 +2193,44 @@ class DataPage(QWidget):
         *,
         origin_path: str = "",
     ) -> bool:
-        from ui.dialogs.import_dialog import _parse_file_preview
+        from ui.dialogs.import_dialog import analyze_file_preview
 
+        state = self._preview_state_for_node(self._selected_node_id)
         try:
-            headers, rows = _parse_file_preview(file_path)
+            result = analyze_file_preview(
+                file_path,
+                row_offset=state.row_offset,
+                row_limit=max(1, state.row_limit),
+                skip_rows=max(0, state.skip_rows),
+                sheet_name=state.selected_sheet,
+            )
         except Exception as exc:
             self._show_text_preview(
                 title,
-                f"无法解析文件预览：{type(exc).__name__}: {exc}\n\n请切换到“源文件”查看原始内容。",
-                "\n".join(stats_lines),
+                f"无法解析文件预览。\n\n失败原因: {type(exc).__name__}: {exc}\n\n可以切换到“源文件”查看原始内容。",
+                [
+                    *stats_lines,
+                    "解析状态: 失败",
+                    f"失败原因: {type(exc).__name__}: {exc}",
+                ],
                 show_source_file_controls=True,
             )
+            self._set_source_file_skip_rows_enabled(True)
+            self._update_source_file_page_controls(0, 0, max(1, state.row_limit), visible=True)
             self._show_source_path_links(file_path, origin_path)
             return True
 
-        preview_rows = rows[:80]
+        if result.total_rows > 0 and result.row_offset >= result.total_rows:
+            state.row_offset = max(result.total_rows - max(1, state.row_limit), 0)
+            return self._show_parsed_source_file_preview(file_path, title, stats_lines, origin_path=origin_path)
+
+        state.selected_sheet = result.selected_sheet
+        state.last_source_path = file_path
         self._show_preview_mode()
         self._preview_image_path = None
         self._set_source_file_preview_mode_controls_visible(True)
+        self._set_source_file_detail_controls_visible(True)
+        self._set_source_file_skip_rows_enabled(True)
         self._set_preview_plot_type_controls_visible(False)
         self._hide_source_path_links()
         self._preview_xs = []
@@ -1791,33 +2239,102 @@ class DataPage(QWidget):
         self._preview_x_label = "X"
         self._preview_y_label = "Y"
 
+        self._configure_source_file_sheet_options(result.sheet_names, result.selected_sheet)
         self._parsed_preview_table.clear()
-        self._parsed_preview_table.setRowCount(len(preview_rows))
-        self._parsed_preview_table.setColumnCount(len(headers))
-        self._parsed_preview_table.setHorizontalHeaderLabels([str(header) for header in headers])
+        self._parsed_preview_table.setRowCount(len(result.rows))
+        self._parsed_preview_table.setColumnCount(len(result.headers))
+        for column_index, header in enumerate(result.headers):
+            column_type = result.column_types[column_index] if column_index < len(result.column_types) else "-"
+            header_text = str(header) if not column_type or column_type == "-" else f"{header} · {column_type}"
+            header_item = QTableWidgetItem(header_text)
+            header_item.setToolTip(header_text)
+            self._parsed_preview_table.setHorizontalHeaderItem(column_index, header_item)
 
-        for row_index, row in enumerate(preview_rows):
-            for column_index, header in enumerate(headers):
+        for row_index, row in enumerate(result.rows):
+            for column_index, header in enumerate(result.headers):
                 value = row[column_index] if column_index < len(row) else ""
                 item = QTableWidgetItem(self._format_preview_value(value))
-                item.setToolTip(f"{header}: {item.text()}")
+                column_type = result.column_types[column_index] if column_index < len(result.column_types) else "-"
+                item.setToolTip(f"{header} ({column_type}): {item.text()}")
                 self._parsed_preview_table.setItem(row_index, column_index, item)
 
         horizontal_header = self._parsed_preview_table.horizontalHeader()
         horizontal_header.setStretchLastSection(False)
-        for column_index in range(len(headers)):
-            mode = QHeaderView.ResizeMode.Stretch if column_index == len(headers) - 1 else QHeaderView.ResizeMode.ResizeToContents
-            horizontal_header.setSectionResizeMode(column_index, mode)
+        horizontal_header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        for column_index in range(len(result.headers)):
+            horizontal_header.setSectionResizeMode(column_index, QHeaderView.ResizeMode.ResizeToContents)
 
+        self._parsed_preview_table.resizeColumnsToContents()
         self._parsed_preview_table.resizeRowsToContents()
         self._preview_stack.setCurrentWidget(self._parsed_preview_table)
+        self._update_source_file_page_controls(result.total_rows, result.row_offset, result.row_limit, visible=True)
 
         summary_lines = list(stats_lines)
-        summary_lines.append(f"解析列数: {len(headers)}")
-        summary_lines.append(f"预览行数: {len(preview_rows)} / {len(rows)}")
-        if len(preview_rows) < len(rows):
-            summary_lines.append("已截断表格预览，仅展示前 80 行。")
-        self._stats_label.setText("\n".join(summary_lines))
+        summary_lines.append(f"解析格式: {result.detected_format}")
+        if result.encoding:
+            summary_lines.append(f"编码: {result.encoding}")
+        if result.delimiter:
+            summary_lines.append(f"分隔: {result.delimiter}")
+        if result.selected_sheet:
+            summary_lines.append(f"工作表: {result.selected_sheet}")
+        if result.applied_skip_rows > 0:
+            unit = "行" if result.applied_skip_rows > 1 else "行"
+            summary_lines.append(f"表头: 跳过{result.applied_skip_rows}{unit}")
+        else:
+            summary_lines.append("表头: 自动识别")
+        summary_lines.append(f"列数: {len(result.headers)}")
+        invalid_line_text = f"无效行: {result.skipped_rows}"
+        if result.header_warning:
+            invalid_line_text += f"（{result.header_warning}）"
+        elif result.applied_skip_rows == 0 and not result.has_header:
+            invalid_line_text += "（缺少表头）"
+        summary_lines.append(invalid_line_text)
+        self._set_preview_summary(summary_lines)
+        self._show_source_path_links(file_path, origin_path)
+        return True
+
+    def _show_paginated_text_source_preview(
+        self,
+        file_path: str,
+        title: str,
+        stats_lines: list[str],
+        *,
+        origin_path: str = "",
+        show_source_file_controls: bool = False,
+    ) -> bool:
+        from ui.dialogs.import_dialog import read_text_preview_page
+
+        state = self._preview_state_for_node(self._selected_node_id)
+        preview = read_text_preview_page(
+            file_path,
+            line_offset=state.row_offset,
+            line_limit=max(1, state.row_limit),
+        )
+        if preview.total_lines > 0 and preview.line_offset >= preview.total_lines:
+            state.row_offset = max(preview.total_lines - max(1, state.row_limit), 0)
+            preview = read_text_preview_page(
+                file_path,
+                line_offset=state.row_offset,
+                line_limit=max(1, state.row_limit),
+            )
+
+        state.last_source_path = file_path
+        content = preview.content or "（当前页没有可显示内容）"
+        self._show_text_preview(title, content, "\n".join(stats_lines), show_source_file_controls=show_source_file_controls)
+        self._set_source_file_skip_rows_enabled(False)
+        self._set_source_file_sheet_controls_visible(False)
+        self._update_source_file_page_controls(
+            preview.total_lines,
+            preview.line_offset,
+            preview.line_limit,
+            visible=show_source_file_controls,
+        )
+
+        summary_lines = list(stats_lines)
+        summary_lines.append(f"文本编码: {preview.encoding}")
+        if preview.total_lines <= 0:
+            summary_lines.append("源文件为空")
+        self._set_preview_summary(summary_lines)
         self._show_source_path_links(file_path, origin_path)
         return True
 
@@ -1837,6 +2354,8 @@ class DataPage(QWidget):
         if suffix in _SOURCE_IMAGE_SUFFIXES:
             self._show_preview_mode()
             self._set_source_file_preview_mode_controls_visible(show_source_file_controls)
+            self._set_source_file_detail_controls_visible(False)
+            self._set_source_file_sheet_controls_visible(False)
             self._set_preview_plot_type_controls_visible(False)
             self._hide_source_path_links()
             self._preview_stack.setCurrentWidget(self._image_preview_label)
@@ -1845,23 +2364,19 @@ class DataPage(QWidget):
                 if show_path_links:
                     self._show_source_path_links(str(path), origin_path)
                 return True
-            self._stats_label.setText("\n".join(stats_lines))
+            self._set_preview_summary(stats_lines)
             if show_path_links:
                 self._show_source_path_links(str(path), origin_path)
             return True
 
         if suffix in _TEXT_PREVIEW_SUFFIXES:
-            try:
-                content = path.read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                content = f"无法读取文本预览: {exc}"
-            preview_text = content[:4000]
-            if len(content) > 4000:
-                preview_text += "\n\n... 已截断 ..."
-            self._show_text_preview(title, preview_text, "\n".join(stats_lines), show_source_file_controls=show_source_file_controls)
-            if show_path_links:
-                self._show_source_path_links(str(path), origin_path)
-            return True
+            return self._show_paginated_text_source_preview(
+                str(path),
+                title,
+                stats_lines,
+                origin_path=origin_path,
+                show_source_file_controls=show_source_file_controls,
+            )
 
         preview_lines = [f"文件名: {title}"]
         if suffix in _TABULAR_PREVIEW_SUFFIXES:
@@ -1871,6 +2386,7 @@ class DataPage(QWidget):
         preview_lines.append("")
         preview_lines.extend(stats_lines)
         self._show_text_preview(title, "\n".join(preview_lines), "\n".join(stats_lines), show_source_file_controls=show_source_file_controls)
+        self._set_source_file_sheet_controls_visible(False)
         if show_path_links:
             self._show_source_path_links(str(path), origin_path)
         return True
@@ -1879,6 +2395,7 @@ class DataPage(QWidget):
         self._show_preview_mode()
         self._preview_image_path = None
         self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
         self._set_preview_plot_type_controls_visible(False)
         self._hide_source_path_links()
         image = project_manager.get_image(image_id)
@@ -1900,7 +2417,7 @@ class DataPage(QWidget):
         self._preview_name = image_name
         self._preview_xs = []
         self._preview_ys = []
-        self._stats_label.setText(stats_text)
+        self._set_preview_summary([line for line in stats_text.splitlines() if line.strip()])
         return True
 
     def _show_folder_preview(self, node) -> None:
@@ -1979,6 +2496,7 @@ class DataPage(QWidget):
             series = data_file.series[0]
             self._selected_type = "series"
             self._selected_id = series.id
+            self._restore_plot_type_for_node(node_id)
             self._show_xy_preview(
                 series.x,
                 series.y,
@@ -2005,6 +2523,8 @@ class DataPage(QWidget):
 
         path = Path(file_path)
         origin_path = "" if asset is None else asset.source_file_path
+        state = self._restore_source_file_detail_state(node_id)
+        state.last_source_path = str(path)
         stats_lines = [
             f"文件名: {node.name or path.name}",
             f"类型: {path.suffix.lower() or '-'}",
@@ -2014,7 +2534,17 @@ class DataPage(QWidget):
         except OSError:
             pass
 
-        self._configure_source_file_preview_modes(str(path))
+        sheet_names: list[str] = []
+        if path.suffix.lower() in {".xlsx", ".xls"}:
+            from ui.dialogs.import_dialog import get_excel_sheet_names
+
+            try:
+                sheet_names = get_excel_sheet_names(str(path))
+            except Exception:
+                sheet_names = []
+        state.selected_sheet = self._configure_source_file_sheet_options(sheet_names, state.selected_sheet)
+        self._configure_source_file_preview_modes(str(path), preferred_mode=state.source_preview_mode)
+        state.source_preview_mode = self._current_source_file_preview_mode()
         if self._current_source_file_preview_mode() == "解析" and self._supports_dataset_import(str(path)):
             return self._show_parsed_source_file_preview(
                 str(path),
@@ -2163,10 +2693,12 @@ class DataPage(QWidget):
         self.refresh()
         InfoBar.success("已删除", target_name, parent=self, position=InfoBarPosition.TOP)
 
-    def _create_import_dialog(self, file_path: Optional[str] = None):
+    def _create_import_dialog(self, file_path: Optional[str] = None, default_file_name: Optional[str] = None):
         from ui.dialogs.import_dialog import ImportDialog
 
         dialog = ImportDialog(self)
+        if default_file_name:
+            dialog.set_default_file_name(default_file_name)
         if file_path:
             dialog.load_file(file_path)
         return dialog
@@ -2257,13 +2789,14 @@ class DataPage(QWidget):
 
         for file_path in list(self._pending_import_paths):
             path = Path(file_path)
+            import_name = self._pending_import_names.get(file_path, path.name)
             if not path.exists():
-                failed_names.append(path.name)
+                failed_names.append(import_name)
                 continue
             try:
-                dialog = self._create_import_dialog(str(path))
+                dialog = self._create_import_dialog(str(path), default_file_name=import_name)
             except Exception as exc:
-                failed_names.append(path.name)
+                failed_names.append(import_name)
                 InfoBar.warning("导入失败", f"无法读取文件 {path.name}: {exc}", parent=self, position=InfoBarPosition.TOP)
                 continue
             if not dialog.exec():
@@ -2272,7 +2805,7 @@ class DataPage(QWidget):
             if self._apply_import_dialog_results(dialog, show_feedback=False):
                 completed_paths.append(str(path))
             else:
-                failed_names.append(path.name)
+                failed_names.append(import_name)
 
         if completed_paths:
             self._remove_pending_source_files(completed_paths)
@@ -2301,16 +2834,17 @@ class DataPage(QWidget):
 
         for file_path in list(self._pending_import_paths):
             path = Path(file_path)
+            import_name = self._pending_import_names.get(file_path, path.name)
             if not path.exists():
-                skipped_names.append(path.name)
+                skipped_names.append(import_name)
                 continue
             if not self._supports_digitize_import(str(path)):
-                skipped_names.append(path.name)
+                skipped_names.append(import_name)
                 continue
             try:
-                project_manager.add_image(str(path), name=path.name)
+                project_manager.add_image(str(path), name=import_name)
             except ValueError:
-                skipped_names.append(path.name)
+                skipped_names.append(import_name)
                 continue
             completed_paths.append(str(path))
 
@@ -2339,15 +2873,17 @@ class DataPage(QWidget):
         failed_names: list[str] = []
 
         for file_path in list(self._pending_import_paths):
+            import_name = self._pending_import_names.get(file_path, Path(file_path).name)
             node = project_manager.add_source_file(
                 file_path,
+                name=import_name,
                 parent_id=target_folder_id,
                 auto_rename_on_conflict=True,
             )
             if node is not None:
                 completed_paths.append(file_path)
             else:
-                failed_names.append(Path(file_path).name)
+                failed_names.append(import_name)
 
         if completed_paths:
             self._remove_pending_source_files(completed_paths)
@@ -2584,6 +3120,7 @@ class DataPage(QWidget):
             if series and series.x:
                 self._selected_type = "series" if kind == "series" else "curve"
                 self._selected_id = series.id
+                self._restore_plot_type_for_node(node_id)
                 self._show_xy_preview(series.x, series.y, series.name, series.x_label, series.y_label)
                 self._set_actions_enabled(True)
                 self._refresh_management_panel()
@@ -2607,6 +3144,7 @@ class DataPage(QWidget):
             self._selected_type = None
             self._selected_id = None
             if self._current_import_group() in {"datasets", "images", "source_files"}:
+                self._restore_external_browser_dir_for_node(node_id)
                 self._show_source_file_manager()
                 self._set_actions_enabled(False)
                 self._refresh_management_panel()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 import uuid
@@ -58,7 +59,7 @@ from core.extension_api import (
     build_extension_entry,
     extension_registry,
     invoke_plot_extension_handler,
-    reload_builtin_extensions,
+    reload_configured_extensions,
 )
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
@@ -113,9 +114,57 @@ _ICON_PLOT_EXTENSION_HELP = getattr(FIF, "INFO", getattr(FIF, "HELP", FIF.SEARCH
 _PLOT_EXTENSION_TEACHING_TIP_TEXT = "在右侧面板选择扩展，并叠加到当前图表。适合参考线、标注或自定义绘制流程。"
 
 
+def _merge_nested_mapping(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    result = copy.deepcopy(base)
+    for key, value in dict(patch or {}).items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge_nested_mapping(result[key], value)
+            continue
+        result[key] = copy.deepcopy(value)
+    return result
+
+
+def _flatten_nested_mapping(data: Dict[str, Any], prefix: tuple[str, ...] = ()) -> Dict[tuple[str, ...], Any]:
+    flattened: Dict[tuple[str, ...], Any] = {}
+    for key, value in dict(data or {}).items():
+        next_prefix = (*prefix, str(key))
+        if isinstance(value, dict):
+            if value:
+                flattened.update(_flatten_nested_mapping(value, next_prefix))
+            else:
+                flattened[next_prefix] = {}
+            continue
+        flattened[next_prefix] = copy.deepcopy(value)
+    return flattened
+
+
+def _nested_mapping_changed_paths(before: Dict[str, Any], after: Dict[str, Any]) -> set[tuple[str, ...]]:
+    before_flat = _flatten_nested_mapping(before)
+    after_flat = _flatten_nested_mapping(after)
+    return {
+        path
+        for path in set(before_flat) | set(after_flat)
+        if before_flat.get(path) != after_flat.get(path)
+    }
+
+
+def _set_nested_mapping_value(target: Dict[str, Any], path: tuple[str, ...], value: Any) -> None:
+    if not path:
+        return
+    current = target
+    for segment in path[:-1]:
+        child = current.get(segment)
+        if not isinstance(child, dict):
+            child = {}
+            current[segment] = child
+        current = child
+    current[path[-1]] = copy.deepcopy(value)
+
+
 class ChartPage(QWidget):
     """数据可视化页面。"""
 
+    extensions_reloaded = Signal()
     project_modified = Signal()
     assets_modified = Signal()
 
@@ -149,8 +198,10 @@ class ChartPage(QWidget):
         self._plot_extension_options: Dict[str, dict] = {}
         self._applied_plot_extensions: List[Dict[str, Any]] = []
         self._plot_extension_instance_seed = 0
-        self._plot_style_extension_options: Dict[str, dict] = {}
-        self._curve_style_extension_options: Dict[str, dict] = {}
+        self._style_change_sequence = 0
+        self._figure_state_change_versions: Dict[str, int] = {}
+        self._plot_style_extra_versions: Dict[tuple[str, ...], int] = {}
+        self._curve_style_change_versions: Dict[str, Dict[str, int]] = {}
         self._plot_style_extras: Dict[str, Any] = {}
         self._display_dpi = 100.0
         self._display_canvas_size: Optional[tuple[int, int]] = None
@@ -295,7 +346,7 @@ class ChartPage(QWidget):
         self._content_splitter.setSizes([340, 980])
         self._page_splitter.addWidget(self._content_splitter)
 
-        self._extension_panel = ExtensionConfigPanel("样式扩展", "应用扩展", self)
+        self._extension_panel = ExtensionConfigPanel("绘图扩展", "应用扩展", self)
         self._extension_panel.apply_requested.connect(self._on_chart_extension_apply)
         self._extension_panel.reload_requested.connect(self._reload_chart_extensions)
         self._extension_panel.remove_requested.connect(self._on_chart_extension_remove_requested)
@@ -341,7 +392,7 @@ class ChartPage(QWidget):
                 lambda: self._style_tabs,
                 TeachingTipTailPosition.BOTTOM,
                 "样式与扩展分开管理",
-                "曲线样式、绘图样式和绘图扩展分栏放置；叠加参考线时切到“绘图扩展”。",
+                "左侧保留曲线样式、绘图样式和绘图扩展三个页签；右侧扩展侧栏统一管理绘图扩展。",
             ),
             OnboardingStep(
                 lambda: self._plot_actions_bar,
@@ -529,6 +580,17 @@ class ChartPage(QWidget):
         line_width_row.addWidget(self._style_line_width_edit)
         line_width_row.addStretch()
         layout.addLayout(line_width_row)
+
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(self._make_style_form_label("透明度:", page))
+        self._style_opacity_edit = LineEdit(page)
+        self._style_opacity_edit.setPlaceholderText("1.0")
+        self._style_opacity_edit.setEnabled(False)
+        self._style_opacity_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._set_compact_edit_width(self._style_opacity_edit)
+        opacity_row.addWidget(self._style_opacity_edit)
+        opacity_row.addStretch()
+        layout.addLayout(opacity_row)
 
         marker_size_row = QHBoxLayout()
         marker_size_row.addWidget(self._make_style_form_label("点大小:", page))
@@ -773,6 +835,8 @@ class ChartPage(QWidget):
 
     def _build_plot_extension_tab(self, parent: QWidget) -> QWidget:
         scroll, page, layout = self._create_style_tab_page(parent)
+        page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
 
         self._plot_extension_target_hint = make_hint_label("", page)
         self._plot_extension_target_hint.setWordWrap(True)
@@ -780,7 +844,7 @@ class ChartPage(QWidget):
         layout.addWidget(make_hsep(page))
 
         applied_header = QHBoxLayout()
-        applied_header.addWidget(make_section_label("已加载曲线", page))
+        applied_header.addWidget(make_section_label("已加载扩展", page))
         self._plot_extension_help_btn = ToolButton(_ICON_PLOT_EXTENSION_HELP, page)
         self._plot_extension_help_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         self._plot_extension_help_btn.setToolTip("绘图扩展说明")
@@ -798,6 +862,7 @@ class ChartPage(QWidget):
         layout.addWidget(self._plot_extension_repeat_hint)
 
         self._plot_extension_applied_list = ListWidget(page)
+        self._plot_extension_applied_list.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
         layout.addWidget(self._plot_extension_applied_list, 1)
@@ -865,6 +930,116 @@ class ChartPage(QWidget):
     def _curve_identity(curve: dict) -> str:
         return ChartPage._curve_key(curve) or curve.get("name", "")
 
+    def _next_style_change_sequence(self) -> int:
+        self._style_change_sequence += 1
+        return self._style_change_sequence
+
+    def _record_figure_state_changes(self, keys: set[str] | List[str], *, sequence: Optional[int] = None) -> None:
+        if not keys:
+            return
+        change_sequence = self._next_style_change_sequence() if sequence is None else sequence
+        for key in keys:
+            self._figure_state_change_versions[str(key)] = change_sequence
+
+    def _record_plot_style_extra_changes(
+        self,
+        paths: set[tuple[str, ...]] | List[tuple[str, ...]],
+        *,
+        sequence: Optional[int] = None,
+    ) -> None:
+        if not paths:
+            return
+        change_sequence = self._next_style_change_sequence() if sequence is None else sequence
+        for path in paths:
+            clean_path = tuple(str(item) for item in path if str(item))
+            if clean_path:
+                self._plot_style_extra_versions[clean_path] = change_sequence
+
+    def _record_curve_style_changes(
+        self,
+        curve_key: str,
+        keys: set[str] | List[str],
+        *,
+        sequence: Optional[int] = None,
+    ) -> None:
+        clean_curve_key = str(curve_key or "").strip()
+        if not clean_curve_key or not keys:
+            return
+        change_sequence = self._next_style_change_sequence() if sequence is None else sequence
+        target_versions = self._curve_style_change_versions.setdefault(clean_curve_key, {})
+        for key in keys:
+            target_versions[str(key)] = change_sequence
+
+    def _manual_plot_style_version(self, path: tuple[str, ...]) -> int:
+        version = 0
+        current_path = tuple(path)
+        while current_path:
+            version = max(version, self._plot_style_extra_versions.get(current_path, 0))
+            current_path = current_path[:-1]
+        return version
+
+    def _plot_context_series_entry(
+        self,
+        curve: Optional[dict],
+        *,
+        style_payload: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if curve is None:
+            return None
+        entry = dict(curve)
+        entry["curve_identity"] = self._curve_identity(curve)
+        entry["display_name"] = self._curve_display_name(curve)
+        entry["style"] = copy.deepcopy(style_payload if style_payload is not None else self._current_curve_style_payload(curve))
+        return entry
+
+    def _effective_plot_figure_state_payload(
+        self,
+        base_payload: Dict[str, Any],
+        extension_layers: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        merged = dict(base_payload)
+        for layer in extension_layers:
+            sequence = int(layer.get("sequence") or 0)
+            for key, value in dict(layer.get("figure_state") or {}).items():
+                clean_key = str(key)
+                if sequence > self._figure_state_change_versions.get(clean_key, 0):
+                    merged[clean_key] = copy.deepcopy(value)
+        return merged
+
+    def _effective_plot_style_extras(
+        self,
+        base_extras: Dict[str, Any],
+        extension_layers: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        merged = copy.deepcopy(base_extras)
+        for layer in extension_layers:
+            sequence = int(layer.get("sequence") or 0)
+            flattened = _flatten_nested_mapping(dict(layer.get("plot_style_extras") or {}))
+            for path, value in flattened.items():
+                if sequence > self._manual_plot_style_version(path):
+                    _set_nested_mapping_value(merged, path, value)
+        return merged
+
+    def _effective_curve_style_payloads(
+        self,
+        base_payloads: Dict[str, Dict[str, Any]],
+        extension_layers: List[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        merged = {identity: copy.deepcopy(payload) for identity, payload in base_payloads.items()}
+        for layer in extension_layers:
+            sequence = int(layer.get("sequence") or 0)
+            for curve_identity, patch in dict(layer.get("curve_styles") or {}).items():
+                clean_identity = str(curve_identity or "").strip()
+                if not clean_identity:
+                    continue
+                target_payload = merged.setdefault(clean_identity, {})
+                target_versions = self._curve_style_change_versions.get(clean_identity, {})
+                for key, value in dict(patch or {}).items():
+                    clean_key = str(key)
+                    if sequence > target_versions.get(clean_key, 0):
+                        target_payload[clean_key] = copy.deepcopy(value)
+        return merged
+
     def _curve_tree_path_label(self, curve: Optional[dict]) -> str:
         if curve is None:
             return "—"
@@ -903,24 +1078,13 @@ class ChartPage(QWidget):
         for figure in global_assets.list_figure_templates():
             label = self._unique_style_label(figure.name or figure.id[:8], used_labels, "已保存")
             choices.append((label, make_plot_style_asset_key("template", figure.id)))
-        for extension in extension_registry.list_plot_style():
-            label = self._unique_style_label(f"扩展 · {extension.name}", used_labels, "扩展")
-            choices.append((label, make_plot_style_asset_key("extension", extension.type)))
         return choices
-
-    def _plot_style_extension_entries(self) -> List[dict]:
-        entries: List[dict] = []
-        for extension in extension_registry.list_plot_style():
-            entry = build_extension_entry(extension)
-            entry["label"] = f"样式扩展 · {extension.name}"
-            entries.append(entry)
-        return entries
 
     def _plot_extension_entries(self) -> List[dict]:
         entries: List[dict] = []
         for extension in extension_registry.list_plot():
             entry = build_extension_entry(extension)
-            entry["label"] = f"绘图扩展 · {extension.name}"
+            entry["label"] = extension.name
             entries.append(entry)
         return entries
 
@@ -974,6 +1138,7 @@ class ChartPage(QWidget):
         return {
             "id": self._next_plot_extension_instance_id(),
             "type": type_id,
+            "sequence": self._next_style_change_sequence(),
             "options": dict(options),
             "curve_identity": self._curve_identity(target_curve) if target_curve is not None else None,
             "curve_name": target_curve.get("name") if target_curve is not None else None,
@@ -1034,6 +1199,7 @@ class ChartPage(QWidget):
                 target_row = 0
             self._plot_extension_applied_list.setCurrentRow(target_row)
         self._plot_extension_applied_list.blockSignals(False)
+        self._sync_plot_extension_list_height()
         self._on_plot_extension_instance_selection_changed(self._plot_extension_applied_list.currentItem(), None)
 
     def _on_plot_extension_instance_selection_changed(self, current, _previous) -> None:
@@ -1078,53 +1244,25 @@ class ChartPage(QWidget):
             return
         self._remove_plot_extension_instance(str(applied.get("id") or ""))
 
-    def _curve_style_extension_entries(self) -> List[dict]:
-        return [build_extension_entry(extension) for extension in extension_registry.list_curve_style()]
-
-    def _refresh_style_extension_panel(self, _index: Optional[int] = None) -> None:
+    def _extension_panel_context_target(self) -> str:
         current_tab = self._style_tabs.currentIndex()
         if current_tab == 0:
             selected_curve = self._selected_curve()
-            target = selected_curve["name"] if selected_curve is not None else "未选中曲线"
-            available_types = {entry["type"] for entry in self._curve_style_extension_entries()}
-            panel_current_type = self._extension_panel.current_type() if hasattr(self, "_extension_panel") else None
-            current_type = None
-            if panel_current_type in available_types:
-                current_type = panel_current_type
-            elif self._active_curve_style_ref and self._active_curve_style_ref.startswith("curve_extension:"):
-                current_type = parse_plot_style_asset_key(self._active_curve_style_ref)[1]
-            self._extension_panel.set_panel_title("曲线样式扩展")
-            self._extension_panel.set_action_text("应用扩展")
-            self._extension_panel.set_context("图表样式", target)
-            self._extension_panel.set_status_context("curve_style", "曲线样式扩展")
-            self._extension_panel.set_entries(
-                self._curve_style_extension_entries(),
-                saved_options=self._curve_style_extension_options,
-                current_type=current_type,
-            )
-            self._update_extension_remove_action()
-            return
-        if current_tab == 1:
-            plot_style_entries = self._plot_style_extension_entries()
-            available_types = {entry["type"] for entry in plot_style_entries}
-            panel_current_type = self._extension_panel.current_type() if hasattr(self, "_extension_panel") else None
-            current_type = None
-            if panel_current_type in available_types:
-                current_type = panel_current_type
-            elif self._applied_plot_style_ref and self._applied_plot_style_ref.startswith("extension:"):
-                current_type = parse_plot_style_asset_key(self._applied_plot_style_ref)[1]
-            self._extension_panel.set_panel_title("绘图样式扩展")
-            self._extension_panel.set_action_text("应用扩展")
-            self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
-            self._extension_panel.set_status_context("plot_style", "绘图样式扩展")
-            self._extension_panel.set_entries(
-                plot_style_entries,
-                saved_options=self._plot_style_extension_options,
-                current_type=current_type,
-            )
-            self._update_extension_remove_action()
-            return
+            return self._curve_display_name(selected_curve) if selected_curve is not None else "未选中曲线"
+        return self._figure_state.theme or "绘图样式"
 
+    def _sync_plot_extension_list_height(self) -> None:
+        if not hasattr(self, "_plot_extension_applied_list"):
+            return
+        count = self._plot_extension_applied_list.count()
+        row_height = self._plot_extension_applied_list.sizeHintForRow(0) if count > 0 else 32
+        row_height = max(row_height, 32)
+        frame_height = self._plot_extension_applied_list.frameWidth() * 2 + 6
+        target_min_height = row_height * min(max(count, 1), 3) + frame_height
+        self._plot_extension_applied_list.setMinimumHeight(max(target_min_height, 120))
+        self._plot_extension_applied_list.setMaximumHeight(16777215)
+
+    def _refresh_style_extension_panel(self, _index: Optional[int] = None) -> None:
         plot_entries = self._plot_extension_entries()
         available_types = {entry["type"] for entry in plot_entries}
         panel_current_type = self._extension_panel.current_type() if hasattr(self, "_extension_panel") else None
@@ -1138,7 +1276,7 @@ class ChartPage(QWidget):
             ) or next((type_id for type_id in self._plot_extension_options if type_id in available_types), None)
         self._extension_panel.set_panel_title("绘图扩展")
         self._extension_panel.set_action_text("应用扩展")
-        self._extension_panel.set_context("图表样式", self._figure_state.theme or "绘图样式")
+        self._extension_panel.set_context("图表样式", self._extension_panel_context_target())
         self._extension_panel.set_status_context("plot", "绘图扩展")
         self._extension_panel.set_entries(
             plot_entries,
@@ -1149,30 +1287,18 @@ class ChartPage(QWidget):
         self._refresh_plot_extension_list()
 
     def _on_chart_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
-        current_tab = self._style_tabs.currentIndex()
-        if current_tab == 0:
-            self._curve_style_extension_options[type_id] = dict(options)
-            self._apply_curve_style_extension(type_id)
-            return
-        if current_tab == 2:
-            self._plot_extension_options[type_id] = dict(options)
-            self._apply_plot_extension(type_id)
-            return
-        self._plot_style_extension_options[type_id] = dict(options)
-        self._apply_plot_style_extension(type_id)
+        self._plot_extension_options[type_id] = dict(options)
+        self._apply_plot_extension(type_id)
 
     def _reload_chart_extensions(self) -> None:
-        report = reload_builtin_extensions()
+        report = reload_configured_extensions()
         plot_types = {extension.type for extension in extension_registry.list_plot()}
-        plot_style_types = {extension.type for extension in extension_registry.list_plot_style()}
-        curve_style_types = {extension.type for extension in extension_registry.list_curve_style()}
         self._plot_extension_options = {key: value for key, value in self._plot_extension_options.items() if key in plot_types}
         self._applied_plot_extensions = [entry for entry in self._applied_plot_extensions if entry.get("type") in plot_types]
-        self._plot_style_extension_options = {key: value for key, value in self._plot_style_extension_options.items() if key in plot_style_types}
-        self._curve_style_extension_options = {key: value for key, value in self._curve_style_extension_options.items() if key in curve_style_types}
         self._refresh_curve_style_template_combo()
         self._refresh_template_combo(self._applied_plot_style_ref)
         self._refresh_style_extension_panel()
+        self.extensions_reloaded.emit()
         if report.get("errors"):
             InfoBar.warning(
                 "重载完成",
@@ -1311,15 +1437,7 @@ class ChartPage(QWidget):
                 )
                 self._btn_update_template.setEnabled(True)
                 return
-        elif style_type == "extension":
-            extension = extension_registry.get_plot_style(asset_id)
-            if extension is not None:
-                self._template_summary_label.setText(
-                    f"{pending_message}当前使用扩展绘图样式: {extension.name}".strip()
-                )
-                self._btn_update_template.setEnabled(False)
-                return
-        else:
+        elif style_type == "theme":
             theme = global_assets.get_plot_theme(asset_id)
             if theme is not None:
                 self._template_summary_label.setText(
@@ -1348,9 +1466,6 @@ class ChartPage(QWidget):
         if style_type == "template":
             self.load_template(asset_id)
             return
-        if style_type == "extension":
-            self._apply_plot_style_extension(asset_id)
-            return
         theme = global_assets.get_plot_theme(asset_id)
         if theme is None:
             return
@@ -1370,30 +1485,9 @@ class ChartPage(QWidget):
         self._active_template_node_id = active_template_node_id
         self._applied_plot_style_ref = make_plot_style_asset_key("theme", theme.id or theme.name)
         self._current_plot_theme_id = theme.id
-        self._plot_style_extras = {}
-        self._apply_figure_state(state)
+        self._apply_plot_style_payload(state.model_dump(), source="manual")
         self._redraw_now()
         self._refresh_style_extension_panel()
-
-    def _apply_plot_style_extension(self, type_id: str) -> None:
-        extension = extension_registry.get_plot_style(type_id)
-        if extension is None:
-            return
-        current_state = self._current_plot_style_payload()
-        options = dict(self._plot_style_extension_options.get(type_id, extension.default_options))
-        state_patch = extension.handler(dict(current_state), options)
-        if not isinstance(state_patch, dict):
-            return
-        merged_state = dict(current_state)
-        merged_state.update(state_patch)
-        merged_state.setdefault("theme", extension.name)
-        self._active_template_node_id = None
-        self._current_plot_theme_id = None
-        self._applied_plot_style_ref = make_plot_style_asset_key("extension", type_id)
-        self._apply_plot_style_payload(merged_state)
-        self._refresh_template_combo(self._applied_plot_style_ref)
-        self._refresh_style_extension_panel()
-        self._redraw_now()
 
     def _apply_plot_extension(self, type_id: str) -> None:
         extension = extension_registry.get_plot(type_id)
@@ -1412,6 +1506,26 @@ class ChartPage(QWidget):
 
     def _resolve_plot_theme(self):
         return global_assets.get_plot_theme(self._current_plot_theme_id or self._figure_state.theme)
+
+    def _theme_palette_for_state(self, state: FigureState) -> tuple[str, str, str]:
+        theme = global_assets.get_plot_theme(state.theme) or self._resolve_plot_theme()
+        dark = isDarkTheme()
+        if theme is None or theme.canvas_mode == "app":
+            background = theme.background_color if theme and theme.background_color else ("#1e1e1e" if dark else "#ffffff")
+            foreground = theme.foreground_color if theme and theme.foreground_color else ("#cccccc" if dark else "#222222")
+            grid_color = theme.grid_color if theme and theme.grid_color else ("#444444" if dark else "#dddddd")
+            return background, foreground, grid_color
+        if theme.canvas_mode == "dark":
+            return (
+                theme.background_color or "#1e1e1e",
+                theme.foreground_color or "#e6e6e6",
+                theme.grid_color or "#454545",
+            )
+        return (
+            theme.background_color or "#ffffff",
+            theme.foreground_color or "#222222",
+            theme.grid_color or "#dddddd",
+        )
 
     def load_template(self, template_node_id: str) -> None:
         figure = global_assets.get_figure_template(template_node_id)
@@ -1444,8 +1558,7 @@ class ChartPage(QWidget):
         )
         self._active_template_node_id = figure.id
         self._applied_plot_style_ref = make_plot_style_asset_key("template", figure.id)
-        self._plot_style_extras = {}
-        self._apply_figure_state(state)
+        self._apply_plot_style_payload(state.model_dump(), source="manual")
         self._refresh_style_extension_panel()
         self._redraw_now()
 
@@ -1554,9 +1667,6 @@ class ChartPage(QWidget):
         for item in templates:
             self._curve_style_template_combo.addItem(item.name)
             self._curve_style_template_ids.append(item.id)
-        for extension in extension_registry.list_curve_style():
-            self._curve_style_template_combo.addItem(f"扩展 · {extension.name}")
-            self._curve_style_template_ids.append(make_plot_style_asset_key("curve_extension", extension.type))
         target_id = self._active_curve_style_ref
         if target_id in self._curve_style_template_ids:
             self._curve_style_template_combo.setCurrentIndex(self._curve_style_template_ids.index(target_id))
@@ -1570,18 +1680,6 @@ class ChartPage(QWidget):
         if not self._active_curve_style_ref:
             self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
             self._btn_update_curve_style_template.setEnabled(False)
-            return
-        if self._active_curve_style_ref.startswith("curve_extension:"):
-            extension = extension_registry.get_curve_style(parse_plot_style_asset_key(self._active_curve_style_ref)[1])
-            if extension is None:
-                self._active_curve_style_ref = None
-                self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
-                self._btn_update_curve_style_template.setEnabled(False)
-                self._refresh_style_extension_panel()
-                return
-            self._curve_style_template_label.setText(f"当前扩展样式: {extension.name}")
-            self._btn_update_curve_style_template.setEnabled(False)
-            self._refresh_style_extension_panel()
             return
         template = global_assets.get_curve_style_template(self._active_curve_style_ref)
         if template is None:
@@ -1611,19 +1709,13 @@ class ChartPage(QWidget):
         style_ref = self._selected_curve_style_template_id()
         if style_ref:
             self._active_curve_style_ref = style_ref
-            if style_ref.startswith("curve_extension:"):
-                self._active_curve_style_template_id = None
-            else:
-                self._active_curve_style_template_id = style_ref
+            self._active_curve_style_template_id = style_ref
             self._update_curve_style_template_summary()
 
     def _load_selected_curve_style_template(self) -> None:
         style_ref = self._selected_curve_style_template_id()
         if not style_ref:
             InfoBar.warning("提示", "请先选择一个曲线样式", parent=self, position=InfoBarPosition.TOP)
-            return
-        if style_ref.startswith("curve_extension:"):
-            self._apply_curve_style_extension(parse_plot_style_asset_key(style_ref)[1])
             return
         self.load_curve_style_template(style_ref)
 
@@ -1638,30 +1730,6 @@ class ChartPage(QWidget):
         self._apply_curve_style(self._curve_key(curve), template.style)
         self._active_curve_style_template_id = template.id
         self._active_curve_style_ref = template.id
-        self._refresh_curve_style_template_combo()
-        self._redraw_now()
-
-    def _apply_curve_style_extension(self, type_id: str) -> None:
-        extension = extension_registry.get_curve_style(type_id)
-        if extension is None:
-            return
-        curve = self._selected_curve()
-        if curve is None:
-            InfoBar.warning("提示", "请先选中一条曲线再应用扩展样式", parent=self, position=InfoBarPosition.TOP)
-            return
-        current_style = self._current_curve_style(curve)
-        if current_style is None:
-            return
-        options = dict(self._curve_style_extension_options.get(type_id, extension.default_options))
-        current_payload = self._current_curve_style_payload(curve)
-        style_patch = extension.handler(dict(current_payload), options)
-        if not isinstance(style_patch, dict):
-            return
-        merged_style = dict(current_payload)
-        merged_style.update(style_patch)
-        self._apply_curve_style_payload(self._curve_key(curve), merged_style)
-        self._active_curve_style_template_id = None
-        self._active_curve_style_ref = make_plot_style_asset_key("curve_extension", type_id)
         self._refresh_curve_style_template_combo()
         self._redraw_now()
 
@@ -1697,9 +1765,11 @@ class ChartPage(QWidget):
     def _apply_curve_style(self, curve_key: str, style: CurveStyle) -> None:
         self._apply_curve_style_payload(curve_key, style.model_dump())
 
-    def _apply_curve_style_payload(self, curve_key: str, payload: Dict[str, Any]) -> None:
+    def _apply_curve_style_payload(self, curve_key: str, payload: Dict[str, Any], *, source: str = "manual") -> None:
         style_dict = self._curve_styles.setdefault(curve_key, {})
         style_dict.update({key: value for key, value in payload.items() if key != "visible"})
+        if source == "manual":
+            self._record_curve_style_changes(curve_key, {str(key) for key in payload.keys()})
         for curve in self._chart_series:
             if self._curve_key(curve) == curve_key:
                 if "visible" in payload:
@@ -1749,24 +1819,37 @@ class ChartPage(QWidget):
         return config
 
     def _apply_advanced_config(self, cfg: dict) -> None:
-        payload = self._get_current_config()
-        payload.update(cfg)
+        payload = _merge_nested_mapping(self._get_current_config(), cfg)
         self._applied_plot_style_ref = (
             make_plot_style_asset_key("template", self._active_template_node_id)
             if self._active_template_node_id
             else None
         )
-        self._apply_plot_style_payload(payload)
+        self._apply_plot_style_payload(payload, source="manual")
+        self._redraw_now()
 
     def _current_plot_style_payload(self) -> Dict[str, Any]:
         payload = self._sync_state_from_controls().model_dump()
         payload.update(self._plot_style_extras)
         return payload
 
-    def _apply_plot_style_payload(self, payload: Dict[str, Any]) -> None:
+    def _apply_plot_style_payload(self, payload: Dict[str, Any], *, source: str = "manual") -> None:
         figure_fields = set(FigureState.model_fields.keys())
-        state_payload = {key: value for key, value in payload.items() if key in figure_fields}
-        self._plot_style_extras = {key: value for key, value in payload.items() if key not in figure_fields}
+        previous_state_payload = self._figure_state.model_dump()
+        state_payload = dict(previous_state_payload)
+        state_payload.update({key: value for key, value in payload.items() if key in figure_fields})
+        next_plot_style_extras = {key: copy.deepcopy(value) for key, value in payload.items() if key not in figure_fields}
+        if source == "manual":
+            changed_state_keys = {
+                key for key in figure_fields
+                if previous_state_payload.get(key) != state_payload.get(key)
+            }
+            changed_extra_paths = _nested_mapping_changed_paths(self._plot_style_extras, next_plot_style_extras)
+            if changed_state_keys or changed_extra_paths:
+                sequence = self._next_style_change_sequence()
+                self._record_figure_state_changes(changed_state_keys, sequence=sequence)
+                self._record_plot_style_extra_changes(changed_extra_paths, sequence=sequence)
+        self._plot_style_extras = next_plot_style_extras
         self._apply_figure_state(FigureState(**state_payload))
 
     def _apply_figure_state(self, state: FigureState) -> None:
@@ -1925,7 +2008,13 @@ class ChartPage(QWidget):
         return self._figure_state
 
     def _on_quick_config_changed(self) -> None:
-        self._sync_state_from_controls()
+        previous_state_payload = self._figure_state.model_dump()
+        state = self._sync_state_from_controls()
+        changed_keys = {
+            key for key, value in state.model_dump().items()
+            if previous_state_payload.get(key) != value
+        }
+        self._record_figure_state_changes(changed_keys)
         self._theme_hint_label.setText(_THEME_HINTS.get(self._figure_state.theme, ""))
         self._redraw()
 
@@ -2043,6 +2132,7 @@ class ChartPage(QWidget):
     def _on_clear_chart(self) -> None:
         self._chart_series.clear()
         self._curve_styles.clear()
+        self._curve_style_change_versions.clear()
         self._style_target = None
         self._refresh_chart_list()
         self._redraw_now()
@@ -2054,6 +2144,7 @@ class ChartPage(QWidget):
         target_key = self._curve_key(curve)
         self._chart_series = [item for item in self._chart_series if self._curve_key(item) != target_key]
         self._curve_styles.pop(target_key, None)
+        self._curve_style_change_versions.pop(target_key, None)
         if self._style_target == target_key:
             self._style_target = None
         self._refresh_chart_list()
@@ -2064,6 +2155,7 @@ class ChartPage(QWidget):
         if curve is None:
             return
         curve["visible"] = not bool(curve.get("visible", True))
+        self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
         self._redraw_now()
 
@@ -2090,42 +2182,68 @@ class ChartPage(QWidget):
         for tick_label in [*axis.get_xticklabels(), *axis.get_yticklabels()]:
             self._apply_text_style(tick_label, font_family=state.font_family, font_size=state.font_size, color=fg)
 
+    @staticmethod
+    def _positive_axis_bound(values: List[Any], *, prefer_max: bool = False) -> Optional[float]:
+        positives: List[float] = []
+        for value in values:
+            number = _safe_float(value)
+            if number is None or number <= 0:
+                continue
+            positives.append(number)
+        if not positives:
+            return None
+        return max(positives) if prefer_max else min(positives)
+
+    def _sanitize_log_axis_limits(
+        self,
+        values: List[Any],
+        lower: Optional[float],
+        upper: Optional[float],
+    ) -> tuple[Optional[float], Optional[float], bool]:
+        min_positive = self._positive_axis_bound(values)
+        max_positive = self._positive_axis_bound(values, prefer_max=True)
+        if min_positive is None or max_positive is None:
+            return lower, upper, False
+
+        safe_lower = lower if lower is not None and lower > 0 else min_positive
+        safe_upper = upper if upper is not None and upper > 0 else max_positive
+        if safe_upper <= safe_lower:
+            safe_upper = max_positive if max_positive > safe_lower else safe_lower * 10.0
+        return safe_lower, safe_upper, True
+
     def _redraw_now(self) -> None:
         if not HAS_MATPLOTLIB or self._figure is None or self._canvas is None:
             return
 
         self._redraw_timer.stop()
-        state = self._sync_state_from_controls()
-        self._sync_canvas_display_geometry(state)
+        manual_state = self._sync_state_from_controls().model_copy(deep=True)
+        manual_state_payload = manual_state.model_dump()
+        manual_plot_style_extras = copy.deepcopy(self._plot_style_extras)
+        base_curve_style_payloads: Dict[str, Dict[str, Any]] = {}
+        context_curve_style_payloads: Dict[str, Dict[str, Any]] = {}
+        for curve in self._chart_series:
+            curve_identity = self._curve_identity(curve)
+            base_curve_style_payloads[curve_identity] = {
+                **copy.deepcopy(self._curve_styles.get(self._curve_key(curve), {})),
+                "visible": bool(curve.get("visible", True)),
+            }
+            context_curve_style_payloads[curve_identity] = self._current_curve_style_payload(curve)
+
+        self._sync_canvas_display_geometry(manual_state)
         self._figure.clear()
         axis = self._figure.add_subplot(111)
-        theme = self._resolve_plot_theme()
-
-        dark = isDarkTheme()
         self._apply_preview_host_background()
-        if theme is None or theme.canvas_mode == "app":
-            bg = theme.background_color if theme and theme.background_color else ("#1e1e1e" if dark else "#ffffff")
-            fg = theme.foreground_color if theme and theme.foreground_color else ("#cccccc" if dark else "#222222")
-            grid_color = theme.grid_color if theme and theme.grid_color else ("#444444" if dark else "#dddddd")
-        elif theme.canvas_mode == "dark":
-            bg = theme.background_color or "#1e1e1e"
-            fg = theme.foreground_color or "#e6e6e6"
-            grid_color = theme.grid_color or "#454545"
-        else:
-            bg = theme.background_color or "#ffffff"
-            fg = theme.foreground_color or "#222222"
-            grid_color = theme.grid_color or "#dddddd"
+        base_bg, base_fg, base_grid_color = self._theme_palette_for_state(manual_state)
 
-        figure_facecolor = self._plot_style_extras.get("figure_facecolor")
-        axes_facecolor = self._plot_style_extras.get("axes_facecolor")
-        visible_series = [curve for curve in self._chart_series if curve.get("visible", True)]
         selected_curve = self._selected_curve()
+        initial_visible_series = [
+            curve for curve in self._chart_series
+            if base_curve_style_payloads.get(self._curve_identity(curve), {}).get("visible", True)
+        ]
         bw_colors = ["#000000", "#444444", "#888888", "#aaaaaa"]
         bw_index = 0
-        default_line_kwargs = dict(self._plot_style_extras.get("line_defaults", {}) or {})
-        errorbar_kwargs = dict(self._plot_style_extras.get("errorbar_kwargs", {}) or {})
         reserved_curve_keys = {
-            "color", "linestyle", "marker", "linewidth", "marker_size", "alpha", "markevery", "dash_scale",
+            "color", "linestyle", "marker", "linewidth", "marker_size", "alpha", "markevery", "dash_scale", "visible",
         }
         plotted_series: List[dict] = []
 
@@ -2134,14 +2252,28 @@ class ChartPage(QWidget):
             canvas=self._canvas,
             axis=axis,
             axes=[axis],
-            visible_series=[dict(curve) for curve in visible_series],
+            visible_series=[
+                self._plot_context_series_entry(
+                    curve,
+                    style_payload=context_curve_style_payloads.get(self._curve_identity(curve), {}),
+                )
+                for curve in initial_visible_series
+            ],
             plotted_series=plotted_series,
-            selected_series=(dict(selected_curve) if selected_curve is not None else None),
+            selected_series=(
+                self._plot_context_series_entry(
+                    selected_curve,
+                    style_payload=context_curve_style_payloads.get(self._curve_identity(selected_curve), {}),
+                )
+                if selected_curve is not None
+                else None
+            ),
             selected_series_identity=(self._curve_identity(selected_curve) if selected_curve is not None else None),
-            figure_state=self._current_plot_style_payload(),
-            plot_style_extras=dict(self._plot_style_extras),
-            theme_colors={"background": bg, "foreground": fg, "grid": grid_color},
+            figure_state=copy.deepcopy(manual_state_payload),
+            plot_style_extras=copy.deepcopy(manual_plot_style_extras),
+            theme_colors={"background": base_bg, "foreground": base_fg, "grid": base_grid_color},
         )
+        extension_style_layers: List[Dict[str, Any]] = []
 
         for applied in list(self._applied_plot_extensions):
             type_id = str(applied.get("type") or "")
@@ -2149,14 +2281,62 @@ class ChartPage(QWidget):
             if extension is None:
                 continue
             target_curve = self._resolve_plot_extension_curve(applied.get("curve_identity"))
-            plot_context.selected_series = dict(target_curve) if target_curve is not None else None
+            plot_context.clear_style_patches()
+            plot_context.selected_series = (
+                self._plot_context_series_entry(
+                    target_curve,
+                    style_payload=context_curve_style_payloads.get(self._curve_identity(target_curve), {}),
+                )
+                if target_curve is not None
+                else None
+            )
             plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
             try:
                 plot_context.phase = "before_plot"
                 invoke_plot_extension_handler(extension.handler, plot_context, dict(applied.get("options") or {}))
             except Exception:
                 continue
+            extension_style_layers.append({
+                "sequence": int(applied.get("sequence") or 0),
+                "figure_state": copy.deepcopy(plot_context.figure_state_patch),
+                "plot_style_extras": copy.deepcopy(plot_context.plot_style_patch),
+                "curve_styles": copy.deepcopy(plot_context.curve_style_patches),
+            })
             plot_context.refresh_axes()
+
+        effective_state_payload = self._effective_plot_figure_state_payload(manual_state_payload, extension_style_layers)
+        effective_plot_style_extras = self._effective_plot_style_extras(manual_plot_style_extras, extension_style_layers)
+        effective_curve_style_payloads = self._effective_curve_style_payloads(base_curve_style_payloads, extension_style_layers)
+        state = FigureState(**effective_state_payload)
+        self._sync_canvas_display_geometry(state)
+        bg, fg, grid_color = self._theme_palette_for_state(state)
+        figure_facecolor = effective_plot_style_extras.get("figure_facecolor")
+        axes_facecolor = effective_plot_style_extras.get("axes_facecolor")
+        visible_series = [
+            curve for curve in self._chart_series
+            if effective_curve_style_payloads.get(self._curve_identity(curve), {}).get("visible", True)
+        ]
+        default_line_kwargs = dict(effective_plot_style_extras.get("line_defaults", {}) or {})
+        errorbar_kwargs = dict(effective_plot_style_extras.get("errorbar_kwargs", {}) or {})
+        plot_context.figure_state = copy.deepcopy(effective_state_payload)
+        plot_context.plot_style_extras = copy.deepcopy(effective_plot_style_extras)
+        plot_context.theme_colors = {"background": bg, "foreground": fg, "grid": grid_color}
+        plot_context.visible_series = [
+            self._plot_context_series_entry(
+                curve,
+                style_payload=effective_curve_style_payloads.get(self._curve_identity(curve), {}),
+            )
+            for curve in visible_series
+        ]
+        plot_context.selected_series = (
+            self._plot_context_series_entry(
+                selected_curve,
+                style_payload=effective_curve_style_payloads.get(self._curve_identity(selected_curve), {}),
+            )
+            if selected_curve is not None
+            else None
+        )
+        plot_context.selected_series_identity = self._curve_identity(selected_curve) if selected_curve is not None else None
 
         axis = plot_context.axis
         if axis is None:
@@ -2166,8 +2346,11 @@ class ChartPage(QWidget):
         self._figure.patch.set_facecolor(figure_facecolor or bg)
         if axis is not None and not plot_context.skip_default_formatting:
             axis.set_facecolor(axes_facecolor or bg)
+            spine_width = _safe_float(effective_plot_style_extras.get("spine_width"))
             for spine in axis.spines.values():
                 spine.set_edgecolor(fg)
+                if spine_width is not None:
+                    spine.set_linewidth(max(0.1, spine_width))
 
             grid_kwargs = {
                 "color": grid_color,
@@ -2175,13 +2358,17 @@ class ChartPage(QWidget):
                 "linewidth": state.grid_line_width,
                 "alpha": state.grid_alpha,
             }
-            grid_kwargs.update(dict(self._plot_style_extras.get("grid_kwargs", {}) or {}))
-            axis.grid(state.grid, **grid_kwargs)
+            grid_kwargs.update(dict(effective_plot_style_extras.get("grid_kwargs", {}) or {}))
+            if state.grid:
+                axis.grid(True, **grid_kwargs)
+            else:
+                axis.grid(False)
 
         if not plot_context.skip_default_plot and axis is not None:
             for curve in visible_series:
+                curve_identity = self._curve_identity(curve)
                 display_name = self._curve_display_name(curve)
-                style_overrides = self._curve_styles.get(self._curve_key(curve), {})
+                style_overrides = dict(effective_curve_style_payloads.get(curve_identity, {}))
                 color = style_overrides.get("color") or curve.get("color")
                 linestyle = style_overrides.get("linestyle", "-")
                 marker = style_overrides.get("marker", "")
@@ -2218,7 +2405,12 @@ class ChartPage(QWidget):
                 x_values = list(curve.get("x", []))
                 y_values = list(curve.get("y", []))
                 y_err = list(curve.get("y_err", []) or [])
-                plotted_series.append({**curve, "display_name": display_name, "style": dict(style_overrides)})
+                plotted_series.append({
+                    **curve,
+                    "curve_identity": curve_identity,
+                    "display_name": display_name,
+                    "style": dict(style_overrides),
+                })
                 if state.show_errbar and y_err and len(y_err) == len(x_values):
                     axis.errorbar(x_values, y_values, yerr=y_err, capsize=3, **errorbar_kwargs, **plot_kwargs)
                 else:
@@ -2231,9 +2423,17 @@ class ChartPage(QWidget):
                 continue
             target_curve = self._resolve_plot_extension_curve(applied.get("curve_identity"))
             try:
+                plot_context.clear_style_patches()
                 plot_context.phase = "after_plot"
                 plot_context.axis = axis
-                plot_context.selected_series = dict(target_curve) if target_curve is not None else None
+                plot_context.selected_series = (
+                    self._plot_context_series_entry(
+                        target_curve,
+                        style_payload=effective_curve_style_payloads.get(self._curve_identity(target_curve), {}),
+                    )
+                    if target_curve is not None
+                    else None
+                )
                 plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
                 invoke_plot_extension_handler(extension.handler, plot_context, dict(applied.get("options") or {}))
             except Exception:
@@ -2254,7 +2454,7 @@ class ChartPage(QWidget):
                 legend_kwargs["prop"] = {"family": state.font_family, "size": state.legend_font_size}
             else:
                 legend_kwargs["fontsize"] = state.legend_font_size
-            legend_kwargs.update(dict(self._plot_style_extras.get("legend_kwargs", {}) or {}))
+            legend_kwargs.update(dict(effective_plot_style_extras.get("legend_kwargs", {}) or {}))
             legend = axis.legend(
                 **legend_kwargs,
             )
@@ -2262,21 +2462,37 @@ class ChartPage(QWidget):
         if axis is not None and not plot_context.skip_default_formatting:
             axis.set_xlabel(state.x_label or "X")
             axis.set_ylabel(state.y_label or "Y")
-            if state.x_min is not None or state.x_max is not None:
-                axis.set_xlim(left=state.x_min, right=state.x_max)
-            if state.y_min is not None or state.y_max is not None:
-                axis.set_ylim(bottom=state.y_min, top=state.y_max)
+            x_min = state.x_min
+            x_max = state.x_max
+            y_min = state.y_min
+            y_max = state.y_max
             if state.x_log:
-                axis.set_xscale("log")
+                x_min, x_max, use_x_log = self._sanitize_log_axis_limits(
+                    [value for curve in visible_series for value in curve.get("x", [])],
+                    x_min,
+                    x_max,
+                )
+                if use_x_log:
+                    axis.set_xscale("log")
             if state.y_log:
-                axis.set_yscale("log")
+                y_min, y_max, use_y_log = self._sanitize_log_axis_limits(
+                    [value for curve in visible_series for value in curve.get("y", [])],
+                    y_min,
+                    y_max,
+                )
+                if use_y_log:
+                    axis.set_yscale("log")
+            if x_min is not None or x_max is not None:
+                axis.set_xlim(left=x_min, right=x_max)
+            if y_min is not None or y_max is not None:
+                axis.set_ylim(bottom=y_min, top=y_max)
 
-            axis_kwargs = dict(self._plot_style_extras.get("axis_kwargs", {}) or {})
+            axis_kwargs = dict(effective_plot_style_extras.get("axis_kwargs", {}) or {})
             if axis_kwargs:
                 axis.set(**axis_kwargs)
 
             self._apply_axis_text_style(axis, state, fg)
-            tick_params = dict(self._plot_style_extras.get("tick_params", {}) or {})
+            tick_params = dict(effective_plot_style_extras.get("tick_params", {}) or {})
             if tick_params:
                 axis.tick_params(**tick_params)
             if legend is not None:
@@ -2286,7 +2502,7 @@ class ChartPage(QWidget):
 
         if not plot_context.skip_default_layout:
             self._apply_figure_layout(state)
-            subplot_adjust = self._plot_style_extras.get("subplot_adjust")
+            subplot_adjust = effective_plot_style_extras.get("subplot_adjust")
             if isinstance(subplot_adjust, dict) and subplot_adjust:
                 self._figure.subplots_adjust(**subplot_adjust)
         self._canvas.draw()
@@ -2307,6 +2523,7 @@ class ChartPage(QWidget):
         self._style_reset_color_btn.setEnabled(enabled)
         self._style_line_combo.setEnabled(enabled)
         self._style_line_width_edit.setEnabled(enabled)
+        self._style_opacity_edit.setEnabled(enabled)
         self._style_marker_size_edit.setEnabled(enabled)
         self._style_density_edit.setEnabled(enabled)
         self._btn_load_curve_style_template.setEnabled(enabled)
@@ -2333,6 +2550,9 @@ class ChartPage(QWidget):
             self._style_line_width_edit.blockSignals(True)
             self._style_line_width_edit.setText(f"{style.linewidth:g}")
             self._style_line_width_edit.blockSignals(False)
+            self._style_opacity_edit.blockSignals(True)
+            self._style_opacity_edit.setText(f"{style.alpha:g}")
+            self._style_opacity_edit.blockSignals(False)
             self._style_marker_size_edit.blockSignals(True)
             self._style_marker_size_edit.setText(f"{style.marker_size:g}")
             self._style_marker_size_edit.blockSignals(False)
@@ -2345,6 +2565,7 @@ class ChartPage(QWidget):
             self._style_target_label.setToolTip("")
             self._update_color_btn("#888888")
             self._style_line_width_edit.clear()
+            self._style_opacity_edit.clear()
             self._style_marker_size_edit.clear()
             self._style_density_edit.clear()
 
@@ -2363,12 +2584,14 @@ class ChartPage(QWidget):
         if not color_obj.isValid():
             return
         self._curve_styles.setdefault(self._style_target, {})["color"] = color_obj.name(QColor.NameFormat.HexRgb)
+        self._record_curve_style_changes(self._style_target, {"color"})
         self._redraw_now()
 
     def _on_style_reset_color(self) -> None:
         if not self._style_target:
             return
         self._curve_styles.get(self._style_target, {}).pop("color", None)
+        self._record_curve_style_changes(self._style_target, {"color"})
         for curve in self._chart_series:
             if self._curve_key(curve) == self._style_target:
                 self._update_color_btn(curve.get("color") or "#888888")
@@ -2381,6 +2604,7 @@ class ChartPage(QWidget):
         style = self._curve_styles.setdefault(self._style_target, {})
         style["linestyle"] = _STYLE_LINESTYLES[idx]
         style["marker"] = _STYLE_MARKERS[idx]
+        self._record_curve_style_changes(self._style_target, {"linestyle", "marker"})
         self._redraw_now()
 
     def _on_style_metrics_changed(self) -> None:
@@ -2388,10 +2612,15 @@ class ChartPage(QWidget):
             return
         style = self._curve_styles.setdefault(self._style_target, {})
         style["linewidth"] = max(0.1, _safe_float_or(self._style_line_width_edit.text(), self._figure_state.line_width))
+        style["alpha"] = _clamp_float(_safe_float_or(self._style_opacity_edit.text(), 1.0), 0.0, 1.0)
         style["marker_size"] = max(0.1, _safe_float_or(self._style_marker_size_edit.text(), self._figure_state.marker_size))
         density = max(1, _safe_int_or(self._style_density_edit.text(), 1))
         style["markevery"] = density
         style["dash_scale"] = float(density)
+        self._record_curve_style_changes(
+            self._style_target,
+            {"linewidth", "alpha", "marker_size", "markevery", "dash_scale"},
+        )
         self._redraw()
 
     def _on_export_image(self) -> None:

@@ -50,9 +50,9 @@ else:
 
 sys.path.insert(0, BASE_DIR)
 
-from core.extension_api import load_builtin_extensions
+from core.extension_api import load_configured_extensions
 
-_EXTENSION_LOAD_REPORT = load_builtin_extensions(os.path.join(BASE_DIR, "extensions"))
+_EXTENSION_LOAD_REPORT = load_configured_extensions(os.path.join(BASE_DIR, "extensions"))
 for _extension_error in _EXTENSION_LOAD_REPORT.get("errors", []):
     print(f"[ALine] 扩展加载失败: {_extension_error}", file=sys.stderr)
 
@@ -70,6 +70,9 @@ def main():
 
     from ui.main_window import MainWindow
     window = MainWindow()
+    minWidth, minHeight = 1600, 900
+    window.setMinimumSize(minWidth, minHeight)
+    window.resize(minWidth, minHeight)
     window.show()
 
     sys.exit(app.exec())
