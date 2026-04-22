@@ -8,7 +8,7 @@ def _as_float(value, default):
         return float(default)
 
 
-def kalman_filter_series(xs, ys, params):
+def kalman_filter_series(xs, ys, params, lines=None):
     if not ys:
         return list(xs), []
 
@@ -35,6 +35,7 @@ def register_extensions(registry):
             type="kalman_filter",
             name="卡尔曼滤波",
             handler=kalman_filter_series,
+            line_mode="single",
             description="对一维序列执行标量卡尔曼滤波，适合平滑含噪测量数据。",
             default_options={
                 "process_variance": 1e-4,

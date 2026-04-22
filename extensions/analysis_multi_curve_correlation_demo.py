@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+import math
+
+from core.extension_api import AnalysisExtension, ExtensionConfigField
+from processing.data_engine import align_lines_to_common_x
+
+
+def _pearson(values_a, values_b):
+    if len(values_a) != len(values_b) or len(values_a) < 2:
+        return 0.0
+    mean_a = sum(values_a) / len(values_a)
+    mean_b = sum(values_b) / len(values_b)
+    covariance = sum((left - mean_a) * (right - mean_b) for left, right in zip(values_a, values_b))
+    std_a = math.sqrt(sum((value - mean_a) ** 2 for value in values_a))
+    std_b = math.sqrt(sum((value - mean_b) ** 2 for value in values_b))
+    if std_a <= 1e-12 or std_b <= 1e-12:
+        return 0.0
+    return covariance / (std_a * std_b)
+
+
+def _ranks(values):
+    indexed = sorted(enumerate(values), key=lambda item: item[1])
+    ranks = [0.0] * len(values)
+    index = 0
+    while index < len(indexed):
+        end = index
+        while end + 1 < len(indexed) and indexed[end + 1][1] == indexed[index][1]:
+            end += 1
+        rank = (index + end) / 2.0 + 1.0
+        for current in range(index, end + 1):
+            ranks[indexed[current][0]] = rank
+        index = end + 1
+    return ranks
+
+
+def _correlation(values_a, values_b, method):
+    if method == "spearman":
+        return _pearson(_ranks(values_a), _ranks(values_b))
+    return _pearson(values_a, values_b)
+
+
+def multi_curve_correlation(inputs, params, lines_list=None):
+    aligned_lines, warnings = align_lines_to_common_x(list(lines_list or inputs or []), params)
+    if len(aligned_lines) < 2:
+        raise ValueError("多曲线相关性分析至少需要 2 条输入曲线")
+
+    method = str(params.get("method", "pearson") or "pearson").strip().lower()
+    primary = aligned_lines[0]
+    comparison_items = []
+    for line in aligned_lines[1:]:
+        comparison_items.append({
+            "name": str(line.get("name", "") or "未命名曲线"),
+            "correlation": _correlation(list(primary.get("y", [])), list(line.get("y", [])), method),
+        })
+
+    best_match = max(comparison_items, key=lambda item: abs(item["correlation"])) if comparison_items else {"name": "", "correlation": 0.0}
+    average_correlation = sum(item["correlation"] for item in comparison_items) / len(comparison_items)
+    line_color = str(params.get("line_color", "#C23B22") or "#C23B22")
+    primary_name = str(primary.get("name", "") or "主曲线")
+
+    return {
+        "analysis_type": "multi_curve_correlation",
+        "source_name": primary_name,
+        "primary_name": primary_name,
+        "method": method,
+        "compared_count": len(comparison_items),
+        "best_match_name": best_match["name"],
+        "best_correlation": best_match["correlation"],
+        "average_correlation": average_correlation,
+        "alignment_note": warnings[0] if warnings else "",
+        "comparison_details": comparison_items,
+        "x_label": "对比序号",
+        "y_label": "相关系数",
+        "plot_title": f"{primary_name} 多曲线相关性",
+        "_plot_series": [
+            {
+                "name": "相关系数",
+                "x": list(range(1, len(comparison_items) + 1)),
+                "y": [item["correlation"] for item in comparison_items],
+                "color": line_color,
+            }
+        ],
+    }
+
+
+def register_extensions(registry):
+    registry.register_analysis(
+        AnalysisExtension(
+            type="multi_curve_correlation",
+            name="多曲线相关性",
+            handler=multi_curve_correlation,
+            description="以 lines_list 第一项为主曲线，对其余曲线做多曲线相关性比较。",
+            default_options={
+                "method": "pearson",
+                "align_mode": "auto",
+                "resample_mode": "count",
+                "n": 200,
+                "step": 0.1,
+                "line_color": "#C23B22",
+            },
+            config_fields=[
+                ExtensionConfigField(
+                    key="method",
+                    description="相关系数算法：pearson 或 spearman。",
+                    field_type="string",
+                    default="pearson",
+                    choices=("pearson", "spearman"),
+                ),
+                ExtensionConfigField(
+                    key="align_mode",
+                    description="坐标未对齐时的处理方式：auto 自动重采样，strict 直接报错。",
+                    field_type="string",
+                    default="auto",
+                    choices=("auto", "strict"),
+                ),
+                ExtensionConfigField(
+                    key="resample_mode",
+                    description="自动对齐时的重采样方式：count 固定点数，spacing 固定间距。",
+                    field_type="string",
+                    default="count",
+                    choices=("count", "spacing"),
+                ),
+                ExtensionConfigField(
+                    key="n",
+                    description="固定点数模式下的输出点数。",
+                    field_type="integer",
+                    default=200,
+                ),
+                ExtensionConfigField(
+                    key="step",
+                    description="固定间距模式下的 X 轴间距。",
+                    field_type="number",
+                    default=0.1,
+                ),
+                ExtensionConfigField(
+                    key="line_color",
+                    description="相关性结果曲线颜色。",
+                    field_type="string",
+                    default="#C23B22",
+                ),
+            ],
+            report_placeholders=[
+                {"key": "primary_name", "label": "主曲线", "description": "当前多曲线相关性分析的主曲线名称。"},
+                {"key": "compared_count", "label": "对比数量", "description": "参与比较的副曲线数量。"},
+                {"key": "best_match_name", "label": "最佳匹配", "description": "与主曲线最接近的副曲线名称。"},
+                {"key": "best_correlation", "label": "最佳相关系数", "description": "最佳匹配对应的相关系数。"},
+                {"key": "average_correlation", "label": "平均相关系数", "description": "全部副曲线相关系数平均值。"},
+            ],
+        )
+    )

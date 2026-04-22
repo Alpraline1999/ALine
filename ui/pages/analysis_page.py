@@ -1012,13 +1012,7 @@ class AnalysisPage(QWidget):
         self._sync_related_analysis_tabs()
 
     def _assign_input_for_current_mode(self, payload: dict) -> None:
-        if self._requires_pair_input():
-            if len(self._selected_inputs) < 2:
-                self._selected_inputs.append(payload)
-            else:
-                self._selected_inputs[1] = payload
-        else:
-            self._selected_inputs = [payload]
+        self._selected_inputs.append(payload)
         self._rebuild_input_list()
         self._sync_related_analysis_tabs()
 
@@ -1071,12 +1065,9 @@ class AnalysisPage(QWidget):
         if is_extension:
             self._sync_extension_params_editor(t)
         if self._requires_pair_input():
-            self._input_hint_label.setText("按顺序双击两条数据加入分析输入列表")
+            self._input_hint_label.setText("可连续双击多条数据加入列表；内置相关性分析和误差比较默认使用前两条输入")
         else:
-            if len(self._selected_inputs) > 1:
-                self._selected_inputs = self._selected_inputs[:1]
-                self._rebuild_input_list()
-            self._input_hint_label.setText("双击一条数据作为当前分析输入")
+            self._input_hint_label.setText("可连续双击多条数据加入分析输入列表；第一条输入视为主曲线")
         self._sync_input_role_labels()
         self._update_peak_export_buttons()
         if hasattr(self, "_extension_panel"):

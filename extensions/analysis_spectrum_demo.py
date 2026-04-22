@@ -35,8 +35,9 @@ def _window_values(window_name, size):
     return np.hanning(size)
 
 
-def spectrum_analysis(inputs, params):
-    source = inputs[0] if inputs else {}
+def spectrum_analysis(inputs, params, lines_list=None):
+    effective_inputs = list(lines_list or inputs or [])
+    source = effective_inputs[0] if effective_inputs else {}
     xs = np.asarray(list(source.get("x", []) or []), dtype=float)
     ys = np.asarray(list(source.get("y", []) or []), dtype=float)
     if ys.size < 2:
@@ -94,7 +95,7 @@ def register_extensions(registry):
             type="spectrum_analysis",
             name="频谱分析",
             handler=spectrum_analysis,
-            description="基于 FFT 计算单条序列的频谱分布，并返回主频与频率分辨率。",
+            description="基于 FFT 计算主曲线的频谱分布，并返回主频与频率分辨率。",
             default_options={
                 "sampling_rate": 0.0,
                 "window": "hann",

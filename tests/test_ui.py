@@ -3856,8 +3856,10 @@ class TestProcessPage(unittest.TestCase):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
         if node:
             self.page.on_tree_node_selected("data_file", node.id)
+        self.assertEqual(len(self.page._selected_inputs), 0)
+        self.assertIn("不再支持直接使用数据文件批处理", self.page._current_input_label.text())
 
-    def test_on_tree_node_selected_data_file_runs_pipeline_for_all_series(self):
+    def test_on_tree_node_selected_series_accumulates_selected_list_for_batch_processing(self):
         from models.schemas import DataFile, DataSeries
 
         node = self.pm.add_data_file(
@@ -3869,16 +3871,23 @@ class TestProcessPage(unittest.TestCase):
                 ],
             )
         )
+        data_file = self.p.find_data_file(node.data_file_id)
+        self.assertIsNotNone(data_file)
 
-        self.page.on_tree_node_selected("data_file", node.id)
+        first_series_id = data_file.series[0].id
+        second_series_id = data_file.series[1].id
+
+        self.page.on_tree_node_selected("series", first_series_id)
+        self.page.on_tree_node_selected("series", second_series_id)
         self.page._run_timer.stop()
         self.page._run_pipeline_now()
 
+        self.assertEqual(len(self.page._selected_inputs), 2)
         self.assertEqual(len(self.page._src_series_batch), 2)
         self.assertEqual(len(self.page._out_series_batch), 2)
         self.assertEqual([series.name for series in self.page._out_series_batch], ["sA", "sB"])
-        self.assertIn("batch.csv", self.page._current_input_label.text())
-        self.assertIn("2 条数据系列", self.page._current_input_label.text())
+        self.assertEqual(self.page._selected_input_list.count(), 2)
+        self.assertIn("已选择 2 条输入", self.page._current_input_label.text())
         self.assertEqual(self.page._save_result_button.text(), "导出为数据文件")
 
     def test_on_tree_node_selected_curve(self):
@@ -3999,7 +4008,7 @@ class TestProcessPage(unittest.TestCase):
         self.assertEqual(len(self.df.series), original_count + 1)
         self.assertEqual(self.df.series[-1].name, "处理结果B")
 
-    def test_save_result_for_data_file_creates_new_data_file_with_all_output_series(self):
+    def test_save_result_for_selected_list_batch_creates_new_data_file_with_all_output_series(self):
         from models.schemas import DataFile, DataSeries
         from ui.dialogs.export_flow import DataExportPlan
 
@@ -4012,10 +4021,13 @@ class TestProcessPage(unittest.TestCase):
                 ],
             )
         )
+        data_file = self.p.find_data_file(node.data_file_id)
+        self.assertIsNotNone(data_file)
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
-        self.page.on_tree_node_selected("data_file", node.id)
+        self.page.on_tree_node_selected("series", data_file.series[0].id)
+        self.page.on_tree_node_selected("series", data_file.series[1].id)
         self.page._load_ops_into_chain([{"type": "crop", "params": {"x_min": 1.0, "x_max": 2.0}}])
         self.page._run_timer.stop()
         self.page._run_pipeline_now()
@@ -4037,6 +4049,35 @@ class TestProcessPage(unittest.TestCase):
         self.assertEqual(data_file.series[0].y, [2.0, 3.0])
         self.assertEqual(data_file.series[1].x, [1.0, 2.0])
         self.assertEqual(data_file.series[1].y, [4.0, 6.0])
+
+    def test_pairwise_compute_uses_primary_two_inputs_and_surfaces_alignment_warning(self):
+        from models.schemas import DataFile, DataSeries
+
+        node = self.pm.add_data_file(
+            DataFile(
+                name="pairwise.csv",
+                series=[
+                    DataSeries(name="left", x=[0.0, 1.0, 2.0], y=[1.0, 3.0, 5.0]),
+                    DataSeries(name="right", x=[0.0, 0.5, 1.0, 1.5, 2.0], y=[1.0, 2.0, 3.0, 4.0, 5.0]),
+                ],
+            )
+        )
+        data_file = self.p.find_data_file(node.data_file_id)
+        self.assertIsNotNone(data_file)
+
+        self.page.on_tree_node_selected("series", data_file.series[0].id)
+        self.page.on_tree_node_selected("series", data_file.series[1].id)
+        self.page._load_ops_into_chain([
+            {"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "n": 3}}
+        ])
+        self.page._run_timer.stop()
+        self.page._run_pipeline_now()
+
+        self.assertEqual(len(self.page._out_series_batch), 1)
+        self.assertEqual(self.page._out_series_batch[0].y, [0.0, 0.0, 0.0])
+        self.assertTrue(self.page._pipeline_warnings)
+        self.assertIn("自动重采样", self.page._stats_label.text())
+        self.assertEqual(self.page._save_result_button.text(), "导出为数据列")
 
     def test_processing_extension_appears_in_selector_and_panel(self):
         from core.extension_api import ProcessingExtension, extension_registry
@@ -4679,6 +4720,60 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(self.page._result["analysis_type"], "error_compare")
         self.assertIn("mae", self.page._result)
 
+    def test_analysis_extension_keeps_multiple_selected_inputs(self):
+        from models.schemas import DataSeries
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        other = DataSeries(name="s2", x=[1.0, 2.0, 3.0], y=[1.5, 1.0, 2.5])
+        self.df.series.append(other)
+
+        def _multi(inputs, params, lines_list=None):
+            return {
+                "analysis_type": "ui_multi_input_extension",
+                "input_count": len(inputs),
+                "lines_count": len(lines_list or []),
+                "primary_name": inputs[0].get("name", "") if inputs else "",
+            }
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_multi_input_extension",
+                name="UI 多输入扩展",
+                handler=_multi,
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_multi_input_extension"))
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.on_tree_node_activated("series", other.id)
+
+            self.assertEqual(len(self.page._selected_inputs), 2)
+            self.page._run_analysis()
+
+            self.assertEqual(self.page._result["analysis_type"], "ui_multi_input_extension")
+            self.assertEqual(self.page._result["input_count"], 2)
+            self.assertEqual(self.page._result["lines_count"], 2)
+            self.assertEqual(self.page._result["primary_name"], self.s.name)
+        finally:
+            extension_registry.unregister_analysis("ui_multi_input_extension")
+            self.page._refresh_analysis_type_choices()
+
+    def test_switching_from_pair_type_does_not_truncate_selected_inputs(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s3", x=[1.0, 2.0, 3.0], y=[0.5, 1.5, 2.0])
+        self.df.series.append(other)
+
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("correlation"))
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other.id)
+        self.assertEqual(len(self.page._selected_inputs), 2)
+
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("curve_fit"))
+
+        self.assertEqual(len(self.page._selected_inputs), 2)
+
     def test_load_saved_analysis_result_from_tree(self):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
@@ -4952,15 +5047,16 @@ class TestAnalysisPage(unittest.TestCase):
         names = [data_file.name for data_file in self.p.data_files[-2:]]
         self.assertEqual(names, ["波峰A.analysis", "波谷A.analysis"])
 
-    def test_single_input_mode_replaces_previous_input(self):
+    def test_non_pair_mode_keeps_multiple_selected_inputs(self):
         from models.schemas import DataSeries
 
         other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
         self.df.series.append(other)
         self.page.on_tree_node_activated("series", self.s.id)
         self.page.on_tree_node_activated("series", other.id)
-        self.assertEqual(len(self.page._selected_inputs), 1)
-        self.assertEqual(self.page._selected_inputs[0]["node_id"], other.id)
+        self.assertEqual(len(self.page._selected_inputs), 2)
+        self.assertEqual(self.page._selected_inputs[0]["node_id"], self.s.id)
+        self.assertEqual(self.page._selected_inputs[1]["node_id"], other.id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

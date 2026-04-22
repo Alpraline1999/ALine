@@ -10,12 +10,12 @@ import math
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem
+from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListWidgetItem, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem
 from qfluentwidgets import (
     BodyLabel, ComboBox, FluentIcon as FIF,
     CardWidget,
     InfoBar, InfoBarPosition, LineEdit,
-    PlainTextEdit, PrimaryPushButton, ToolButton,
+    PlainTextEdit, PrimaryPushButton, PushButton, ToolButton,
     TeachingTipTailPosition,
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
 )
@@ -30,7 +30,7 @@ from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, SavedPipeline
-from processing.data_engine import apply_pipeline
+from processing.data_engine import apply_pipeline_to_lines
 
 try:
     import matplotlib
@@ -50,6 +50,7 @@ _OPS = [
     ("平滑 (Smooth)",          "smooth"),
     ("归一化 (Normalize)",     "normalize"),
     ("重采样 (Resample)",      "resample"),
+    ("双曲线计算 (Pairwise)",  "pairwise_compute"),
     ("FFT 频谱 (FFT)",        "fft"),
     ("求导 (Derivative)",      "derivative"),
     ("积分 (Integral)",        "integral"),
@@ -65,6 +66,7 @@ _OP_HINTS = {
     "smooth": "对 Y 序列做平滑处理，适合去噪。",
     "normalize": "按 min-max 或 z-score 归一化 Y 序列。",
     "resample": "把数据重采样到新的等间距点数或固定间距。",
+    "pairwise_compute": "以已选择列表的前两条输入为主/副曲线，支持自动对齐后的双曲线计算。",
     "fft": "将时域/空间域信号转换为频域频谱，可选指定采样频率。",
     "derivative": "计算一阶导数，观察变化速率。",
     "integral": "计算积分或累积积分。",
@@ -102,8 +104,10 @@ class ProcessPage(QWidget):
         self._src_ys: List[float] = []
         self._out_xs: List[float] = []
         self._out_ys: List[float] = []
+        self._selected_inputs: List[Dict[str, Any]] = []
         self._src_series_batch: List[DataSeries] = []
         self._out_series_batch: List[DataSeries] = []
+        self._pipeline_warnings: List[str] = []
         self._ops: List[Dict[str, Any]] = []
         self._param_widgets: List[_ParamWidget] = []
         self._processing_op_labels: List[str] = list(_OP_LABELS)
@@ -185,7 +189,13 @@ class ProcessPage(QWidget):
                 lambda: self._current_input_label,
                 TeachingTipTailPosition.BOTTOM,
                 "先选输入",
-                "从共享树双击数据后，这里会同步当前处理对象。",
+                "从共享项目树单击数据列或曲线后，这里会同步主输入和已选择数量。",
+            ),
+            OnboardingStep(
+                lambda: self._selected_input_list,
+                TeachingTipTailPosition.BOTTOM,
+                "已选择列表支持批处理",
+                "列表第一项会作为主曲线；多条输入可批量处理或供双曲线工具使用。",
             ),
             OnboardingStep(
                 lambda: self._add_op_combo,
@@ -262,6 +272,30 @@ class ProcessPage(QWidget):
         self._current_input_label = BodyLabel("当前输入: 未选择")
         self._current_input_label.setWordWrap(True)
         mv.addWidget(self._current_input_label)
+
+        self._input_hint_label = BodyLabel("在共享项目树中单击数据列或曲线加入已选择列表；第一项视为主曲线。")
+        self._input_hint_label.setWordWrap(True)
+        mv.addWidget(self._input_hint_label)
+
+        mv.addWidget(make_hsep())
+        mv.addWidget(make_section_label("已选择列表"))
+        self._selected_input_list = ListWidget(self)
+        self._selected_input_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._selected_input_list.setMinimumHeight(96)
+        mv.addWidget(self._selected_input_list)
+
+        selected_row = QHBoxLayout()
+        self._btn_clear_inputs = PushButton(FIF.DELETE, "清除", self)
+        apply_button_metrics(self._btn_clear_inputs, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        self._btn_clear_inputs.clicked.connect(self._clear_inputs)
+        selected_row.addWidget(self._btn_clear_inputs)
+        self._btn_remove_selected_inputs = PushButton(FIF.REMOVE, "移除选中", self)
+        apply_button_metrics(self._btn_remove_selected_inputs, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        self._btn_remove_selected_inputs.clicked.connect(self._remove_selected_inputs)
+        selected_row.addWidget(self._btn_remove_selected_inputs)
+        mv.addLayout(selected_row)
+
+        mv.addWidget(make_hsep())
 
         template_row = QHBoxLayout()
         self._pipeline_combo = ComboBox(self)
@@ -417,69 +451,148 @@ class ProcessPage(QWidget):
         if typ == "curve":
             c = next((c for img in p.images for c in img.curves if c.id == obj_id), None)
             if c:
-                self._selected_source_kind = "curve"
-                self._selected_source_node_id = obj_id
-                self._src_series_batch = [DataSeries(name=c.name, x=list(c.x_actual), y=list(c.y_actual), color=c.color, source="pyline_curve_copy", source_curve_id=c.id)]
-                self._src_xs = list(c.x_actual)
-                self._src_ys = list(c.y_actual)
-                self._selected_src_id = obj_id
-                self._current_input_label.setText(f"当前输入: {c.name}")
-                self._extension_panel.set_context("数据处理", c.name)
-                self._save_name_edit.setText(self._suggest_result_name(c.name))
+                self.receive_data("curve", obj_id)
         elif typ == "series":
             s = p.find_series(obj_id)
             if s:
-                self._selected_source_kind = "series"
-                self._selected_source_node_id = obj_id
-                self._src_series_batch = [s]
-                self._src_xs = list(s.x)
-                self._src_ys = list(s.y)
-                self._selected_src_id = obj_id
-                self._current_input_label.setText(f"当前输入: {s.name}")
-                self._extension_panel.set_context("数据处理", s.name)
-                self._save_name_edit.setText(self._suggest_result_name(s.name))
-        self._update_save_action_presentation()
-        self._run_pipeline()
+                self.receive_data("series", obj_id)
 
-    def _set_source_from_tree_node(self, kind: str, node_id: str) -> bool:
+    def _resolve_input_payloads(self, kind: str, node_id: str) -> List[Dict[str, Any]]:
         if kind == "data_file":
-            source_series = [series for series in project_manager.get_all_series_from_node(kind, node_id) if series and series.x]
-            if not source_series:
-                return False
+            return []
+
+        if kind == "image_work":
             node = project_manager.get_node_by_id(node_id)
-            source_name = node.name if node is not None else source_series[0].name
-            self._src_series_batch = list(source_series)
-            self._src_xs = list(source_series[0].x)
-            self._src_ys = list(source_series[0].y)
-            self._selected_src_id = source_series[0].id
-            self._current_input_label.setText(f"当前输入: {source_name}（共 {len(source_series)} 条数据系列）")
-            self._extension_panel.set_context("数据处理", source_name)
-            self._save_name_edit.setText(self._suggest_result_name(source_name))
-            self._refresh_save_targets()
-            self._update_save_action_presentation()
-            self._run_pipeline()
-            return True
+            container_name = node.name if node is not None else "图像曲线"
+            payloads = []
+            for series in project_manager.get_all_series_from_node(kind, node_id):
+                if not series or not series.x:
+                    continue
+                item_kind = "curve" if series.source_curve_id else "series"
+                item_id = series.source_curve_id or series.id
+                payloads.append({
+                    "kind": item_kind,
+                    "node_id": item_id,
+                    "label": f"{container_name} / {series.name}",
+                })
+            return payloads
 
         series = project_manager.get_series_from_node(kind, node_id)
         if series is None or not series.x:
-            return False
-        self._src_series_batch = [series]
-        self._src_xs = list(series.x)
-        self._src_ys = list(series.y)
-        self._selected_src_id = series.id
-        self._current_input_label.setText(f"当前输入: {series.name}")
-        self._extension_panel.set_context("数据处理", series.name)
-        self._save_name_edit.setText(self._suggest_result_name(series.name))
+            return []
+        return [{"kind": kind, "node_id": node_id, "label": series.name}]
+
+    def _rebuild_source_series_batch(self) -> None:
+        rebuilt: List[DataSeries] = []
+        for payload in self._selected_inputs:
+            series = project_manager.get_series_from_node(payload["kind"], payload["node_id"])
+            if series is None or not series.x:
+                continue
+            rebuilt.append(DataSeries(
+                name=series.name,
+                x=list(series.x),
+                y=list(series.y),
+                y_err=list(series.y_err) if series.y_err else None,
+                x_label=series.x_label,
+                y_label=series.y_label,
+                color=series.color,
+                visible=series.visible,
+                source=series.source,
+                source_curve_id=series.source_curve_id,
+            ))
+        self._src_series_batch = rebuilt
+        preview = self._src_series_batch[0] if self._src_series_batch else None
+        self._src_xs = list(preview.x) if preview is not None else []
+        self._src_ys = list(preview.y) if preview is not None else []
+
+    def _sync_selected_input_state(self) -> None:
+        if not self._selected_inputs:
+            self._selected_src_id = None
+            self._selected_source_kind = None
+            self._selected_source_node_id = None
+            self._current_input_label.setText("当前输入: 未选择")
+            self._extension_panel.set_context("数据处理", "未选择输入")
+            self._refresh_save_targets()
+            self._update_save_action_presentation()
+            return
+
+        primary = self._selected_inputs[0]
+        self._selected_src_id = primary["node_id"]
+        self._selected_source_kind = primary["kind"]
+        self._selected_source_node_id = primary["node_id"]
+        if len(self._selected_inputs) == 1:
+            self._current_input_label.setText(f"当前输入: {primary['label']}")
+            self._extension_panel.set_context("数据处理", primary["label"])
+        else:
+            self._current_input_label.setText(f"当前输入: {primary['label']}（已选择 {len(self._selected_inputs)} 条输入）")
+            self._extension_panel.set_context("数据处理", f"{primary['label']} 等 {len(self._selected_inputs)} 条输入")
         self._refresh_save_targets()
         self._update_save_action_presentation()
-        self._run_pipeline()
+
+    def _rebuild_selected_input_list(self) -> None:
+        self._selected_input_list.clear()
+        for payload in self._selected_inputs:
+            item = QListWidgetItem(payload["label"])
+            item.setData(Qt.ItemDataRole.UserRole, {"node_id": payload["node_id"]})
+            item.setToolTip(payload["label"])
+            self._selected_input_list.addItem(item)
+        self._sync_selected_input_state()
+
+    def _append_inputs_from_tree_node(self, kind: str, node_id: str) -> bool:
+        payloads = self._resolve_input_payloads(kind, node_id)
+        if kind == "data_file":
+            self._current_input_label.setText("当前输入: 不再支持直接使用数据文件批处理，请选择其中的数据列")
+            return False
+        if not payloads:
+            return False
+
+        added = False
+        for payload in payloads:
+            if any(item["node_id"] == payload["node_id"] for item in self._selected_inputs):
+                continue
+            self._selected_inputs.append(payload)
+            added = True
+
+        self._rebuild_source_series_batch()
+        self._rebuild_selected_input_list()
+        if added:
+            self._save_name_edit.setText(self._suggest_result_name())
+            self._run_pipeline()
         return True
 
-    def _is_data_file_input(self) -> bool:
-        return self._selected_source_kind == "data_file" and bool(self._src_series_batch)
+    def _clear_inputs(self) -> None:
+        self._selected_inputs.clear()
+        self._rebuild_source_series_batch()
+        self._rebuild_selected_input_list()
+        self._pipeline_warnings = []
+        self._out_series_batch = []
+        self._out_xs = []
+        self._out_ys = []
+        self._save_name_edit.clear()
+        self._draw_preview()
+        self._stats_label.setText("（选择数据并配置操作后显示统计）")
+
+    def _remove_selected_inputs(self) -> None:
+        to_remove = set()
+        for item in self._selected_input_list.selectedItems():
+            payload = item.data(Qt.ItemDataRole.UserRole)
+            if payload:
+                to_remove.add(payload["node_id"])
+        if not to_remove:
+            return
+        self._selected_inputs = [item for item in self._selected_inputs if item["node_id"] not in to_remove]
+        self._rebuild_source_series_batch()
+        self._rebuild_selected_input_list()
+        self._save_name_edit.setText(self._suggest_result_name())
+        self._run_pipeline()
+
+    def _is_batch_output(self) -> bool:
+        if self._out_series_batch:
+            return len(self._out_series_batch) > 1
+        return len(self._src_series_batch) > 1
 
     def _update_save_action_presentation(self) -> None:
-        self._save_result_button.setText("导出为数据文件" if self._is_data_file_input() else "导出为数据列")
+        self._save_result_button.setText("导出为数据文件" if self._is_batch_output() else "导出为数据列")
 
     # ─────────────────────────────────────────────────────────
     # 操作链管理
@@ -570,35 +683,62 @@ class ProcessPage(QWidget):
 
     def _run_pipeline_now(self):
         if not self._src_series_batch:
+            self._pipeline_warnings = []
+            self._out_series_batch = []
+            self._out_xs = []
+            self._out_ys = []
+            self._draw_preview()
+            self._stats_label.setText("（选择数据并配置操作后显示统计）")
+            self._update_save_action_presentation()
             return
         for op, pw in zip(self._ops, self._param_widgets):
             op["params"] = pw.get_params()
         try:
-            self._out_series_batch = []
-            for source_series in self._src_series_batch:
-                out_xs, out_ys = apply_pipeline(list(source_series.x), list(source_series.y), self._ops)
-                self._out_series_batch.append(DataSeries(
-                    name=source_series.name,
-                    x=list(out_xs),
-                    y=list(out_ys),
-                    x_label=source_series.x_label,
-                    y_label=source_series.y_label,
-                    color=source_series.color,
-                    visible=source_series.visible,
+            line_inputs = [
+                {
+                    "name": source_series.name,
+                    "x": list(source_series.x),
+                    "y": list(source_series.y),
+                    "x_label": source_series.x_label,
+                    "y_label": source_series.y_label,
+                    "color": source_series.color,
+                    "visible": source_series.visible,
+                    "source_curve_id": source_series.source_curve_id,
+                }
+                for source_series in self._src_series_batch
+            ]
+            output_lines, self._pipeline_warnings = apply_pipeline_to_lines(line_inputs, self._ops)
+            self._out_series_batch = [
+                DataSeries(
+                    name=str(line.get("name", source_series.name) or source_series.name),
+                    x=list(line.get("x", []) or []),
+                    y=list(line.get("y", []) or []),
+                    x_label=str(line.get("x_label", source_series.x_label) or source_series.x_label),
+                    y_label=str(line.get("y_label", source_series.y_label) or source_series.y_label),
+                    color=str(line.get("color", source_series.color) or source_series.color),
+                    visible=bool(line.get("visible", source_series.visible)),
                     source="computed",
-                    source_curve_id=source_series.source_curve_id,
-                ))
+                    source_curve_id=line.get("source_curve_id", source_series.source_curve_id),
+                )
+                for line, source_series in zip(
+                    output_lines,
+                    self._src_series_batch + [self._src_series_batch[0]] * max(0, len(output_lines) - len(self._src_series_batch)),
+                )
+            ]
             preview_series = self._out_series_batch[0] if self._out_series_batch else None
             self._out_xs = list(preview_series.x) if preview_series is not None else []
             self._out_ys = list(preview_series.y) if preview_series is not None else []
         except Exception as e:
+            self._pipeline_warnings = []
             self._out_series_batch = []
             self._out_xs = []
             self._out_ys = []
             self._stats_label.setText(f"⚠ 处理错误: {e}")
+            self._update_save_action_presentation()
             return
         self._draw_preview()
         self._update_stats()
+        self._update_save_action_presentation()
 
     def _draw_preview(self):
         if not _HAS_MPL or self._figure is None:
@@ -617,8 +757,8 @@ class ProcessPage(QWidget):
             sp.set_edgecolor(fg)
         ax.grid(True, color=gc, linestyle="--", linewidth=0.5, alpha=0.6)
         _MAX_PTS = 2000
-        src_label = "原始（预览第一条）" if len(self._src_series_batch) > 1 else "原始"
-        out_label = "处理后（预览第一条）" if len(self._out_series_batch) > 1 else "处理后"
+        src_label = "原始（预览主曲线）" if len(self._src_series_batch) > 1 else "原始"
+        out_label = "处理后（预览第一条输出）" if len(self._out_series_batch) > 1 else "处理后"
         if self._src_xs:
             sx, sy = _downsample(self._src_xs, self._src_ys, _MAX_PTS)
             ax.plot(sx, sy, color="#888888",
@@ -651,8 +791,10 @@ class ProcessPage(QWidget):
             mean = sum(self._out_ys) / n
             std = math.sqrt(sum((v - mean) ** 2 for v in self._out_ys) / n)
         prefix = f"共处理 {len(self._out_series_batch)} 条数据系列；预览 " if len(self._out_series_batch) > 1 else ""
-        self._stats_label.setText(
-            f"{prefix}输出 N={n}  Y: [{y_min:.4g}, {y_max:.4g}]  均值={mean:.4g}  σ={std:.4g}")
+        stats_text = f"{prefix}输出 N={n}  Y: [{y_min:.4g}, {y_max:.4g}]  均值={mean:.4g}  σ={std:.4g}"
+        if self._pipeline_warnings:
+            stats_text += "\n提示: " + "；".join(self._pipeline_warnings)
+        self._stats_label.setText(stats_text)
 
     # ─────────────────────────────────────────────────────────
     # 保存结果
@@ -668,27 +810,27 @@ class ProcessPage(QWidget):
             return
 
         default_name = self._save_name_edit.text().strip() or self._suggest_result_name()
-        preferred_target_node_id = self._selected_source_node_id if self._is_data_file_input() else None
+        batch_output = self._is_batch_output()
         export_plan = choose_data_export_plan(
             self,
-            title="导出为数据文件" if self._is_data_file_input() else "导出为数据列",
+            title="导出为数据文件" if batch_output else "导出为数据列",
             default_export_name=default_name,
             default_file_name=f"{default_name}.process",
-            preferred_target_node_id=preferred_target_node_id,
             file_suffix=".process",
-            allow_append_to_existing=not self._is_data_file_input(),
-            show_export_name=not self._is_data_file_input(),
+            allow_append_to_existing=True,
+            show_export_name=not batch_output,
         )
         if export_plan is None:
             return
-        if self._is_data_file_input():
+
+        if batch_output:
             if export_plan.target_data_file_id:
-                InfoBar.warning("提示", "整份数据文件结果只能另存为新的数据文件", parent=self, position=InfoBarPosition.TOP)
-                return
-            data_file = DataFile(
-                name=export_plan.new_data_file_name or f"{default_name}.process",
-                series=[
-                    DataSeries(
+                target_file = p.find_data_file(export_plan.target_data_file_id)
+                if target_file is None:
+                    InfoBar.error("保存失败", "未找到目标数据文件", parent=self, position=InfoBarPosition.TOP)
+                    return
+                for series in self._out_series_batch:
+                    copied = DataSeries(
                         name=series.name,
                         x=list(series.x),
                         y=list(series.y),
@@ -699,23 +841,49 @@ class ProcessPage(QWidget):
                         source="computed",
                         source_curve_id=series.source_curve_id,
                     )
-                    for series in self._out_series_batch
-                ],
-            )
-            node = project_manager.add_data_file(data_file, parent_id=export_plan.new_parent_id)
-            if node is None:
-                message = project_manager.get_last_error_message() or "未能创建处理结果数据文件"
-                InfoBar.error("保存失败", message, parent=self, position=InfoBarPosition.TOP)
-                return
-            message = f"{len(data_file.series)} 条数据系列 -> {data_file.name}"
+                    if not project_manager.add_series_to_data_file(export_plan.target_data_file_id, copied):
+                        message = project_manager.get_last_error_message() or "未能追加到目标数据文件"
+                        InfoBar.error("保存失败", message, parent=self, position=InfoBarPosition.TOP)
+                        return
+                message = f"{len(self._out_series_batch)} 条数据系列 -> {target_file.name}"
+            else:
+                data_file = DataFile(
+                    name=export_plan.new_data_file_name or f"{default_name}.process",
+                    series=[
+                        DataSeries(
+                            name=series.name,
+                            x=list(series.x),
+                            y=list(series.y),
+                            x_label=series.x_label,
+                            y_label=series.y_label,
+                            color=series.color,
+                            visible=series.visible,
+                            source="computed",
+                            source_curve_id=series.source_curve_id,
+                        )
+                        for series in self._out_series_batch
+                    ],
+                )
+                node = project_manager.add_data_file(data_file, parent_id=export_plan.new_parent_id)
+                if node is None:
+                    message = project_manager.get_last_error_message() or "未能创建处理结果数据文件"
+                    InfoBar.error("保存失败", message, parent=self, position=InfoBarPosition.TOP)
+                    return
+                message = f"{len(data_file.series)} 条数据系列 -> {data_file.name}"
         else:
             result_name = export_plan.export_name
             self._save_name_edit.setText(result_name)
+            preview_series = self._out_series_batch[0]
             series = DataSeries(
                 name=result_name,
-                x=list(self._out_xs),
-                y=list(self._out_ys),
+                x=list(preview_series.x),
+                y=list(preview_series.y),
+                x_label=preview_series.x_label,
+                y_label=preview_series.y_label,
+                color=preview_series.color,
+                visible=preview_series.visible,
                 source="computed",
+                source_curve_id=preview_series.source_curve_id,
             )
             if export_plan.target_data_file_id:
                 target_file = p.find_data_file(export_plan.target_data_file_id)
@@ -739,9 +907,8 @@ class ProcessPage(QWidget):
 
     def _suggest_result_name(self, source_name: Optional[str] = None) -> str:
         base_name = source_name
-        if not base_name and self._selected_source_kind == "data_file" and self._selected_source_node_id:
-            node = project_manager.get_node_by_id(self._selected_source_node_id)
-            base_name = node.name if node is not None else None
+        if not base_name and self._selected_inputs:
+            base_name = self._selected_inputs[0]["label"]
         if not base_name and self._selected_src_id:
             series = project_manager.get_series_from_node("series", self._selected_src_id)
             base_name = series.name if series is not None else None
@@ -928,18 +1095,8 @@ class ProcessPage(QWidget):
     def receive_data(self, data_type: str, obj_id: str):
         self._selected_source_kind = data_type
         self._selected_source_node_id = obj_id
-        if self._set_source_from_tree_node(data_type, obj_id):
+        if self._append_inputs_from_tree_node(data_type, obj_id):
             return
-        self._selected_src_id = None
-        self._src_series_batch = []
-        self._out_series_batch = []
-        self._src_xs = []
-        self._src_ys = []
-        self._out_xs = []
-        self._out_ys = []
-        self._current_input_label.setText("当前输入: 未选择")
-        self._save_name_edit.clear()
-        self._update_save_action_presentation()
         self._refresh_tree()
         if not hasattr(self, "_src_tree") or self._src_tree is None:
             return
@@ -954,7 +1111,7 @@ class ProcessPage(QWidget):
                     return
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
-        """共享树选中节点 → 加载为处理输入（series / data_file / image_work / curve）。"""
+        """共享树选中节点 → 追加到处理已选择列表（series / curve / image_work）。"""
         if kind in ("series", "curve", "data_file", "image_work"):
             self.receive_data(kind, node_id)
 
@@ -1003,8 +1160,7 @@ class ProcessPage(QWidget):
             self._op_list.setCurrentRow(len(self._ops) - 1)
             self._on_op_selected(len(self._ops) - 1)
         self._save_name_edit.setText(self._suggest_result_name())
-        if self._ops:
-            self._run_pipeline()
+        self._run_pipeline()
 
     def update_theme(self):
         self._apply_preview_host_background()
@@ -1180,6 +1336,94 @@ class _ResampleParam(_ParamWidget):
         mode = str(params.get("mode", "count") or "count").strip().lower()
         self._mode.setCurrentIndex(1 if mode == "spacing" else 0)
         if mode == "spacing":
+            self._value_edit.setText(str(params.get("step", params.get("spacing", 0.1))))
+        else:
+            self._value_edit.setText(str(params.get("n", 200)))
+        self._sync_mode()
+
+
+class _PairwiseParam(_ParamWidget):
+    def __init__(self, parent, on_change):
+        super().__init__(parent)
+        lv = QVBoxLayout(self)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(4)
+
+        operator_row = QHBoxLayout()
+        operator_row.addWidget(BodyLabel("计算方式:"))
+        self._operator = ComboBox()
+        self._operator.addItems(["主-副", "主+副", "主*副", "主/副", "绝对差"])
+        self._operator.currentIndexChanged.connect(on_change)
+        _install_fluent_tip(self._operator, "第一条已选曲线为主曲线，第二条为副曲线")
+        operator_row.addWidget(self._operator, 1)
+        lv.addLayout(operator_row)
+
+        align_row = QHBoxLayout()
+        align_row.addWidget(BodyLabel("坐标未对齐时:"))
+        self._align_mode = ComboBox()
+        self._align_mode.addItems(["自动重采样", "严格报错"])
+        self._align_mode.currentIndexChanged.connect(on_change)
+        _install_fluent_tip(self._align_mode, "自动重采样会在重叠区间内对两条曲线建立公共 X 坐标")
+        align_row.addWidget(self._align_mode, 1)
+        lv.addLayout(align_row)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(BodyLabel("重采样方式:"))
+        self._mode = ComboBox()
+        self._mode.addItems(["点数", "间距"])
+        self._mode.currentIndexChanged.connect(self._sync_mode)
+        self._mode.currentIndexChanged.connect(on_change)
+        mode_row.addWidget(self._mode, 1)
+        lv.addLayout(mode_row)
+
+        value_row = QHBoxLayout()
+        self._value_label = BodyLabel("点数:")
+        value_row.addWidget(self._value_label)
+        self._value_edit = LineEdit()
+        self._value_edit.setText("200")
+        self._value_edit.textChanged.connect(on_change)
+        value_row.addWidget(self._value_edit)
+        lv.addLayout(value_row)
+        self._sync_mode()
+
+    def _sync_mode(self) -> None:
+        if self._mode.currentIndex() == 1:
+            self._value_label.setText("间距:")
+            self._value_edit.setPlaceholderText("0.1")
+            _install_fluent_tip(self._value_edit, "自动对齐时公共 X 坐标的采样间距")
+        else:
+            self._value_label.setText("点数:")
+            self._value_edit.setPlaceholderText("200")
+            _install_fluent_tip(self._value_edit, "自动对齐时公共 X 坐标的输出点数")
+
+    def get_params(self):
+        operators = ["subtract", "add", "multiply", "divide", "abs_diff"]
+        params = {
+            "operator": operators[self._operator.currentIndex()],
+            "align_mode": "strict" if self._align_mode.currentIndex() == 1 else "auto",
+            "resample_mode": "spacing" if self._mode.currentIndex() == 1 else "count",
+        }
+        if self._mode.currentIndex() == 1:
+            try:
+                params["step"] = float(self._value_edit.text())
+            except Exception:
+                params["step"] = 0.1
+        else:
+            try:
+                params["n"] = max(2, int(float(self._value_edit.text())))
+            except Exception:
+                params["n"] = 200
+        return params
+
+    def set_params(self, params: dict) -> None:
+        operator = str(params.get("operator", "subtract") or "subtract").strip().lower()
+        operator_map = {"subtract": 0, "add": 1, "multiply": 2, "divide": 3, "abs_diff": 4}
+        self._operator.setCurrentIndex(operator_map.get(operator, 0))
+        align_mode = str(params.get("align_mode", "auto") or "auto").strip().lower()
+        self._align_mode.setCurrentIndex(1 if align_mode == "strict" else 0)
+        resample_mode = str(params.get("resample_mode", params.get("mode", "count")) or "count").strip().lower()
+        self._mode.setCurrentIndex(1 if resample_mode == "spacing" else 0)
+        if resample_mode == "spacing":
             self._value_edit.setText(str(params.get("step", params.get("spacing", 0.1))))
         else:
             self._value_edit.setText(str(params.get("n", 200)))
@@ -1431,6 +1675,7 @@ def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:
         "smooth":     _SmoothParam,
         "normalize":  _NormalizeParam,
         "resample":   _ResampleParam,
+        "pairwise_compute": _PairwiseParam,
         "fft":        _FFTParam,
         "derivative": _EmptyParam,
         "integral":   _IntegralParam,
