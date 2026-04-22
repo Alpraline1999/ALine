@@ -1559,12 +1559,12 @@ class TestAnalysisEngine(unittest.TestCase):
 
         directory = default_extensions_directory()
         expected = {
-            "processing_kalman_filter_demo.py": ("processing", "kalman_filter", {"process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
-            "processing_multi_curve_mean_demo.py": ("processing", "multi_curve_mean", {"align_mode", "resample_mode", "n", "step", "result_name", "line_color"}),
-            "analysis_spectrum_demo.py": ("analysis", "spectrum_analysis", {"sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
-            "analysis_multi_curve_correlation_demo.py": ("analysis", "multi_curve_correlation", {"method", "align_mode", "resample_mode", "n", "step", "line_color"}),
+            "processing_kalman_filter_demo.py": ("processing", "kalman_filter", {"lines", "process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
+            "processing_multi_curve_mean_demo.py": ("processing", "multi_curve_mean", {"lines", "align_mode", "resample_mode", "n", "step", "result_name", "line_color"}),
+            "analysis_spectrum_demo.py": ("analysis", "spectrum_analysis", {"lines", "sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
+            "analysis_multi_curve_correlation_demo.py": ("analysis", "multi_curve_correlation", {"lines", "method", "align_mode", "resample_mode", "n", "step", "line_color"}),
             "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
-            "plot_dual_curve_band_demo.py": ("plot", "plot_dual_curve_band", {"align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
+            "plot_dual_curve_band_demo.py": ("plot", "plot_dual_curve_band", {"lines", "align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
             "plot_arrow_annotation_demo.py": ("plot", "plot_arrow_annotation", {"coordinate_mode", "start_x", "start_y", "end_x", "end_y", "text"}),
             "plot_rectangle_annotation_demo.py": ("plot", "plot_rectangle_annotation", {"coordinate_mode", "x", "y", "width", "height", "edge_color"}),
             "plot_circle_annotation_demo.py": ("plot", "plot_circle_annotation", {"coordinate_mode", "center_x", "center_y", "radius", "edge_color"}),

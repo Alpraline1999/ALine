@@ -97,6 +97,7 @@ def register_extensions(registry):
             handler=spectrum_analysis,
             description="基于 FFT 计算主曲线的频谱分布，并返回主频与频率分辨率。",
             default_options={
+                "lines": {"number": 1, "lines_list": [1]},
                 "sampling_rate": 0.0,
                 "window": "hann",
                 "detrend": True,

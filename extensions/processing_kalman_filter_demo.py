@@ -38,6 +38,7 @@ def register_extensions(registry):
             line_mode="single",
             description="对一维序列执行标量卡尔曼滤波，适合平滑含噪测量数据。",
             default_options={
+                "lines": {"number": 1, "lines_list": [1]},
                 "process_variance": 1e-4,
                 "measurement_variance": 1e-2,
                 "initial_estimate": 0.0,

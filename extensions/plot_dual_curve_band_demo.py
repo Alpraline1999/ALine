@@ -93,6 +93,7 @@ def register_extensions(registry):
             handler=draw_dual_curve_band,
             description="演示如何在绘图阶段对前两条可见曲线自动对齐，并绘制双曲线差异带。",
             default_options={
+                "lines": {"number": 2, "lines_list": [1, 2]},
                 "align_mode": "auto",
                 "resample_mode": "count",
                 "n": 200,

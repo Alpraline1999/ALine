@@ -92,6 +92,7 @@ def register_extensions(registry):
             handler=multi_curve_correlation,
             description="以 lines_list 第一项为主曲线，对其余曲线做多曲线相关性比较。",
             default_options={
+                "lines": {"number": -1, "lines_list": "all"},
                 "method": "pearson",
                 "align_mode": "auto",
                 "resample_mode": "count",

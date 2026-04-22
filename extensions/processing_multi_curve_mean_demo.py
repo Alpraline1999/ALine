@@ -38,6 +38,7 @@ def register_extensions(registry):
             min_lines=2,
             description="对已选择列表中的多条曲线建立公共 X 坐标后，计算逐点均值曲线。",
             default_options={
+                "lines": {"number": -1, "lines_list": "all"},
                 "align_mode": "auto",
                 "resample_mode": "count",
                 "n": 200,
