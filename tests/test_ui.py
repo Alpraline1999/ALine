@@ -1189,6 +1189,35 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertNotIn("发送到处理", visible_texts)
         self.assertNotIn("发送到分析", visible_texts)
 
+    def test_picture_context_menu_offers_chart_and_folder_actions(self):
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "snapshot.png"
+            image = QImage(24, 24, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(picture_path)))
+            node = self.pm.add_picture(str(picture_path), name="snapshot.png")
+
+            self.assertIsNotNone(node)
+            self.widget.refresh()
+            item = self.widget._find_item(node.id)
+            self.assertIsNotNone(item)
+            parent_item = item.parent()
+            if parent_item is not None:
+                parent_item.setExpanded(True)
+            pos = self.widget._tree.visualItemRect(item).center()
+            captured = {}
+
+            def _fake_exec(menu, *_args):
+                captured["actions"] = list(menu.actions())
+
+            with mock.patch("ui.widgets.project_tree.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+                self.widget._on_context_menu(pos)
+
+        visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+        self.assertEqual(visible_texts[:4], ["发送到可视化", "在文件夹打开", "重命名", "删除"])
+
     def test_project_tree_icons_follow_updated_asset_mapping(self):
         from qfluentwidgets import FluentIcon as FIF
 
@@ -1347,9 +1376,13 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_extension_controls_exist(self):
         self.assertIsNotNone(self.page._builtin_extensions_enabled_checkbox)
+        self.assertIsNotNone(self.page._external_extensions_enabled_checkbox)
         self.assertIsNotNone(self.page._external_extensions_dir_edit)
+        self.assertIsNotNone(self.page._refresh_external_extensions_btn)
+        self.assertIsNotNone(self.page._extension_tabs)
         self.assertIsNotNone(self.page._save_extension_settings_btn)
         self.assertIsInstance(self.page._builtin_extension_checkboxes, dict)
+        self.assertIsInstance(self.page._external_extension_checkboxes, dict)
 
     def test_settings_scroll_content_uses_workbench_like_margins(self):
         general_layout = self.page._tabs.widget(0).widget().layout()
@@ -1413,6 +1446,58 @@ class TestSettingsPage(unittest.TestCase):
         titles = [self.page._tabs.tabText(i) for i in range(self.page._tabs.count())]
         self.assertEqual(titles, ["常规", "快捷键"])
 
+    def test_settings_tabs_and_extension_sections_use_fluent_navigation_widgets(self):
+        from pathlib import Path
+        from qfluentwidgets import Pivot, SegmentedWidget
+        from ui.pages.settings_page import SettingsPage
+
+        builtin_specs = [
+            {
+                "id": "demo_plot_reference_line",
+                "file_name": "plot_reference_line_demo.py",
+                "name": "圆形框",
+                "categories": ["plot"],
+                "category_labels": ["绘图扩展"],
+                "type_ids": ["demo_plot_reference_line"],
+                "names_by_category": {"plot": ["圆形框"]},
+                "type_ids_by_category": {"plot": ["demo_plot_reference_line"]},
+                "source": "builtin",
+                "source_label": "内置",
+                "load_error": "",
+            }
+        ]
+        external_specs = [
+            {
+                "id": "external_plot_reference_line",
+                "file_name": "external_plot_reference_line.py",
+                "name": "外部圆角",
+                "categories": ["plot"],
+                "category_labels": ["绘图扩展"],
+                "type_ids": ["external_plot_reference_line"],
+                "names_by_category": {"plot": ["外部圆角"]},
+                "type_ids_by_category": {"plot": ["external_plot_reference_line"]},
+                "source": "external",
+                "source_label": "外部",
+                "load_error": "",
+            }
+        ]
+
+        temp_page = None
+        try:
+            with mock.patch("core.extension_settings._CONFIG_PATH", Path("/nonexistent/aline_extension_settings.json")), \
+                 mock.patch("core.extension_api.list_builtin_extension_specs", return_value=builtin_specs), \
+                 mock.patch("core.extension_api.list_external_extension_specs", return_value=external_specs):
+                temp_page = SettingsPage()
+
+            self.assertIsInstance(temp_page._tabs.navigationWidget, Pivot)
+            self.assertIsInstance(temp_page._extension_tabs.navigationWidget, SegmentedWidget)
+            self.assertEqual(temp_page._extension_tabs.tabText(0), "绘图扩展")
+            self.assertEqual(temp_page._builtin_extension_checkboxes["demo_plot_reference_line"].text(), "[内置] 圆形框")
+            self.assertEqual(temp_page._external_extension_checkboxes["external_plot_reference_line"].text(), "[外部] 外部圆角")
+        finally:
+            if temp_page is not None:
+                temp_page.deleteLater()
+
     def test_save_ai_config_no_crash(self):
         self.page._ai_url_edit.setText("https://api.openai.com/v1")
         self.page._ai_model_edit.setText("gpt-4o-mini")
@@ -1448,13 +1533,34 @@ class TestSettingsPage(unittest.TestCase):
                     "id": "demo_plot_reference_line",
                     "file_name": "plot_reference_line_demo.py",
                     "name": "圆形框",
+                    "categories": ["plot"],
                     "category_labels": ["绘图扩展"],
                     "type_ids": ["demo_plot_reference_line"],
+                    "names_by_category": {"plot": ["圆形框"]},
+                    "type_ids_by_category": {"plot": ["demo_plot_reference_line"]},
+                    "source": "builtin",
+                    "source_label": "内置",
+                    "load_error": "",
+                }
+            ]
+            external_specs = [
+                {
+                    "id": "external_plot_reference_line",
+                    "file_name": "external_plot_reference_line.py",
+                    "name": "外部圆角",
+                    "categories": ["plot"],
+                    "category_labels": ["绘图扩展"],
+                    "type_ids": ["external_plot_reference_line"],
+                    "names_by_category": {"plot": ["外部圆角"]},
+                    "type_ids_by_category": {"plot": ["external_plot_reference_line"]},
+                    "source": "external",
+                    "source_label": "外部",
                     "load_error": "",
                 }
             ]
             with mock.patch("core.extension_settings._CONFIG_PATH", config_path), \
                  mock.patch("core.extension_api.list_builtin_extension_specs", return_value=builtin_specs), \
+                 mock.patch("core.extension_api.list_external_extension_specs", return_value=external_specs), \
                  mock.patch(
                      "core.extension_api.reload_configured_extensions",
                      return_value={"loaded": ["builtin:demo_plot_reference_line"], "errors": []},
@@ -1462,18 +1568,83 @@ class TestSettingsPage(unittest.TestCase):
                 self.page._load_extension_settings()
                 self.assertEqual(
                     self.page._builtin_extension_checkboxes["demo_plot_reference_line"].text(),
-                    "绘图扩展·圆形框",
+                    "[内置] 圆形框",
+                )
+                self.assertEqual(
+                    self.page._external_extension_checkboxes["external_plot_reference_line"].text(),
+                    "[外部] 外部圆角",
                 )
                 self.page._external_extensions_dir_edit.setText(str(external_dir))
                 self.page._builtin_extension_checkboxes["demo_plot_reference_line"].setChecked(False)
+                self.page._external_extension_checkboxes["external_plot_reference_line"].setChecked(False)
+                self.page._external_extensions_enabled_checkbox.setChecked(False)
                 self.page._save_extension_settings()
 
             self.assertEqual(received, [True])
             self.assertTrue(config_path.exists())
             config_text = config_path.read_text(encoding="utf-8")
             self.assertIn("demo_plot_reference_line", config_text)
+            self.assertIn("external_plot_reference_line", config_text)
             self.assertIn(str(external_dir), config_text)
+            self.assertIn('"load_external_extensions": false', config_text)
             reload_mock.assert_called_once()
+
+    def test_refresh_external_extension_specs_rebuilds_without_reloading_registry(self):
+        from pathlib import Path
+        from ui.pages import settings_page
+        from ui.pages.settings_page import SettingsPage
+
+        builtin_specs = [
+            {
+                "id": "demo_plot_reference_line",
+                "file_name": "plot_reference_line_demo.py",
+                "name": "圆形框",
+                "categories": ["plot"],
+                "category_labels": ["绘图扩展"],
+                "type_ids": ["demo_plot_reference_line"],
+                "names_by_category": {"plot": ["圆形框"]},
+                "type_ids_by_category": {"plot": ["demo_plot_reference_line"]},
+                "source": "builtin",
+                "source_label": "内置",
+                "load_error": "",
+            }
+        ]
+        initial_external_specs = []
+        refreshed_external_specs = [
+            {
+                "id": "external_plot_reference_line",
+                "file_name": "external_plot_reference_line.py",
+                "name": "外部圆角",
+                "categories": ["plot"],
+                "category_labels": ["绘图扩展"],
+                "type_ids": ["external_plot_reference_line"],
+                "names_by_category": {"plot": ["外部圆角"]},
+                "type_ids_by_category": {"plot": ["external_plot_reference_line"]},
+                "source": "external",
+                "source_label": "外部",
+                "load_error": "",
+            }
+        ]
+
+        temp_page = None
+        try:
+            with mock.patch("core.extension_settings._CONFIG_PATH", Path("/nonexistent/aline_extension_settings.json")), \
+                 mock.patch("core.extension_api.list_builtin_extension_specs", return_value=builtin_specs), \
+                 mock.patch("core.extension_api.list_external_extension_specs", side_effect=[initial_external_specs, refreshed_external_specs]), \
+                 mock.patch.object(settings_page.InfoBar, "success") as success_mock:
+                temp_page = SettingsPage()
+                self.assertNotIn("external_plot_reference_line", temp_page._external_extension_checkboxes)
+
+                temp_page._refresh_external_extension_specs()
+
+            self.assertEqual(
+                temp_page._external_extension_checkboxes["external_plot_reference_line"].text(),
+                "[外部] 外部圆角",
+            )
+            success_mock.assert_called_once()
+        finally:
+            if temp_page is not None:
+                temp_page.deleteLater()
 
     def test_provider_changed_to_ollama(self):
         # Ollama 也允许填写 API key（服务端代理场景）
@@ -1519,6 +1690,17 @@ class TestSettingsPage(unittest.TestCase):
 
 class TestHomePage(unittest.TestCase):
     """HomePage 引导入口与扩展状态"""
+
+    def test_home_page_builds_banner_with_two_reserved_link_cards(self):
+        from ui.pages.home_page import HomePage
+
+        page = HomePage()
+        try:
+            self.assertIsNotNone(page._banner)
+            self.assertFalse(page._banner._background.isNull())
+            self.assertEqual([card.titleLabel.text() for card in page._banner._link_cards], ["软件主页", "GitHub 仓库"])
+        finally:
+            page.deleteLater()
 
     def test_home_page_hides_guide_button_and_shows_extension_status_summary(self):
         from core.ui_preferences import set_home_onboarding_completed
@@ -1567,7 +1749,7 @@ class TestHomePage(unittest.TestCase):
             self.assertEqual(page._status_bar.styleSheet(), f"background: transparent; border-top: 1px solid {border_color()};")
             self.assertFalse(hasattr(page, "_extension_detail_btn"))
             self.assertEqual(page._extension_status_btn.parent(), page._status_bar)
-            self.assertEqual(len(page._home_onboarding_steps()), 4)
+            self.assertEqual(len(page._home_onboarding_steps()), 5)
         finally:
             page.deleteLater()
 
@@ -1766,6 +1948,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
                     "name": "面板配置探针",
                     "label": "面板配置探针",
                     "description": "测试扩展配置面板的全局预设保存。",
+                    "version": "1.2.0",
                     "default_options": {"factor": 2},
                     "config_fields": [],
                 }
@@ -1774,6 +1957,10 @@ class TestExtensionConfigPanel(unittest.TestCase):
             self.assertEqual(
                 [item.name for item in global_assets.list_extension_configs(category="processing", extension_type="panel_extension_probe")],
                 ["默认配置"],
+            )
+            self.assertEqual(
+                global_assets.get_extension_default_config("processing", "panel_extension_probe").extension_version,
+                "1.2.0",
             )
 
             panel._editor.setPlainText('{"factor": 8}')
@@ -1784,6 +1971,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
             self.assertEqual(selector_items, ["默认配置", "方案A"])
             saved = global_assets.get_extension_config_by_name("processing", "panel_extension_probe", "方案A")
             self.assertIsNotNone(saved)
+            self.assertEqual(saved.extension_version, "1.2.0")
 
             panel._editor.setPlainText('{"factor": 1}')
             panel._config_selector.setCurrentIndex(selector_items.index("方案A"))
@@ -1791,6 +1979,45 @@ class TestExtensionConfigPanel(unittest.TestCase):
             self.assertEqual(panel.current_options(), {"factor": 8})
             self.assertTrue(panel.load_config_by_id(saved.id))
             self.assertEqual(panel.current_options(), {"factor": 8})
+        finally:
+            panel.deleteLater()
+            restore_assets()
+
+    def test_loading_outdated_extension_config_shows_version_warning(self):
+        from core.global_assets import global_assets
+        from ui.widgets import extension_panel
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        restore_assets = _patch_global_assets()
+        panel = ExtensionConfigPanel()
+        try:
+            panel.set_status_context("processing", "处理扩展")
+            panel.set_entries([
+                {
+                    "type": "panel_extension_probe",
+                    "name": "面板配置探针",
+                    "label": "面板配置探针",
+                    "description": "测试扩展配置面板的版本提醒。",
+                    "version": "1.2.0",
+                    "default_options": {"factor": 2},
+                    "config_fields": [],
+                }
+            ])
+            saved = global_assets.add_extension_config(
+                category="processing",
+                extension_type="panel_extension_probe",
+                extension_name="面板配置探针",
+                extension_version="1.0.0",
+                name="旧版本方案",
+                options={"factor": 3},
+            )
+
+            with mock.patch.object(extension_panel.InfoBar, "warning") as warning_mock:
+                self.assertTrue(panel.load_config_by_id(saved.id))
+
+            warning_mock.assert_called_once()
+            self.assertIn("1.0.0", warning_mock.call_args.args[1])
+            self.assertIn("1.2.0", warning_mock.call_args.args[1])
         finally:
             panel.deleteLater()
             restore_assets()
@@ -1893,6 +2120,32 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertTrue(panel._status_summary_btn.isEnabled())
         self.assertIn("font-size: 12px", panel._status_summary_btn.styleSheet())
         self.assertIn(warning_color(), panel._status_summary_btn.styleSheet())
+        panel.deleteLater()
+
+    def test_status_summary_uses_home_style_accent_when_extensions_available(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+        from ui.theme import accent_color
+
+        panel = ExtensionConfigPanel()
+        with mock.patch(
+            "ui.widgets.extension_panel.get_extension_load_status",
+            return_value={
+                "label": "绘图扩展",
+                "registered_count": 2,
+                "error_count": 0,
+                "source_summary": {
+                    "loaded_extension_counts": {"builtin": 1, "external": 1},
+                    "loaded_file_counts": {"builtin": 1, "external": 1},
+                    "error_file_counts": {"builtin": 0, "external": 0},
+                },
+                "details": {"loaded": [{"path": "plot_ok.py"}], "errors": []},
+            },
+        ):
+            panel.set_status_context("plot", "绘图扩展")
+
+        self.assertEqual(panel._status_summary_btn.text(), "绘图扩展 2 项可用（内置 1 / 外部 1）。")
+        self.assertIn("font-size: 12px", panel._status_summary_btn.styleSheet())
+        self.assertIn(accent_color(), panel._status_summary_btn.styleSheet())
         panel.deleteLater()
 
     def test_invalid_config_infobar_uses_top_level_parent(self):
@@ -2061,6 +2314,23 @@ class TestDataPage(unittest.TestCase):
 
         self.page.on_tree_node_selected("series", self.s.id)
         self.assertFalse(self.page._preview_plot_type_controls.isHidden())
+
+    def test_picture_node_selection_shows_image_preview(self):
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "preview.png"
+            image = QImage(48, 32, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(picture_path)))
+            picture_node = self.pm.add_picture(str(picture_path), name="preview.png")
+
+            self.assertIsNotNone(picture_node)
+            self.page.on_tree_node_selected("picture", picture_node.id)
+
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._image_preview_label)
+        self.assertEqual(self.page._stats_title_label.text(), "图片名称: preview.png")
+        self.assertIn("绘图快照: 未保存", self.page._stats_label.text())
 
     def test_source_file_data_preview_switches_between_parsed_and_source_modes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3637,6 +3907,17 @@ class TestChartPage(unittest.TestCase):
             TabCloseButtonDisplayMode.NEVER,
         )
 
+    def test_style_tabs_use_segmented_navigation_and_selected_list_button_metrics(self):
+        from qfluentwidgets import PushButton, SegmentedWidget
+
+        self.assertIsInstance(self.page._style_tabs.navigationWidget, SegmentedWidget)
+        self.assertIsInstance(self.page._btn_clear, PushButton)
+        self.assertIsInstance(self.page._btn_remove, PushButton)
+        self.assertEqual(self.page._btn_clear.height(), 32)
+        self.assertEqual(self.page._btn_remove.height(), 32)
+        self.assertEqual(self.page._btn_clear.text(), "清除")
+        self.assertEqual(self.page._btn_remove.text(), "移除选中")
+
     def test_plot_style_numeric_inputs_use_compact_widths(self):
         self.assertLessEqual(self.page._font_size_edit.maximumWidth(), 96)
         self.assertLessEqual(self.page._figure_width_edit.maximumWidth(), 96)
@@ -4818,6 +5099,12 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(self.page._btn_clear_inputs.height(), 32)
         self.assertEqual(self.page._btn_remove_selected_inputs.height(), 32)
         self.assertTrue(self.page._report_template_label.isHidden())
+
+    def test_result_tabs_use_segmented_navigation_and_report_combos_share_width(self):
+        from qfluentwidgets import SegmentedWidget
+
+        self.assertIsInstance(self.page._result_tabs.navigationWidget, SegmentedWidget)
+        self.assertEqual(self.page._report_template_combo.width(), self.page._report_placeholder_combo.width())
 
     def test_analysis_canvas_draws_chinese_without_glyph_warnings(self):
         if self.page._figure is None or self.page._canvas is None:
@@ -6411,6 +6698,54 @@ class TestMainWindow(unittest.TestCase):
         export_mock.assert_called_once_with()
 
 
+class TestMainWindowPictureRoute(unittest.TestCase):
+
+    def setUp(self):
+        self._restore_assets = _patch_global_assets()
+        self.pm, self.p, self.df, self.s = _make_project("mw_picture_route")
+        self._restore = _patch_pm(self.pm)
+        from ui.main_window import MainWindow
+
+        self.win = MainWindow()
+
+    def tearDown(self):
+        self._restore()
+        self._restore_assets()
+        self.win.deleteLater()
+
+    def test_picture_activation_routes_to_chart_restore(self):
+        from models.schemas import FigureState, PicturePlotSeriesSnapshot, PicturePlotSnapshot
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "restore.png"
+            picture_path.write_bytes(b"png")
+            picture_node = self.pm.add_picture(
+                str(picture_path),
+                name="restore.png",
+                plot_snapshot=PicturePlotSnapshot(
+                    figure_state=FigureState(x_label="Restored X"),
+                    series=[
+                        PicturePlotSeriesSnapshot(
+                            curve_key="restored-curve",
+                            curve_identity="restored-curve",
+                            name="restored",
+                            display_name="restored",
+                            x=[1.0, 2.0],
+                            y=[3.0, 4.0],
+                        )
+                    ],
+                ),
+            )
+
+            self.assertIsNotNone(picture_node)
+            with mock.patch("ui.pages.chart_page.MessageBox.exec", return_value=True):
+                self.win._on_tree_node_activated("picture", picture_node.id)
+
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.chart_page)
+        self.assertEqual(len(self.win.chart_page._chart_series), 1)
+        self.assertEqual(self.win.chart_page._chart_series[0]["name"], "restored")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 9. 组合信号流程测试 — 模拟完整工作流
 # ═══════════════════════════════════════════════════════════════════════════
@@ -7070,6 +7405,134 @@ class TestChartPageV3(unittest.TestCase):
             picture_node = next((n for n in self.p.tree.nodes if n.kind == "picture" and n.picture_id == picture.id), None)
             self.assertIsNotNone(picture_node)
             self.assertEqual(picture_node.parent_id, picture_root.id)
+
+    def test_export_to_picture_group_persists_plot_snapshot(self):
+        from ui.dialogs.export_flow import PictureExportPlan
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._x_label_edit.setText("Time")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "chart_snapshot.pyline"
+            self.pm.save(str(project_file))
+            picture_root = next(
+                n for n in self.p.tree.nodes
+                if n.kind == "folder" and getattr(n, "group_type", None) == "pictures"
+            )
+            self.page.on_tree_node_selected("folder", picture_root.id)
+            with mock.patch(
+                "ui.pages.chart_page.choose_picture_export_plan",
+                return_value=PictureExportPlan(export_name="chart.png", target_folder_id=picture_root.id),
+            ):
+                self.page._on_export_to_picture_group()
+
+            picture = self.p.pictures[0]
+            self.assertIsNotNone(picture.plot_snapshot)
+            self.assertEqual(picture.plot_snapshot.figure_state.x_label, "Time")
+            self.assertEqual(len(picture.plot_snapshot.series), 1)
+            self.assertEqual(picture.plot_snapshot.series[0].name, self.s.name)
+
+    def test_picture_activation_rejects_missing_plot_extension(self):
+        from models.schemas import FigureState, PicturePlotExtensionSnapshot, PicturePlotSeriesSnapshot, PicturePlotSnapshot
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "missing-extension.png"
+            picture_path.write_bytes(b"png")
+            snapshot = PicturePlotSnapshot(
+                figure_state=FigureState(x_label="Restored X"),
+                series=[
+                    PicturePlotSeriesSnapshot(
+                        curve_key="restored-curve",
+                        curve_identity="restored-curve",
+                        name="restored",
+                        display_name="restored",
+                        x=[1.0, 2.0],
+                        y=[2.0, 3.0],
+                    )
+                ],
+                applied_extensions=[
+                    PicturePlotExtensionSnapshot(
+                        id="plot-extension-1",
+                        type="missing-plot-extension",
+                        sequence=1,
+                        extension_version="1.0.0",
+                    )
+                ],
+            )
+            picture_node = self.pm.add_picture(str(picture_path), name="missing-extension.png", plot_snapshot=snapshot)
+
+            self.assertIsNotNone(picture_node)
+            self.page.on_tree_node_activated("series", self.s.id)
+            with mock.patch("ui.pages.chart_page.InfoBar.error") as error_mock, \
+                 mock.patch("ui.pages.chart_page.MessageBox.exec") as exec_mock:
+                self.page.on_tree_node_activated("picture", picture_node.id)
+
+        self.assertEqual(len(self.page._chart_series), 1)
+        self.assertEqual(self.page._chart_series[0]["name"], self.s.name)
+        error_mock.assert_called_once()
+        self.assertEqual(error_mock.call_args.args[1], "绘图中使用的扩展不存在或未加载")
+        exec_mock.assert_not_called()
+
+    def test_picture_activation_restores_snapshot_and_warns_on_version_mismatch(self):
+        from core.extension_api import PlotExtension, extension_registry
+        from models.schemas import FigureState, PicturePlotExtensionSnapshot, PicturePlotSeriesSnapshot, PicturePlotSnapshot
+
+        def _noop_extension(_context, _options):
+            return None
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="picture-restore-extension",
+                name="图片恢复扩展",
+                handler=_noop_extension,
+                version="2.0.0",
+            )
+        )
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                picture_path = Path(temp_dir) / "restore.png"
+                picture_path.write_bytes(b"png")
+                snapshot = PicturePlotSnapshot(
+                    figure_state=FigureState(x_label="Restored X", y_label="Restored Y"),
+                    curve_styles={"restored-curve": {"color": "#123456", "linewidth": 2.5}},
+                    series=[
+                        PicturePlotSeriesSnapshot(
+                            curve_key="restored-curve",
+                            curve_identity="restored-curve",
+                            name="restored",
+                            display_name="restored",
+                            x=[1.0, 2.0],
+                            y=[3.0, 4.0],
+                        )
+                    ],
+                    applied_extensions=[
+                        PicturePlotExtensionSnapshot(
+                            id="plot-extension-1",
+                            type="picture-restore-extension",
+                            sequence=1,
+                            options={"alpha": 0.3},
+                            extension_version="1.0.0",
+                        )
+                    ],
+                    selected_curve_key="restored-curve",
+                )
+                picture_node = self.pm.add_picture(str(picture_path), name="restore.png", plot_snapshot=snapshot)
+
+                self.assertIsNotNone(picture_node)
+                self.page.on_tree_node_activated("series", self.s.id)
+                with mock.patch("ui.pages.chart_page.InfoBar.warning") as warning_mock, \
+                     mock.patch("ui.pages.chart_page.MessageBox.exec", return_value=True), \
+                     mock.patch("ui.pages.chart_page.InfoBar.success") as success_mock:
+                    self.page.on_tree_node_activated("picture", picture_node.id)
+
+            self.assertEqual(len(self.page._chart_series), 1)
+            self.assertEqual(self.page._chart_series[0]["name"], "restored")
+            self.assertEqual(self.page._x_label_edit.text(), "Restored X")
+            self.assertEqual(self.page._curve_styles["restored-curve"]["color"], "#123456")
+            warning_mock.assert_called_once()
+            self.assertEqual(warning_mock.call_args.args[0], "扩展版本不一致")
+            success_mock.assert_called_once()
+        finally:
+            extension_registry.unregister_plot("picture-restore-extension")
 
     def test_project_modified_signal_emitted_on_save_template(self):
         """保存模板应发出 project_modified"""

@@ -44,6 +44,7 @@ from models.schemas import (
     AIAgent,
     ImageWork,
     PictureAsset,
+    PicturePlotSnapshot,
     PictureNode,
     Project,
 )
@@ -621,7 +622,14 @@ class ProjectManager:
             return ""
         return self.resolve_image_path(image, project)
 
-    def add_picture(self, image_path: str, name: Optional[str] = None, parent_id: Optional[str] = None) -> Optional[PictureNode]:
+    def add_picture(
+        self,
+        image_path: str,
+        name: Optional[str] = None,
+        parent_id: Optional[str] = None,
+        *,
+        plot_snapshot: Optional[PicturePlotSnapshot] = None,
+    ) -> Optional[PictureNode]:
         self._clear_last_operation_error()
         p = self.current_project
         if p is None:
@@ -642,6 +650,7 @@ class ProjectManager:
             id=str(uuid.uuid4()),
             name=picture_name,
             image_path=image_path,
+            plot_snapshot=plot_snapshot.model_copy(deep=True) if plot_snapshot is not None else None,
         )
         if p.file_path:
             self._backup_picture_for_project(picture, p.file_path, None, target_folder_id=parent_id)

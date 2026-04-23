@@ -17,6 +17,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.extension_api import normalize_extension_version
 from models.schemas import (
     AIAgent,
     AIPrompt,
@@ -179,6 +180,7 @@ class ExtensionConfigPreset(BaseModel):
     category: str
     extension_type: str
     extension_name: str
+    extension_version: str = "1.0.0"
     name: str = _DEFAULT_EXTENSION_CONFIG_NAME
     options: Dict[str, Any] = Field(default_factory=dict)
     is_default: bool = False
@@ -487,11 +489,13 @@ class GlobalAssetManager:
         extension_type: str,
         extension_name: str,
         options: Optional[Dict[str, Any]] = None,
+        extension_version: Optional[str] = None,
     ) -> ExtensionConfigPreset:
         normalized_category = _normalize_extension_category(category)
         normalized_type = _normalize_extension_type(extension_type)
         clean_extension_name = _normalize_extension_config_name(extension_name) or normalized_type
         clean_options = dict(options or {})
+        clean_version = normalize_extension_version(extension_version)
 
         for item in self.data.extension_configs:
             if _normalize_extension_category(item.category) == normalized_category and _normalize_extension_type(item.extension_type) == normalized_type:
@@ -503,6 +507,7 @@ class GlobalAssetManager:
                 category=normalized_category,
                 extension_type=normalized_type,
                 extension_name=clean_extension_name,
+                extension_version=clean_version,
                 name=_DEFAULT_EXTENSION_CONFIG_NAME,
                 options=clean_options,
                 is_default=True,
@@ -514,6 +519,9 @@ class GlobalAssetManager:
         changed = False
         if existing.extension_name != clean_extension_name:
             existing.extension_name = clean_extension_name
+            changed = True
+        if existing.extension_version != clean_version:
+            existing.extension_version = clean_version
             changed = True
         if existing.name != _DEFAULT_EXTENSION_CONFIG_NAME:
             existing.name = _DEFAULT_EXTENSION_CONFIG_NAME
@@ -534,12 +542,14 @@ class GlobalAssetManager:
         category: str,
         extension_type: str,
         extension_name: str,
+        extension_version: Optional[str] = None,
         name: str,
         options: Optional[Dict[str, Any]] = None,
     ) -> ExtensionConfigPreset:
         normalized_category = _normalize_extension_category(category)
         normalized_type = _normalize_extension_type(extension_type)
         clean_name = _normalize_extension_config_name(name)
+        clean_version = normalize_extension_version(extension_version)
         if not normalized_category or not normalized_type or not clean_name:
             raise ValueError("扩展配置保存信息不完整")
         if self.get_extension_config_by_name(normalized_category, normalized_type, clean_name) is not None:
@@ -548,6 +558,7 @@ class GlobalAssetManager:
             category=normalized_category,
             extension_type=normalized_type,
             extension_name=_normalize_extension_config_name(extension_name) or normalized_type,
+            extension_version=clean_version,
             name=clean_name,
             options=dict(options or {}),
             is_default=False,
@@ -562,6 +573,7 @@ class GlobalAssetManager:
         *,
         name: Optional[str] = None,
         options: Optional[Dict[str, Any]] = None,
+        extension_version: Optional[str] = None,
     ) -> Optional[ExtensionConfigPreset]:
         item = self.get_extension_config(config_id)
         if item is None:
@@ -582,6 +594,11 @@ class GlobalAssetManager:
         if options is not None and dict(item.options or {}) != dict(options):
             item.options = dict(options)
             changed = True
+        if extension_version is not None:
+            clean_version = normalize_extension_version(extension_version)
+            if item.extension_version != clean_version:
+                item.extension_version = clean_version
+                changed = True
         if changed:
             self.save()
         return item

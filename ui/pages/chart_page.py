@@ -38,12 +38,12 @@ from qfluentwidgets import (
     InfoBarPosition,
     LineEdit,
     ListWidget,
+    MessageBox,
     PrimaryPushButton,
     PushButton,
     RoundMenu,
     SmoothScrollArea,
     TabCloseButtonDisplayMode,
-    TabWidget,
     TeachingTip,
     TeachingTipTailPosition,
     TeachingTipView,
@@ -57,18 +57,30 @@ from core.global_assets import global_assets, make_plot_style_asset_key, parse_p
 from core.extension_api import (
     PlotExtensionContext,
     build_extension_entry,
+    compare_extension_versions,
     extension_registry,
     invoke_plot_extension_handler,
     reload_configured_extensions,
 )
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
-from models.schemas import AxisConfig, CurveStyle, CurveStyleTemplate, FigureConfig, FigureState
+from models.schemas import (
+    AxisConfig,
+    CurveStyle,
+    CurveStyleTemplate,
+    FigureConfig,
+    FigureState,
+    PicturePlotExtensionSnapshot,
+    PicturePlotExtraVersion,
+    PicturePlotSeriesSnapshot,
+    PicturePlotSnapshot,
+)
 from ui.dialogs.export_flow import choose_picture_export_plan
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.focus_commit import install_click_away_focus_commit
+from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color
 
@@ -257,15 +269,15 @@ class ChartPage(QWidget):
         left_layout.addWidget(self._chart_path_label)
 
         toolbar_row = QHBoxLayout()
-        self._btn_clear = ToolButton(FIF.DELETE, left_card)
+        self._btn_clear = PushButton(FIF.DELETE, "清除", left_card)
         self._btn_clear.setToolTip("清除当前画布中的所有曲线")
         self._btn_clear.clicked.connect(self._on_clear_chart)
-        self._btn_clear.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+        apply_button_metrics(self._btn_clear, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         toolbar_row.addWidget(self._btn_clear)
-        self._btn_remove = ToolButton(FIF.REMOVE, left_card)
+        self._btn_remove = PushButton(FIF.REMOVE, "移除选中", left_card)
         self._btn_remove.setToolTip("移除当前选中的曲线")
         self._btn_remove.clicked.connect(self._on_remove_selected)
-        self._btn_remove.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+        apply_button_metrics(self._btn_remove, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         toolbar_row.addWidget(self._btn_remove)
         self._btn_toggle_visible = ToolButton(_ICON_HIDE, left_card)
         self._btn_toggle_visible.setToolTip("隐藏当前曲线")
@@ -277,7 +289,7 @@ class ChartPage(QWidget):
 
         left_layout.addWidget(make_hsep(left_card))
 
-        self._style_tabs = TabWidget(left_card)
+        self._style_tabs = SegmentedStackWidget(left_card)
         self._style_tabs.tabBar.setAddButtonVisible(False)
         self._style_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
         self._style_tabs.addTab(self._build_curve_style_tab(left_card), "曲线样式")
@@ -592,6 +604,7 @@ class ChartPage(QWidget):
         self._style_opacity_edit.setPlaceholderText("1.0")
         self._style_opacity_edit.setEnabled(False)
         self._connect_line_edit_commit(self._style_opacity_edit, self._on_style_metrics_changed)
+        self._style_opacity_edit.textChanged.connect(lambda _text: self._on_style_metrics_changed())
         self._set_compact_edit_width(self._style_opacity_edit)
         opacity_row.addWidget(self._style_opacity_edit)
         opacity_row.addStretch()
@@ -888,10 +901,231 @@ class ChartPage(QWidget):
             return
         if kind.endswith("_to_chart"):
             kind = kind[:-9]
+        if kind == "picture":
+            self._load_picture_snapshot_from_node(node_id)
+            return
         series_list = project_manager.get_all_series_from_node(kind, node_id)
         if not series_list:
             return
         self._add_series_batch(series_list, source="tree")
+
+    def _build_picture_plot_snapshot(self) -> PicturePlotSnapshot:
+        state = self._sync_state_from_controls().model_copy(deep=True)
+        selected_curve = self._selected_curve()
+        series_entries: List[PicturePlotSeriesSnapshot] = []
+        for curve in self._chart_series:
+            y_err = curve.get("y_err")
+            series_entries.append(
+                PicturePlotSeriesSnapshot(
+                    curve_key=self._curve_key(curve),
+                    curve_identity=self._curve_identity(curve),
+                    name=str(curve.get("name") or ""),
+                    display_name=self._curve_display_name(curve),
+                    x=[float(value) for value in list(curve.get("x") or [])],
+                    y=[float(value) for value in list(curve.get("y") or [])],
+                    y_err=[float(value) for value in list(y_err)] if y_err is not None else None,
+                    color=str(curve.get("color") or ""),
+                    source=str(curve.get("source") or ""),
+                    obj_id=str(curve.get("obj_id") or ""),
+                    visible=bool(curve.get("visible", True)),
+                )
+            )
+
+        applied_extensions: List[PicturePlotExtensionSnapshot] = []
+        for applied in self._applied_plot_extensions:
+            type_id = str(applied.get("type") or "")
+            extension = extension_registry.get_plot(type_id)
+            applied_extensions.append(
+                PicturePlotExtensionSnapshot(
+                    id=str(applied.get("id") or ""),
+                    type=type_id,
+                    sequence=int(applied.get("sequence") or 0),
+                    options=copy.deepcopy(dict(applied.get("options") or {})),
+                    curve_identity=str(applied.get("curve_identity") or "") or None,
+                    curve_name=str(applied.get("curve_name") or ""),
+                    curve_display_name=str(applied.get("curve_display_name") or ""),
+                    extension_version=str(applied.get("extension_version") or getattr(extension, "version", "")),
+                )
+            )
+
+        return PicturePlotSnapshot(
+            style_change_sequence=int(self._style_change_sequence),
+            figure_state=state,
+            figure_state_change_versions={str(key): int(value) for key, value in self._figure_state_change_versions.items()},
+            plot_style_extras=copy.deepcopy(self._plot_style_extras),
+            plot_style_extra_versions=[
+                PicturePlotExtraVersion(path=list(path), sequence=int(sequence))
+                for path, sequence in self._plot_style_extra_versions.items()
+            ],
+            curve_styles={str(key): copy.deepcopy(dict(value)) for key, value in self._curve_styles.items()},
+            curve_style_change_versions={
+                str(identity): {str(key): int(sequence) for key, sequence in versions.items()}
+                for identity, versions in self._curve_style_change_versions.items()
+            },
+            series=series_entries,
+            applied_extensions=applied_extensions,
+            selected_curve_key=(self._curve_key(selected_curve) if selected_curve is not None else self._style_target),
+            applied_plot_style_ref=self._applied_plot_style_ref,
+            active_template_id=self._active_template_node_id,
+        )
+
+    def _picture_snapshot_for_node(self, node_id: str) -> tuple[Optional[object], Optional[PicturePlotSnapshot]]:
+        project = project_manager.current_project
+        if project is None or project.tree is None:
+            return None, None
+        node = project.tree.get_node(node_id)
+        if node is None or getattr(node, "kind", None) != "picture":
+            return None, None
+        picture_id = str(getattr(node, "picture_id", "") or "")
+        if not picture_id:
+            return None, None
+        picture = project_manager.get_picture(picture_id)
+        if picture is None:
+            return None, None
+        snapshot = picture.plot_snapshot.model_copy(deep=True) if picture.plot_snapshot is not None else None
+        return picture, snapshot
+
+    def _validate_picture_snapshot_extensions(self, snapshot: PicturePlotSnapshot) -> tuple[List[str], List[str]]:
+        missing: List[str] = []
+        mismatched: List[str] = []
+        for applied in snapshot.applied_extensions:
+            type_id = str(applied.type or "").strip()
+            if not type_id:
+                continue
+            extension = extension_registry.get_plot(type_id)
+            if extension is None:
+                missing.append(type_id)
+                continue
+            saved_version = str(applied.extension_version or "").strip()
+            current_version = str(getattr(extension, "version", "") or "").strip()
+            if saved_version and current_version and compare_extension_versions(saved_version, current_version) != 0:
+                mismatched.append(f"{extension.name} {saved_version} -> {current_version}")
+        return missing, mismatched
+
+    def _set_current_curve_item_by_key(self, curve_key: Optional[str]) -> None:
+        target_key = str(curve_key or "").strip()
+        if not target_key:
+            return
+        for index in range(self._chart_list.count()):
+            item = self._chart_list.item(index)
+            if str(item.data(Qt.ItemDataRole.UserRole) or "") == target_key:
+                self._chart_list.setCurrentItem(item)
+                return
+
+    def _restore_picture_plot_snapshot(self, snapshot: PicturePlotSnapshot) -> None:
+        restored_series: List[Dict[str, Any]] = []
+        for index, entry in enumerate(snapshot.series, start=1):
+            curve_key = str(entry.curve_key or entry.curve_identity or entry.obj_id or f"picture-curve-{index}")
+            restored_series.append(
+                {
+                    "curve_key": curve_key,
+                    "name": entry.name or f"曲线{index}",
+                    "display_name": entry.display_name or entry.name or f"曲线{index}",
+                    "x": [float(value) for value in entry.x],
+                    "y": [float(value) for value in entry.y],
+                    "y_err": [float(value) for value in entry.y_err] if entry.y_err is not None else None,
+                    "color": entry.color,
+                    "obj_id": entry.obj_id,
+                    "source": entry.source,
+                    "visible": bool(entry.visible),
+                }
+            )
+
+        self._chart_series = restored_series
+        self._curve_styles = {str(key): copy.deepcopy(dict(value)) for key, value in snapshot.curve_styles.items()}
+        self._curve_style_change_versions = {
+            str(identity): {str(key): int(sequence) for key, sequence in versions.items()}
+            for identity, versions in snapshot.curve_style_change_versions.items()
+        }
+        self._figure_state_change_versions = {
+            str(key): int(value) for key, value in snapshot.figure_state_change_versions.items()
+        }
+        self._plot_style_extras = copy.deepcopy(snapshot.plot_style_extras)
+        self._plot_style_extra_versions = {
+            tuple(str(part) for part in entry.path if str(part)): int(entry.sequence)
+            for entry in snapshot.plot_style_extra_versions
+            if entry.path
+        }
+
+        self._applied_plot_extensions = []
+        self._plot_extension_options = {}
+        self._plot_extension_instance_seed = 0
+        max_sequence = int(snapshot.style_change_sequence)
+        for index, applied in enumerate(snapshot.applied_extensions, start=1):
+            instance_id = str(applied.id or f"plot-extension-{index}")
+            self._applied_plot_extensions.append(
+                {
+                    "id": instance_id,
+                    "type": str(applied.type or ""),
+                    "sequence": int(applied.sequence),
+                    "options": copy.deepcopy(dict(applied.options or {})),
+                    "curve_identity": applied.curve_identity,
+                    "curve_name": applied.curve_name,
+                    "curve_display_name": applied.curve_display_name,
+                    "extension_version": applied.extension_version,
+                }
+            )
+            if applied.type:
+                self._plot_extension_options[str(applied.type)] = copy.deepcopy(dict(applied.options or {}))
+            try:
+                if instance_id.startswith("plot-extension-"):
+                    self._plot_extension_instance_seed = max(
+                        self._plot_extension_instance_seed,
+                        int(instance_id.rsplit("-", 1)[1]),
+                    )
+            except Exception:
+                self._plot_extension_instance_seed = max(self._plot_extension_instance_seed, index)
+            max_sequence = max(max_sequence, int(applied.sequence))
+
+        self._style_change_sequence = max_sequence
+        self._style_target = None
+        self._active_template_node_id = snapshot.active_template_id
+        self._applied_plot_style_ref = snapshot.applied_plot_style_ref
+        self._active_curve_style_ref = None
+        self._active_curve_style_template_id = None
+        self._apply_figure_state(snapshot.figure_state.model_copy(deep=True))
+        self._refresh_curve_style_template_combo()
+        self._refresh_chart_list()
+        self._set_current_curve_item_by_key(snapshot.selected_curve_key)
+        self._refresh_plot_extension_list()
+        self._refresh_style_extension_panel()
+        self._redraw_now()
+
+    def _load_picture_snapshot_from_node(self, node_id: str) -> bool:
+        picture, snapshot = self._picture_snapshot_for_node(node_id)
+        if picture is None:
+            return False
+        if snapshot is None:
+            InfoBar.warning("提示", "当前图片未保存绘图信息", parent=self, position=InfoBarPosition.TOP)
+            return False
+
+        missing_extensions, mismatched_versions = self._validate_picture_snapshot_extensions(snapshot)
+        if missing_extensions:
+            InfoBar.error(
+                "发送失败",
+                "绘图中使用的扩展不存在或未加载",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return False
+        if mismatched_versions:
+            InfoBar.warning(
+                "扩展版本不一致",
+                "；".join(mismatched_versions),
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+        if not MessageBox("确认覆盖当前绘图", "是否确认覆盖当前绘图？", self).exec():
+            return False
+
+        self._restore_picture_plot_snapshot(snapshot)
+        InfoBar.success(
+            "已发送到可视化",
+            str(getattr(picture, "name", "") or "已恢复图片绘图"),
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
+        return True
 
     def _add_series_batch(self, series_list: List, source: str) -> None:
         added = False
@@ -998,6 +1232,21 @@ class ChartPage(QWidget):
         entry["style"] = copy.deepcopy(style_payload if style_payload is not None else self._current_curve_style_payload(curve))
         return entry
 
+    def _plot_context_series_entries(
+        self,
+        curves: List[dict],
+        style_payloads: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        entries: List[Dict[str, Any]] = []
+        for curve in curves:
+            entry = self._plot_context_series_entry(
+                curve,
+                style_payload=style_payloads.get(self._curve_identity(curve), {}),
+            )
+            if entry is not None:
+                entries.append(entry)
+        return entries
+
     def _effective_plot_figure_state_payload(
         self,
         base_payload: Dict[str, Any],
@@ -1058,7 +1307,7 @@ class ChartPage(QWidget):
 
     def _update_selected_curve_path_label(self, curve: Optional[dict]) -> None:
         path = self._curve_tree_path_label(curve)
-        self._chart_path_label.setText(f"当前选中：{path}")
+        self._chart_path_label.setText(f"路径：{path}")
         self._chart_path_label.setToolTip(path if path not in {"—", "未关联项目树"} else "")
 
     @staticmethod
@@ -1141,6 +1390,7 @@ class ChartPage(QWidget):
 
     def _build_applied_plot_extension(self, type_id: str, options: Dict[str, Any]) -> Dict[str, Any]:
         target_curve = self._selected_curve()
+        extension = extension_registry.get_plot(type_id)
         return {
             "id": self._next_plot_extension_instance_id(),
             "type": type_id,
@@ -1149,6 +1399,7 @@ class ChartPage(QWidget):
             "curve_identity": self._curve_identity(target_curve) if target_curve is not None else None,
             "curve_name": target_curve.get("name") if target_curve is not None else None,
             "curve_display_name": self._curve_display_name(target_curve) if target_curve is not None else "",
+            "extension_version": str(getattr(extension, "version", "")),
         }
 
     def _applied_plot_extension_label(self, entry: Dict[str, Any], index: int) -> str:
@@ -2258,13 +2509,7 @@ class ChartPage(QWidget):
             canvas=self._canvas,
             axis=axis,
             axes=[axis],
-            visible_series=[
-                self._plot_context_series_entry(
-                    curve,
-                    style_payload=context_curve_style_payloads.get(self._curve_identity(curve), {}),
-                )
-                for curve in initial_visible_series
-            ],
+            visible_series=self._plot_context_series_entries(initial_visible_series, context_curve_style_payloads),
             plotted_series=plotted_series,
             selected_series=(
                 self._plot_context_series_entry(
@@ -2327,13 +2572,7 @@ class ChartPage(QWidget):
         plot_context.figure_state = copy.deepcopy(effective_state_payload)
         plot_context.plot_style_extras = copy.deepcopy(effective_plot_style_extras)
         plot_context.theme_colors = {"background": bg, "foreground": fg, "grid": grid_color}
-        plot_context.visible_series = [
-            self._plot_context_series_entry(
-                curve,
-                style_payload=effective_curve_style_payloads.get(self._curve_identity(curve), {}),
-            )
-            for curve in visible_series
-        ]
+        plot_context.visible_series = self._plot_context_series_entries(visible_series, effective_curve_style_payloads)
         plot_context.selected_series = (
             self._plot_context_series_entry(
                 selected_curve,
@@ -2702,7 +2941,12 @@ class ChartPage(QWidget):
         if not self._save_figure_to_path(file_path):
             return
         target_folder_id = project_manager.get_picture_target_folder_id(export_plan.target_folder_id)
-        node = project_manager.add_picture(file_path, name=Path(file_path).name, parent_id=target_folder_id)
+        node = project_manager.add_picture(
+            file_path,
+            name=Path(file_path).name,
+            parent_id=target_folder_id,
+            plot_snapshot=self._build_picture_plot_snapshot(),
+        )
         if node is None:
             InfoBar.error("导出失败", "图片记录写入项目失败", parent=self, position=InfoBarPosition.TOP)
             return

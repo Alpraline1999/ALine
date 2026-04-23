@@ -25,7 +25,7 @@ from qfluentwidgets import (
 )
 
 from core.global_assets import global_assets
-from core.extension_api import format_extension_load_report, get_extension_load_status
+from core.extension_api import compare_extension_versions, format_extension_load_report, get_extension_load_status, normalize_extension_version
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.theme import (
@@ -306,6 +306,7 @@ class ExtensionConfigPanel(QWidget):
         self._saved_options[target_type] = dict(config_item.options or {})
         self._refresh_config_selector(target_type)
         self._editor.setPlainText(json.dumps(dict(config_item.options or {}), ensure_ascii=False, indent=2))
+        self._warn_if_outdated_config_version(self._entry_for_type(target_type), config_item)
         return True
 
     def current_options(self) -> Dict[str, Any]:
@@ -329,6 +330,30 @@ class ExtensionConfigPanel(QWidget):
             return {}
         return dict(entry.get("default_options") or {})
 
+    def _entry_version(self, entry: Optional[dict]) -> str:
+        if entry is None:
+            return normalize_extension_version(None)
+        try:
+            return normalize_extension_version(str(entry.get("version") or ""))
+        except ValueError:
+            return normalize_extension_version(None)
+
+    def _warn_if_outdated_config_version(self, entry: Optional[dict], config_item: Optional[Any]) -> None:
+        if entry is None or config_item is None:
+            return
+        current_version = self._entry_version(entry)
+        try:
+            saved_version = normalize_extension_version(str(getattr(config_item, "extension_version", "") or ""))
+        except ValueError:
+            saved_version = normalize_extension_version(None)
+        if compare_extension_versions(saved_version, current_version) < 0:
+            InfoBar.warning(
+                "配置版本较旧",
+                f'配置 "{config_item.name}" 的版本 {saved_version} 低于当前扩展版本 {current_version}，请检查参数兼容性',
+                parent=self._notification_parent(),
+                position=InfoBarPosition.TOP,
+            )
+
     def _preset_items_for_type(self, type_id: Optional[str]) -> List[Any]:
         if not self._config_category or not type_id:
             return []
@@ -349,6 +374,7 @@ class ExtensionConfigPanel(QWidget):
                 type_id,
                 str(entry.get("name") or type_id),
                 dict(entry.get("default_options") or {}),
+                extension_version=self._entry_version(entry),
             )
 
     def _refresh_config_selector(self, type_id: Optional[str]) -> None:
@@ -516,6 +542,7 @@ class ExtensionConfigPanel(QWidget):
         self._selected_config_ids[type_id] = config_item.id
         self._saved_options[type_id] = dict(config_item.options or {})
         self._editor.setPlainText(json.dumps(dict(config_item.options or {}), ensure_ascii=False, indent=2))
+        self._warn_if_outdated_config_version(self._entry_for_type(type_id), config_item)
 
     def _save_current_as_config(self) -> None:
         type_id = self.current_type()
@@ -535,6 +562,7 @@ class ExtensionConfigPanel(QWidget):
                 category=self._config_category,
                 extension_type=type_id,
                 extension_name=str(entry.get("name") or type_id),
+                extension_version=self._entry_version(entry),
                 name=name,
                 options=options,
             )
@@ -559,7 +587,11 @@ class ExtensionConfigPanel(QWidget):
         except ValueError as exc:
             InfoBar.error("覆盖失败", str(exc), parent=self._notification_parent(), position=InfoBarPosition.TOP)
             return
-        global_assets.update_extension_config(config_item.id, options=options)
+        global_assets.update_extension_config(
+            config_item.id,
+            options=options,
+            extension_version=self._entry_version(self._entry_for_type(type_id)),
+        )
         self._selected_config_ids[type_id] = config_item.id
         self._refresh_config_selector(type_id)
         self.configs_changed.emit()

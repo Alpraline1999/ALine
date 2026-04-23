@@ -81,6 +81,7 @@ class PictureAsset(BaseModel):
     name: str = ""
     image_path: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    plot_snapshot: Optional["PicturePlotSnapshot"] = None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -214,6 +215,66 @@ class FigureState(BaseModel):
     legend_font_size: int = 8
     line_width: float = 1.4
     marker_size: float = 5.0
+
+
+class PicturePlotExtraVersion(BaseModel):
+    """图片绘图快照中记录的扩展样式覆盖版本。"""
+    model_config = ConfigDict(extra="ignore")
+
+    path: List[str] = Field(default_factory=list)
+    sequence: int = 0
+
+
+class PicturePlotSeriesSnapshot(BaseModel):
+    """图片绘图快照中的单条曲线数据。"""
+    model_config = ConfigDict(extra="ignore")
+
+    curve_key: str = ""
+    curve_identity: str = ""
+    name: str = ""
+    display_name: str = ""
+    x: List[float] = Field(default_factory=list)
+    y: List[float] = Field(default_factory=list)
+    y_err: Optional[List[float]] = None
+    color: str = "#0078D4"
+    source: str = ""
+    obj_id: str = ""
+    visible: bool = True
+
+
+class PicturePlotExtensionSnapshot(BaseModel):
+    """图片绘图快照中的扩展加载记录。"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    type: str = ""
+    sequence: int = 0
+    options: Dict[str, Any] = Field(default_factory=dict)
+    curve_identity: Optional[str] = None
+    curve_name: str = ""
+    curve_display_name: str = ""
+    extension_version: str = ""
+
+
+class PicturePlotSnapshot(BaseModel):
+    """图片节点保存的完整绘图快照。"""
+    model_config = ConfigDict(extra="ignore")
+
+    style_change_sequence: int = 0
+    figure_state: FigureState = Field(default_factory=FigureState)
+    figure_state_change_versions: Dict[str, int] = Field(default_factory=dict)
+    plot_style_extras: Dict[str, Any] = Field(default_factory=dict)
+    plot_style_extra_versions: List[PicturePlotExtraVersion] = Field(default_factory=list)
+    curve_styles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    curve_style_change_versions: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    series: List[PicturePlotSeriesSnapshot] = Field(default_factory=list)
+    applied_extensions: List[PicturePlotExtensionSnapshot] = Field(default_factory=list)
+    selected_curve_key: Optional[str] = None
+    applied_plot_style_ref: Optional[str] = None
+    active_template_id: Optional[str] = None
+
+
+PictureAsset.model_rebuild()
 
 
 class CurveStyle(BaseModel):

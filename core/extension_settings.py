@@ -16,6 +16,8 @@ class ExtensionSettings(BaseModel):
     external_extensions_dir: str = ""
     load_builtin_extensions: bool = True
     disabled_builtin_extensions: list[str] = Field(default_factory=list)
+    load_external_extensions: bool = True
+    disabled_external_extensions: list[str] = Field(default_factory=list)
 
     @classmethod
     def load(cls) -> "ExtensionSettings":
@@ -48,6 +50,10 @@ def _normalize_builtin_extension_ids(extension_ids: Iterable[str] | None) -> lis
     return normalized
 
 
+def _normalize_external_extension_ids(extension_ids: Iterable[str] | None) -> list[str]:
+    return _normalize_builtin_extension_ids(extension_ids)
+
+
 def _normalize_extension_directory(directory: str | Path | None) -> Path:
     raw = str(directory or "").strip()
     path = Path(raw).expanduser() if raw else default_external_extensions_directory()
@@ -72,6 +78,19 @@ def set_external_extensions_directory(directory: str | Path | None) -> Path:
     settings.external_extensions_dir = str(normalized)
     settings.save()
     return normalized
+
+
+def get_external_extension_settings() -> tuple[bool, list[str]]:
+    settings = ExtensionSettings.load()
+    return bool(settings.load_external_extensions), _normalize_external_extension_ids(settings.disabled_external_extensions)
+
+
+def set_external_extension_settings(load_external: bool, disabled_extension_ids: Iterable[str] | None = None) -> ExtensionSettings:
+    settings = ExtensionSettings.load()
+    settings.load_external_extensions = bool(load_external)
+    settings.disabled_external_extensions = _normalize_external_extension_ids(disabled_extension_ids)
+    settings.save()
+    return settings
 
 
 def get_builtin_extension_settings() -> tuple[bool, list[str]]:

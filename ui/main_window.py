@@ -686,7 +686,7 @@ class MainWindow(FluentWindow):
             if hasattr(self.analysis_page, 'load_analysis_result'):
                 self.analysis_page.load_analysis_result(node_id)
         elif kind in ("data_file_to_chart", "image_work_to_chart",
-                       "series_to_chart", "curve_to_chart"):
+                       "series_to_chart", "curve_to_chart", "picture_to_chart", "picture"):
             self.switchTo(self.chart_page)
             if hasattr(self.chart_page, 'on_tree_node_activated'):
                 self.chart_page.on_tree_node_activated(kind, node_id)

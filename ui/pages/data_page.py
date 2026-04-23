@@ -2497,6 +2497,49 @@ class DataPage(QWidget):
         self._set_preview_summary([line for line in stats_text.splitlines() if line.strip()])
         return True
 
+    def _show_picture_preview(self, node_id: str) -> bool:
+        project = project_manager.current_project
+        if project is None or project.tree is None:
+            return False
+        node = project.tree.get_node(node_id)
+        if node is None or node.kind != "picture":
+            return False
+        picture_id = getattr(node, "picture_id", "")
+        if not picture_id:
+            return False
+        picture = project_manager.get_picture(picture_id)
+        if picture is None:
+            return False
+
+        picture_path = project_manager.get_picture_path(picture.id)
+        self._show_preview_mode()
+        self._preview_image_path = None
+        self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
+        self._set_preview_plot_type_controls_visible(False)
+        self._hide_source_path_links()
+        self._preview_stack.setCurrentWidget(self._image_preview_label)
+        if not self._update_preview_image_from_path(picture_path):
+            self._image_preview_label.setPixmap(QPixmap())
+            self._image_preview_label.setText(f"无法加载图片预览\n\n{picture_path or '未找到图片路径'}")
+            stats_lines = [f"图片名称: {picture.name}", "预览状态: 加载失败"]
+        else:
+            pixmap = QPixmap(picture_path)
+            stats_lines = [
+                f"图片名称: {picture.name}",
+                f"尺寸: {pixmap.width()} × {pixmap.height()} px",
+            ]
+        if picture.plot_snapshot is not None:
+            stats_lines.append(f"绘图快照: {len(picture.plot_snapshot.series)} 条曲线")
+        else:
+            stats_lines.append("绘图快照: 未保存")
+
+        self._preview_name = picture.name
+        self._preview_xs = []
+        self._preview_ys = []
+        self._set_preview_summary(stats_lines)
+        return True
+
     def _show_folder_preview(self, node) -> None:
         project = project_manager.current_project
         if project is None or project.tree is None or node is None:
@@ -3211,6 +3254,12 @@ class DataPage(QWidget):
                 self._set_actions_enabled(False)
                 self._refresh_management_panel()
                 return
+        if kind == "picture" and self._show_picture_preview(node_id):
+            self._selected_type = None
+            self._selected_id = None
+            self._set_actions_enabled(False)
+            self._refresh_management_panel()
+            return
         if kind == "analysis_result" and self._show_analysis_result_preview(node_id):
             self._selected_type = None
             self._selected_id = None

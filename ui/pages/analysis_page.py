@@ -38,6 +38,7 @@ from core.analysis_engine import list_report_template_placeholders, run_analysis
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.focus_commit import install_click_away_focus_commit
+from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, accent_color, apply_button_metrics, make_hint_label, make_section_label, make_hsep, placeholder_color
 from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
@@ -428,7 +429,7 @@ class AnalysisPage(QWidget):
         rv = QVBoxLayout(panel)
         rv.setContentsMargins(14, 14, 14, 14)
         rv.setSpacing(8)
-        self._result_tabs = TabWidget(panel)
+        self._result_tabs = SegmentedStackWidget(panel)
         self._result_tabs.tabBar.setAddButtonVisible(False)
         self._result_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
 
@@ -460,7 +461,7 @@ class AnalysisPage(QWidget):
 
         template_row = QHBoxLayout()
         self._report_template_combo = ComboBox(panel)
-        template_row.addWidget(self._report_template_combo, 1)
+        template_row.addWidget(self._report_template_combo)
         self._btn_load_report_template = ToolButton(FIF.FOLDER, panel)
         self._btn_load_report_template.setToolTip("加载选中的报告模板")
         self._btn_load_report_template.clicked.connect(self._load_selected_report_template)
@@ -473,16 +474,18 @@ class AnalysisPage(QWidget):
         self._btn_save_report_template_as.setToolTip("另存为新的报告模板")
         self._btn_save_report_template_as.clicked.connect(self._save_report_template_as)
         template_row.addWidget(self._btn_save_report_template_as)
+        template_row.addStretch(1)
         report_layout.addLayout(template_row)
 
         placeholder_row = QHBoxLayout()
         self._report_placeholder_combo = EditableComboBox(panel)
         self._configure_report_placeholder_combo()
         self._report_placeholder_combo.currentIndexChanged.connect(self._on_report_placeholder_changed)
-        placeholder_row.addWidget(self._report_placeholder_combo, 1)
+        placeholder_row.addWidget(self._report_placeholder_combo)
         self._btn_insert_report_placeholder = PushButton(FIF.ADD, "插入占位符", panel)
         self._btn_insert_report_placeholder.clicked.connect(self._insert_selected_report_placeholder)
         placeholder_row.addWidget(self._btn_insert_report_placeholder)
+        placeholder_row.addStretch(1)
         report_layout.addLayout(placeholder_row)
 
         self._report_placeholder_hint = CaptionLabel("", panel)
@@ -524,6 +527,7 @@ class AnalysisPage(QWidget):
         self._apply_report_preview_theme()
 
         self._refresh_report_placeholder_choices()
+        self._sync_report_combo_widths()
 
         self._result_tabs.addTab(result_tab, "分析结果")
         self._result_tabs.addTab(report_tab, "生成报告")
@@ -615,6 +619,18 @@ class AnalysisPage(QWidget):
         self._set_summary_rows(peak_meta_table, [("状态", "（运行峰谷检测后显示结果）")])
         self._set_peak_points_rows(peak_points_table, [], [])
         return view
+
+    def _sync_report_combo_widths(self) -> None:
+        if not hasattr(self, "_report_template_combo") or not hasattr(self, "_report_placeholder_combo"):
+            return
+        shared_width = max(
+            self._report_template_combo.sizeHint().width(),
+            self._report_placeholder_combo.sizeHint().width(),
+            280,
+        )
+        shared_width = min(shared_width, 360)
+        self._report_template_combo.setFixedWidth(shared_width)
+        self._report_placeholder_combo.setFixedWidth(shared_width)
 
     @staticmethod
     def _configure_result_table(table: TableWidget, headers: List[str]) -> None:

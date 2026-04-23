@@ -1,8 +1,11 @@
+from pathlib import Path
+
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QFrame
-from PySide6.QtCore import Qt, Signal
-from qfluentwidgets import (PrimaryPushButton, PushButton, FluentIcon as FIF,
+from qfluentwidgets import (HyperlinkCard, PrimaryPushButton, PushButton, FluentIcon as FIF,
     BodyLabel, LargeTitleLabel, SubtitleLabel, SmoothScrollArea,
-    InfoBar, TeachingTipTailPosition)
+    InfoBar, TeachingTipTailPosition, isDarkTheme)
 
 from core.extension_api import get_extension_load_status
 from core.ui_preferences import is_home_onboarding_completed, set_home_onboarding_completed
@@ -28,6 +31,62 @@ from ui.widgets.extension_panel import show_extension_load_report_dialog
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 
 
+class _HomeBannerWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(288)
+        self._background = QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "aline_home_background.png"))
+        self._link_cards = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(0)
+        layout.addStretch(1)
+
+        card_row = QHBoxLayout()
+        card_row.setSpacing(14)
+        card_row.setContentsMargins(0, 0, 0, 0)
+        for title, icon in (
+            ("软件主页", getattr(FIF, "HOME", FIF.LINK)),
+            ("GitHub 仓库", FIF.GITHUB),
+        ):
+            card = HyperlinkCard("", "", icon, title, "", self)
+            card.setFixedWidth(250)
+            self._link_cards.append(card)
+            card_row.addWidget(card)
+        card_row.addStretch(1)
+        layout.addLayout(card_row)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        path = QPainterPath()
+        rect = QRectF(self.rect())
+        path.addRoundedRect(rect, 18, 18)
+
+        if not self._background.isNull():
+            pixmap = self._background.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            painter.fillPath(path, QBrush(pixmap))
+        else:
+            fallback = QColor(224, 232, 242) if not isDarkTheme() else QColor(24, 28, 34)
+            painter.fillPath(path, fallback)
+
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        if isDarkTheme():
+            gradient.setColorAt(0.0, QColor(0, 0, 0, 96))
+            gradient.setColorAt(1.0, QColor(0, 0, 0, 168))
+        else:
+            gradient.setColorAt(0.0, QColor(255, 255, 255, 18))
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 148))
+        painter.fillPath(path, QBrush(gradient))
+
+    def update_theme(self) -> None:
+        self.update()
+
+
 class HomePage(QWidget):
     """首页 - 项目列表/新建/打开"""
 
@@ -37,6 +96,7 @@ class HomePage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._banner = None
         self._title = None
         self._subtitle = None
         self._recent_label = None
@@ -63,6 +123,9 @@ class HomePage(QWidget):
         layout.setSpacing(20)
         # 左侧边距需要足够大，避免被导航栏遮挡
         layout.setContentsMargins(40, 40, 40, 40)
+
+        self._banner = _HomeBannerWidget(self)
+        layout.addWidget(self._banner)
 
         # 标题
         self._title = LargeTitleLabel("ALine", self)
@@ -164,6 +227,8 @@ class HomePage(QWidget):
         self._no_recent.setStyleSheet(f"color: {pc}; font-size: 12px;")
         if self._status_bar is not None:
             self._status_bar.setStyleSheet(f"background: transparent; border-top: 1px solid {border_color()};")
+        if self._banner is not None:
+            self._banner.update_theme()
 
     def refresh_recent(self):
         """刷新最近项目列表"""
@@ -281,6 +346,12 @@ class HomePage(QWidget):
 
     def _home_onboarding_steps(self) -> list[OnboardingStep]:
         return [
+            OnboardingStep(
+                lambda: self._banner,
+                TeachingTipTailPosition.BOTTOM,
+                "主页入口留在这里",
+                "顶部 Banner 预留了软件主页和 GitHub 仓库卡片，后续可直接补充链接和封面。",
+            ),
             OnboardingStep(
                 lambda: self._new_btn,
                 TeachingTipTailPosition.BOTTOM,

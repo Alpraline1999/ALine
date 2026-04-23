@@ -315,6 +315,55 @@ class TestProjectManager(unittest.TestCase):
             reopened_asset = reopened.source_files[0]
             self.assertEqual(reopened_asset.source_file_path, expected_origin)
 
+    def test_picture_plot_snapshot_survives_save_and_reopen(self):
+        from models.schemas import FigureState, PicturePlotExtensionSnapshot, PicturePlotSeriesSnapshot, PicturePlotSnapshot
+
+        p = self.pm.create_new("picture_snapshot")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "picture_snapshot.aline"
+            self.pm.save(str(project_file))
+
+            picture_path = Path(temp_dir) / "chart.png"
+            picture_path.write_bytes(b"png")
+            snapshot = PicturePlotSnapshot(
+                figure_state=FigureState(x_label="Time", y_label="Value"),
+                series=[
+                    PicturePlotSeriesSnapshot(
+                        curve_key="curve-1",
+                        curve_identity="curve-1",
+                        name="series-a",
+                        display_name="series-a",
+                        x=[1.0, 2.0],
+                        y=[3.0, 4.0],
+                    )
+                ],
+                applied_extensions=[
+                    PicturePlotExtensionSnapshot(
+                        id="plot-extension-1",
+                        type="probe-extension",
+                        sequence=1,
+                        options={"factor": 2},
+                        extension_version="1.2.3",
+                    )
+                ],
+            )
+
+            node = self.pm.add_picture(str(picture_path), name="chart.png", plot_snapshot=snapshot)
+
+            self.assertIsNotNone(node)
+            self.assertIsNotNone(p.pictures[0].plot_snapshot)
+
+            self.pm.save(str(project_file))
+            self.pm.close_current_project()
+            reopened = self.pm.open(str(project_file))
+
+            reopened_picture = reopened.pictures[0]
+            self.assertIsNotNone(reopened_picture.plot_snapshot)
+            self.assertEqual(reopened_picture.plot_snapshot.figure_state.x_label, "Time")
+            self.assertEqual(len(reopened_picture.plot_snapshot.series), 1)
+            self.assertEqual(reopened_picture.plot_snapshot.series[0].name, "series-a")
+            self.assertEqual(reopened_picture.plot_snapshot.applied_extensions[0].extension_version, "1.2.3")
+
     def test_migrate_to_v3_removes_legacy_tools_folder(self):
         from models.schemas import FolderNode, ProjectTree
 
@@ -1565,6 +1614,53 @@ class TestAnalysisEngine(unittest.TestCase):
                 extension_registry.unregister_processing("builtin_probe")
                 extension_registry.unregister_analysis("external_probe")
 
+    def test_configured_external_extension_files_respect_saved_enable_and_disable_state(self):
+        from core.extension_api import configured_external_extension_files, list_external_extension_specs
+        from core.extension_settings import set_external_extension_settings, set_external_extensions_directory
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "extension_settings.json"
+            external_dir = Path(temp_dir) / "external_extensions"
+            external_dir.mkdir()
+            (external_dir / "external_enabled.py").write_text(textwrap.dedent(
+                """
+                from core.extension_api import PlotExtension
+
+                def _plot(axis, lines, params):
+                    return None
+
+                def register_extensions(registry):
+                    registry.register_plot(
+                        PlotExtension(type='external_enabled', name='外部已启用', handler=_plot)
+                    )
+                """
+            ), encoding="utf-8")
+            (external_dir / "external_disabled.py").write_text(textwrap.dedent(
+                """
+                from core.extension_api import PlotExtension
+
+                def _plot(axis, lines, params):
+                    return None
+
+                def register_extensions(registry):
+                    registry.register_plot(
+                        PlotExtension(type='external_disabled', name='外部已禁用', handler=_plot)
+                    )
+                """
+            ), encoding="utf-8")
+
+            with mock.patch("core.extension_settings._CONFIG_PATH", config_path):
+                set_external_extensions_directory(external_dir)
+                set_external_extension_settings(True, ["external_disabled"])
+                files = configured_external_extension_files()
+                specs = list_external_extension_specs()
+
+                self.assertEqual([path.stem for path in files], ["external_enabled"])
+                self.assertEqual(
+                    {item["id"]: item["enabled"] for item in specs},
+                    {"external_disabled": False, "external_enabled": True},
+                )
+
     def test_reload_builtin_extensions_replaces_previous_registry_entries(self):
         from core.extension_api import default_extensions_directory, extension_registry, reload_builtin_extensions
 
@@ -1609,6 +1705,50 @@ class TestAnalysisEngine(unittest.TestCase):
 
         extension_registry.clear()
         extension_registry.load_from_directory(default_extensions_directory())
+
+    def test_extension_registry_rejects_invalid_version_format(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+
+        def _noop(xs, ys, params):
+            return list(xs), list(ys)
+
+        with self.assertRaisesRegex(ValueError, "x.x.x"):
+            extension_registry.register_processing(
+                ProcessingExtension(type="invalid_version_probe", name="非法版本", handler=_noop, version="1.0")
+            )
+
+    def test_global_asset_extension_configs_preserve_extension_version(self):
+        from core.global_assets import GlobalAssetManager
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = GlobalAssetManager(Path(temp_dir) / "global_assets.json")
+            default_config = manager.ensure_extension_default_config(
+                "processing",
+                "version_probe",
+                "版本探针",
+                {"factor": 2},
+                extension_version="1.2.3",
+            )
+            saved = manager.add_extension_config(
+                category="processing",
+                extension_type="version_probe",
+                extension_name="版本探针",
+                extension_version="1.2.3",
+                name="方案A",
+                options={"factor": 8},
+            )
+
+            self.assertEqual(default_config.extension_version, "1.2.3")
+            self.assertEqual(saved.extension_version, "1.2.3")
+
+            updated = manager.update_extension_config(
+                saved.id,
+                options={"factor": 9},
+                extension_version="1.3.0",
+            )
+
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated.extension_version, "1.3.0")
 
     def test_repository_demo_extensions_and_json_samples_are_valid(self):
         from core.extension_api import ExtensionRegistry, default_extensions_directory

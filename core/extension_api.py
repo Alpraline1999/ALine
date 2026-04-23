@@ -5,12 +5,15 @@ from importlib import util as importlib_util
 import inspect
 import copy
 from pathlib import Path
+import re
 from types import ModuleType
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import hashlib
 
 
 XY = Tuple[List[float], List[float]]
+DEFAULT_EXTENSION_VERSION = "1.0.0"
+_EXTENSION_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 
 _EXTENSION_CATEGORY_LABELS = {
     "processing": "处理扩展",
@@ -32,6 +35,29 @@ _EXTENSION_SOURCE_HINTS = {
 
 def _extension_name_key(name: str) -> str:
     return str(name or "").strip().casefold()
+
+
+def normalize_extension_version(version: str | None, *, default: str = DEFAULT_EXTENSION_VERSION) -> str:
+    clean = str(version or "").strip() or default
+    if not _EXTENSION_VERSION_PATTERN.fullmatch(clean):
+        raise ValueError("扩展 version 必须是 x.x.x 格式")
+    return clean
+
+
+def parse_extension_version(version: str | None) -> Tuple[int, int, int]:
+    normalized = normalize_extension_version(version)
+    major, minor, patch = normalized.split(".")
+    return int(major), int(minor), int(patch)
+
+
+def compare_extension_versions(left: str | None, right: str | None) -> int:
+    left_parts = parse_extension_version(left)
+    right_parts = parse_extension_version(right)
+    if left_parts < right_parts:
+        return -1
+    if left_parts > right_parts:
+        return 1
+    return 0
 
 
 def _merge_nested_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -152,6 +178,7 @@ class ProcessingExtension:
     name: str
     handler: Callable[..., Any]
     description: str = ""
+    version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
     line_mode: str = "single"
@@ -165,6 +192,7 @@ class AnalysisExtension:
     name: str
     handler: Callable[..., Any]
     description: str = ""
+    version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
     report_placeholders: List[Dict[str, Any]] = field(default_factory=list)
@@ -176,6 +204,7 @@ class PlotExtension:
     name: str
     handler: Callable[..., None]
     description: str = ""
+    version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
 
@@ -325,6 +354,7 @@ class ExtensionRegistry:
         name = str(getattr(extension, "name", "") or "").strip()
         if not name:
             raise ValueError(f"{category} extension name is required")
+        normalize_extension_version(getattr(extension, "version", DEFAULT_EXTENSION_VERSION))
         if type_id in mapping:
             raise ValueError(f"重复的 {category} 扩展 type: {type_id}")
         duplicate_name = next((item for item in mapping.values() if _extension_name_key(getattr(item, "name", "")) == _extension_name_key(name)), None)
@@ -542,7 +572,11 @@ def _builtin_extension_id(path: str | Path) -> str:
     return Path(path).stem.strip()
 
 
-def _builtin_extension_disabled_markers(disabled_extension_ids: Iterable[str] | None) -> set[str]:
+def _extension_file_id(path: str | Path) -> str:
+    return Path(path).stem.strip()
+
+
+def _extension_disabled_markers(disabled_extension_ids: Iterable[str] | None) -> set[str]:
     markers: set[str] = set()
     for item in disabled_extension_ids or []:
         clean = str(item or "").strip()
@@ -552,6 +586,10 @@ def _builtin_extension_disabled_markers(disabled_extension_ids: Iterable[str] | 
         markers.add(Path(clean).name)
         markers.add(Path(clean).stem)
     return markers
+
+
+def _builtin_extension_disabled_markers(disabled_extension_ids: Iterable[str] | None) -> set[str]:
+    return _extension_disabled_markers(disabled_extension_ids)
 
 
 def _extension_entries_by_category(registry: ExtensionRegistry) -> Dict[str, List[Dict[str, str]]]:
@@ -580,6 +618,7 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "name": extension.name,
         "label": extension.name,
         "description": extension.description,
+        "version": normalize_extension_version(getattr(extension, "version", DEFAULT_EXTENSION_VERSION)),
         "default_options": dict(getattr(extension, "default_options", {}) or {}),
         "config_fields": config_fields,
         "line_mode": str(getattr(extension, "line_mode", "single") or "single"),
@@ -685,6 +724,15 @@ def builtin_extension_files(base_dir: str | Path | None = None) -> List[Path]:
     return [path for path in sorted(directory.glob("*.py")) if not path.name.startswith("_")]
 
 
+def external_extension_files(directory: str | Path | None = None) -> List[Path]:
+    from core.extension_settings import get_external_extensions_directory
+
+    target = Path(directory) if directory is not None else get_external_extensions_directory()
+    if not target.exists() or not target.is_dir():
+        return []
+    return [path for path in sorted(target.glob("*.py")) if not path.name.startswith("_")]
+
+
 def configured_builtin_extension_files(
     base_dir: str | Path | None = None,
     *,
@@ -706,13 +754,36 @@ def configured_builtin_extension_files(
     ]
 
 
-def list_builtin_extension_specs(base_dir: str | Path | None = None) -> List[Dict[str, Any]]:
-    from core.extension_settings import get_builtin_extension_settings
+def configured_external_extension_files(
+    directory: str | Path | None = None,
+    *,
+    load_external: Optional[bool] = None,
+    disabled_extension_ids: Optional[Iterable[str]] = None,
+) -> List[Path]:
+    from core.extension_settings import get_external_extension_settings
 
-    load_builtin, disabled_extension_ids = get_builtin_extension_settings()
-    disabled_markers = _builtin_extension_disabled_markers(disabled_extension_ids)
+    settings_load_external, settings_disabled_ids = get_external_extension_settings()
+    effective_load_external = settings_load_external if load_external is None else bool(load_external)
+    effective_disabled_ids = settings_disabled_ids if disabled_extension_ids is None else list(disabled_extension_ids)
+    if not effective_load_external:
+        return []
+
+    disabled_markers = _extension_disabled_markers(effective_disabled_ids)
+    return [
+        path for path in external_extension_files(directory)
+        if _extension_file_id(path) not in disabled_markers and path.name not in disabled_markers
+    ]
+
+
+def _build_extension_specs(
+    file_paths: Iterable[Path],
+    *,
+    source_kind: str,
+    enabled_markers: set[str],
+    load_enabled: bool,
+) -> List[Dict[str, Any]]:
     specs: List[Dict[str, Any]] = []
-    for path in builtin_extension_files(base_dir):
+    for path in file_paths:
         categories: List[str] = []
         entries_by_category: Dict[str, List[Dict[str, str]]] = {}
         load_error = ""
@@ -723,38 +794,76 @@ def list_builtin_extension_specs(base_dir: str | Path | None = None) -> List[Dic
             load_error = str(exc)
             categories = ExtensionRegistry._infer_categories_from_source(Path(path))
 
-        discovered_entries = [
-            entry
-            for category in categories
-            for entry in entries_by_category.get(category, [])
-        ]
+        names_by_category = {
+            category: [entry["name"] for entry in entries if entry.get("name")]
+            for category, entries in entries_by_category.items()
+        }
+        type_ids_by_category = {
+            category: [entry["type"] for entry in entries if entry.get("type")]
+            for category, entries in entries_by_category.items()
+        }
+        discovered_entries = [entry for entries in entries_by_category.values() for entry in entries]
         names = [entry["name"] for entry in discovered_entries if entry.get("name")]
         type_ids = [entry["type"] for entry in discovered_entries if entry.get("type")]
+        spec_id = _extension_file_id(path)
         specs.append({
-            "id": _builtin_extension_id(path),
+            "id": spec_id,
+            "source": source_kind,
+            "source_label": _EXTENSION_SOURCE_LABELS.get(source_kind, source_kind),
             "file_name": Path(path).name,
-            "name": " / ".join(names) if names else _builtin_extension_id(path),
+            "name": " / ".join(names) if names else spec_id,
             "categories": categories,
             "category_labels": [_EXTENSION_CATEGORY_LABELS.get(category, category) for category in categories],
             "type_ids": type_ids,
+            "entries_by_category": entries_by_category,
+            "names_by_category": names_by_category,
+            "type_ids_by_category": type_ids_by_category,
             "path": str(path),
-            "enabled": bool(load_builtin) and _builtin_extension_id(path) not in disabled_markers and Path(path).name not in disabled_markers,
+            "enabled": bool(load_enabled) and spec_id not in enabled_markers and Path(path).name not in enabled_markers,
             "load_error": load_error,
         })
     return specs
+
+
+def list_builtin_extension_specs(base_dir: str | Path | None = None) -> List[Dict[str, Any]]:
+    from core.extension_settings import get_builtin_extension_settings
+
+    load_builtin, disabled_extension_ids = get_builtin_extension_settings()
+    disabled_markers = _builtin_extension_disabled_markers(disabled_extension_ids)
+    return _build_extension_specs(
+        builtin_extension_files(base_dir),
+        source_kind="builtin",
+        enabled_markers=disabled_markers,
+        load_enabled=load_builtin,
+    )
+
+
+def list_external_extension_specs(directory: str | Path | None = None) -> List[Dict[str, Any]]:
+    from core.extension_settings import get_external_extension_settings
+
+    load_external, disabled_extension_ids = get_external_extension_settings()
+    disabled_markers = _extension_disabled_markers(disabled_extension_ids)
+    return _build_extension_specs(
+        external_extension_files(directory),
+        source_kind="external",
+        enabled_markers=disabled_markers,
+        load_enabled=load_external,
+    )
 
 
 def configured_extension_directories(
     base_dir: str | Path | None = None,
     external_dir: str | Path | None = None,
 ) -> List[Path]:
-    from core.extension_settings import get_builtin_extension_settings, get_external_extensions_directory
+    from core.extension_settings import get_builtin_extension_settings, get_external_extension_settings, get_external_extensions_directory
 
     load_builtin, _disabled_extension_ids = get_builtin_extension_settings()
+    load_external, _disabled_external_ids = get_external_extension_settings()
     directories: List[Path] = []
     if load_builtin:
         directories.append(default_extensions_directory(base_dir))
-    directories.append(Path(external_dir) if external_dir is not None else get_external_extensions_directory())
+    if load_external:
+        directories.append(Path(external_dir) if external_dir is not None else get_external_extensions_directory())
 
     resolved: List[Path] = []
     seen: set[str] = set()
@@ -781,16 +890,24 @@ def load_configured_extensions(
     base_dir: str | Path | None = None,
     external_dir: str | Path | None = None,
 ) -> Dict[str, List[str]]:
-    from core.extension_settings import get_external_extensions_directory
-
     builtin_files = configured_builtin_extension_files(base_dir)
-    external_target = Path(external_dir) if external_dir is not None else get_external_extensions_directory()
-    return extension_registry.load_from_sources(
-        file_paths=builtin_files,
-        directories=[external_target],
-        file_source_kind="builtin",
-        directory_source_kind="external",
-    )
+    external_files = configured_external_extension_files(external_dir)
+    report = {"loaded": [], "errors": []}
+    detail_report: Dict[str, List[Dict[str, Any]]] = {"loaded": [], "errors": []}
+
+    for file_group, source_kind in ((builtin_files, "builtin"), (external_files, "external")):
+        group_report, group_detail = extension_registry._scan_paths(file_group, source_kind=source_kind)
+        report["loaded"].extend(group_report["loaded"])
+        report["errors"].extend(group_report["errors"])
+        detail_report["loaded"].extend(group_detail["loaded"])
+        detail_report["errors"].extend(group_detail["errors"])
+
+    extension_registry._last_load_report = {
+        "loaded": list(report["loaded"]),
+        "errors": list(report["errors"]),
+    }
+    extension_registry._last_load_details = detail_report
+    return report
 
 
 def reload_configured_extensions(

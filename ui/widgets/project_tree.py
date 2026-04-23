@@ -1077,6 +1077,7 @@ class ProjectTreeWidget(QWidget):
         elif kind == "picture":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
+                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("picture_to_chart", node_id)),
                 (_PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
