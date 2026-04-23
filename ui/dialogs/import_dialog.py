@@ -17,6 +17,7 @@ from qfluentwidgets import (
     BodyLabel, CaptionLabel, ComboBox, InfoBar, InfoBarPosition,
     LineEdit, PrimaryPushButton, PushButton, RadioButton, SubtitleLabel, TableWidget,
 )
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 from core.project_manager import project_manager
 from models.schemas import DataSeries
@@ -70,6 +71,7 @@ class ImportDialog(QDialog):
         self._raw_rows: List[List[float]] = []  # 全量数据行
         self._target_data_file_id: Optional[str] = None
         self._last_auto_data_file_name = ""
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
         self._setup_ui()
 

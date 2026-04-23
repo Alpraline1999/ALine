@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel, ComboBox, FluentIcon as FIF,
     InfoBar, InfoBarPosition,
-    PlainTextEdit, PrimaryPushButton, PushButton, SubtitleLabel,
+    PlainTextEdit, PrimaryPushButton, PushButton, SubtitleLabel, isDarkTheme,
 )
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -22,6 +22,8 @@ from core.global_assets import global_assets
 from core.analysis_engine import render_report, _DEFAULT_REPORT_TEMPLATE, list_report_template_placeholders
 from models.schemas import ReportTemplate
 from ui.dialogs.fluent_dialogs import TextInputDialog
+from ui.theme import accent_color, border_color, secondary_color, surface_color, text_color
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 
 class ReportTemplateDialog(QDialog):
@@ -41,8 +43,27 @@ class ReportTemplateDialog(QDialog):
         self._template_ids: list[Optional[str]] = [None]
         self._placeholder_entries = list_report_template_placeholders(self._result)
         self._setup_ui()
+        self._apply_editor_theme()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
         self._load_template_list()
         self._on_preview()
+
+    def _apply_editor_theme(self) -> None:
+        dark = isDarkTheme()
+        background = "#1e1e1e" if dark else surface_color()
+        foreground = "#f5f5f5" if dark else text_color()
+        border = "#3a3a3a" if dark else border_color()
+        style = (
+            f"background: {background};"
+            f"color: {foreground};"
+            f"border: 1px solid {border};"
+            "border-radius: 6px;"
+            f"selection-background-color: {accent_color()};"
+            "selection-color: #ffffff;"
+        )
+        self._editor.setStyleSheet(style)
+        if isinstance(self._preview, PlainTextEdit):
+            self._preview.setStyleSheet(style)
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
@@ -72,7 +93,7 @@ class ReportTemplateDialog(QDialog):
 
         self._placeholder_hint = BodyLabel("", self)
         self._placeholder_hint.setWordWrap(True)
-        self._placeholder_hint.setStyleSheet("color: #666; font-size: 12px;")
+        self._placeholder_hint.setStyleSheet(f"color: {secondary_color()}; font-size: 12px;")
         root.addWidget(self._placeholder_hint)
 
         # 主区域：左编辑器 | 右预览

@@ -6,4 +6,5 @@ numpy
 scipy
 openpyxl
 matplotlib
+scienceplots
 openai>=1.0

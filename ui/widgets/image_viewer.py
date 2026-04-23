@@ -1066,10 +1066,10 @@ class ImageViewer(QWidget):
             painter.drawPath(self._cached_brush_path)
 
     def _draw_eraser_cursor(self, painter: QPainter):
-        """绘制橡皮擦/画笔蒙版光标（仅在按下时显示）"""
+        """绘制橡皮擦/画笔蒙版光标。"""
         if self._mouse_image_pos is None:
             return
-        if self._current_tool == self.MODE_ERASER and self._eraser_pressed:
+        if self._current_tool == self.MODE_ERASER:
             pen = QPen(QColor("#F44336"))
             pen.setWidthF(2.0 / self._scale)
             painter.setPen(pen)

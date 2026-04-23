@@ -11,6 +11,7 @@ from qfluentwidgets import (
     BodyLabel, CheckBox, ComboBox, FluentIcon as FIF,
     LineEdit, PrimaryPushButton, PushButton, SubtitleLabel,
 )
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 
 class AdvancedFigureDialog(QDialog):
@@ -22,6 +23,7 @@ class AdvancedFigureDialog(QDialog):
         self.setMinimumWidth(400)
         self._cfg = dict(current_config or {})
         self._setup_ui()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)

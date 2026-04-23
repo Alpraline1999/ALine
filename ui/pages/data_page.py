@@ -10,7 +10,7 @@ import math
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QEvent, Qt, Signal, QUrl
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontMetrics, QIntValidator, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -26,7 +26,7 @@ from qfluentwidgets import (
     TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit, RoundMenu, TableWidget, HyperlinkButton,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit, TabCloseButtonDisplayMode,
-    TabWidget, TeachingTipTailPosition, ToolTipFilter, ToolTipPosition, isDarkTheme,
+    TabWidget, TeachingTipTailPosition, ToolTip, ToolTipFilter, ToolTipPosition, isDarkTheme,
 )
 
 from ui.theme import (
@@ -35,9 +35,11 @@ from ui.theme import (
     WORKBENCH_TOOL_PANEL_WIDTH,
     apply_button_metrics,
     accent_color, border_color, card_background_color,
-    hover_color, secondary_color, surface_color, text_color,
+    hover_color, preview_canvas_background_color, preview_canvas_foreground_color,
+    secondary_color, surface_color, text_color,
     make_inline_label, make_section_label, make_hsep,
 )
+from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.matplotlib_fonts import configure_matplotlib_cjk
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.shortcut_manager import ShortcutBindingSet
@@ -121,9 +123,12 @@ class DataPage(QWidget):
         self._preview_image_path: Optional[str] = None
         self._node_preview_states: dict[str, _NodePreviewState] = {}
         self._current_source_preview_total_rows = 0
+        self._fluent_tooltip = None
+        self._fluent_tooltip_views: dict[QWidget, TreeWidget] = {}
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
         self._onboarding_controller = PageOnboardingController(self, "data", self._data_onboarding_steps)
 
     def showEvent(self, event) -> None:
@@ -193,6 +198,17 @@ class DataPage(QWidget):
 
     def eventFilter(self, watched, event):
         preview_targets = getattr(self, "_preview_drop_targets", ())
+        item_tooltip_views = getattr(self, "_fluent_tooltip_views", {})
+        if watched in item_tooltip_views:
+            if event.type() == QEvent.Type.ToolTip:
+                self._show_fluent_tooltip_for_item_view(item_tooltip_views[watched], event)
+                return True
+            if event.type() in {
+                QEvent.Type.Leave,
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.MouseButtonDblClick,
+            }:
+                self._hide_fluent_tooltip()
         if watched in preview_targets:
             if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
                 file_path = self._supported_drop_file_path(event.mimeData())
@@ -210,6 +226,56 @@ class DataPage(QWidget):
                 self._import_file(file_path)
                 return True
         return super().eventFilter(watched, event)
+
+    def _dialog_parent(self) -> QWidget:
+        window = self.window()
+        return window if isinstance(window, QWidget) else self
+
+    def _install_item_view_tooltip_filter(self, view: TreeWidget) -> None:
+        viewport = view.viewport()
+        self._fluent_tooltip_views[viewport] = view
+        viewport.installEventFilter(self)
+
+    @staticmethod
+    def _tooltip_item_at_event(view: TreeWidget, event) -> Optional[QTreeWidgetItem]:
+        if hasattr(event, "position"):
+            return view.itemAt(event.position().toPoint())
+        if hasattr(event, "pos"):
+            return view.itemAt(event.pos())
+        return None
+
+    @staticmethod
+    def _tooltip_global_pos(view: TreeWidget, event) -> QPoint:
+        viewport = view.viewport()
+        if hasattr(event, "globalPos"):
+            return event.globalPos()
+        if hasattr(event, "position"):
+            return viewport.mapToGlobal(event.position().toPoint())
+        if hasattr(event, "pos"):
+            return viewport.mapToGlobal(event.pos())
+        return viewport.mapToGlobal(viewport.rect().center())
+
+    def _show_fluent_tooltip_for_item_view(self, view: TreeWidget, event) -> None:
+        item = self._tooltip_item_at_event(view, event)
+        text = ""
+        if item is not None:
+            try:
+                text = item.toolTip(0).strip()
+            except RuntimeError:
+                text = ""
+        if not text:
+            self._hide_fluent_tooltip()
+            return
+        if self._fluent_tooltip is None:
+            self._fluent_tooltip = ToolTip(text, self._dialog_parent())
+        self._fluent_tooltip.setText(text)
+        self._fluent_tooltip.adjustSize()
+        self._fluent_tooltip.move(self._tooltip_global_pos(view, event) + QPoint(12, 18))
+        self._fluent_tooltip.show()
+
+    def _hide_fluent_tooltip(self) -> None:
+        if self._fluent_tooltip is not None:
+            self._fluent_tooltip.hide()
 
     def _install_preview_drop_targets(self) -> None:
         targets = [
@@ -243,8 +309,8 @@ class DataPage(QWidget):
 
     def _apply_preview_host_background(self) -> None:
         dark = isDarkTheme()
-        bg = "#1e1e1e" if dark else "#ffffff"
-        fg = "#cccccc" if dark else "#222222"
+        bg = preview_canvas_background_color(dark)
+        fg = preview_canvas_foreground_color(dark)
         self._plot_preview_panel.setStyleSheet(f"background: {bg};")
         if self._preview_canvas is not None:
             self._preview_canvas.setStyleSheet(f"background: {bg};")
@@ -431,6 +497,7 @@ class DataPage(QWidget):
         self._pending_source_list.customContextMenuRequested.connect(self._show_pending_source_context_menu)
         self._pending_source_list.itemDoubleClicked.connect(self._begin_rename_pending_source_item)
         self._pending_source_list.itemChanged.connect(self._on_pending_source_item_changed)
+        self._install_item_view_tooltip_filter(self._pending_source_list)
         queue_layout.addWidget(self._pending_source_list, 1)
 
         pending_row = QHBoxLayout()
@@ -964,6 +1031,7 @@ class DataPage(QWidget):
         self._project_source_browser.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._project_source_browser.itemSelectionChanged.connect(self._refresh_project_source_controls)
         self._project_source_browser.itemDoubleClicked.connect(self._on_project_source_item_activated)
+        self._install_item_view_tooltip_filter(self._project_source_browser)
         project_source_layout.addWidget(self._project_source_browser, 1)
 
         self._project_source_detail_label = CaptionLabel("未选择项目源文件", project_source_page)
@@ -1016,6 +1084,7 @@ class DataPage(QWidget):
         self._source_browser.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._source_browser.itemSelectionChanged.connect(self._refresh_source_browser_controls)
         self._source_browser.itemDoubleClicked.connect(self._on_source_browser_item_activated)
+        self._install_item_view_tooltip_filter(self._source_browser)
         system_layout.addWidget(self._source_browser, 1)
 
         self._source_browser_detail_label = CaptionLabel("未选择系统文件", system_page)
@@ -2242,26 +2311,34 @@ class DataPage(QWidget):
         self._configure_source_file_sheet_options(result.sheet_names, result.selected_sheet)
         self._parsed_preview_table.clear()
         self._parsed_preview_table.setRowCount(len(result.rows))
-        self._parsed_preview_table.setColumnCount(len(result.headers))
-        for column_index, header in enumerate(result.headers):
-            column_type = result.column_types[column_index] if column_index < len(result.column_types) else "-"
+        self._parsed_preview_table.setColumnCount(len(result.headers) + 1)
+        row_header_item = QTableWidgetItem("行号")
+        row_header_item.setToolTip("源文件中的原始行号")
+        self._parsed_preview_table.setHorizontalHeaderItem(0, row_header_item)
+        for column_index, header in enumerate(result.headers, start=1):
+            value_index = column_index - 1
+            column_type = result.column_types[value_index] if value_index < len(result.column_types) else "-"
             header_text = str(header) if not column_type or column_type == "-" else f"{header} · {column_type}"
             header_item = QTableWidgetItem(header_text)
             header_item.setToolTip(header_text)
             self._parsed_preview_table.setHorizontalHeaderItem(column_index, header_item)
 
         for row_index, row in enumerate(result.rows):
-            for column_index, header in enumerate(result.headers):
-                value = row[column_index] if column_index < len(row) else ""
+            row_number_item = QTableWidgetItem(str(result.row_offset + row_index + 1))
+            row_number_item.setToolTip(f"行号: {result.row_offset + row_index + 1}")
+            self._parsed_preview_table.setItem(row_index, 0, row_number_item)
+            for value_index, header in enumerate(result.headers):
+                value = row[value_index] if value_index < len(row) else ""
                 item = QTableWidgetItem(self._format_preview_value(value))
-                column_type = result.column_types[column_index] if column_index < len(result.column_types) else "-"
+                column_type = result.column_types[value_index] if value_index < len(result.column_types) else "-"
                 item.setToolTip(f"{header} ({column_type}): {item.text()}")
-                self._parsed_preview_table.setItem(row_index, column_index, item)
+                self._parsed_preview_table.setItem(row_index, value_index + 1, item)
 
         horizontal_header = self._parsed_preview_table.horizontalHeader()
         horizontal_header.setStretchLastSection(False)
         horizontal_header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        for column_index in range(len(result.headers)):
+        horizontal_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for column_index in range(1, len(result.headers) + 1):
             horizontal_header.setSectionResizeMode(column_index, QHeaderView.ResizeMode.ResizeToContents)
 
         self._parsed_preview_table.resizeColumnsToContents()

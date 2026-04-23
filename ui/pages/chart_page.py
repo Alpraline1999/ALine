@@ -68,8 +68,9 @@ from ui.dialogs.export_flow import choose_picture_export_plan
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, make_hint_label, make_hsep, make_inline_label, make_section_label
+from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color
 
 try:
     import matplotlib
@@ -218,6 +219,7 @@ class ChartPage(QWidget):
 
         self._setup_ui()
         self._setup_shortcuts()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
         self._onboarding_controller = PageOnboardingController(self, "chart", self._chart_onboarding_steps)
 
     def showEvent(self, event) -> None:
@@ -251,9 +253,7 @@ class ChartPage(QWidget):
         self._chart_list.customContextMenuRequested.connect(self._on_chart_list_context_menu)
         left_layout.addWidget(self._chart_list)
 
-        self._chart_path_label = BodyLabel("路径：—", left_card)
-        self._chart_path_label.setWordWrap(True)
-        self._chart_path_label.setStyleSheet("color: gray; font-size: 11px;")
+        self._chart_path_label = make_hint_label("路径：—", left_card)
         left_layout.addWidget(self._chart_path_label)
 
         toolbar_row = QHBoxLayout()
@@ -348,6 +348,7 @@ class ChartPage(QWidget):
 
         self._extension_panel = ExtensionConfigPanel("绘图扩展", "应用扩展", self)
         self._extension_panel.apply_requested.connect(self._on_chart_extension_apply)
+        self._extension_panel.configs_changed.connect(self.assets_modified.emit)
         self._extension_panel.reload_requested.connect(self._reload_chart_extensions)
         self._extension_panel.remove_requested.connect(self._on_chart_extension_remove_requested)
         self._extension_panel.selection_changed.connect(lambda _type_id: self._update_extension_remove_action())
@@ -456,7 +457,7 @@ class ChartPage(QWidget):
     def _apply_preview_host_background(self) -> None:
         if self._canvas_host is None:
             return
-        background = "#1e1e1e" if isDarkTheme() else "#ffffff"
+        background = preview_canvas_background_color(isDarkTheme())
         self._canvas_host.setStyleSheet(f"QScrollArea {{ background: {background}; border: none; }}")
         self._canvas_host.viewport().setStyleSheet(f"background: {background};")
         canvas_stage = self._canvas_host.widget()
@@ -486,6 +487,10 @@ class ChartPage(QWidget):
     @staticmethod
     def _set_compact_edit_width(edit: LineEdit, width: int = 96) -> None:
         edit.setMaximumWidth(width)
+
+    @staticmethod
+    def _connect_line_edit_commit(edit: LineEdit, slot) -> None:
+        edit.editingFinished.connect(slot)
 
     @staticmethod
     def _set_square_tool_button(button: ToolButton) -> None:
@@ -575,7 +580,7 @@ class ChartPage(QWidget):
         self._style_line_width_edit = LineEdit(page)
         self._style_line_width_edit.setPlaceholderText("1.4")
         self._style_line_width_edit.setEnabled(False)
-        self._style_line_width_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._connect_line_edit_commit(self._style_line_width_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_line_width_edit)
         line_width_row.addWidget(self._style_line_width_edit)
         line_width_row.addStretch()
@@ -586,7 +591,7 @@ class ChartPage(QWidget):
         self._style_opacity_edit = LineEdit(page)
         self._style_opacity_edit.setPlaceholderText("1.0")
         self._style_opacity_edit.setEnabled(False)
-        self._style_opacity_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._connect_line_edit_commit(self._style_opacity_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_opacity_edit)
         opacity_row.addWidget(self._style_opacity_edit)
         opacity_row.addStretch()
@@ -597,7 +602,7 @@ class ChartPage(QWidget):
         self._style_marker_size_edit = LineEdit(page)
         self._style_marker_size_edit.setPlaceholderText("5.0")
         self._style_marker_size_edit.setEnabled(False)
-        self._style_marker_size_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._connect_line_edit_commit(self._style_marker_size_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_marker_size_edit)
         marker_size_row.addWidget(self._style_marker_size_edit)
         marker_size_row.addStretch()
@@ -608,7 +613,7 @@ class ChartPage(QWidget):
         self._style_density_edit = LineEdit(page)
         self._style_density_edit.setPlaceholderText("1")
         self._style_density_edit.setEnabled(False)
-        self._style_density_edit.textChanged.connect(self._on_style_metrics_changed)
+        self._connect_line_edit_commit(self._style_density_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_density_edit)
         density_row.addWidget(self._style_density_edit)
         density_row.addStretch()
@@ -657,7 +662,7 @@ class ChartPage(QWidget):
         x_row.addWidget(self._make_style_form_label("X:", page))
         self._x_label_edit = LineEdit(page)
         self._x_label_edit.setPlaceholderText("X")
-        self._x_label_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._x_label_edit, self._on_quick_config_changed)
         x_row.addWidget(self._x_label_edit)
         layout.addLayout(x_row)
 
@@ -665,7 +670,7 @@ class ChartPage(QWidget):
         y_row.addWidget(self._make_style_form_label("Y:", page))
         self._y_label_edit = LineEdit(page)
         self._y_label_edit.setPlaceholderText("Y")
-        self._y_label_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._y_label_edit, self._on_quick_config_changed)
         y_row.addWidget(self._y_label_edit)
         layout.addLayout(y_row)
 
@@ -680,13 +685,13 @@ class ChartPage(QWidget):
         x_range_row.addWidget(self._make_style_form_label("X 最小:", page))
         self._x_min_edit = LineEdit(page)
         self._x_min_edit.setPlaceholderText("自动")
-        self._x_min_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._x_min_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._x_min_edit)
         x_range_row.addWidget(self._x_min_edit)
         x_range_row.addWidget(self._make_style_form_label("最大:", page))
         self._x_max_edit = LineEdit(page)
         self._x_max_edit.setPlaceholderText("自动")
-        self._x_max_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._x_max_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._x_max_edit)
         x_range_row.addWidget(self._x_max_edit)
         layout.addLayout(x_range_row)
@@ -695,13 +700,13 @@ class ChartPage(QWidget):
         y_range_row.addWidget(self._make_style_form_label("Y 最小:", page))
         self._y_min_edit = LineEdit(page)
         self._y_min_edit.setPlaceholderText("自动")
-        self._y_min_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._y_min_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._y_min_edit)
         y_range_row.addWidget(self._y_min_edit)
         y_range_row.addWidget(self._make_style_form_label("最大:", page))
         self._y_max_edit = LineEdit(page)
         self._y_max_edit.setPlaceholderText("自动")
-        self._y_max_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._y_max_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._y_max_edit)
         y_range_row.addWidget(self._y_max_edit)
         layout.addLayout(y_range_row)
@@ -744,14 +749,14 @@ class ChartPage(QWidget):
         font_size_row.addWidget(self._make_style_form_label("字号:", page))
         self._font_size_edit = LineEdit(page)
         self._font_size_edit.setPlaceholderText("10")
-        self._font_size_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._font_size_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._font_size_edit)
         font_size_row.addWidget(self._font_size_edit)
         
         font_size_row.addWidget(self._make_style_form_label("图例字号:", page))
         self._legend_font_size_edit = LineEdit(page)
         self._legend_font_size_edit.setPlaceholderText("8")
-        self._legend_font_size_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._legend_font_size_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._legend_font_size_edit)
         font_size_row.addWidget(self._legend_font_size_edit)
         font_size_row.addStretch()
@@ -764,7 +769,7 @@ class ChartPage(QWidget):
         figure_width_row.addWidget(self._make_style_form_label("图宽:", page))
         self._figure_width_edit = LineEdit(page)
         self._figure_width_edit.setPlaceholderText("7.0")
-        self._figure_width_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._figure_width_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_width_edit)
         figure_width_row.addWidget(self._figure_width_edit)
         figure_width_row.addStretch()
@@ -774,7 +779,7 @@ class ChartPage(QWidget):
         figure_height_row.addWidget(self._make_style_form_label("图高:", page))
         self._figure_height_edit = LineEdit(page)
         self._figure_height_edit.setPlaceholderText("5.0")
-        self._figure_height_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._figure_height_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_height_edit)
         figure_height_row.addWidget(self._figure_height_edit)
         figure_height_row.addStretch()
@@ -784,7 +789,7 @@ class ChartPage(QWidget):
         dpi_row.addWidget(self._make_style_form_label("DPI:", page))
         self._dpi_edit = LineEdit(page)
         self._dpi_edit.setPlaceholderText("150")
-        self._dpi_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._dpi_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._dpi_edit)
         dpi_row.addWidget(self._dpi_edit)
         dpi_row.addStretch()
@@ -794,7 +799,7 @@ class ChartPage(QWidget):
         style_row.addWidget(self._make_style_form_label("默认线宽:", page))
         self._plot_line_width_edit = LineEdit(page)
         self._plot_line_width_edit.setPlaceholderText("1.4")
-        self._plot_line_width_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._plot_line_width_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._plot_line_width_edit)
         style_row.addWidget(self._plot_line_width_edit)
         style_row.addStretch()
@@ -804,7 +809,7 @@ class ChartPage(QWidget):
         marker_row.addWidget(self._make_style_form_label("默认点大小:", page))
         self._plot_marker_size_edit = LineEdit(page)
         self._plot_marker_size_edit.setPlaceholderText("5.0")
-        self._plot_marker_size_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._plot_marker_size_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._plot_marker_size_edit)
         marker_row.addWidget(self._plot_marker_size_edit)
         marker_row.addStretch()
@@ -814,7 +819,7 @@ class ChartPage(QWidget):
         grid_style_row.addWidget(self._make_style_form_label("网格透明度:", page))
         self._grid_alpha_edit = LineEdit(page)
         self._grid_alpha_edit.setPlaceholderText("0.7")
-        self._grid_alpha_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._grid_alpha_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._grid_alpha_edit)
         grid_style_row.addWidget(self._grid_alpha_edit)
         grid_style_row.addStretch()
@@ -824,7 +829,7 @@ class ChartPage(QWidget):
         grid_width_row.addWidget(self._make_style_form_label("网格线宽:", page))
         self._grid_line_width_edit = LineEdit(page)
         self._grid_line_width_edit.setPlaceholderText("0.5")
-        self._grid_line_width_edit.textChanged.connect(self._on_quick_config_changed)
+        self._connect_line_edit_commit(self._grid_line_width_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._grid_line_width_edit)
         grid_width_row.addWidget(self._grid_line_width_edit)
         grid_width_row.addStretch()
@@ -851,6 +856,7 @@ class ChartPage(QWidget):
         self._plot_extension_help_btn.clicked.connect(self._show_plot_extension_teaching_tip)
         self._plot_extension_help_btn.installEventFilter(ToolTipFilter(self._plot_extension_help_btn, 300, ToolTipPosition.TOP))
         applied_header.addWidget(self._plot_extension_help_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        self._plot_extension_help_btn.hide()
         applied_header.addStretch()
         self._remove_selected_plot_extension_btn = PushButton("撤销选中", page)
         self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
@@ -1052,7 +1058,7 @@ class ChartPage(QWidget):
 
     def _update_selected_curve_path_label(self, curve: Optional[dict]) -> None:
         path = self._curve_tree_path_label(curve)
-        self._chart_path_label.setText(f"路径：{path}")
+        self._chart_path_label.setText(f"当前选中：{path}")
         self._chart_path_label.setToolTip(path if path not in {"—", "未关联项目树"} else "")
 
     @staticmethod
@@ -1511,20 +1517,20 @@ class ChartPage(QWidget):
         theme = global_assets.get_plot_theme(state.theme) or self._resolve_plot_theme()
         dark = isDarkTheme()
         if theme is None or theme.canvas_mode == "app":
-            background = theme.background_color if theme and theme.background_color else ("#1e1e1e" if dark else "#ffffff")
-            foreground = theme.foreground_color if theme and theme.foreground_color else ("#cccccc" if dark else "#222222")
-            grid_color = theme.grid_color if theme and theme.grid_color else ("#444444" if dark else "#dddddd")
+            background = theme.background_color if theme and theme.background_color else preview_canvas_background_color(dark)
+            foreground = theme.foreground_color if theme and theme.foreground_color else preview_canvas_foreground_color(dark)
+            grid_color = theme.grid_color if theme and theme.grid_color else preview_canvas_grid_color(dark)
             return background, foreground, grid_color
         if theme.canvas_mode == "dark":
             return (
-                theme.background_color or "#1e1e1e",
-                theme.foreground_color or "#e6e6e6",
-                theme.grid_color or "#454545",
+                theme.background_color or preview_canvas_background_color(True),
+                theme.foreground_color or preview_canvas_foreground_color(True),
+                theme.grid_color or preview_canvas_grid_color(True),
             )
         return (
-            theme.background_color or "#ffffff",
-            theme.foreground_color or "#222222",
-            theme.grid_color or "#dddddd",
+            theme.background_color or preview_canvas_background_color(False),
+            theme.foreground_color or preview_canvas_foreground_color(False),
+            theme.grid_color or preview_canvas_grid_color(False),
         )
 
     def load_template(self, template_node_id: str) -> None:

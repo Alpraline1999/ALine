@@ -1,5 +1,7 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout
 from qfluentwidgets import BodyLabel, LineEdit, PrimaryPushButton, PushButton
+from ui.theme import border_color, secondary_color, surface_color
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 
 class CalibrationDialog(QDialog):
@@ -10,6 +12,7 @@ class CalibrationDialog(QDialog):
         self._calibration = calibration
         self._coord_type = coord_type
         self.setup_ui()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
     def setup_ui(self):
         self.setWindowTitle("校准配置")
@@ -27,7 +30,10 @@ class CalibrationDialog(QDialog):
             f"Y轴终点: ({self._calibration.y_end.x():.1f}, {self._calibration.y_end.y():.1f})",
             self
         )
-        info.setStyleSheet("color: gray; padding: 10px; background: #f0f0f0; border-radius: 5px;")
+        info.setStyleSheet(
+            f"color: {secondary_color()}; padding: 10px; background: {surface_color()};"
+            f" border: 1px solid {border_color()}; border-radius: 6px;"
+        )
         layout.addWidget(info)
 
         form = QFormLayout()

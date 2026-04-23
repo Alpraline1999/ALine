@@ -3,17 +3,19 @@ from __future__ import annotations
 import math
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.data_engine import align_lines_to_common_x
 
 
 def _pearson(values_a, values_b):
-    if len(values_a) != len(values_b) or len(values_a) < 2:
+    count = min(len(values_a), len(values_b))
+    if count < 2:
         return 0.0
-    mean_a = sum(values_a) / len(values_a)
-    mean_b = sum(values_b) / len(values_b)
-    covariance = sum((left - mean_a) * (right - mean_b) for left, right in zip(values_a, values_b))
-    std_a = math.sqrt(sum((value - mean_a) ** 2 for value in values_a))
-    std_b = math.sqrt(sum((value - mean_b) ** 2 for value in values_b))
+    trimmed_a = list(values_a[:count])
+    trimmed_b = list(values_b[:count])
+    mean_a = sum(trimmed_a) / count
+    mean_b = sum(trimmed_b) / count
+    covariance = sum((left - mean_a) * (right - mean_b) for left, right in zip(trimmed_a, trimmed_b))
+    std_a = math.sqrt(sum((value - mean_a) ** 2 for value in trimmed_a))
+    std_b = math.sqrt(sum((value - mean_b) ** 2 for value in trimmed_b))
     if std_a <= 1e-12 or std_b <= 1e-12:
         return 0.0
     return covariance / (std_a * std_b)
@@ -41,7 +43,7 @@ def _correlation(values_a, values_b, method):
 
 
 def multi_curve_correlation(inputs, params, lines_list=None):
-    aligned_lines, warnings = align_lines_to_common_x(list(lines_list or inputs or []), params)
+    aligned_lines = list(lines_list or inputs or [])
     if len(aligned_lines) < 2:
         raise ValueError("多曲线相关性分析至少需要 2 条输入曲线")
 
@@ -68,7 +70,7 @@ def multi_curve_correlation(inputs, params, lines_list=None):
         "best_match_name": best_match["name"],
         "best_correlation": best_match["correlation"],
         "average_correlation": average_correlation,
-        "alignment_note": warnings[0] if warnings else "",
+        "alignment_note": "",
         "comparison_details": comparison_items,
         "x_label": "对比序号",
         "y_label": "相关系数",
@@ -90,14 +92,10 @@ def register_extensions(registry):
             type="multi_curve_correlation",
             name="多曲线相关性",
             handler=multi_curve_correlation,
-            description="以 lines_list 第一项为主曲线，对其余曲线做多曲线相关性比较。",
+            description="以 lines_list 第一项为主曲线，对其余曲线按样本顺序做多曲线相关性比较，不内置重采样。",
             default_options={
                 "lines": {"number": -1, "lines_list": "all"},
                 "method": "pearson",
-                "align_mode": "auto",
-                "resample_mode": "count",
-                "n": 200,
-                "step": 0.1,
                 "line_color": "#C23B22",
             },
             config_fields=[
@@ -107,32 +105,6 @@ def register_extensions(registry):
                     field_type="string",
                     default="pearson",
                     choices=("pearson", "spearman"),
-                ),
-                ExtensionConfigField(
-                    key="align_mode",
-                    description="坐标未对齐时的处理方式：auto 自动重采样，strict 直接报错。",
-                    field_type="string",
-                    default="auto",
-                    choices=("auto", "strict"),
-                ),
-                ExtensionConfigField(
-                    key="resample_mode",
-                    description="自动对齐时的重采样方式：count 固定点数，spacing 固定间距。",
-                    field_type="string",
-                    default="count",
-                    choices=("count", "spacing"),
-                ),
-                ExtensionConfigField(
-                    key="n",
-                    description="固定点数模式下的输出点数。",
-                    field_type="integer",
-                    default=200,
-                ),
-                ExtensionConfigField(
-                    key="step",
-                    description="固定间距模式下的 X 轴间距。",
-                    field_type="number",
-                    default=0.1,
                 ),
                 ExtensionConfigField(
                     key="line_color",

@@ -8,12 +8,18 @@ from core.extension_api import get_extension_load_status
 from core.ui_preferences import is_home_onboarding_completed, set_home_onboarding_completed
 from ui.theme import (
     accent_color,
+    border_color,
+    flat_status_button_style,
+    install_fluent_tooltip,
     make_empty_state_label,
     make_hint_label,
     make_section_label,
+    notification_parent,
+    hover_color,
     placeholder_color,
     secondary_color,
     text_color,
+    warning_color,
 )
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from core.project_manager import project_manager
@@ -144,6 +150,9 @@ class HomePage(QWidget):
 
         layout.addWidget(self._status_bar)
 
+    def _notification_parent(self):
+        return notification_parent(self)
+
     def _apply_theme_colors(self):
         """应用当前主题颜色"""
         tc = text_color()
@@ -154,7 +163,7 @@ class HomePage(QWidget):
         self._recent_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {tc};")
         self._no_recent.setStyleSheet(f"color: {pc}; font-size: 12px;")
         if self._status_bar is not None:
-            self._status_bar.setStyleSheet("background: transparent; border-top: 1px solid rgba(128,128,128,0.22);")
+            self._status_bar.setStyleSheet(f"background: transparent; border-top: 1px solid {border_color()};")
 
     def refresh_recent(self):
         """刷新最近项目列表"""
@@ -187,7 +196,7 @@ class HomePage(QWidget):
             row.setFixedHeight(54)
             row.setStyleSheet(
                 f"QWidget {{border-radius: 6px; background: transparent;}}"
-                f"QWidget:hover {{background: rgba(128,128,128,0.12);}}"
+                f"QWidget:hover {{background: {hover_color()};}}"
             )
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(8, 4, 8, 4)
@@ -200,6 +209,7 @@ class HomePage(QWidget):
             path_lbl = BodyLabel(path)
             path_lbl.setStyleSheet(f"font-size: 11px; color: {pc};")
             path_lbl.setToolTip(path)
+            install_fluent_tooltip(path_lbl)
             info_col.addWidget(name_lbl)
             info_col.addWidget(path_lbl)
             row_layout.addLayout(info_col, 1)
@@ -214,6 +224,7 @@ class HomePage(QWidget):
             remove_btn.setIcon(FIF.CLOSE.icon())
             remove_btn.setStyleSheet("border: none; background: transparent;")
             remove_btn.setToolTip("从列表移除")
+            install_fluent_tooltip(remove_btn)
             remove_btn.clicked.connect(lambda _, p=path: self._on_remove_recent(p))
             row_layout.addWidget(remove_btn)
 
@@ -241,16 +252,15 @@ class HomePage(QWidget):
             if builtin_count + external_count > 0
             else ""
         )
-        base_style = "background: transparent; border: none; padding: 0; text-align: left;"
         if error_count:
             self._extension_status_btn.setText(f"扩展：{registered_count} 项可用{source_suffix}，{error_count} 项失败")
-            self._extension_status_btn.setStyleSheet(base_style + "color: #D83B01; font-size: 12px;")
+            self._extension_status_btn.setStyleSheet(flat_status_button_style(warning_color()))
         elif registered_count:
             self._extension_status_btn.setText(f"扩展：{registered_count} 项可用{source_suffix}")
-            self._extension_status_btn.setStyleSheet(base_style + f"color: {accent_color()}; font-size: 12px;")
+            self._extension_status_btn.setStyleSheet(flat_status_button_style(accent_color()))
         else:
             self._extension_status_btn.setText("扩展：未发现可用项")
-            self._extension_status_btn.setStyleSheet(base_style + f"color: {placeholder_color()}; font-size: 12px;")
+            self._extension_status_btn.setStyleSheet(flat_status_button_style(placeholder_color()))
         details = status["details"]
         tooltip_lines = []
         if builtin_count + external_count > 0:
@@ -260,6 +270,7 @@ class HomePage(QWidget):
         if builtin_error_count + external_error_count > 0:
             tooltip_lines.append(f"失败文件：内置 {builtin_error_count}，外部 {external_error_count}")
         self._extension_status_btn.setToolTip("\n".join(tooltip_lines))
+        install_fluent_tooltip(self._extension_status_btn)
         self._extension_status_btn.setEnabled(bool(details.get("loaded") or details.get("errors")))
 
     def _show_extension_details(self) -> None:
@@ -298,7 +309,7 @@ class HomePage(QWidget):
 
     def _request_quick_start(self, destination: str) -> None:
         if project_manager.current_project is None:
-            InfoBar.warning(title="提示", content="请先新建项目或打开现有项目", parent=self, duration=3000)
+            InfoBar.warning(title="提示", content="请先新建项目或打开现有项目", parent=self._notification_parent(), duration=3000)
             return
         self.quick_start_requested.emit(destination)
 
@@ -306,7 +317,7 @@ class HomePage(QWidget):
         """打开最近项目"""
         import os
         if not os.path.exists(path):
-            InfoBar.warning(title="文件不存在", content=f"项目文件已移动或删除:\n{path}", parent=self, duration=5000)
+            InfoBar.warning(title="文件不存在", content=f"项目文件已移动或删除:\n{path}", parent=self._notification_parent(), duration=5000)
             remove_recent(path)
             self.refresh_recent()
             return
@@ -314,7 +325,7 @@ class HomePage(QWidget):
             project_manager.open(path)
             self.project_opened.emit(path)
         except Exception as e:
-            InfoBar.error(title="错误", content=f"无法打开项目:\n{str(e)}", parent=self, duration=5000)
+            InfoBar.error(title="错误", content=f"无法打开项目:\n{str(e)}", parent=self._notification_parent(), duration=5000)
 
     def _on_remove_recent(self, path: str):
         """从最近列表移除"""
@@ -341,7 +352,7 @@ class HomePage(QWidget):
                 project_manager.create_new(name, parent_dir=base_dir, create_structure=True)
                 self.project_created.emit(name)
             except Exception as e:
-                InfoBar.error(title="错误", content=f"创建项目失败:\n{str(e)}", parent=self, duration=5000)
+                InfoBar.error(title="错误", content=f"创建项目失败:\n{str(e)}", parent=self._notification_parent(), duration=5000)
 
     def on_open_project(self):
         """打开项目"""
@@ -356,4 +367,4 @@ class HomePage(QWidget):
                 project_manager.open(file_path)
                 self.project_opened.emit(file_path)
             except Exception as e:
-                InfoBar.error(title="错误", content=f"无法打开项目:\n{str(e)}", parent=self, duration=5000)
+                InfoBar.error(title="错误", content=f"无法打开项目:\n{str(e)}", parent=self._notification_parent(), duration=5000)

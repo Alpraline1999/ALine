@@ -18,12 +18,44 @@ def _candidate_series(plot_context):
     return []
 
 
+def _resolve_line_indices(options, total):
+    lines = dict(options.get("lines") or {})
+    raw = lines.get("lines_list", [1, 2])
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text in {"", ":", "*", "all"}:
+            return list(range(1, total + 1))
+        raw = [piece.strip() for piece in text.split(",") if piece.strip()]
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+    result = []
+    for item in raw:
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= index <= total:
+            result.append(index)
+    return result or [1, 2]
+
+
+def _candidate_series_for_lines(plot_context, options):
+    series = list(plot_context.visible_series or [])
+    if len(series) < 2:
+        return []
+    indices = _resolve_line_indices(options, len(series))
+    chosen = [series[index - 1] for index in indices[:2] if 1 <= index <= len(series)]
+    if len(chosen) >= 2:
+        return chosen[:2]
+    return _candidate_series(plot_context)
+
+
 def draw_dual_curve_band(plot_context, options):
     axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
     if axis is None:
         return
 
-    candidates = _candidate_series(plot_context)
+    candidates = _candidate_series_for_lines(plot_context, options)
     if len(candidates) < 2:
         return
 

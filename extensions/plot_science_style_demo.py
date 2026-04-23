@@ -1,18 +1,37 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
 
 
+_NAMED_SIZES = {
+    "xx-small": 6.0,
+    "x-small": 7.0,
+    "small": 8.0,
+    "medium": 10.0,
+    "large": 12.0,
+    "x-large": 14.0,
+    "xx-large": 16.0,
+}
+
+
+def _named_size(value):
+    text = str(value or "").strip().lower()
+    return _NAMED_SIZES.get(text)
+
+
 def _as_float(value, default):
+    named = _named_size(value)
+    if named is not None:
+        return named
     try:
         return float(value)
     except (TypeError, ValueError):
+        named_default = _named_size(default)
+        if named_default is not None:
+            return named_default
         return float(default)
 
 
 def _as_int(value, default):
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return int(default)
+    return int(round(_as_float(value, default)))
 
 
 def _clamp(value, minimum, maximum, default):
@@ -20,30 +39,45 @@ def _clamp(value, minimum, maximum, default):
     return max(minimum, min(maximum, number))
 
 
+def _science_style_rcparams():
+    import matplotlib.pyplot as plt
+    import scienceplots  # noqa: F401
+
+    original = plt.rcParams.copy()
+    try:
+        plt.style.use("science")
+        plt.rcParams["text.usetex"] = False
+        return dict(plt.rcParams)
+    finally:
+        plt.rcParams.update(original)
+
+
 def apply_science_style(plot_context, options):
     if plot_context.phase != "before_plot":
         return
 
+    rc_params = _science_style_rcparams()
+
     x_label = str(options.get("x_label", "")).strip()
     y_label = str(options.get("y_label", "")).strip()
-    axis_label_size = max(1, _as_int(options.get("axis_label_size", 11), 11))
-    tick_label_size = max(1, _as_int(options.get("tick_label_size", 10), 10))
-    legend_font_size = max(1, _as_int(options.get("legend_font_size", 9), 9))
-    line_width = max(0.1, _as_float(options.get("line_width", 1.6), 1.6))
-    marker_size = max(0.1, _as_float(options.get("marker_size", 4.8), 4.8))
-    grid_alpha = _clamp(options.get("grid_alpha", 0.18), 0.0, 1.0, 0.18)
-    grid_line_width = max(0.1, _as_float(options.get("grid_line_width", 0.8), 0.8))
-    spine_width = max(0.1, _as_float(options.get("spine_width", 1.0), 1.0))
+    axis_label_size = max(1, _as_int(options.get("axis_label_size", rc_params.get("axes.labelsize", 11)), rc_params.get("axes.labelsize", 11)))
+    tick_label_size = max(1, _as_int(options.get("tick_label_size", rc_params.get("xtick.labelsize", 10)), rc_params.get("xtick.labelsize", 10)))
+    legend_font_size = max(1, _as_int(options.get("legend_font_size", rc_params.get("legend.fontsize", 9)), rc_params.get("legend.fontsize", 9)))
+    line_width = max(0.1, _as_float(options.get("line_width", rc_params.get("lines.linewidth", 1.6)), rc_params.get("lines.linewidth", 1.6)))
+    marker_size = max(0.1, _as_float(options.get("marker_size", rc_params.get("lines.markersize", 4.8)), rc_params.get("lines.markersize", 4.8)))
+    grid_alpha = _clamp(options.get("grid_alpha", rc_params.get("grid.alpha", 0.18)), 0.0, 1.0, rc_params.get("grid.alpha", 0.18))
+    grid_line_width = max(0.1, _as_float(options.get("grid_line_width", rc_params.get("grid.linewidth", 0.8)), rc_params.get("grid.linewidth", 0.8)))
+    spine_width = max(0.1, _as_float(options.get("spine_width", rc_params.get("axes.linewidth", 1.0)), rc_params.get("axes.linewidth", 1.0)))
 
     figure_patch = {
         "font_size": axis_label_size,
         "legend_font_size": legend_font_size,
         "line_width": line_width,
         "marker_size": marker_size,
-        "grid": bool(options.get("show_grid", False)),
+        "grid": bool(options.get("show_grid", rc_params.get("axes.grid", False))),
         "grid_alpha": grid_alpha,
         "grid_line_width": grid_line_width,
-        "legend_pos": str(options.get("legend_location", "best") or "best"),
+        "legend_pos": str(options.get("legend_location", rc_params.get("legend.loc", "best")) or "best"),
     }
     if x_label:
         figure_patch["x_label"] = x_label
@@ -52,23 +86,23 @@ def apply_science_style(plot_context, options):
     plot_context.patch_figure_state(figure_patch)
 
     legend_kwargs = {
-        "frameon": bool(options.get("legend_frame", False)),
+        "frameon": bool(options.get("legend_frame", rc_params.get("legend.frameon", False))),
     }
     if legend_kwargs["frameon"]:
-        legend_kwargs["framealpha"] = _clamp(options.get("legend_frame_alpha", 1.0), 0.0, 1.0, 1.0)
+        legend_kwargs["framealpha"] = _clamp(options.get("legend_frame_alpha", rc_params.get("legend.framealpha", 1.0)), 0.0, 1.0, rc_params.get("legend.framealpha", 1.0))
         legend_kwargs["edgecolor"] = str(options.get("legend_edge_color", "#222222"))
 
     plot_context.patch_plot_style(
         {
-            "figure_facecolor": "#ffffff",
-            "axes_facecolor": "#ffffff",
+            "figure_facecolor": str(rc_params.get("figure.facecolor", "#ffffff")),
+            "axes_facecolor": str(rc_params.get("axes.facecolor", "#ffffff")),
             "spine_width": spine_width,
             "tick_params": {
-                "direction": str(options.get("tick_direction", "in") or "in"),
-                "length": max(0.0, _as_float(options.get("tick_length", 4.0), 4.0)),
-                "width": max(0.1, _as_float(options.get("tick_width", 1.0), 1.0)),
-                "top": bool(options.get("show_top_ticks", True)),
-                "right": bool(options.get("show_right_ticks", True)),
+                "direction": str(options.get("tick_direction", rc_params.get("xtick.direction", "in")) or "in"),
+                "length": max(0.0, _as_float(options.get("tick_length", rc_params.get("xtick.major.size", 4.0)), rc_params.get("xtick.major.size", 4.0))),
+                "width": max(0.1, _as_float(options.get("tick_width", rc_params.get("xtick.major.width", 1.0)), rc_params.get("xtick.major.width", 1.0))),
+                "top": bool(options.get("show_top_ticks", rc_params.get("xtick.top", True))),
+                "right": bool(options.get("show_right_ticks", rc_params.get("ytick.right", True))),
                 "labelsize": tick_label_size,
             },
             "legend_kwargs": legend_kwargs,
@@ -82,7 +116,7 @@ def register_extensions(registry):
             type="demo_plot_science_style",
             name="Science 图幅样式",
             handler=apply_science_style,
-            description="用最小覆盖方式套用论文风格图幅，包括坐标轴标签、刻度样式和图例边框。",
+            description="通过 plt.style.use('science') 套用 scienceplots 论文风格，并叠加当前图幅的少量覆盖设置。",
             default_options={
                 "x_label": "",
                 "y_label": "",

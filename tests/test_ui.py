@@ -213,7 +213,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.refresh()
         global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
         root_children = [global_root.child(i).text(0) for i in range(global_root.childCount())]
-        self.assertEqual(root_children, ["Pipelines", "曲线样式", "绘图样式", "报告模板"])
+        self.assertEqual(root_children, ["Pipelines", "曲线样式", "绘图样式", "报告模板", "扩展配置"])
 
         pipeline_group = next(
             global_root.child(i)
@@ -235,6 +235,37 @@ class TestProjectTreeWidget(unittest.TestCase):
         style_items = [style_group.child(i).text(0) for i in range(style_group.childCount())]
         self.assertIn("默认", style_items)
         self.assertIn("样式A", style_items)
+
+    def test_global_resource_contains_extension_config_defaults(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+
+        def _probe(xs, ys, params):
+            return list(xs), list(ys)
+
+        extension_registry.register_processing(
+            ProcessingExtension(type="tree_extension_config_probe", name="树配置探针", handler=_probe, default_options={"factor": 2})
+        )
+        try:
+            self.widget.refresh()
+            global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
+            extension_root = next(
+                global_root.child(i)
+                for i in range(global_root.childCount())
+                if global_root.child(i).text(0) == "扩展配置"
+            )
+            processing_group = next(
+                extension_root.child(i)
+                for i in range(extension_root.childCount())
+                if extension_root.child(i).text(0) == "处理扩展"
+            )
+            target_group = next(
+                processing_group.child(i)
+                for i in range(processing_group.childCount())
+                if processing_group.child(i).text(0) == "树配置探针"
+            )
+            self.assertEqual([target_group.child(i).text(0) for i in range(target_group.childCount())], ["默认配置"])
+        finally:
+            extension_registry.unregister_processing("tree_extension_config_probe")
 
     def test_builtin_report_template_cannot_be_renamed_or_deleted(self):
         restore_assets = _patch_global_assets()
@@ -277,7 +308,6 @@ class TestProjectTreeWidget(unittest.TestCase):
         global_root.setExpanded(False)
 
         self.widget.refresh()
-
         project_root = self.widget._tree.topLevelItem(0)
         dataset_group = project_root.child(0)
         global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
@@ -285,12 +315,55 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertFalse(dataset_group.isExpanded())
         self.assertFalse(global_root.isExpanded())
 
+    def test_project_root_defaults_to_first_level_expanded_only(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        folder = self.pm.add_folder("批次A", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(folder)
+        self.pm.add_folder("子目录", parent_id=folder.id, group_type="datasets")
+
+        self.widget.refresh()
+
+        project_root = self.widget._tree.topLevelItem(0)
+        self.assertTrue(project_root.isExpanded())
+        root_children = [project_root.child(i) for i in range(project_root.childCount())]
+        self.assertTrue(root_children)
+        self.assertTrue(all(not child.isExpanded() for child in root_children))
+
+    def test_tree_sorts_siblings_with_folders_first_and_english_before_chinese(self):
+        from models.schemas import DataFile, DataSeries
+
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        container = self.pm.add_folder("排序测试组", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(container)
+
+        self.pm.add_folder("AlphaFolder", parent_id=container.id, group_type="datasets")
+        self.pm.add_folder("中文目录", parent_id=container.id, group_type="datasets")
+        self.pm.add_data_file(
+            DataFile(name="Beta.csv", series=[DataSeries(name="s_beta", x=[0.0], y=[1.0])]),
+            parent_id=container.id,
+        )
+        self.pm.add_data_file(
+            DataFile(name="中文数据.csv", series=[DataSeries(name="s_cn", x=[0.0], y=[2.0])]),
+            parent_id=container.id,
+        )
+
+        self.widget.refresh()
+        container_item = self.widget._find_item(container.id)
+        self.assertIsNotNone(container_item)
+        children = [container_item.child(i).text(0) for i in range(container_item.childCount())]
+        self.assertEqual(children, ["AlphaFolder", "中文目录", "Beta.csv", "中文数据.csv"])
+
     def test_tree_config_enables_wrapped_labels(self):
         self.widget.set_name_display_mode("wrap")
         self.assertEqual(self.widget._tree.textElideMode(), Qt.TextElideMode.ElideNone)
 
     def test_tree_supports_extended_selection_for_batch_actions(self):
         self.assertEqual(self.widget._tree.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
+
+    def test_tree_disables_double_click_inline_rename(self):
+        self.assertEqual(self.widget._tree.editTriggers(), QAbstractItemView.EditTrigger.NoEditTriggers)
 
     def test_tree_uses_compact_indentation(self):
         self.assertEqual(self.widget._tree.indentation(), 14)
@@ -333,7 +406,29 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.refresh()
         root = self.widget._tree.topLevelItem(0)
         labels = [root.child(i).text(0) for i in range(root.childCount())]
-        self.assertEqual(labels[:5], ["源文件", "数据集", "图片集", "数据化", "分析结果"])
+        self.assertEqual(labels[:5], ["源文件", "数据集", "数据化", "图片集", "分析结果"])
+
+    def test_duplicate_extension_config_group_labels_are_disambiguated(self):
+        from core.global_assets import global_assets
+
+        global_assets.ensure_extension_default_config("plot", "orphan_text_a", "重复文字", {"text": "A"})
+        global_assets.ensure_extension_default_config("plot", "orphan_text_b", "重复文字", {"text": "B"})
+
+        self.widget.refresh()
+        global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
+        extension_root = next(
+            global_root.child(i)
+            for i in range(global_root.childCount())
+            if global_root.child(i).text(0) == "扩展配置"
+        )
+        plot_group = next(
+            extension_root.child(i)
+            for i in range(extension_root.childCount())
+            if extension_root.child(i).text(0) == "绘图扩展"
+        )
+        labels = [plot_group.child(i).text(0) for i in range(plot_group.childCount()) if plot_group.child(i).text(0).startswith("重复文字")]
+
+        self.assertEqual(labels, ["重复文字（orphan_text_a）", "重复文字（orphan_text_b）"])
 
     def test_add_source_files_creates_source_nodes_under_source_group(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -724,7 +819,7 @@ class TestProjectTreeWidget(unittest.TestCase):
             project_root = widget._tree.topLevelItem(0)
             self.assertEqual(project_root.text(0), project.name)
             names = [project_root.child(i).text(0) for i in range(project_root.childCount())]
-            self.assertEqual(names, ["源文件", "数据集", "图片集", "数据化", "分析结果"])
+            self.assertEqual(names, ["源文件", "数据集", "数据化", "图片集", "分析结果"])
         finally:
             restore()
             if widget is not None:
@@ -1290,6 +1385,13 @@ class TestSettingsPage(unittest.TestCase):
         self.assertIn("筛选", self.page._shortcut_filter_edit.toolTip())
         self.assertIn(accent_color(), self.page._shortcut_filter_edit.styleSheet())
 
+    def test_settings_cards_use_shared_title_and_hint_styles(self):
+        from ui.theme import body_text_style_sheet, card_title_style_sheet, placeholder_text_style_sheet
+
+        self.assertEqual(self.page._appearance_title.styleSheet(), card_title_style_sheet(font_size=18))
+        self.assertEqual(self.page._theme_label.styleSheet(), body_text_style_sheet())
+        self.assertEqual(self.page._extension_hint.styleSheet(), placeholder_text_style_sheet(font_size=11))
+
     def test_settings_title_label_is_removed(self):
         self.assertIsNone(self.page._title_label)
 
@@ -1316,6 +1418,23 @@ class TestSettingsPage(unittest.TestCase):
         self.page._ai_model_edit.setText("gpt-4o-mini")
         self.page._ai_timeout_edit.setText("30")
         self.page._save_ai_config()
+
+    def test_save_ai_config_infobar_uses_top_level_parent(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.pages import settings_page
+        from ui.pages.settings_page import SettingsPage
+
+        host = QWidget()
+        page = SettingsPage(parent=host)
+        try:
+            with mock.patch.object(settings_page.InfoBar, "success") as success_mock:
+                page._save_ai_config()
+
+            success_mock.assert_called_once()
+            self.assertIs(success_mock.call_args.kwargs["parent"], host)
+        finally:
+            page.deleteLater()
+            host.deleteLater()
 
     def test_save_extension_settings_persists_and_reloads_extensions(self):
         received = []
@@ -1427,25 +1546,96 @@ class TestHomePage(unittest.TestCase):
                 ):
                     page = HomePage()
                 try:
+                    from ui.theme import warning_color
+
                     self.assertIsNone(page._guide_toggle_btn)
                     self.assertEqual(page._extension_status_btn.text(), "扩展：3 项可用（内置 2 / 外部 1），1 项失败")
                     self.assertIn("可用扩展：内置 2，外部 1", page._extension_status_btn.toolTip())
                     self.assertTrue(page._extension_status_btn.isEnabled())
                     self.assertIsNotNone(page._status_bar)
+                    self.assertIn(warning_color(), page._extension_status_btn.styleSheet())
+                    self.assertTrue(page._extension_status_btn.property("_alineFluentTooltip"))
                 finally:
                     page.deleteLater()
 
     def test_home_page_uses_bottom_extension_status_bar(self):
         from ui.pages.home_page import HomePage
+        from ui.theme import border_color
 
         page = HomePage()
         try:
-            self.assertEqual(page._status_bar.styleSheet(), "background: transparent; border-top: 1px solid rgba(128,128,128,0.22);")
+            self.assertEqual(page._status_bar.styleSheet(), f"background: transparent; border-top: 1px solid {border_color()};")
             self.assertFalse(hasattr(page, "_extension_detail_btn"))
             self.assertEqual(page._extension_status_btn.parent(), page._status_bar)
             self.assertEqual(len(page._home_onboarding_steps()), 4)
         finally:
             page.deleteLater()
+
+    def test_home_page_recent_rows_use_shared_hover_color(self):
+        from ui.pages.home_page import HomePage
+        from ui.theme import hover_color
+
+        with mock.patch(
+            "ui.pages.home_page.load_recent",
+            return_value=[{"name": "示例项目", "path": "/tmp/example.aline", "opened_at": "2026-04-23 10:20:30"}],
+        ):
+            page = HomePage()
+
+        try:
+            row = self._first_recent_row(page)
+            self.assertIsNotNone(row)
+            self.assertIn(hover_color(), row.styleSheet())
+        finally:
+            page.deleteLater()
+
+    def test_home_page_recent_tooltips_use_fluent_filters(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.pages.home_page import HomePage
+
+        with mock.patch(
+            "ui.pages.home_page.load_recent",
+            return_value=[{"name": "示例项目", "path": "/tmp/example.aline", "opened_at": "2026-04-23 10:20:30"}],
+        ):
+            page = HomePage()
+
+        try:
+            tooltip_widgets = [
+                widget
+                for widget in page.findChildren(QWidget)
+                if widget.toolTip() in {"/tmp/example.aline", "从列表移除"}
+            ]
+            self.assertEqual(len(tooltip_widgets), 2)
+            for widget in tooltip_widgets:
+                self.assertTrue(widget.property("_alineFluentTooltip"))
+        finally:
+            page.deleteLater()
+
+    def test_home_page_infobar_uses_top_level_parent(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.pages import home_page
+        from ui.pages.home_page import HomePage
+
+        host = QWidget()
+        page = HomePage(parent=host)
+        try:
+            with mock.patch.object(type(home_page.project_manager), "current_project", new_callable=mock.PropertyMock, return_value=None):
+                with mock.patch.object(home_page.InfoBar, "warning") as warning_mock:
+                    page._request_quick_start("chart")
+
+            warning_mock.assert_called_once()
+            self.assertIs(warning_mock.call_args.kwargs["parent"], host)
+        finally:
+            page.deleteLater()
+            host.deleteLater()
+
+    @staticmethod
+    def _first_recent_row(page):
+        for index in range(page._recent_items_layout.count()):
+            item = page._recent_items_layout.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                return widget
+        return None
 
 
 class TestSettingsPageAIActions(unittest.TestCase):
@@ -1539,16 +1729,90 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertIs(panel._config_help_area.widget(), panel._config_help_container)
         panel.deleteLater()
 
-    def test_reset_and_clear_actions_use_tool_buttons(self):
+    def test_reset_clear_and_config_actions_use_tool_buttons(self):
         from qfluentwidgets import ToolButton
         from ui.widgets.extension_panel import ExtensionConfigPanel
 
         panel = ExtensionConfigPanel()
 
+        self.assertIsInstance(panel._config_load_btn, ToolButton)
+        self.assertIsInstance(panel._config_add_btn, ToolButton)
+        self.assertIsInstance(panel._config_overwrite_btn, ToolButton)
         self.assertIsInstance(panel._reset_btn, ToolButton)
         self.assertIsInstance(panel._clear_btn, ToolButton)
         self.assertEqual(panel._apply_btn.text(), "应用扩展")
         panel.deleteLater()
+
+    def test_config_action_tool_buttons_use_square_metrics(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel()
+
+        for button in (panel._config_load_btn, panel._config_add_btn, panel._config_overwrite_btn):
+            self.assertEqual(button.width(), button.height())
+        panel.deleteLater()
+
+    def test_panel_can_save_and_load_global_extension_configs(self):
+        from core.global_assets import global_assets
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        restore_assets = _patch_global_assets()
+        panel = ExtensionConfigPanel()
+        try:
+            panel.set_status_context("processing", "处理扩展")
+            panel.set_entries([
+                {
+                    "type": "panel_extension_probe",
+                    "name": "面板配置探针",
+                    "label": "面板配置探针",
+                    "description": "测试扩展配置面板的全局预设保存。",
+                    "default_options": {"factor": 2},
+                    "config_fields": [],
+                }
+            ])
+
+            self.assertEqual(
+                [item.name for item in global_assets.list_extension_configs(category="processing", extension_type="panel_extension_probe")],
+                ["默认配置"],
+            )
+
+            panel._editor.setPlainText('{"factor": 8}')
+            with mock.patch("ui.widgets.extension_panel.TextInputDialog.get_text", return_value=("方案A", True)):
+                panel._save_current_as_config()
+
+            selector_items = [panel._config_selector.itemText(i) for i in range(panel._config_selector.count())]
+            self.assertEqual(selector_items, ["默认配置", "方案A"])
+            saved = global_assets.get_extension_config_by_name("processing", "panel_extension_probe", "方案A")
+            self.assertIsNotNone(saved)
+
+            panel._editor.setPlainText('{"factor": 1}')
+            panel._config_selector.setCurrentIndex(selector_items.index("方案A"))
+            panel._load_selected_config()
+            self.assertEqual(panel.current_options(), {"factor": 8})
+            self.assertTrue(panel.load_config_by_id(saved.id))
+            self.assertEqual(panel.current_options(), {"factor": 8})
+        finally:
+            panel.deleteLater()
+            restore_assets()
+
+    def test_copy_current_config_shows_success_infobar(self):
+        from ui.widgets import extension_panel
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        host = QWidget()
+        panel = ExtensionConfigPanel(parent=host)
+        panel._editor.setPlainText('{"factor": 4}')
+        try:
+            with mock.patch.object(extension_panel.InfoBar, "success") as success_mock:
+                panel._copy_current_config()
+
+            self.assertEqual(QApplication.clipboard().text(), '{"factor": 4}')
+            success_mock.assert_called_once()
+            self.assertIs(success_mock.call_args.kwargs["parent"], host)
+        finally:
+            panel.deleteLater()
+            host.deleteLater()
 
     def test_config_help_uses_key_type_required_description_format(self):
         from ui.widgets.extension_panel import ExtensionConfigPanel
@@ -1589,17 +1853,23 @@ class TestExtensionConfigPanel(unittest.TestCase):
 
     def test_panel_uses_dividers_and_compact_descriptions(self):
         from qfluentwidgets import CaptionLabel
+        from ui.theme import card_title_style_sheet, placeholder_text_style_sheet
         from ui.widgets.extension_panel import ExtensionConfigPanel
 
         panel = ExtensionConfigPanel()
 
-        self.assertGreaterEqual(len(panel._section_dividers), 4)
+        self.assertEqual(len(panel._section_dividers), 3)
         self.assertIsInstance(panel._description_label, CaptionLabel)
-        self.assertEqual(panel._status_detail_btn.text(), "详情")
+        self.assertEqual(panel._title_label.styleSheet(), card_title_style_sheet(font_size=17))
+        self.assertEqual(panel._description_label.styleSheet(), placeholder_text_style_sheet(font_size=12))
+        self.assertIn("font-size: 12px", panel._description_label.styleSheet())
+        self.assertTrue(panel._status_summary_btn.isFlat())
+        self.assertIsNone(panel._status_detail_btn)
         panel.deleteLater()
 
     def test_status_summary_reflects_category_load_state(self):
         from ui.widgets.extension_panel import ExtensionConfigPanel
+        from ui.theme import warning_color
 
         panel = ExtensionConfigPanel()
         with mock.patch(
@@ -1619,7 +1889,41 @@ class TestExtensionConfigPanel(unittest.TestCase):
             panel.set_status_context("processing", "处理扩展")
 
         self.assertEqual(panel._status_label.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败。")
-        self.assertTrue(panel._status_detail_btn.isEnabled())
+        self.assertEqual(panel._status_summary_btn.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败。")
+        self.assertTrue(panel._status_summary_btn.isEnabled())
+        self.assertIn("font-size: 12px", panel._status_summary_btn.styleSheet())
+        self.assertIn(warning_color(), panel._status_summary_btn.styleSheet())
+        panel.deleteLater()
+
+    def test_invalid_config_infobar_uses_top_level_parent(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets import extension_panel
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        host = QWidget()
+        panel = ExtensionConfigPanel(parent=host)
+        try:
+            panel.set_status_context("processing", "处理扩展")
+            panel.set_entries([
+                {
+                    "type": "panel_extension_probe",
+                    "name": "面板配置探针",
+                    "label": "面板配置探针",
+                    "description": "测试扩展配置面板的全局预设保存。",
+                    "default_options": {"factor": 2},
+                    "config_fields": [],
+                }
+            ])
+            panel._editor.setPlainText("{")
+
+            with mock.patch.object(extension_panel.InfoBar, "error") as error_mock:
+                panel._save_current_as_config()
+
+            error_mock.assert_called_once()
+            self.assertIs(error_mock.call_args.kwargs["parent"], host)
+        finally:
+            panel.deleteLater()
+            host.deleteLater()
         panel.deleteLater()
 
     def test_report_dialog_uses_top_level_window_as_parent(self):
@@ -1774,9 +2078,11 @@ class TestDataPage(unittest.TestCase):
             )
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
             self.assertEqual(self.page._parsed_preview_table.rowCount(), 2)
-            self.assertEqual(self.page._parsed_preview_table.columnCount(), 2)
-            self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "10")
-            self.assertEqual(self.page._parsed_preview_table.item(0, 1).text(), "20")
+            self.assertEqual(self.page._parsed_preview_table.columnCount(), 3)
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "行号")
+            self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "1")
+            self.assertEqual(self.page._parsed_preview_table.item(0, 1).text(), "10")
+            self.assertEqual(self.page._parsed_preview_table.item(0, 2).text(), "20")
             self.assertIn("列数: 2", self.page._stats_label.text())
 
             self.page._source_file_preview_combo.setCurrentText("源文件")
@@ -1803,8 +2109,9 @@ class TestDataPage(unittest.TestCase):
             self.assertIn("表头: 自动识别", self.page._stats_label.text())
             self.assertNotIn("列类型:", self.page._stats_label.text())
             self.assertNotIn("当前显示", self.page._stats_label.text())
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "x · 整数")
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "y · 浮点数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "行号")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "x · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(2).text(), "y · 浮点数")
             self.assertEqual(self.page._source_file_page_label.text(), "1 - 2 / 3")
 
     def test_source_file_skip_rows_disables_header_detection(self):
@@ -1820,8 +2127,9 @@ class TestDataPage(unittest.TestCase):
 
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
             self.assertEqual(self.page._parsed_preview_table.rowCount(), 2)
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "col_0 · 整数")
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_1 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "行号")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_0 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(2).text(), "col_1 · 整数")
             self.assertIn("表头: 跳过1行", self.page._stats_label.text())
             self.assertIn("无效行: 1", self.page._stats_label.text())
 
@@ -1837,8 +2145,9 @@ class TestDataPage(unittest.TestCase):
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
             self.assertIn("表头: 自动识别", self.page._stats_label.text())
             self.assertIn("无效行: 0（缺少表头）", self.page._stats_label.text())
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "col_0 · 整数")
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_1 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "行号")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_0 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(2).text(), "col_1 · 整数")
 
     def test_source_file_header_issue_is_reported_in_invalid_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1852,8 +2161,9 @@ class TestDataPage(unittest.TestCase):
             self.assertIs(self.page._preview_stack.currentWidget(), self.page._parsed_preview_table)
             self.assertIn("表头: 自动识别", self.page._stats_label.text())
             self.assertIn("无效行: 0（表头缺项或错误）", self.page._stats_label.text())
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "col_0 · 整数")
-            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_1 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(0).text(), "行号")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(1).text(), "col_0 · 整数")
+            self.assertEqual(self.page._parsed_preview_table.horizontalHeaderItem(2).text(), "col_1 · 整数")
 
     def test_source_file_parsed_preview_remains_fully_horizontally_scrollable_when_narrow(self):
         from PySide6.QtGui import QFontMetrics
@@ -1932,10 +2242,12 @@ class TestDataPage(unittest.TestCase):
                 ["SheetA", "SheetB"],
             )
             self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "1")
+            self.assertEqual(self.page._parsed_preview_table.item(0, 1).text(), "1")
 
             self.page._source_file_sheet_combo.setCurrentText("SheetB")
 
-            self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "10")
+            self.assertEqual(self.page._parsed_preview_table.item(0, 0).text(), "1")
+            self.assertEqual(self.page._parsed_preview_table.item(0, 1).text(), "10")
             self.assertIn("工作表: SheetB", self.page._stats_label.text())
 
     def test_source_file_preview_state_is_remembered_per_node(self):
@@ -2053,6 +2365,21 @@ class TestDataPage(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(imported)
+
+    def test_pending_and_browser_item_views_use_fluent_tooltip_filters(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "tooltip-source.csv"
+            source_path.write_text("x,y\n1,2\n", encoding="utf-8")
+            self.page._append_source_files_to_pending([str(source_path)])
+
+            pending_item = self.page._pending_source_list.topLevelItem(0)
+            self.assertIsNotNone(pending_item)
+            self.assertEqual(pending_item.toolTip(0), self.page._pending_entry_tooltip(str(source_path)))
+
+        self.assertIs(self.page._fluent_tooltip_views[self.page._pending_source_list.viewport()], self.page._pending_source_list)
+        self.assertIs(self.page._fluent_tooltip_views[self.page._source_browser.viewport()], self.page._source_browser)
+        self.assertIs(self.page._fluent_tooltip_views[self.page._project_source_browser.viewport()], self.page._project_source_browser)
+        self.assertNotIn("QToolTip", self.page._pending_source_list.styleSheet())
 
     def test_pending_import_lists_are_isolated_by_group(self):
         source_root = self.pm._find_folder_by_group_type("source_files")
@@ -2817,6 +3144,16 @@ class TestChartPage(unittest.TestCase):
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
 
+    def test_chart_quick_config_line_edits_wait_for_edit_commit(self):
+        original_font_size = self.page._figure_state.font_size
+
+        self.page._font_size_edit.setText("18")
+        QApplication.processEvents()
+        self.assertEqual(self.page._figure_state.font_size, original_font_size)
+
+        self.page._font_size_edit.editingFinished.emit()
+        self.assertEqual(self.page._figure_state.font_size, 18)
+
     def test_style_tabs_use_consistent_scroll_containers(self):
         from qfluentwidgets import SmoothScrollArea
         from PySide6.QtWidgets import QSizePolicy
@@ -2877,6 +3214,15 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._style_color_btn.width(), 32)
         self.assertEqual(self.page._style_color_btn.height(), 32)
         self.assertEqual(self.page._plot_style_scroll.frameShape(), QFrame.Shape.NoFrame)
+
+    def test_chart_path_label_uses_shared_hint_style(self):
+        from ui.theme import make_hint_label
+
+        probe = make_hint_label("路径：示例")
+        try:
+            self.assertEqual(self.page._chart_path_label.styleSheet(), probe.styleSheet())
+        finally:
+            probe.deleteLater()
 
     def test_on_tree_node_selected_data_file(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
@@ -3634,10 +3980,29 @@ class TestChartPage(unittest.TestCase):
         if self.page._figure is None or self.page._canvas_host is None:
             self.skipTest("matplotlib unavailable")
 
+        from ui.theme import preview_canvas_background_color
+
         with mock.patch("ui.pages.chart_page.isDarkTheme", return_value=True):
             self.page._apply_preview_host_background()
 
-        self.assertIn("#1e1e1e", self.page._canvas_host.viewport().styleSheet())
+        self.assertIn(preview_canvas_background_color(True), self.page._canvas_host.viewport().styleSheet())
+
+    def test_chart_theme_palette_uses_shared_preview_helpers(self):
+        from ui.theme import preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color
+
+        with mock.patch("ui.pages.chart_page.global_assets.get_plot_theme", return_value=None), \
+             mock.patch.object(self.page, "_resolve_plot_theme", return_value=None), \
+             mock.patch("ui.pages.chart_page.isDarkTheme", return_value=True):
+            palette = self.page._theme_palette_for_state(self.page._figure_state)
+
+        self.assertEqual(
+            palette,
+            (
+                preview_canvas_background_color(True),
+                preview_canvas_foreground_color(True),
+                preview_canvas_grid_color(True),
+            ),
+        )
 
     def test_chart_style_panel_keeps_compact_width_conventions(self):
         from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH
@@ -3850,16 +4215,19 @@ class TestProcessPage(unittest.TestCase):
         self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
 
     def test_on_tree_node_selected_series(self):
-        self.page.on_tree_node_selected("series", self.s.id)
+        self.page.on_tree_node_activated("series", self.s.id)
+
+        self.assertEqual(len(self.page._selected_inputs), 1)
+        self.assertEqual(self.page._selected_input_list.count(), 1)
 
     def test_on_tree_node_selected_data_file(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
         if node:
-            self.page.on_tree_node_selected("data_file", node.id)
-        self.assertEqual(len(self.page._selected_inputs), 0)
-        self.assertIn("不再支持直接使用数据文件批处理", self.page._current_input_label.text())
+            self.page.on_tree_node_activated("data_file", node.id)
 
-    def test_on_tree_node_selected_series_accumulates_selected_list_for_batch_processing(self):
+        self.assertGreaterEqual(len(self.page._selected_inputs), 1)
+
+    def test_on_tree_node_selected_data_file_runs_pipeline_for_all_series(self):
         from models.schemas import DataFile, DataSeries
 
         node = self.pm.add_data_file(
@@ -3871,14 +4239,8 @@ class TestProcessPage(unittest.TestCase):
                 ],
             )
         )
-        data_file = self.p.find_data_file(node.data_file_id)
-        self.assertIsNotNone(data_file)
 
-        first_series_id = data_file.series[0].id
-        second_series_id = data_file.series[1].id
-
-        self.page.on_tree_node_selected("series", first_series_id)
-        self.page.on_tree_node_selected("series", second_series_id)
+        self.page.on_tree_node_activated("data_file", node.id)
         self.page._run_timer.stop()
         self.page._run_pipeline_now()
 
@@ -3887,8 +4249,139 @@ class TestProcessPage(unittest.TestCase):
         self.assertEqual(len(self.page._out_series_batch), 2)
         self.assertEqual([series.name for series in self.page._out_series_batch], ["sA", "sB"])
         self.assertEqual(self.page._selected_input_list.count(), 2)
-        self.assertIn("已选择 2 条输入", self.page._current_input_label.text())
-        self.assertEqual(self.page._save_result_button.text(), "导出为数据文件")
+        self.assertIn("已选择 2 条", self.page._current_input_label.text())
+        self.assertIn("当前处理:", self.page._selected_input_state_label.text())
+        self.assertEqual(self.page._save_result_button.text(), "导出数据列")
+        self.assertTrue(self.page._save_batch_result_button.isEnabled())
+
+    def test_save_result_uses_current_selected_curve_preview(self):
+        from models.schemas import DataFile, DataSeries
+        from ui.dialogs.export_flow import DataExportPlan
+
+        node = self.pm.add_data_file(
+            DataFile(
+                name="current_export.csv",
+                series=[
+                    DataSeries(name="left", x=[0.0, 1.0, 2.0], y=[1.0, 2.0, 3.0]),
+                    DataSeries(name="right", x=[0.0, 1.0, 2.0], y=[10.0, 20.0, 30.0]),
+                ],
+            )
+        )
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        self.page.on_tree_node_activated("data_file", node.id)
+        self.page._run_timer.stop()
+        self.page._run_pipeline_now()
+
+        first_item = self.page._selected_input_list.item(0)
+        second_item = self.page._selected_input_list.item(1)
+        self.assertIsNotNone(first_item)
+        self.assertIsNotNone(second_item)
+        self.page._selected_input_list.clearSelection()
+        first_item.setSelected(True)
+        second_item.setSelected(True)
+        self.page._selected_input_list.setCurrentItem(second_item)
+        self.page._sync_selected_input_state()
+        self.page._run_pipeline_now()
+
+        with mock.patch(
+            "ui.pages.process_page.choose_data_export_plan",
+            return_value=DataExportPlan(
+                export_name="当前曲线导出",
+                new_parent_id=datasets_root.id,
+                new_data_file_name="当前曲线导出.process",
+            ),
+        ):
+            self.page._save_result()
+
+        data_file = next((df for df in self.p.data_files if df.name == "当前曲线导出.process"), None)
+        self.assertIsNotNone(data_file)
+        self.assertEqual(len(data_file.series), 1)
+        self.assertEqual(data_file.series[0].name, "当前曲线导出")
+        self.assertEqual(data_file.series[0].y, [10.0, 20.0, 30.0])
+
+    def test_save_result_defaults_export_name_to_current_preview_curve(self):
+        from models.schemas import DataFile, DataSeries
+        from ui.dialogs.export_flow import DataExportPlan
+
+        node = self.pm.add_data_file(
+            DataFile(
+                name="current_export_name.csv",
+                series=[
+                    DataSeries(name="left", x=[0.0, 1.0, 2.0], y=[1.0, 2.0, 3.0]),
+                    DataSeries(name="right", x=[0.0, 1.0, 2.0], y=[10.0, 20.0, 30.0]),
+                ],
+            )
+        )
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        self.page.on_tree_node_activated("data_file", node.id)
+        self.page._run_timer.stop()
+        self.page._run_pipeline_now()
+
+        first_item = self.page._selected_input_list.item(0)
+        second_item = self.page._selected_input_list.item(1)
+        self.assertIsNotNone(first_item)
+        self.assertIsNotNone(second_item)
+        self.page._selected_input_list.clearSelection()
+        first_item.setSelected(True)
+        second_item.setSelected(True)
+        self.page._selected_input_list.setCurrentItem(second_item)
+        self.page._sync_selected_input_state()
+        self.page._run_pipeline_now()
+
+        self.assertIn("right", self.page._save_name_edit.text())
+        self.assertNotIn("left", self.page._save_name_edit.text())
+
+        captured = {}
+
+        def _capture_export_plan(*_args, **kwargs):
+            captured.update(kwargs)
+            export_name = kwargs["default_export_name"]
+            return DataExportPlan(
+                export_name=export_name,
+                new_parent_id=datasets_root.id,
+                new_data_file_name=f"{export_name}.process",
+            )
+
+        with mock.patch("ui.pages.process_page.choose_data_export_plan", side_effect=_capture_export_plan):
+            self.page._save_result()
+
+        self.assertEqual(captured["default_export_name"], "right")
+
+
+    def test_selected_input_labels_use_tree_paths(self):
+        from models.schemas import DataFile, DataSeries
+
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        folder = self.pm.add_folder("批次A", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(folder)
+        node = self.pm.add_data_file(
+            DataFile(name="path.csv", series=[DataSeries(name="s_path", x=[0.0, 1.0], y=[1.0, 2.0])]),
+            parent_id=folder.id,
+        )
+
+        self.page.on_tree_node_activated("data_file", node.id)
+
+        self.assertEqual(self.page._selected_input_list.item(0).text(), "批次A / path.csv / s_path")
+
+    def test_param_stack_height_tracks_selected_operation(self):
+        self.page._load_ops_into_chain([
+            {"type": "derivative", "params": {}},
+            {"type": "pairwise_compute", "params": {"x_expr": "x1", "y_expr": "y1 - y2"}},
+        ])
+
+        self.page._on_op_selected(0)
+        derivative_height = self.page._param_stack.maximumHeight()
+        self.assertEqual(derivative_height, self.page._param_widgets[0].sizeHint().height())
+
+        self.page._on_op_selected(1)
+        pairwise_height = self.page._param_stack.maximumHeight()
+        self.assertEqual(pairwise_height, self.page._param_widgets[1].sizeHint().height())
+        self.assertNotEqual(derivative_height, pairwise_height)
 
     def test_on_tree_node_selected_curve(self):
         self.page.on_tree_node_selected("curve", "fake-curve-id")
@@ -3942,7 +4435,55 @@ class TestProcessPage(unittest.TestCase):
 
         self.page._load_ops_into_chain(ops)
 
-        self.assertEqual(self.page._param_widgets[0].get_params(), {"mode": "spacing", "step": 0.25})
+        self.assertEqual(
+            self.page._param_widgets[0].get_params(),
+            {"mode": "spacing", "spacing_mode": "coord", "step": 0.25},
+        )
+
+    def test_resample_coord_spacing_waits_for_edit_commit(self):
+        from ui.pages.process_page import _ResampleParam
+
+        on_change = mock.Mock()
+        widget = _ResampleParam(self.page, on_change)
+        widget._mode.setCurrentIndex(1)
+        on_change.reset_mock()
+
+        widget._value_edit.setText("0")
+        QApplication.processEvents()
+        self.assertFalse(on_change.called)
+
+        widget._value_edit.editingFinished.emit()
+        self.assertEqual(on_change.call_count, 1)
+        widget.deleteLater()
+
+    def test_clicking_blank_area_commits_active_param_editor(self):
+        from PySide6.QtCore import QPoint
+
+        self.page.resize(900, 640)
+        self.page.show()
+        QApplication.processEvents()
+
+        with mock.patch.object(self.page, "_run_pipeline") as run_pipeline:
+            self.page._load_ops_into_chain([
+                {"type": "resample", "params": {"mode": "spacing", "spacing_mode": "coord", "step": 0.25}}
+            ])
+            widget = self.page._param_widgets[0]
+            value_edit = widget._value_edit
+            run_pipeline.reset_mock()
+
+            value_edit.setFocus()
+            QApplication.processEvents()
+            value_edit.clear()
+            QTest.keyClicks(value_edit, "0.5")
+            QApplication.processEvents()
+            self.assertTrue(value_edit.hasFocus())
+            self.assertFalse(run_pipeline.called)
+
+            QTest.mouseClick(self.page, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, self.page.rect().bottomRight() - QPoint(8, 8))
+            QApplication.processEvents()
+
+            self.assertFalse(value_edit.hasFocus())
+            self.assertEqual(run_pipeline.call_count, 1)
 
     def test_load_ops_with_fft_sampling_rate_params(self):
         ops = [{"type": "fft", "params": {"output": "power", "detrend": False, "sampling_rate": 50.0}}]
@@ -4008,9 +4549,9 @@ class TestProcessPage(unittest.TestCase):
         self.assertEqual(len(self.df.series), original_count + 1)
         self.assertEqual(self.df.series[-1].name, "处理结果B")
 
-    def test_save_result_for_selected_list_batch_creates_new_data_file_with_all_output_series(self):
+    def test_save_batch_result_for_data_file_creates_new_data_file_with_all_output_series(self):
         from models.schemas import DataFile, DataSeries
-        from ui.dialogs.export_flow import DataExportPlan
+        from ui.dialogs.export_flow import BatchDataExportPlan
 
         node = self.pm.add_data_file(
             DataFile(
@@ -4021,26 +4562,23 @@ class TestProcessPage(unittest.TestCase):
                 ],
             )
         )
-        data_file = self.p.find_data_file(node.data_file_id)
-        self.assertIsNotNone(data_file)
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
-        self.page.on_tree_node_selected("series", data_file.series[0].id)
-        self.page.on_tree_node_selected("series", data_file.series[1].id)
+        self.page.on_tree_node_activated("data_file", node.id)
         self.page._load_ops_into_chain([{"type": "crop", "params": {"x_min": 1.0, "x_max": 2.0}}])
         self.page._run_timer.stop()
         self.page._run_pipeline_now()
 
         with mock.patch(
-            "ui.pages.process_page.choose_data_export_plan",
-            return_value=DataExportPlan(
-                export_name="批量结果",
+            "ui.pages.process_page.choose_data_export_batch_plan",
+            return_value=BatchDataExportPlan(
+                export_names=["left", "right"],
                 new_parent_id=datasets_root.id,
                 new_data_file_name="batch_save.process",
             ),
         ):
-            self.page._save_result()
+            self.page._save_batch_result()
 
         data_file = next((df for df in self.p.data_files if df.name == "batch_save.process"), None)
         self.assertIsNotNone(data_file)
@@ -4050,7 +4588,7 @@ class TestProcessPage(unittest.TestCase):
         self.assertEqual(data_file.series[1].x, [1.0, 2.0])
         self.assertEqual(data_file.series[1].y, [4.0, 6.0])
 
-    def test_pairwise_compute_uses_primary_two_inputs_and_surfaces_alignment_warning(self):
+    def test_pairwise_compute_requires_prealigned_inputs(self):
         from models.schemas import DataFile, DataSeries
 
         node = self.pm.add_data_file(
@@ -4062,22 +4600,68 @@ class TestProcessPage(unittest.TestCase):
                 ],
             )
         )
-        data_file = self.p.find_data_file(node.data_file_id)
-        self.assertIsNotNone(data_file)
 
-        self.page.on_tree_node_selected("series", data_file.series[0].id)
-        self.page.on_tree_node_selected("series", data_file.series[1].id)
+        self.page.on_tree_node_activated("data_file", node.id)
         self.page._load_ops_into_chain([
-            {"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "n": 3}}
+            {
+                "type": "pairwise_compute",
+                "params": {
+                    "primary_index": 1,
+                    "secondary_index": 2,
+                    "x_expr": "x1",
+                    "y_expr": "y1 - y2",
+                    "align_mode": "auto",
+                    "resample_mode": "count",
+                    "n": 3,
+                },
+            }
         ])
         self.page._run_timer.stop()
         self.page._run_pipeline_now()
 
-        self.assertEqual(len(self.page._out_series_batch), 1)
-        self.assertEqual(self.page._out_series_batch[0].y, [0.0, 0.0, 0.0])
-        self.assertTrue(self.page._pipeline_warnings)
-        self.assertIn("自动重采样", self.page._stats_label.text())
-        self.assertEqual(self.page._save_result_button.text(), "导出为数据列")
+        self.assertEqual(len(self.page._out_series_batch), 0)
+        self.assertIn("需进行坐标间距重采样", self.page._stats_label.text())
+        self.assertEqual(self.page._save_result_button.text(), "导出数据列")
+        self.assertFalse(self.page._save_batch_result_button.isEnabled())
+
+    def test_selected_input_reorder_moves_item_to_top(self):
+        from models.schemas import DataSeries
+
+        other_a = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        other_b = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other_a, other_b])
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other_a.id)
+        self.page.on_tree_node_activated("series", other_b.id)
+
+        self.page._selected_input_list.clearSelection()
+        target_item = self.page._selected_input_list.item(2)
+        target_item.setSelected(True)
+        self.page._move_selected_inputs_to_top()
+
+        self.assertEqual(self.page._selected_inputs[0]["node_id"], other_b.id)
+
+    def test_selected_input_reorder_preserves_current_indicator(self):
+        from models.schemas import DataSeries
+
+        other_a = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        other_b = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other_a, other_b])
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other_a.id)
+        self.page.on_tree_node_activated("series", other_b.id)
+
+        target_item = self.page._selected_input_list.item(1)
+        self.page._selected_input_list.setCurrentItem(target_item)
+        target_item.setSelected(True)
+
+        self.page._move_selected_inputs_down()
+
+        current_payload = self.page._selected_input_list.currentItem().data(Qt.ItemDataRole.UserRole)
+        self.assertEqual(current_payload["node_id"], other_a.id)
+        self.assertTrue(self.page._selected_input_list.currentItem().isSelected())
 
     def test_processing_extension_appears_in_selector_and_panel(self):
         from core.extension_api import ProcessingExtension, extension_registry
@@ -4211,6 +4795,11 @@ class TestAnalysisPage(unittest.TestCase):
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
 
+    def test_selected_input_state_label_uses_shared_placeholder_color(self):
+        from ui.theme import placeholder_color
+
+        self.assertIn(placeholder_color(), self.page._selected_input_state_label.styleSheet())
+
     def test_analysis_extension_panel_uses_splitter_side_panel(self):
         self.page.resize(1280, 820)
         self.page.show()
@@ -4280,6 +4869,17 @@ class TestAnalysisPage(unittest.TestCase):
 
         self.assertIn("#1e1e1e", self.page._report_preview.styleSheet())
 
+    def test_report_preview_uses_fluent_selection_colors(self):
+        from ui.theme import accent_color
+
+        self.page._apply_report_preview_theme()
+
+        editor_style = self.page._report_editor.styleSheet()
+        preview_style = self.page._report_preview.styleSheet()
+        self.assertIn("selection-background-color", editor_style)
+        self.assertIn(accent_color(), editor_style)
+        self.assertIn("selection-color: #ffffff", preview_style)
+
     def test_analysis_update_theme_reapplies_canvas_and_report_backgrounds(self):
         if self.page._canvas is None:
             self.skipTest("matplotlib unavailable")
@@ -4310,7 +4910,7 @@ class TestAnalysisPage(unittest.TestCase):
 
         clipboard_text = QApplication.clipboard().text()
         self.assertIn(self.s.name, clipboard_text)
-        self.assertIn(other.name, clipboard_text)
+        self.assertIn(other.series[0].name, clipboard_text)
 
     def test_summary_area_has_larger_minimum_height(self):
         current_view = self.page._analysis_tab_views["current"]
@@ -4574,9 +5174,89 @@ class TestAnalysisPage(unittest.TestCase):
 
             self.assertEqual(self.page._result["analysis_type"], "ui_span_left_json")
             self.assertEqual(self.page._result["scale"], 6)
-            self.assertEqual(self.page._current_analysis_params()["extension_options"], {"scale": 6})
+            self.assertEqual(
+                self.page._current_analysis_params()["extension_options"],
+                {"scale": 6, "lines": {"number": 1, "lines_list": [1]}},
+            )
         finally:
             extension_registry.unregister_analysis("ui_span_left_json")
+            self.page._refresh_analysis_type_choices()
+
+    def test_analysis_extension_lines_follow_selected_list_selection(self):
+        from models.schemas import DataSeries
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 5.0])
+        self.df.series.extend([other, third])
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_lines_selected",
+                name="UI 选中曲线扩展",
+                handler=lambda inputs, params: {
+                    "analysis_type": "ui_lines_selected",
+                    "source_name": inputs[0].get("name", "") if inputs else "",
+                    "input_names": [item.get("name", "") for item in inputs],
+                    "line_refs": list((params.get("lines") or {}).get("lines_list", [])),
+                },
+                default_options={"lines": {"number": -1, "lines_list": "selected"}},
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.on_tree_node_activated("series", other.id)
+            self.page.on_tree_node_activated("series", third.id)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_lines_selected"))
+            self.page._input_list.clearSelection()
+            self.page._input_list.item(1).setSelected(True)
+            self.page._input_list.item(2).setSelected(True)
+
+            self.page._run_analysis()
+
+            self.assertEqual(self.page._result["input_names"], [other.name, third.name])
+            self.assertEqual(self.page._result["line_refs"], [2, 3])
+        finally:
+            extension_registry.unregister_analysis("ui_lines_selected")
+            self.page._refresh_analysis_type_choices()
+
+    def test_pair_analysis_extension_uses_pair_dropdown_selection(self):
+        from models.schemas import DataSeries
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 5.0])
+        self.df.series.extend([other, third])
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_pair_lines_extension",
+                name="UI 双曲线扩展",
+                handler=lambda inputs, params: {
+                    "analysis_type": "ui_pair_lines_extension",
+                    "source_name": inputs[0].get("name", "") if inputs else "",
+                    "input_names": [item.get("name", "") for item in inputs],
+                    "line_refs": list((params.get("lines") or {}).get("lines_list", [])),
+                },
+                default_options={"lines": {"number": 2, "lines_list": "selected"}},
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.on_tree_node_activated("series", other.id)
+            self.page.on_tree_node_activated("series", third.id)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_pair_lines_extension"))
+            self.page._pair_primary_combo.setCurrentIndex(0)
+            self.page._pair_secondary_combo.setCurrentIndex(2)
+
+            self.page._run_analysis()
+
+            self.assertEqual(self.page._result["input_names"], [self.s.name, third.name])
+            self.assertEqual(self.page._result["line_refs"], [1, 3])
+        finally:
+            extension_registry.unregister_analysis("ui_pair_lines_extension")
             self.page._refresh_analysis_type_choices()
 
     def test_analysis_extension_can_render_custom_plot_series_and_custom_placeholders(self):
@@ -4719,60 +5399,6 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._run_analysis()
         self.assertEqual(self.page._result["analysis_type"], "error_compare")
         self.assertIn("mae", self.page._result)
-
-    def test_analysis_extension_keeps_multiple_selected_inputs(self):
-        from models.schemas import DataSeries
-        from core.extension_api import AnalysisExtension, extension_registry
-
-        other = DataSeries(name="s2", x=[1.0, 2.0, 3.0], y=[1.5, 1.0, 2.5])
-        self.df.series.append(other)
-
-        def _multi(inputs, params, lines_list=None):
-            return {
-                "analysis_type": "ui_multi_input_extension",
-                "input_count": len(inputs),
-                "lines_count": len(lines_list or []),
-                "primary_name": inputs[0].get("name", "") if inputs else "",
-            }
-
-        extension_registry.register_analysis(
-            AnalysisExtension(
-                type="ui_multi_input_extension",
-                name="UI 多输入扩展",
-                handler=_multi,
-            )
-        )
-        try:
-            self.page._refresh_analysis_type_choices()
-            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_multi_input_extension"))
-            self.page.on_tree_node_activated("series", self.s.id)
-            self.page.on_tree_node_activated("series", other.id)
-
-            self.assertEqual(len(self.page._selected_inputs), 2)
-            self.page._run_analysis()
-
-            self.assertEqual(self.page._result["analysis_type"], "ui_multi_input_extension")
-            self.assertEqual(self.page._result["input_count"], 2)
-            self.assertEqual(self.page._result["lines_count"], 2)
-            self.assertEqual(self.page._result["primary_name"], self.s.name)
-        finally:
-            extension_registry.unregister_analysis("ui_multi_input_extension")
-            self.page._refresh_analysis_type_choices()
-
-    def test_switching_from_pair_type_does_not_truncate_selected_inputs(self):
-        from models.schemas import DataSeries
-
-        other = DataSeries(name="s3", x=[1.0, 2.0, 3.0], y=[0.5, 1.5, 2.0])
-        self.df.series.append(other)
-
-        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("correlation"))
-        self.page.on_tree_node_activated("series", self.s.id)
-        self.page.on_tree_node_activated("series", other.id)
-        self.assertEqual(len(self.page._selected_inputs), 2)
-
-        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("curve_fit"))
-
-        self.assertEqual(len(self.page._selected_inputs), 2)
 
     def test_load_saved_analysis_result_from_tree(self):
         self.page.on_tree_node_activated("series", self.s.id)
@@ -5034,20 +5660,35 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._run_analysis()
 
         with mock.patch(
+            "ui.pages.analysis_page.SelectionDialog.get_item",
+            return_value=("峰谷", True),
+        ), mock.patch(
             "ui.pages.analysis_page.choose_data_export_plan",
-            side_effect=[
-                DataExportPlan(export_name="波峰A", new_parent_id=datasets_root.id, new_data_file_name="波峰A.analysis"),
-                DataExportPlan(export_name="波谷A", new_parent_id=datasets_root.id, new_data_file_name="波谷A.analysis"),
-            ],
+            return_value=DataExportPlan(
+                export_name="峰谷A",
+                new_parent_id=datasets_root.id,
+                new_data_file_name="峰谷A.analysis",
+            ),
+        ):
+            self.page._export_extrema_by_choice()
+
+        self.assertEqual(len(self.p.data_files), before + 1)
+        self.assertEqual(self.p.data_files[-1].name, "峰谷A.analysis")
+        self.assertEqual([series.name for series in self.p.data_files[-1].series], ["峰谷A"])
+        self.assertEqual(self.p.data_files[-1].series[0].x, [1.0, 3.0])
+        self.assertEqual(self.p.data_files[-1].series[0].y, [2.0, -1.5])
+
+        with mock.patch(
+            "ui.pages.analysis_page.choose_data_export_plan",
+            return_value=DataExportPlan(export_name="波峰B", new_parent_id=datasets_root.id, new_data_file_name="波峰B.analysis"),
         ):
             self.page._export_extrema_series("peaks", "peaks")
-            self.page._export_extrema_series("valleys", "valleys")
 
         self.assertEqual(len(self.p.data_files), before + 2)
         names = [data_file.name for data_file in self.p.data_files[-2:]]
-        self.assertEqual(names, ["波峰A.analysis", "波谷A.analysis"])
+        self.assertEqual(names, ["峰谷A.analysis", "波峰B.analysis"])
 
-    def test_non_pair_mode_keeps_multiple_selected_inputs(self):
+    def test_single_curve_analysis_uses_current_list_selection(self):
         from models.schemas import DataSeries
 
         other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
@@ -5055,8 +5696,13 @@ class TestAnalysisPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page.on_tree_node_activated("series", other.id)
         self.assertEqual(len(self.page._selected_inputs), 2)
-        self.assertEqual(self.page._selected_inputs[0]["node_id"], self.s.id)
-        self.assertEqual(self.page._selected_inputs[1]["node_id"], other.id)
+
+        self.page._input_list.clearSelection()
+        self.page._input_list.item(1).setSelected(True)
+
+        data = self.page._get_selected_data()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0][2], other.name)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -5074,6 +5720,21 @@ class TestDigitizePage(unittest.TestCase):
     def tearDown(self):
         self._restore()
         self.page.deleteLater()
+
+    def test_eraser_cursor_draws_without_press(self):
+        from PySide6.QtCore import QPointF
+
+        viewer = self.page._image_viewer
+        viewer._current_tool = viewer.MODE_ERASER
+        viewer._mouse_image_pos = QPointF(10.0, 12.0)
+        viewer._eraser_pressed = False
+        viewer._scale = 1.0
+
+        painter = mock.Mock()
+
+        viewer._draw_eraser_cursor(painter)
+
+        painter.drawEllipse.assert_called_once()
 
     def _add_digitize_curve(self):
         from models.schemas import ImageWork
@@ -5105,6 +5766,11 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(self.page._crosshair_color_btn.width(), 34)
         self.assertEqual(self.page._crosshair_color_btn.height(), 34)
         self.assertEqual(self.page._crosshair_color_btn.height(), self.page._calibrate_btn.height())
+
+    def test_digitize_border_color_uses_shared_theme_helper(self):
+        from ui.theme import border_color
+
+        self.assertEqual(self.page._border_color(), border_color())
 
     def test_load_image_by_id_nonexistent(self):
         """不存在的 ID 不崩溃"""
@@ -5624,6 +6290,19 @@ class TestMainWindow(unittest.TestCase):
         self.assertIs(self.win.stackedWidget.currentWidget(), self.win.analysis_page)
         self.assertEqual(len(self.win.analysis_page._selected_inputs), 1)
 
+    def test_tree_node_activated_data_file_only_dispatches_on_process_page(self):
+        data_file_node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
+        self.assertIsNotNone(data_file_node)
+
+        self.win.switchTo(self.win.analysis_page)
+        before = len(self.win.analysis_page._selected_inputs)
+        self.win._on_tree_node_activated("data_file", data_file_node.id)
+        self.assertEqual(len(self.win.analysis_page._selected_inputs), before)
+
+        self.win.switchTo(self.win.process_page)
+        self.win._on_tree_node_activated("data_file", data_file_node.id)
+        self.assertGreater(len(self.win.process_page._selected_inputs), 0)
+
     def test_tree_node_activated_analysis_result_loads_analysis_page(self):
         self.win.analysis_page.on_tree_node_activated("series", self.s.id)
         self.win.analysis_page._run_analysis()
@@ -5661,6 +6340,38 @@ class TestMainWindow(unittest.TestCase):
         tmpl = self.pm.add_report_template("r1", "# Report")
         self.win._on_tree_node_activated("global_report_template", tmpl.id)
         self.assertEqual(self.win.analysis_page._current_report_template_id, tmpl.id)
+
+    def test_tree_node_activated_extension_config_opens_matching_extension_panel(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+        from core.global_assets import global_assets
+
+        def _probe(xs, ys, params):
+            return list(xs), list(ys)
+
+        extension_registry.register_processing(
+            ProcessingExtension(type="mw_extension_route_probe", name="主窗口路由探针", handler=_probe, default_options={"factor": 2})
+        )
+        try:
+            self.win.process_page._refresh_processing_extensions()
+            config = global_assets.add_extension_config(
+                category="processing",
+                extension_type="mw_extension_route_probe",
+                extension_name="主窗口路由探针",
+                name="方案A",
+                options={"factor": 8},
+            )
+
+            with mock.patch.object(self.win.process_page, "set_extension_panel_visible", wraps=self.win.process_page.set_extension_panel_visible) as visible_mock, \
+                 mock.patch.object(self.win.process_page._extension_panel, "load_config_by_id", wraps=self.win.process_page._extension_panel.load_config_by_id) as load_mock:
+                self.win._on_tree_node_activated("global_extension_config", config.id)
+
+            self.assertIs(self.win.stackedWidget.currentWidget(), self.win.process_page)
+            visible_mock.assert_called_once_with(True)
+            load_mock.assert_called_once_with(config.id)
+            self.assertEqual(self.win.process_page._extension_panel.current_type(), "mw_extension_route_probe")
+            self.assertEqual(self.win.process_page._extension_panel.current_options(), {"factor": 8})
+        finally:
+            extension_registry.unregister_processing("mw_extension_route_probe")
 
     def test_tree_node_activated_image_work(self):
         with mock.patch.object(self.win.digitize_page, "load_image_by_id") as load_mock:
@@ -6205,14 +6916,82 @@ class TestAnalysisPageV3(unittest.TestCase):
         xs, ys, name = data[0]
         self.assertEqual(len(xs), len(self.s.x))
 
+    def test_on_tree_node_activated_data_file_expands_all_series(self):
+        from models.schemas import DataSeries
+
+        self.df.series.append(DataSeries(name="s2", x=[1.0, 2.0], y=[3.0, 4.0]))
+        node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
+        self.assertIsNotNone(node)
+
+        self.page.on_tree_node_activated("data_file", node.id)
+
+        self.assertEqual(len(self.page._selected_inputs), 2)
+        self.assertEqual(self.page._input_list.count(), 2)
+        self.assertIn("当前分析:", self.page._selected_input_state_label.text())
+
+    def test_analysis_selected_input_labels_use_tree_paths(self):
+        from models.schemas import DataFile, DataSeries
+
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        folder = self.pm.add_folder("分析组", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(folder)
+        node = self.pm.add_data_file(
+            DataFile(name="analysis_path.csv", series=[DataSeries(name="curve_a", x=[0.0, 1.0], y=[1.0, 2.0])]),
+            parent_id=folder.id,
+        )
+
+        self.page.on_tree_node_activated("data_file", node.id)
+
+        self.assertEqual(self.page._input_list.item(0).text(), "分析组 / analysis_path.csv / curve_a")
+
+    def test_error_compare_uses_pair_dropdown_selection(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[1.0, 2.0, 3.0], y=[1.5, 1.0, 2.5])
+        third = DataSeries(name="s3", x=[1.0, 2.0, 3.0], y=[2.0, 2.0, 2.0])
+        self.df.series.extend([other, third])
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other.id)
+        self.page.on_tree_node_activated("series", third.id)
+        self.page._type_combo.setCurrentIndex(4)
+        self.page._pair_primary_combo.setCurrentIndex(0)
+        self.page._pair_secondary_combo.setCurrentIndex(2)
+
+        self.page._run_analysis()
+
+        self.assertEqual(self.page._result["analysis_type"], "error_compare")
+        self.assertEqual(self.page._result["name1"], self.s.name)
+        self.assertEqual(self.page._result["name2"], third.name)
+
     def test_peak_export_buttons_only_visible_in_peak_mode(self):
         self.page._type_combo.setCurrentIndex(0)
-        self.assertTrue(self.page._export_peaks_btn.isHidden())
-        self.assertTrue(self.page._export_valleys_btn.isHidden())
+        self.assertTrue(self.page._export_extrema_btn.isHidden())
 
         self.page._type_combo.setCurrentIndex(1)
-        self.assertFalse(self.page._export_peaks_btn.isHidden())
-        self.assertFalse(self.page._export_valleys_btn.isHidden())
+        self.assertFalse(self.page._export_extrema_btn.isHidden())
+
+    def test_analysis_selected_input_reorder_preserves_current_indicator(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other, third])
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other.id)
+        self.page.on_tree_node_activated("series", third.id)
+
+        target_item = self.page._input_list.item(1)
+        self.page._input_list.setCurrentItem(target_item)
+        target_item.setSelected(True)
+
+        self.page._move_selected_inputs_down()
+
+        current_payload = self.page._input_list.currentItem().data(Qt.ItemDataRole.UserRole)
+        self.assertEqual(current_payload["node_id"], other.id)
+        self.assertTrue(self.page._input_list.currentItem().isSelected())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -6376,6 +7155,79 @@ class TestSettingsPageV3(unittest.TestCase):
         self.assertTrue(self.page._tmpl_card.isHidden())
 
 
+class TestDialogFocusCommit(unittest.TestCase):
+
+    def test_advanced_figure_dialog_installs_click_away_focus_commit(self):
+        from ui.dialogs.advanced_figure_dialog import AdvancedFigureDialog
+
+        dialog = AdvancedFigureDialog()
+        try:
+            self.assertIsNotNone(dialog._click_away_focus_commit)
+        finally:
+            dialog.deleteLater()
+
+    def test_ai_tool_dialog_installs_click_away_focus_commit(self):
+        from ui.dialogs.ai_tool_dialog import AIToolDialog
+
+        dialog = AIToolDialog()
+        try:
+            self.assertIsNotNone(dialog._click_away_focus_commit)
+        finally:
+            dialog.deleteLater()
+
+    def test_export_dialogs_install_click_away_focus_commit(self):
+        from ui.dialogs.export_flow import (
+            _AnalysisResultSaveDialog,
+            _BatchDataExportDialog,
+            _DataExportDialog,
+            _PictureExportDialog,
+        )
+
+        dialogs = [
+            _DataExportDialog(
+                None,
+                title="导出数据列",
+                entries=[],
+                default_export_name="结果A",
+                default_file_name="数据集A",
+                file_suffix=".csv",
+                current_text=None,
+                show_export_name=True,
+            ),
+            _BatchDataExportDialog(
+                None,
+                title="批量导出数据列",
+                entries=[],
+                source_labels=["曲线A"],
+                default_export_names=["结果A"],
+                default_file_name="数据集A",
+                file_suffix=".csv",
+                current_text=None,
+            ),
+            _PictureExportDialog(
+                None,
+                title="导出图片",
+                folder_entries=[{"label": "图片集", "node_id": None}],
+                default_export_name="图1",
+                current_text=None,
+                file_suffix=".png",
+            ),
+            _AnalysisResultSaveDialog(
+                None,
+                title="保存分析结果",
+                folder_entries=[{"label": "分析结果", "node_id": None}],
+                default_result_name="结果A",
+                current_text=None,
+            ),
+        ]
+        try:
+            for dialog in dialogs:
+                self.assertIsNotNone(dialog._click_away_focus_commit)
+        finally:
+            for dialog in dialogs:
+                dialog.deleteLater()
+
+
 class TestReportTemplateDialog(unittest.TestCase):
 
     def setUp(self):
@@ -6399,6 +7251,12 @@ class TestReportTemplateDialog(unittest.TestCase):
         items = [self.dialog._tmpl_combo.itemText(i) for i in range(self.dialog._tmpl_combo.count())]
         self.assertIn("默认模板", items)
         self.assertIn("报告模板A", items)
+
+    def test_editor_uses_fluent_selection_colors(self):
+        editor_style = self.dialog._editor.styleSheet()
+
+        self.assertIn("selection-background-color", editor_style)
+        self.assertIn("selection-color: #ffffff", editor_style)
 
     def test_save_template_updates_existing_template_without_duplication(self):
         from core.global_assets import global_assets

@@ -6,10 +6,23 @@ from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     BodyLabel, SubtitleLabel, TitleLabel, SmoothScrollArea,
     LineEdit, PrimaryPushButton, InfoBar, InfoBarPosition, PlainTextEdit,
-    CheckBox, TabWidget, TabCloseButtonDisplayMode, ToolTipFilter, ToolTipPosition)
+    CheckBox, TabWidget, TabCloseButtonDisplayMode)
 
-from ui.theme import accent_color, border_color, card_background_color, text_color, secondary_color, placeholder_color
+from ui.theme import (
+    accent_color,
+    body_text_style_sheet,
+    border_color,
+    card_background_color,
+    card_title_style_sheet,
+    error_text_style_sheet,
+    install_fluent_tooltip,
+    notification_parent,
+    placeholder_text_style_sheet,
+    secondary_text_style_sheet,
+    text_color,
+)
 from ui.dialogs.fluent_dialogs import TextInputDialog
+from ui.widgets.focus_commit import install_click_away_focus_commit
 from core.shortcut_manager import shortcut_manager
 from core.ui_preferences import TreeNameDisplayMode, get_tree_name_display_mode, set_tree_name_display_mode
 from core.ai.providers import (
@@ -78,6 +91,10 @@ class SettingsPage(QWidget):
     def _tab_content_margins() -> tuple[int, int, int, int]:
         return (14, 12, 14, 12)
 
+    def _notification_parent(self) -> QWidget:
+        parent = notification_parent(self)
+        return parent if isinstance(parent, QWidget) else self
+
     def setup_ui(self):
         tabs = TabWidget(self)
         tabs.tabBar.setAddButtonVisible(False)
@@ -97,11 +114,11 @@ class SettingsPage(QWidget):
         self._load_extension_settings()
         self._refresh_ai_tools_panel()
         self._install_tooltip_filters()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
     def _install_tooltip_filters(self) -> None:
         for widget in self.findChildren(QWidget):
-            if widget.toolTip():
-                widget.installEventFilter(ToolTipFilter(widget, 400, ToolTipPosition.TOP))
+            install_fluent_tooltip(widget, delay=400)
 
     def _shortcut_edit_style(self, *, focused: bool) -> str:
         border = accent_color() if focused else border_color()
@@ -156,12 +173,12 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(appearance_layout)
 
         self._appearance_title = BodyLabel("外观", self._appearance_card)
-        self._appearance_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
+        self._appearance_title.setStyleSheet(card_title_style_sheet(font_size=18))
         appearance_layout.addWidget(self._appearance_title)
 
         theme_layout = QVBoxLayout()
         self._theme_label = BodyLabel("主题", content)
-        self._theme_label.setStyleSheet(f"color: {text_color()};")
+        self._theme_label.setStyleSheet(body_text_style_sheet())
         theme_layout.addWidget(self._theme_label)
 
         self.theme_combo = ComboBox(content)
@@ -174,7 +191,7 @@ class SettingsPage(QWidget):
 
         tree_mode_layout = QVBoxLayout()
         self._tree_display_mode_label = BodyLabel("项目树长名称显示", content)
-        self._tree_display_mode_label.setStyleSheet(f"color: {text_color()};")
+        self._tree_display_mode_label.setStyleSheet(body_text_style_sheet())
         tree_mode_layout.addWidget(self._tree_display_mode_label)
 
         self._tree_display_mode_combo = ComboBox(content)
@@ -188,12 +205,12 @@ class SettingsPage(QWidget):
 
         onboarding_layout = QVBoxLayout()
         self._onboarding_label = BodyLabel("新手引导", content)
-        self._onboarding_label.setStyleSheet(f"color: {text_color()};")
+        self._onboarding_label.setStyleSheet(body_text_style_sheet())
         onboarding_layout.addWidget(self._onboarding_label)
 
         self._onboarding_hint = BodyLabel("点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数据化页面的 TeachingTip 状态。", content)
         self._onboarding_hint.setWordWrap(True)
-        self._onboarding_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        self._onboarding_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         onboarding_layout.addWidget(self._onboarding_hint)
 
         self._replay_onboarding_btn = PushButton("重新显示引导", content)
@@ -208,7 +225,7 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(extension_layout)
 
         self._extension_title = BodyLabel("扩展", self._extension_card)
-        self._extension_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
+        self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
         extension_layout.addWidget(self._extension_title)
 
         self._extension_hint = BodyLabel(
@@ -216,12 +233,12 @@ class SettingsPage(QWidget):
             self._extension_card,
         )
         self._extension_hint.setWordWrap(True)
-        self._extension_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         extension_layout.addWidget(self._extension_hint)
 
         external_dir_row = QHBoxLayout()
         self._external_extensions_dir_label = BodyLabel("外部扩展目录", self._extension_card)
-        self._external_extensions_dir_label.setStyleSheet(f"color: {text_color()};")
+        self._external_extensions_dir_label.setStyleSheet(body_text_style_sheet())
         external_dir_row.addWidget(self._external_extensions_dir_label)
         self._external_extensions_dir_edit = LineEdit(self._extension_card)
         self._external_extensions_dir_edit.setPlaceholderText("~/.config/aline/extensions")
@@ -236,11 +253,11 @@ class SettingsPage(QWidget):
         extension_layout.addWidget(self._builtin_extensions_enabled_checkbox)
 
         self._builtin_extension_list_label = BodyLabel("内置扩展项", self._extension_card)
-        self._builtin_extension_list_label.setStyleSheet(f"color: {text_color()};")
+        self._builtin_extension_list_label.setStyleSheet(body_text_style_sheet())
         extension_layout.addWidget(self._builtin_extension_list_label)
 
         self._builtin_extension_empty_hint = BodyLabel("当前未发现内置扩展。", self._extension_card)
-        self._builtin_extension_empty_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        self._builtin_extension_empty_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         extension_layout.addWidget(self._builtin_extension_empty_hint)
 
         self._builtin_extension_options_widget = QWidget(self._extension_card)
@@ -264,11 +281,11 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(lang_layout)
 
         self._lang_title = BodyLabel("语言", self._lang_card)
-        self._lang_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
+        self._lang_title.setStyleSheet(card_title_style_sheet(font_size=18))
         lang_layout.addWidget(self._lang_title)
 
         self._lang_placeholder = BodyLabel("语言设置（预留）", content)
-        self._lang_placeholder.setStyleSheet(f"color: {placeholder_color()}; font-style: italic;")
+        self._lang_placeholder.setStyleSheet(placeholder_text_style_sheet(font_size=12, italic=True))
         lang_layout.addWidget(self._lang_placeholder)
 
         layout.addWidget(self._lang_card)
@@ -295,11 +312,11 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(shortcuts_layout)
 
         self._shortcuts_title = BodyLabel("快捷键", self._shortcuts_card)
-        self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
+        self._shortcuts_title.setStyleSheet(card_title_style_sheet(font_size=18))
         shortcuts_layout.addWidget(self._shortcuts_title)
 
         hint = BodyLabel("所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击“应用快捷键”保存。", self._shortcuts_card)
-        hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         hint.setWordWrap(True)
         shortcuts_layout.addWidget(hint)
 
@@ -327,10 +344,10 @@ class SettingsPage(QWidget):
             self._apply_shortcut_edit_style(edit, focused=False)
             edit.installEventFilter(self)
             row_lbl = BodyLabel(label + ":", sc_content)
-            row_lbl.setStyleSheet(f"color: {text_color()};")
+            row_lbl.setStyleSheet(body_text_style_sheet())
 
             conflict_lbl = BodyLabel("", sc_content)
-            conflict_lbl.setStyleSheet("color: #e81123; font-size: 10px;")
+            conflict_lbl.setStyleSheet(error_text_style_sheet(font_size=10))
             conflict_lbl.setVisible(False)
 
             edit_col = QWidget(sc_content)
@@ -382,12 +399,12 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(ai_layout)
 
         ai_title = BodyLabel("AI 接口", self._ai_card)
-        ai_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
+        ai_title.setStyleSheet(card_title_style_sheet(font_size=18))
         ai_layout.addWidget(ai_title)
 
         self._ai_provider_hint = BodyLabel("", self._ai_card)
         self._ai_provider_hint.setWordWrap(True)
-        self._ai_provider_hint.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        self._ai_provider_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         ai_layout.addWidget(self._ai_provider_hint)
 
         form = QFormLayout()
@@ -479,15 +496,15 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(ai_tools_layout)
 
         ai_tools_title = BodyLabel("AI 工具管理", self._ai_tools_card)
-        ai_tools_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {text_color()};")
+        ai_tools_title.setStyleSheet(card_title_style_sheet(font_size=18))
         ai_tools_layout.addWidget(ai_tools_title)
 
         self._ai_tools_project_label = BodyLabel("当前项目: 未打开", self._ai_tools_card)
-        self._ai_tools_project_label.setStyleSheet(f"color: {text_color()};")
+        self._ai_tools_project_label.setStyleSheet(body_text_style_sheet())
         ai_tools_layout.addWidget(self._ai_tools_project_label)
 
         self._ai_tools_summary_label = BodyLabel("内置 0 · Prompt 0 · Skill 0 · Agent 0", self._ai_tools_card)
-        self._ai_tools_summary_label.setStyleSheet(f"color: {secondary_color()};")
+        self._ai_tools_summary_label.setStyleSheet(secondary_text_style_sheet())
         ai_tools_layout.addWidget(self._ai_tools_summary_label)
 
         # 工具选择下拉框
@@ -508,14 +525,14 @@ class SettingsPage(QWidget):
         detail_name_row = QHBoxLayout()
         detail_name_row.addWidget(BodyLabel("名称:", self._ai_tool_detail_card))
         self._ai_tool_detail_name = BodyLabel("—", self._ai_tool_detail_card)
-        self._ai_tool_detail_name.setStyleSheet(f"font-weight: bold; color: {text_color()};")
+        self._ai_tool_detail_name.setStyleSheet(f"{body_text_style_sheet()} font-weight: bold;")
         detail_name_row.addWidget(self._ai_tool_detail_name, 1)
         detail_layout.addLayout(detail_name_row)
 
         detail_type_row = QHBoxLayout()
         detail_type_row.addWidget(BodyLabel("类型:", self._ai_tool_detail_card))
         self._ai_tool_detail_type = BodyLabel("—", self._ai_tool_detail_card)
-        self._ai_tool_detail_type.setStyleSheet(f"color: {secondary_color()};")
+        self._ai_tool_detail_type.setStyleSheet(secondary_text_style_sheet())
         detail_type_row.addWidget(self._ai_tool_detail_type, 1)
         detail_layout.addLayout(detail_type_row)
 
@@ -631,34 +648,38 @@ class SettingsPage(QWidget):
 
     def _update_colors(self):
         """更新界面颜色以适应新主题"""
-        tc = text_color()
-        pc = placeholder_color()
         if self._appearance_title is not None:
-            self._appearance_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
+            self._appearance_title.setStyleSheet(card_title_style_sheet(font_size=18))
         if self._theme_label is not None:
-            self._theme_label.setStyleSheet(f"color: {tc};")
+            self._theme_label.setStyleSheet(body_text_style_sheet())
         if self._tree_display_mode_label is not None:
-            self._tree_display_mode_label.setStyleSheet(f"color: {tc};")
+            self._tree_display_mode_label.setStyleSheet(body_text_style_sheet())
         if self._onboarding_label is not None:
-            self._onboarding_label.setStyleSheet(f"color: {tc};")
+            self._onboarding_label.setStyleSheet(body_text_style_sheet())
         if self._onboarding_hint is not None:
-            self._onboarding_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
+            self._onboarding_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         if self._extension_title is not None:
-            self._extension_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
+            self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
         if self._extension_hint is not None:
-            self._extension_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
+            self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         if self._external_extensions_dir_label is not None:
-            self._external_extensions_dir_label.setStyleSheet(f"color: {tc};")
+            self._external_extensions_dir_label.setStyleSheet(body_text_style_sheet())
         if self._builtin_extension_list_label is not None:
-            self._builtin_extension_list_label.setStyleSheet(f"color: {tc};")
+            self._builtin_extension_list_label.setStyleSheet(body_text_style_sheet())
         if self._builtin_extension_empty_hint is not None:
-            self._builtin_extension_empty_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
+            self._builtin_extension_empty_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        if self._lang_title is not None:
+            self._lang_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        if self._lang_placeholder is not None:
+            self._lang_placeholder.setStyleSheet(placeholder_text_style_sheet(font_size=12, italic=True))
         if self._shortcuts_title:
-            self._shortcuts_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {tc};")
+            self._shortcuts_title.setStyleSheet(card_title_style_sheet(font_size=18))
         self._apply_shortcut_filter_style()
         # 快捷键行标签
         for lbl in self._shortcut_labels:
-            lbl.setStyleSheet(f"color: {tc};")
+            lbl.setStyleSheet(body_text_style_sheet())
+        for lbl in self._conflict_labels.values():
+            lbl.setStyleSheet(error_text_style_sheet(font_size=10))
         # QKeySequenceEdit 样式
         for edit in self._shortcut_edits.values():
             self._apply_shortcut_edit_style(edit, focused=edit.hasFocus())
@@ -667,9 +688,17 @@ class SettingsPage(QWidget):
             for lbl in self._shortcuts_card.findChildren(BodyLabel):
                 ss = lbl.styleSheet()
                 if 'font-size: 11px' in ss:
-                    lbl.setStyleSheet(f"color: {pc}; font-size: 11px;")
+                    lbl.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         if hasattr(self, "_ai_provider_hint") and self._ai_provider_hint is not None:
-            self._ai_provider_hint.setStyleSheet(f"color: {pc}; font-size: 11px;")
+            self._ai_provider_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        if hasattr(self, "_ai_tools_project_label") and self._ai_tools_project_label is not None:
+            self._ai_tools_project_label.setStyleSheet(body_text_style_sheet())
+        if hasattr(self, "_ai_tools_summary_label") and self._ai_tools_summary_label is not None:
+            self._ai_tools_summary_label.setStyleSheet(secondary_text_style_sheet())
+        if hasattr(self, "_ai_tool_detail_name") and self._ai_tool_detail_name is not None:
+            self._ai_tool_detail_name.setStyleSheet(f"{body_text_style_sheet()} font-weight: bold;")
+        if hasattr(self, "_ai_tool_detail_type") and self._ai_tool_detail_type is not None:
+            self._ai_tool_detail_type.setStyleSheet(secondary_text_style_sheet())
 
     def _current_tree_display_mode(self) -> TreeNameDisplayMode:
         if self._tree_display_mode_combo is None:
@@ -724,6 +753,7 @@ class SettingsPage(QWidget):
             if load_error:
                 tooltip_lines.append(f"探测失败: {load_error}")
             checkbox.setToolTip("\n".join(line for line in tooltip_lines if line))
+            install_fluent_tooltip(checkbox, delay=400)
             self._builtin_extension_checkboxes[spec_id] = checkbox
             self._builtin_extension_options_layout.addWidget(checkbox)
 
@@ -772,7 +802,7 @@ class SettingsPage(QWidget):
         try:
             set_external_extensions_directory(external_dir)
         except ValueError as exc:
-            InfoBar.error("扩展设置保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            InfoBar.error("扩展设置保存失败", str(exc), parent=self._notification_parent(), position=InfoBarPosition.TOP)
             return
         set_builtin_extension_settings(load_builtin, disabled_extension_ids)
         report = reload_configured_extensions()
@@ -782,14 +812,14 @@ class SettingsPage(QWidget):
             InfoBar.warning(
                 "扩展设置已保存",
                 f"已加载 {len(report.get('loaded', []))} 个扩展，{len(report.get('errors', []))} 个失败",
-                parent=self,
+                parent=self._notification_parent(),
                 position=InfoBarPosition.TOP,
             )
             return
         InfoBar.success(
             "扩展设置已保存",
             f"已重新加载 {len(report.get('loaded', []))} 个扩展",
-            parent=self,
+            parent=self._notification_parent(),
             position=InfoBarPosition.TOP,
         )
 
@@ -912,7 +942,7 @@ class SettingsPage(QWidget):
         cfg = self._collect_ai_config()
         cfg.save()
         self.ai_panel_visibility_changed.emit(cfg.show_assistant)
-        InfoBar.success("已保存", "AI 配置已保存", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.success("已保存", "AI 配置已保存", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _refresh_available_models(self) -> None:
         from core.ai_client import AIClient
@@ -925,17 +955,17 @@ class SettingsPage(QWidget):
         try:
             models = AIClient(self._collect_ai_config()).list_available_models_sync()
         except Exception as exc:
-            InfoBar.error("探测失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            InfoBar.error("探测失败", str(exc), parent=self._notification_parent(), position=InfoBarPosition.TOP)
             return
 
         self._populate_model_presets(models, preferred=self._ai_model_edit.text().strip())
         if models and not self._ai_model_edit.text().strip():
             self._ai_model_edit.setText(models[0])
-        InfoBar.success("模型已刷新", f"发现 {len(models)} 个可用模型", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.success("模型已刷新", f"发现 {len(models)} 个可用模型", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _test_ai_connection(self) -> None:
         self._save_ai_config()
-        InfoBar.info("测试中", "正在测试 AI 连接…", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.info("测试中", "正在测试 AI 连接…", parent=self._notification_parent(), position=InfoBarPosition.TOP)
         import asyncio
         from core.ai_client import AIClient
         client = AIClient()
@@ -957,9 +987,9 @@ class SettingsPage(QWidget):
             ok, msg = False, str(e)
 
         if ok:
-            InfoBar.success("连接成功", msg, parent=self, position=InfoBarPosition.TOP)
+            InfoBar.success("连接成功", msg, parent=self._notification_parent(), position=InfoBarPosition.TOP)
         else:
-            InfoBar.error("连接失败", msg, parent=self, position=InfoBarPosition.TOP)
+            InfoBar.error("连接失败", msg, parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     # ── 报告模板方法 ──────────────────────────────────────────
 
@@ -1049,7 +1079,7 @@ class SettingsPage(QWidget):
         if dlg.exec():
             self._refresh_ai_tools_panel()
             self.assets_modified.emit()
-            InfoBar.success("已更新", "AI 工具已修改", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.success("已更新", "AI 工具已修改", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _on_delete_selected_ai_tool(self) -> None:
         idx = self._ai_tool_selector.currentIndex()
@@ -1073,7 +1103,7 @@ class SettingsPage(QWidget):
         self._refresh_ai_tools_panel()
         self.assets_modified.emit()
         tool_label = f'{t["type"]} "{t["name"]}"'
-        InfoBar.success("已删除", f"已删除 {tool_label}", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.success("已删除", f"已删除 {tool_label}", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _open_ai_tool_dialog(self, tool_type: Literal["prompt", "skill", "agent"]) -> None:
         from ui.dialogs.ai_tool_dialog import AIToolDialog
@@ -1082,7 +1112,7 @@ class SettingsPage(QWidget):
         if dlg.exec():
             self._refresh_ai_tools_panel()
             self.assets_modified.emit()
-            InfoBar.success("已保存", "AI 工具已保存到全局资源", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.success("已保存", "AI 工具已保存到全局资源", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _on_new_template(self):
         from core.global_assets import global_assets
@@ -1105,7 +1135,7 @@ class SettingsPage(QWidget):
             return
         tmpl = templates[idx]
         if tmpl.is_builtin:
-            InfoBar.warning("提示", "内置模板不可编辑，请先复制", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning("提示", "内置模板不可编辑，请先复制", parent=self._notification_parent(), position=InfoBarPosition.TOP)
             return
         from ui.dialogs.report_template_dialog import ReportTemplateDialog
         dlg = ReportTemplateDialog(self, template_id=tmpl.id)
@@ -1123,7 +1153,7 @@ class SettingsPage(QWidget):
             return
         tmpl = templates[idx]
         if tmpl.is_builtin:
-            InfoBar.warning("提示", "内置模板不可删除", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning("提示", "内置模板不可删除", parent=self._notification_parent(), position=InfoBarPosition.TOP)
             return
         project_manager.delete_report_template(tmpl.id)
         self.refresh_templates()

@@ -24,6 +24,7 @@ from .widgets.project_tree import ProjectTreeWidget
 from .widgets.ai_assistant_panel import AIAssistantPanel
 from ai.agent import ALineAgent
 from ai.command_layer import CommandDispatcher
+from core.global_assets import global_assets
 from core.project_manager import project_manager
 from core.ui_preferences import reset_all_onboarding_progress
 from core.ai_client import AIConfig
@@ -37,6 +38,7 @@ _BUSINESS_TREE_KINDS = [
     "pipeline", "figure_template", "report_template", "analysis_result",
     "global_pipeline", "global_report_template",
     "global_curve_style_template", "global_plot_style", "global_plot_theme",
+    "global_extension_config",
     "series", "curve",
 ]
 
@@ -139,10 +141,12 @@ class _SharedTreePanel(QWidget):
         self.add_dataset_btn = ToolButton(FIF.DICTIONARY_ADD, self)
         self.add_dataset_btn.setToolTip("新建数据集")
         right_group.addWidget(self.add_dataset_btn)
+        self.add_dataset_btn.hide()
 
         self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
         self.import_file_btn.setToolTip("导入数据文件")
         right_group.addWidget(self.import_file_btn)
+        self.import_file_btn.hide()
 
         self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
         self.extension_toggle_btn.setToolTip("隐藏扩展面板")
@@ -326,6 +330,7 @@ class MainWindow(FluentWindow):
             page.project_modified.connect(self._tree_panel.tree.refresh)
         self.chart_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.process_page.assets_modified.connect(self._tree_panel.tree.refresh)
+        self.analysis_page.assets_modified.connect(self._tree_panel.tree.refresh)
 
     def _on_extensions_reloaded(self) -> None:
         from core.extension_api import extension_registry
@@ -344,6 +349,7 @@ class MainWindow(FluentWindow):
         self.chart_page._refresh_curve_style_template_combo()
         self.chart_page._refresh_template_combo(self.chart_page._applied_plot_style_ref)
         self.chart_page._refresh_style_extension_panel()
+        self._tree_panel.tree.refresh()
 
     # ─────────────────────────────────────────────────────────
     # FluentWindow.switchTo 覆盖
@@ -579,6 +585,8 @@ class MainWindow(FluentWindow):
 
     def _dispatch_activation_to_current_page(self, kind: str, node_id: str) -> bool:
         page = self.stackedWidget.currentWidget()
+        if kind == "data_file" and page is not self.process_page:
+            return False
         if page is self.digitize_page and kind == "image_work":
             if hasattr(self.digitize_page, 'load_image_by_id'):
                 self.digitize_page.load_image_by_id(node_id)
@@ -667,6 +675,8 @@ class MainWindow(FluentWindow):
             self.switchTo(self.analysis_page)
             if hasattr(self.analysis_page, 'load_report_template'):
                 self.analysis_page.load_report_template(node_id)
+        elif kind == "global_extension_config":
+            self._open_extension_config_node(node_id)
         elif kind == "report_template":
             self.switchTo(self.analysis_page)
             if hasattr(self.analysis_page, 'load_report_template'):
@@ -682,12 +692,42 @@ class MainWindow(FluentWindow):
                 self.chart_page.on_tree_node_activated(kind, node_id)
         elif kind in ("data_file_to_process", "series_to_process", "curve_to_process"):
             self.switchTo(self.process_page)
-            if hasattr(self.process_page, 'on_tree_node_selected'):
-                self.process_page.on_tree_node_selected(kind, node_id)
+            if hasattr(self.process_page, 'on_tree_node_activated'):
+                self.process_page.on_tree_node_activated(kind, node_id)
         elif kind in ("data_file_to_analysis", "series_to_analysis", "curve_to_analysis"):
             self.switchTo(self.analysis_page)
             if hasattr(self.analysis_page, 'on_tree_node_activated'):
                 self.analysis_page.on_tree_node_activated(kind, node_id)
+
+    def _open_extension_config_node(self, config_id: str) -> bool:
+        config_item = global_assets.get_extension_config(config_id)
+        if config_item is None:
+            return False
+
+        category = str(config_item.category or "").strip().lower()
+        page = None
+        refresh = None
+        if category == "plot":
+            page = self.chart_page
+            refresh = getattr(self.chart_page, "_refresh_style_extension_panel", None)
+        elif category == "processing":
+            page = self.process_page
+            refresh = getattr(self.process_page, "_refresh_processing_extensions", None)
+        elif category == "analysis":
+            page = self.analysis_page
+            refresh = getattr(self.analysis_page, "_refresh_analysis_type_choices", None)
+        else:
+            return False
+
+        self.switchTo(page)
+        if callable(refresh):
+            refresh()
+        if hasattr(page, "set_extension_panel_visible"):
+            page.set_extension_panel_visible(True)
+        panel = getattr(page, "_extension_panel", None)
+        if panel is None or not hasattr(panel, "load_config_by_id"):
+            return False
+        return bool(panel.load_config_by_id(config_id))
 
     def _on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """单击节点 → 通知当前页面。"""

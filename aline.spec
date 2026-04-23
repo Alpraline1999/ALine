@@ -42,6 +42,7 @@ _hidden = [
     "matplotlib",
     "matplotlib.backends.backend_qtagg",
     "matplotlib.backends.backend_agg",
+    "scienceplots",
     # 数据处理
     "openpyxl",
     "csv",

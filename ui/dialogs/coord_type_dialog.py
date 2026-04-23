@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout
 from qfluentwidgets import BodyLabel, PrimaryPushButton, PushButton
 from qfluentwidgets import ComboBox
 from PySide6.QtCore import Qt
+from ui.theme import border_color, secondary_color, surface_color
 
 
 class CoordTypeDialog(QDialog):
@@ -33,7 +34,10 @@ class CoordTypeDialog(QDialog):
             "二维极坐标：用距离和角度表示平面上的点",
             self
         )
-        self._desc_label.setStyleSheet("color: gray; padding: 10px; background: #f0f0f0; border-radius: 5px;")
+        self._desc_label.setStyleSheet(
+            f"color: {secondary_color()}; padding: 10px; background: {surface_color()};"
+            f" border: 1px solid {border_color()}; border-radius: 6px;"
+        )
         self._desc_label.setWordWrap(True)
         layout.addWidget(self._desc_label)
 

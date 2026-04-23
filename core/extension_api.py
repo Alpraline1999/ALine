@@ -30,6 +30,10 @@ _EXTENSION_SOURCE_HINTS = {
 }
 
 
+def _extension_name_key(name: str) -> str:
+    return str(name or "").strip().casefold()
+
+
 def _merge_nested_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
     result = copy.deepcopy(base)
     for key, value in (patch or {}).items():
@@ -301,19 +305,42 @@ class ExtensionRegistry:
     def get_last_load_details(self) -> Dict[str, List[Dict[str, Any]]]:
         return copy.deepcopy(self._last_load_details)
 
+    def _registry_state(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            "processing": dict(self._processing),
+            "analysis": dict(self._analysis),
+            "plot": dict(self._plot),
+        }
+
+    def _restore_registry_state(self, state: Dict[str, Dict[str, Any]]) -> None:
+        self._processing = dict(state.get("processing", {}))
+        self._analysis = dict(state.get("analysis", {}))
+        self._plot = dict(state.get("plot", {}))
+
+    @staticmethod
+    def _ensure_unique_identity(category: str, mapping: Dict[str, Any], extension: Any) -> None:
+        type_id = str(getattr(extension, "type", "") or "").strip()
+        if not type_id:
+            raise ValueError(f"{category} extension type is required")
+        name = str(getattr(extension, "name", "") or "").strip()
+        if not name:
+            raise ValueError(f"{category} extension name is required")
+        if type_id in mapping:
+            raise ValueError(f"重复的 {category} 扩展 type: {type_id}")
+        duplicate_name = next((item for item in mapping.values() if _extension_name_key(getattr(item, "name", "")) == _extension_name_key(name)), None)
+        if duplicate_name is not None:
+            raise ValueError(f"重复的 {category} 扩展 name: {name}")
+
     def register_processing(self, extension: ProcessingExtension) -> None:
-        if not extension.type.strip():
-            raise ValueError("processing extension type is required")
+        self._ensure_unique_identity("processing", self._processing, extension)
         self._processing[extension.type.strip()] = extension
 
     def register_analysis(self, extension: AnalysisExtension) -> None:
-        if not extension.type.strip():
-            raise ValueError("analysis extension type is required")
+        self._ensure_unique_identity("analysis", self._analysis, extension)
         self._analysis[extension.type.strip()] = extension
 
     def register_plot(self, extension: PlotExtension) -> None:
-        if not extension.type.strip():
-            raise ValueError("plot extension type is required")
+        self._ensure_unique_identity("plot", self._plot, extension)
         self._plot[extension.type.strip()] = extension
 
     def unregister_processing(self, type_id: str) -> None:
@@ -490,11 +517,16 @@ class ExtensionRegistry:
         if spec is None or spec.loader is None:
             raise ImportError(f"无法加载扩展文件: {path}")
         module = importlib_util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        register = getattr(module, "register_extensions", None)
-        if not callable(register):
-            raise ValueError(f"扩展文件缺少 register_extensions(registry) 入口: {path}")
-        register(self)
+        before_state = self._registry_state()
+        try:
+            spec.loader.exec_module(module)
+            register = getattr(module, "register_extensions", None)
+            if not callable(register):
+                raise ValueError(f"扩展文件缺少 register_extensions(registry) 入口: {path}")
+            register(self)
+        except Exception:
+            self._restore_registry_state(before_state)
+            raise
         return module
 
     @staticmethod

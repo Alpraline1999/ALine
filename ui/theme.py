@@ -1,4 +1,4 @@
-from qfluentwidgets import isDarkTheme
+from qfluentwidgets import ToolTipFilter, ToolTipPosition, isDarkTheme
 
 
 def text_color():
@@ -36,9 +36,103 @@ def accent_color():
     return "#0078D4"
 
 
+def warning_color():
+    """警示文字颜色。"""
+    return "#D83B01"
+
+
+def error_color():
+    """错误/冲突文字颜色。"""
+    return "#e81123"
+
+
+def flat_status_button_style(color: str, font_size: int = 12) -> str:
+    """统一扁平状态按钮样式。"""
+    return (
+        "background: transparent; border: none; padding: 0; text-align: left;"
+        f"color: {color}; font-size: {font_size}px;"
+    )
+
+
+def body_text_style_sheet() -> str:
+    """统一正文标签样式。"""
+    return f"color: {text_color()};"
+
+
+def secondary_text_style_sheet(font_size: int = 12) -> str:
+    """统一次级说明文字样式。"""
+    return f"color: {secondary_color()}; font-size: {font_size}px;"
+
+
+def placeholder_text_style_sheet(font_size: int = 11, *, italic: bool = False) -> str:
+    """统一占位/提示文字样式。"""
+    style = f"color: {placeholder_color()}; font-size: {font_size}px;"
+    if italic:
+        style += " font-style: italic;"
+    return style
+
+
+def card_title_style_sheet(font_size: int = 16) -> str:
+    """统一卡片标题样式。"""
+    return f"color: {text_color()}; font-weight: 700; font-size: {font_size}px;"
+
+
+def section_label_style_sheet() -> str:
+    """统一节标题样式。"""
+    return f"color: {text_color()}; font-weight: 700; font-size: 13px;"
+
+
+def error_text_style_sheet(font_size: int = 12) -> str:
+    """统一错误文字样式。"""
+    return f"color: {error_color()}; font-size: {font_size}px;"
+
+
+def notification_parent(widget):
+    """优先返回顶层窗口，供嵌入式页面/面板显示通知。"""
+    from PySide6.QtWidgets import QWidget
+
+    if widget is None:
+        return None
+    window = widget.window() if hasattr(widget, "window") else None
+    return window if isinstance(window, QWidget) else widget
+
+
+def install_fluent_tooltip(widget, delay: int = 400, position=ToolTipPosition.TOP) -> None:
+    """为已有 tooltip 的 widget 安装 Fluent tooltip 过滤器。"""
+    from PySide6.QtWidgets import QWidget
+
+    if not isinstance(widget, QWidget):
+        return
+    if not widget.toolTip():
+        widget.setProperty("_alineFluentTooltip", False)
+        return
+    if bool(widget.property("_alineFluentTooltip")):
+        return
+    widget.installEventFilter(ToolTipFilter(widget, delay, position))
+    widget.setProperty("_alineFluentTooltip", True)
+
+
 def surface_color():
     """浅层面板背景"""
     return "#2a2a2a" if isDarkTheme() else "#fafafa"
+
+
+def preview_canvas_background_color(dark=None):
+    """matplotlib/预览宿主背景"""
+    dark = isDarkTheme() if dark is None else bool(dark)
+    return "#1e1e1e" if dark else "#ffffff"
+
+
+def preview_canvas_foreground_color(dark=None):
+    """matplotlib/预览宿主前景文字"""
+    dark = isDarkTheme() if dark is None else bool(dark)
+    return "#cccccc" if dark else "#222222"
+
+
+def preview_canvas_grid_color(dark=None):
+    """matplotlib/预览宿主网格线颜色"""
+    dark = isDarkTheme() if dark is None else bool(dark)
+    return "#444444" if dark else "#dddddd"
 
 
 def hover_color():
@@ -70,7 +164,7 @@ def make_section_label(text: str, parent=None):
     """创建节标题标签。"""
     from qfluentwidgets import BodyLabel
     lbl = BodyLabel(text, parent)
-    lbl.setStyleSheet(f"color: {text_color()}; font-weight: 700; font-size: 13px;")
+    lbl.setStyleSheet(section_label_style_sheet())
     return lbl
 
 
@@ -89,7 +183,7 @@ def make_card_title(text: str, parent=None):
     from qfluentwidgets import BodyLabel
 
     lbl = BodyLabel(text, parent)
-    lbl.setStyleSheet(f"color: {text_color()}; font-weight: 700; font-size: 16px;")
+    lbl.setStyleSheet(card_title_style_sheet())
     return lbl
 
 
@@ -99,7 +193,7 @@ def make_card_caption(text: str = "", parent=None):
 
     lbl = CaptionLabel(text, parent)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet(f"color: {secondary_color()}; font-size: 12px;")
+    lbl.setStyleSheet(secondary_text_style_sheet(font_size=12))
     return lbl
 
 
@@ -109,7 +203,7 @@ def make_empty_state_label(text: str = "", parent=None):
 
     lbl = BodyLabel(text, parent)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 12px;")
+    lbl.setStyleSheet(placeholder_text_style_sheet(font_size=12))
     return lbl
 
 
@@ -119,7 +213,7 @@ def make_hint_label(text: str = "", parent=None):
 
     lbl = BodyLabel(text, parent)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+    lbl.setStyleSheet(placeholder_text_style_sheet(font_size=11))
     return lbl
 
 

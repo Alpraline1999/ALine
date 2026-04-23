@@ -5,18 +5,18 @@
   {"type": "smooth",     "params": {"method": "savgol", "window": 11, "poly": 3}}
   {"type": "crop",       "params": {"x_min": 0.0, "x_max": 10.0}}
   {"type": "normalize",  "params": {"mode": "minmax"}}   # "minmax" | "zscore"
-  {"type": "resample",   "params": {"mode": "spacing", "spacing_mode": "point", "n": 200}}
-  {"type": "resample",   "params": {"mode": "spacing", "spacing_mode": "coord", "step": 0.1}}
-  {"type": "resample",   "params": {"mode": "align", "target_index": 1, "algorithm": "linear"}}
+    {"type": "resample",   "params": {"mode": "spacing", "spacing_mode": "point", "n": 200}}
+    {"type": "resample",   "params": {"mode": "spacing", "spacing_mode": "coord", "step": 0.1}}
+    {"type": "resample",   "params": {"mode": "align", "target_index": 1, "algorithm": "linear"}}
   {"type": "fft",        "params": {"output": "amplitude", "detrend": True}}
   {"type": "derivative", "params": {}}
   {"type": "integral",   "params": {"cumulative": True}}
   {"type": "transform",  "params": {"x_expr": "", "y_expr": "y * 1.0"}}
-  {"type": "filter",     "params": {"cutoff": 0.1, "order": 4, "mode": "low"}}
-  {"type": "pairwise_compute",
-   "params": {"primary_index": 1, "secondary_index": 2,
-              "x_expr": "x1", "y_expr": "y1 - y2",
-              "align_mode": "auto", "resample_mode": "count", "n": 200}}
+    {"type": "filter",     "params": {"cutoff": 0.1, "order": 4, "mode": "low"}}
+    {"type": "pairwise_compute",
+     "params": {"primary_index": 1, "secondary_index": 2,
+                            "x_expr": "x1", "y_expr": "y1 - y2",
+                            "align_mode": "auto", "resample_mode": "count", "n": 200}}
 
 apply_pipeline(xs, ys, ops) → (xs_new, ys_new)
 apply_pipeline_to_lines(lines, ops, *, selected_lines=None) → (processed_lines, warnings)
@@ -25,9 +25,9 @@ apply_pipeline_to_lines(lines, ops, *, selected_lines=None) → (processed_lines
 - pipeline 中至多 1 个"双/多曲线"算子 (pairwise_compute 或 line_mode=multi 扩展)。
 - 无此算子：对每条 lines 广播单曲线算子，输出数量 == 输入。
 - 存在此算子时：上游单曲线算子对算子引用的输入子集做参数共享的广播，
-  中间由双/多曲线算子消费并输出，随后下游算子对输出做常规广播。
+    中间由双/多曲线算子消费并输出，随后下游算子对输出做常规广播。
 - selected_lines 提供完整"已选择列表"池，用于 pairwise 的 primary/secondary_index、
-  多曲线扩展的 lines.lines_list、以及 resample mode=align 的 target_index 查表。
+    多曲线扩展的 lines.lines_list、以及 resample mode=align 的 target_index 查表。
 """
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def apply_pipeline_to_lines(
     selected_lines  : 完整"已选择列表"池；不传时等同 lines。
     """
     active = _normalize_pipeline_lines(lines)
-    pool = _normalize_pipeline_lines(selected_lines) if selected_lines is not None else [copy.deepcopy(ln) for ln in active]
+    pool = _normalize_pipeline_lines(selected_lines) if selected_lines is not None else [copy.deepcopy(line) for line in active]
 
     pairing = _find_single_pairing_op(ops)
 
@@ -90,24 +90,27 @@ def apply_pipeline_to_lines(
         if pairing is None:
             working = list(active)
             for op in ops or []:
-                working, op_warn = apply_operation_to_lines(working, op)
-                warnings.extend(op_warn)
+                working, op_warnings = apply_operation_to_lines(working, op)
+                warnings.extend(op_warnings)
             return working, warnings
 
         pairing_index, pairing_op = pairing
         pair_inputs = _resolve_pairing_inputs(pairing_op, pool)
         pre = list(pair_inputs)
         for op in (ops or [])[:pairing_index]:
-            pre, op_warn = apply_operation_to_lines(pre, op)
-            warnings.extend(op_warn)
+            if str(op.get("type", "") or "") == "resample" and len(pre) > 1:
+                pre, op_warnings = _apply_resample_to_lines(pre, dict(op.get("params", {}) or {}))
+            else:
+                pre, op_warnings = apply_operation_to_lines(pre, op)
+            warnings.extend(op_warnings)
 
-        mid, mid_warn = _execute_pairing_op(pairing_op, pre)
-        warnings.extend(mid_warn)
+        mid, mid_warnings = _execute_pairing_op(pairing_op, pre)
+        warnings.extend(mid_warnings)
 
         post = list(mid)
         for op in (ops or [])[pairing_index + 1:]:
-            post, op_warn = apply_operation_to_lines(post, op)
-            warnings.extend(op_warn)
+            post, op_warnings = apply_operation_to_lines(post, op)
+            warnings.extend(op_warnings)
         return post, warnings
     finally:
         _pipeline_pool.reset(token)
@@ -226,7 +229,6 @@ def _op_number_spec(op: Dict[str, Any], extension: Any) -> Optional[int]:
             return None
     if extension is None:
         return None
-    # 退化：未声明时按扩展自身的 line_mode / min_lines 推断
     if _processing_extension_line_mode(extension) != "multi":
         return 1
     min_lines = int(getattr(extension, "min_lines", 2) or 2)
@@ -244,14 +246,13 @@ def _is_pairing_op(op: Dict[str, Any]) -> bool:
     t = str(op.get("type", "") or "")
     if t == "pairwise_compute":
         return True
-    ext = extension_registry.get_processing(t)
-    if ext is None:
+    extension = extension_registry.get_processing(t)
+    if extension is None:
         return False
-    return _is_multi_line_processing_op(ext, op)
+    return _is_multi_line_processing_op(extension, op)
 
 
 def _find_single_pairing_op(ops: List[Dict[str, Any]]) -> Optional[Tuple[int, Dict[str, Any]]]:
-    """找出 pipeline 中唯一的双/多曲线 op；超过 1 个时抛错。"""
     found: List[Tuple[int, Dict[str, Any]]] = []
     for index, op in enumerate(ops or []):
         if _is_pairing_op(op):
@@ -263,12 +264,12 @@ def _find_single_pairing_op(ops: List[Dict[str, Any]]) -> Optional[Tuple[int, Di
 
 def _pick_from_pool(pool: List[PipelineLine], index_1based: Any) -> PipelineLine:
     try:
-        i = int(index_1based)
+        index = int(index_1based)
     except (TypeError, ValueError):
         raise ValueError(f"无效的曲线下标: {index_1based!r}")
-    if i < 1 or i > len(pool):
-        raise ValueError(f"曲线下标 {i} 超出已选择列表范围 (共 {len(pool)} 条)")
-    return pool[i - 1]
+    if index < 1 or index > len(pool):
+        raise ValueError(f"曲线下标 {index} 超出已选择列表范围 (共 {len(pool)} 条)")
+    return pool[index - 1]
 
 
 def _normalize_lines_list(raw: Any, pool_size: int) -> List[int]:
@@ -302,19 +303,19 @@ def _resolve_pairing_inputs(op: Dict[str, Any], pool: List[PipelineLine]) -> Lis
         secondary = _pick_from_pool(pool, secondary_idx)
         return [copy.deepcopy(primary), copy.deepcopy(secondary)]
 
-    ext = extension_registry.get_processing(t)
+    extension = extension_registry.get_processing(t)
     cfg = _op_lines_config(op)
     indices = _normalize_lines_list(cfg.get("lines_list"), len(pool))
     if not indices:
         indices = list(range(1, len(pool) + 1))
     chosen = [copy.deepcopy(_pick_from_pool(pool, idx)) for idx in indices]
 
-    number = _op_number_spec(op, ext)
+    number = _op_number_spec(op, extension)
     if number is not None and number > 0 and len(chosen) != number:
-        label = getattr(ext, "name", t) if ext is not None else t
+        label = getattr(extension, "name", t) if extension is not None else t
         raise ValueError(f"{label} 需要 {number} 条输入曲线，当前提供了 {len(chosen)} 条")
-    if ext is not None:
-        _validate_multiline_processing_extension(ext, chosen)
+    if extension is not None:
+        _validate_multiline_processing_extension(extension, chosen)
     return chosen
 
 
@@ -323,15 +324,14 @@ def _execute_pairing_op(op: Dict[str, Any], lines: List[PipelineLine]) -> Pipeli
     p = dict(op.get("params", {}) or {})
     if t == "pairwise_compute":
         return _op_pairwise_compute(lines, p)
-    ext = extension_registry.get_processing(t)
-    if ext is None:
+    extension = extension_registry.get_processing(t)
+    if extension is None:
         raise ValueError(f"未知的多曲线处理算子: {t}")
-    _validate_multiline_processing_extension(ext, lines)
-    return _apply_multiline_processing_extension(ext, lines, p)
+    _validate_multiline_processing_extension(extension, lines)
+    return _apply_multiline_processing_extension(extension, lines, p)
 
 
 def _validate_pipeline_multiline_conflicts(lines: List[PipelineLine], ops: List[Dict[str, Any]]) -> None:
-    """保留给外部调用的轻量冲突校验（主流程已用 _find_single_pairing_op 替代）。"""
     _find_single_pairing_op(ops)
 
 
@@ -435,7 +435,7 @@ def align_lines_to_common_x(
     options = dict(params or {})
     align_mode = str(options.get("align_mode", "auto") or "auto").strip().lower()
     if align_mode == "strict":
-        raise ValueError("输入曲线 X 坐标未对齐，请先重采样，或将对齐方式改为自动重采样")
+        raise ValueError("输入曲线 X 坐标未对齐，需进行坐标间距重采样")
 
     grid = _build_alignment_grid(prepared_lines, options)
     aligned_lines = []
@@ -446,7 +446,10 @@ def align_lines_to_common_x(
         }))
 
     description = _describe_alignment_mode(options, len(grid))
-    warnings = [f"输入曲线 X 坐标未对齐，已在重叠区间内按{description}自动重采样。"]
+    warnings = [
+        "需进行坐标间距重采样",
+        f"输入曲线 X 坐标未对齐，已在重叠区间内按{description}自动重采样。",
+    ]
     return aligned_lines, warnings
 
 
@@ -545,10 +548,7 @@ def _op_pairwise_compute(lines: List[PipelineLine], p: Dict[str, Any]) -> Pipeli
     if len(lines) != 2:
         raise ValueError("双曲线计算需要恰好选择两条输入曲线")
 
-    source_x1 = list(lines[0].get("x", []) or [])
-    source_x2 = list(lines[1].get("x", []) or [])
-
-    aligned_lines, warnings = align_lines_to_common_x(lines, p)
+    aligned_lines, _warnings = align_lines_to_common_x(lines, {"align_mode": "strict"})
     primary, secondary = aligned_lines
     x1 = list(primary.get("x", []) or [])
     y1 = list(primary.get("y", []) or [])
@@ -558,10 +558,6 @@ def _op_pairwise_compute(lines: List[PipelineLine], p: Dict[str, Any]) -> Pipeli
     x_expr, y_expr = _resolve_pairwise_expressions(p)
     new_x, new_y = _evaluate_pairwise_expression(x_expr, y_expr, x1, y1, x2, y2)
 
-    combined_warnings = list(warnings)
-    if not _x_values_equal(source_x1, source_x2):
-        combined_warnings.append("需进行坐标间距重采样")
-
     default_name = f"{primary.get('name', '主曲线')} ⊕ {secondary.get('name', '副曲线')}"
     result_name = str(p.get("result_name", "") or "").strip() or default_name
     result_line = _merge_line_payload(primary, {
@@ -569,7 +565,7 @@ def _op_pairwise_compute(lines: List[PipelineLine], p: Dict[str, Any]) -> Pipeli
         "x": list(new_x),
         "y": list(new_y),
     })
-    return [result_line], combined_warnings
+    return [result_line], []
 
 
 def _resolve_pairwise_expressions(p: Dict[str, Any]) -> Tuple[str, str]:
@@ -601,23 +597,34 @@ def _evaluate_pairwise_expression(
     y2: List[float],
 ) -> Tuple[List[float], List[float]]:
     import math as _math
+
     try:
         import numpy as np
     except ImportError:
         np = None  # type: ignore
+
     safe_globals = {
         "__builtins__": {},
         "math": _math,
-        "abs": abs, "min": min, "max": max, "round": round,
-        "sqrt": _math.sqrt, "log": _math.log, "log10": _math.log10, "exp": _math.exp,
-        "sin": _math.sin, "cos": _math.cos, "tan": _math.tan,
-        "pi": _math.pi, "e": _math.e,
+        "abs": abs,
+        "min": min,
+        "max": max,
+        "round": round,
+        "sqrt": _math.sqrt,
+        "log": _math.log,
+        "log10": _math.log10,
+        "exp": _math.exp,
+        "sin": _math.sin,
+        "cos": _math.cos,
+        "tan": _math.tan,
+        "pi": _math.pi,
+        "e": _math.e,
     }
     if np is not None:
         safe_globals["np"] = np
-        for fn in ("sqrt", "log", "log10", "exp", "sin", "cos", "tan", "abs", "minimum", "maximum"):
-            if hasattr(np, fn):
-                safe_globals[fn] = getattr(np, fn)
+        for name in ("sqrt", "log", "log10", "exp", "sin", "cos", "tan", "abs", "minimum", "maximum"):
+            if hasattr(np, name):
+                safe_globals[name] = getattr(np, name)
         try:
             a1 = np.asarray(x1, dtype=float)
             b1 = np.asarray(y1, dtype=float)
@@ -629,10 +636,11 @@ def _evaluate_pairwise_expression(
             return np.asarray(nx, dtype=float).tolist(), np.asarray(ny, dtype=float).tolist()
         except Exception:
             pass
+
     nx_list: List[float] = []
     ny_list: List[float] = []
-    for v1, u1, v2, u2 in zip(x1, y1, x2, y2):
-        ctx = {"x1": float(v1), "y1": float(u1), "x2": float(v2), "y2": float(u2)}
+    for left_x, left_y, right_x, right_y in zip(x1, y1, x2, y2):
+        ctx = {"x1": float(left_x), "y1": float(left_y), "x2": float(right_x), "y2": float(right_y)}
         nx_list.append(float(eval(x_expr, safe_globals, ctx)))  # noqa: S307
         ny_list.append(float(eval(y_expr, safe_globals, ctx)))  # noqa: S307
     return nx_list, ny_list
@@ -754,24 +762,65 @@ def _op_resample(xs: List[float], ys: List[float], p: dict) -> XY:
     if mode == "spacing":
         spacing_mode = str(p.get("spacing_mode", "") or "").strip().lower()
         if not spacing_mode:
-            # 兼容旧参数：存在 step 走坐标间距，否则点间距
-            spacing_mode = "coord" if float(p.get("step", p.get("spacing", 0.0)) or 0.0) > 0 else "point"
+            spacing_mode = "coord" if ("step" in p or "spacing" in p) else "point"
         if spacing_mode == "coord":
             spacing = float(p.get("step", p.get("spacing", 0.0)) or 0.0)
             if spacing <= 0:
-                return x_sorted, y_sorted
+                raise ValueError("坐标间距必须大于 0")
             return resample_uniform_spacing(x_sorted, y_sorted, spacing)
         n = max(2, int(p.get("n", 200)))
         return resample_uniform(x_sorted, y_sorted, n)
 
-    # 历史兼容：mode=count/spacing 的旧字面量
     if mode == "count":
         n = max(2, int(p.get("n", 200)))
         return resample_uniform(x_sorted, y_sorted, n)
 
-    # 默认回退为点间距
     n = max(2, int(p.get("n", 200)))
     return resample_uniform(x_sorted, y_sorted, n)
+
+
+def _apply_resample_to_lines(lines: List[PipelineLine], params: Dict[str, Any]) -> PipelineResult:
+    working_lines = [_sorted_line_payload(line) for line in _normalize_pipeline_lines(lines)]
+    if not working_lines:
+        return [], []
+    if len(working_lines) == 1:
+        xs, ys = _op_resample(list(working_lines[0].get("x", []) or []), list(working_lines[0].get("y", []) or []), params)
+        return [_merge_line_payload(working_lines[0], {"x": xs, "y": ys})], []
+
+    mode = str(params.get("mode", "spacing") or "spacing").strip().lower()
+    if mode == "align":
+        rebuilt: List[PipelineLine] = []
+        for line in working_lines:
+            xs, ys = _op_resample(list(line.get("x", []) or []), list(line.get("y", []) or []), params)
+            rebuilt.append(_merge_line_payload(line, {"x": xs, "y": ys}))
+        return rebuilt, []
+
+    spacing_mode = str(params.get("spacing_mode", "") or "").strip().lower()
+    if not spacing_mode:
+        spacing_mode = "coord" if ("step" in params or "spacing" in params) else "point"
+    grid_params = dict(params)
+    if spacing_mode == "coord":
+        step = float(params.get("step", params.get("spacing", 0.0)) or 0.0)
+        if step <= 0:
+            raise ValueError("坐标间距必须大于 0")
+        grid_params["mode"] = "spacing"
+        grid_params["resample_mode"] = "spacing"
+        grid_params["step"] = step
+    else:
+        grid_params["mode"] = "count"
+        grid_params["resample_mode"] = "count"
+        grid_params["n"] = max(2, int(params.get("n", 200) or 200))
+
+    grid = _build_alignment_grid(working_lines, grid_params)
+    algorithm = str(params.get("algorithm", "linear") or "linear").strip().lower()
+    rebuilt = [
+        _merge_line_payload(line, {
+            "x": list(grid),
+            "y": _resample_to_grid(list(line.get("x", []) or []), list(line.get("y", []) or []), grid, algorithm),
+        })
+        for line in working_lines
+    ]
+    return rebuilt, []
 
 
 def _resample_to_grid(
@@ -782,14 +831,14 @@ def _resample_to_grid(
 ) -> List[float]:
     algorithm = str(algorithm or "linear").strip().lower()
     if algorithm == "nearest":
-        return [_nearest_value(float(t), xs, ys) for t in target_x]
+        return [_nearest_value(float(value), xs, ys) for value in target_x]
     if algorithm == "cubic":
         try:
             import numpy as np
             from scipy.interpolate import CubicSpline
 
-            cs = CubicSpline(np.asarray(xs, dtype=float), np.asarray(ys, dtype=float), extrapolate=False)
-            values = cs(np.asarray(target_x, dtype=float))
+            spline = CubicSpline(np.asarray(xs, dtype=float), np.asarray(ys, dtype=float), extrapolate=False)
+            values = spline(np.asarray(target_x, dtype=float))
             result: List[float] = []
             for raw, fallback_x in zip(values.tolist(), target_x):
                 if raw is None or (isinstance(raw, float) and math.isnan(raw)):
@@ -799,7 +848,7 @@ def _resample_to_grid(
             return result
         except Exception:
             pass
-    return [_interp_linear(float(t), xs, ys) for t in target_x]
+    return [_interp_linear(float(value), xs, ys) for value in target_x]
 
 
 def _nearest_value(x_value: float, xs: List[float], ys: List[float]) -> float:

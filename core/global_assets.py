@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,6 +33,7 @@ from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
 
 _GLOBAL_ASSET_VERSION = "1"
 _BUILTIN_DEFAULT_REPORT_TEMPLATE_ID = "builtin:default-report-template"
+_DEFAULT_EXTENSION_CONFIG_NAME = "默认配置"
 _KNOWN_TEST_REPORT_TEMPLATE_SIGNATURES = {
     ("tmpl1", "# Hello"),
     ("tmpl1", "# Template"),
@@ -154,6 +156,34 @@ def _sanitize_report_templates(templates: List[ReportTemplate]) -> tuple[List[Re
     return sanitized, changed
 
 
+def _normalize_extension_category(category: str) -> str:
+    return str(category or "").strip().lower()
+
+
+def _normalize_extension_type(extension_type: str) -> str:
+    return str(extension_type or "").strip()
+
+
+def _normalize_extension_config_name(name: str) -> str:
+    return str(name or "").strip()
+
+
+def _extension_config_name_key(name: str) -> str:
+    return _normalize_extension_config_name(name).casefold()
+
+
+class ExtensionConfigPreset(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: f"extcfg:{uuid.uuid4().hex}")
+    category: str
+    extension_type: str
+    extension_name: str
+    name: str = _DEFAULT_EXTENSION_CONFIG_NAME
+    options: Dict[str, Any] = Field(default_factory=dict)
+    is_default: bool = False
+
+
 class GlobalAssets(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -163,6 +193,7 @@ class GlobalAssets(BaseModel):
     report_templates: List[ReportTemplate] = Field(default_factory=list)
     curve_style_templates: List[CurveStyleTemplate] = Field(default_factory=list)
     plot_themes: List[PlotTheme] = Field(default_factory=list)
+    extension_configs: List[ExtensionConfigPreset] = Field(default_factory=list)
     ai_prompts: List[AIPrompt] = Field(default_factory=list)
     ai_skills: List[AISkill] = Field(default_factory=list)
     ai_agents: List[AIAgent] = Field(default_factory=list)
@@ -399,6 +430,172 @@ class GlobalAssetManager:
         if not include_builtin:
             return user_themes
         return _builtin_plot_themes() + user_themes
+
+    def list_extension_configs(
+        self,
+        *,
+        category: Optional[str] = None,
+        extension_type: Optional[str] = None,
+        include_defaults: bool = True,
+    ) -> List[ExtensionConfigPreset]:
+        normalized_category = _normalize_extension_category(category) if category else None
+        normalized_type = _normalize_extension_type(extension_type) if extension_type else None
+        items = list(self.data.extension_configs)
+        if normalized_category is not None:
+            items = [item for item in items if _normalize_extension_category(item.category) == normalized_category]
+        if normalized_type is not None:
+            items = [item for item in items if _normalize_extension_type(item.extension_type) == normalized_type]
+        if not include_defaults:
+            items = [item for item in items if not item.is_default]
+        return items
+
+    def get_extension_config(self, config_id: str) -> Optional[ExtensionConfigPreset]:
+        return next((item for item in self.data.extension_configs if item.id == config_id), None)
+
+    def get_extension_default_config(self, category: str, extension_type: str) -> Optional[ExtensionConfigPreset]:
+        normalized_category = _normalize_extension_category(category)
+        normalized_type = _normalize_extension_type(extension_type)
+        return next(
+            (
+                item
+                for item in self.data.extension_configs
+                if _normalize_extension_category(item.category) == normalized_category
+                and _normalize_extension_type(item.extension_type) == normalized_type
+                and item.is_default
+            ),
+            None,
+        )
+
+    def get_extension_config_by_name(self, category: str, extension_type: str, name: str) -> Optional[ExtensionConfigPreset]:
+        normalized_category = _normalize_extension_category(category)
+        normalized_type = _normalize_extension_type(extension_type)
+        normalized_name = _extension_config_name_key(name)
+        return next(
+            (
+                item
+                for item in self.data.extension_configs
+                if _normalize_extension_category(item.category) == normalized_category
+                and _normalize_extension_type(item.extension_type) == normalized_type
+                and _extension_config_name_key(item.name) == normalized_name
+            ),
+            None,
+        )
+
+    def ensure_extension_default_config(
+        self,
+        category: str,
+        extension_type: str,
+        extension_name: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> ExtensionConfigPreset:
+        normalized_category = _normalize_extension_category(category)
+        normalized_type = _normalize_extension_type(extension_type)
+        clean_extension_name = _normalize_extension_config_name(extension_name) or normalized_type
+        clean_options = dict(options or {})
+
+        for item in self.data.extension_configs:
+            if _normalize_extension_category(item.category) == normalized_category and _normalize_extension_type(item.extension_type) == normalized_type:
+                item.extension_name = clean_extension_name
+
+        existing = self.get_extension_default_config(normalized_category, normalized_type)
+        if existing is None:
+            existing = ExtensionConfigPreset(
+                category=normalized_category,
+                extension_type=normalized_type,
+                extension_name=clean_extension_name,
+                name=_DEFAULT_EXTENSION_CONFIG_NAME,
+                options=clean_options,
+                is_default=True,
+            )
+            self.data.extension_configs.append(existing)
+            self.save()
+            return existing
+
+        changed = False
+        if existing.extension_name != clean_extension_name:
+            existing.extension_name = clean_extension_name
+            changed = True
+        if existing.name != _DEFAULT_EXTENSION_CONFIG_NAME:
+            existing.name = _DEFAULT_EXTENSION_CONFIG_NAME
+            changed = True
+        if dict(existing.options or {}) != clean_options:
+            existing.options = clean_options
+            changed = True
+        if not existing.is_default:
+            existing.is_default = True
+            changed = True
+        if changed:
+            self.save()
+        return existing
+
+    def add_extension_config(
+        self,
+        *,
+        category: str,
+        extension_type: str,
+        extension_name: str,
+        name: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> ExtensionConfigPreset:
+        normalized_category = _normalize_extension_category(category)
+        normalized_type = _normalize_extension_type(extension_type)
+        clean_name = _normalize_extension_config_name(name)
+        if not normalized_category or not normalized_type or not clean_name:
+            raise ValueError("扩展配置保存信息不完整")
+        if self.get_extension_config_by_name(normalized_category, normalized_type, clean_name) is not None:
+            raise ValueError("同一扩展下已存在同名配置")
+        item = ExtensionConfigPreset(
+            category=normalized_category,
+            extension_type=normalized_type,
+            extension_name=_normalize_extension_config_name(extension_name) or normalized_type,
+            name=clean_name,
+            options=dict(options or {}),
+            is_default=False,
+        )
+        self.data.extension_configs.append(item)
+        self.save()
+        return item
+
+    def update_extension_config(
+        self,
+        config_id: str,
+        *,
+        name: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Optional[ExtensionConfigPreset]:
+        item = self.get_extension_config(config_id)
+        if item is None:
+            return None
+        if item.is_default and name is not None:
+            return None
+        changed = False
+        if name is not None:
+            clean_name = _normalize_extension_config_name(name)
+            if not clean_name:
+                return None
+            duplicate = self.get_extension_config_by_name(item.category, item.extension_type, clean_name)
+            if duplicate is not None and duplicate.id != item.id:
+                raise ValueError("同一扩展下已存在同名配置")
+            if item.name != clean_name:
+                item.name = clean_name
+                changed = True
+        if options is not None and dict(item.options or {}) != dict(options):
+            item.options = dict(options)
+            changed = True
+        if changed:
+            self.save()
+        return item
+
+    def delete_extension_config(self, config_id: str) -> bool:
+        target = self.get_extension_config(config_id)
+        if target is None or target.is_default:
+            return False
+        before = len(self.data.extension_configs)
+        self.data.extension_configs = [item for item in self.data.extension_configs if item.id != config_id]
+        if len(self.data.extension_configs) == before:
+            return False
+        self.save()
+        return True
 
     def get_plot_theme(self, theme_key: str) -> Optional[PlotTheme]:
         for item in self.list_plot_themes(include_builtin=True):

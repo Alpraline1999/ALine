@@ -21,6 +21,7 @@ from qfluentwidgets.components.widgets.tree_view import TreeItemDelegate
 from PySide6.QtWidgets import QTreeWidgetItem
 
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
+from core.extension_api import build_extension_entry, extension_registry
 from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
 from models.schemas import DataFile
@@ -57,6 +58,47 @@ def _wrap_text_height(font, text: str, width: int) -> int:
     return ceil(document.size().height())
 
 
+_ROOT_GROUP_ORDER = {
+    "source_files": 0,
+    "datasets": 1,
+    "dataset_set": 1,
+    "images": 2,
+    "image_set": 2,
+    "pictures": 3,
+    "picture_set": 3,
+    "analysis_result_group": 4,
+    "tools": 5,
+    "tool_set": 5,
+}
+
+
+def _sort_name_bucket(text: str) -> int:
+    clean = str(text or "").strip()
+    if not clean:
+        return 3
+    first = clean[0]
+    if first.isascii() and first.isalnum():
+        return 0
+    if first.isascii():
+        return 1
+    return 2
+
+
+def _sort_text_key(text: str) -> tuple[int, str, str]:
+    clean = str(text or "").strip()
+    return (_sort_name_bucket(clean), clean.casefold(), clean)
+
+
+def _extension_config_name_key(text: str) -> str:
+    return str(text or "").strip().casefold()
+
+
+def _global_asset_sort_key(asset) -> tuple[int, int, str, str]:
+    builtin_rank = 0 if bool(getattr(asset, "is_builtin", False)) else 1
+    name_key = _sort_text_key(getattr(asset, "name", "") or getattr(asset, "id", ""))
+    return (builtin_rank, name_key[0], name_key[1], name_key[2])
+
+
 _PROJECT_ICON = getattr(FIF, "ZIP_FOLDER", getattr(FIF, "LIBRARY", FIF.FOLDER))
 _DATA_ICON = FIF.DICTIONARY
 _SOURCE_FOLDER_ICON = getattr(FIF, "IOT", FIF.FOLDER)
@@ -90,6 +132,7 @@ _KIND_CONFIG = {
     "global_curve_style_template": (FIF.PENCIL_INK, "#107C10"),
     "global_plot_style": (FIF.PIE_SINGLE,    "#8C6C00"),
     "global_plot_theme": (FIF.PIE_SINGLE,    "#8C6C00"),
+        "global_extension_config": (getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "#0078D4"),
     "global_ai_prompt": (FIF.CHAT,           "#881798"),
     "global_ai_skill": (FIF.DEVELOPER_TOOLS, "#881798"),
     "global_ai_agent": (FIF.ROBOT,           "#881798"),
@@ -150,9 +193,20 @@ _ROLE = Qt.ItemDataRole.UserRole
 _PROJECT_ROLE = Qt.ItemDataRole.UserRole + 1
 _SYNTHETIC_GLOBAL_KINDS = frozenset({
     "global_root", "global_group", "global_pipeline",
-    "global_report_template", "global_curve_style_template", "global_plot_style", "global_plot_theme",
+    "global_report_template", "global_curve_style_template", "global_plot_style", "global_plot_theme", "global_extension_config",
     "global_ai_prompt", "global_ai_skill", "global_ai_agent",
 })
+
+_EXTENSION_CONFIG_GROUPS = [
+    ("plot", "绘图扩展", getattr(FIF, "PENCIL_INK", FIF.DEVELOPER_TOOLS)),
+    ("processing", "处理扩展", FIF.DEVELOPER_TOOLS),
+    ("analysis", "分析扩展", FIF.SEARCH),
+]
+
+
+def _extension_config_sort_key(config) -> tuple[int, int, str, str]:
+    name_key = _sort_text_key(getattr(config, "name", "") or getattr(config, "id", ""))
+    return (0 if bool(getattr(config, "is_default", False)) else 1, name_key[0], name_key[1], name_key[2])
 
 
 class _ProjectTreeView(TreeWidget):
@@ -269,7 +323,7 @@ class ProjectTreeWidget(QWidget):
         self._tree.setHeaderHidden(True)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
+        self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.setIndentation(14)
         self._tree.setWordWrap(True)
         self._tree.setTextElideMode(Qt.TextElideMode.ElideNone)
@@ -537,7 +591,10 @@ class ProjectTreeWidget(QWidget):
     ) -> None:
         if project is None or project.tree is None or parent_item is None:
             return
-        children = project.tree.get_children(parent_id)
+        children = sorted(
+            project.tree.get_children(parent_id),
+            key=lambda node: self._tree_node_sort_key(node, parent_id),
+        )
         for node in children:
             kind = node.kind
             if self._filter_kinds and kind not in self._filter_kinds:
@@ -554,7 +611,7 @@ class ProjectTreeWidget(QWidget):
                 if not self._filter_kinds or "series" in self._filter_kinds or "data_file" in self._filter_kinds:
                     df = project.find_data_file(node.data_file_id)
                     if df:
-                        for series in df.series:
+                        for series in sorted(df.series, key=lambda item: _sort_text_key(item.name or item.id)):
                             child = self._make_virtual_series_item(series, project.id)
                             item.addChild(child)
 
@@ -563,7 +620,7 @@ class ProjectTreeWidget(QWidget):
                 if not self._filter_kinds or "curve" in self._filter_kinds or "image_work" in self._filter_kinds:
                     img = next((image for image in project.images if image.id == node.image_work_id), None)
                     if img:
-                        for curve in img.curves:
+                        for curve in sorted(img.curves, key=lambda item: _sort_text_key(item.name or item.id)):
                             child = self._make_virtual_curve_item(curve, project.id)
                             item.addChild(child)
 
@@ -579,8 +636,6 @@ class ProjectTreeWidget(QWidget):
                     parent_item.removeChild(item)
                 continue
 
-            item.setExpanded(True)
-
     def _make_synthetic_item(self, label: str, kind: str, node_id: str, icon_fif) -> QTreeWidgetItem:
         item = QTreeWidgetItem([label])
         item.setData(0, _ROLE, (kind, node_id))
@@ -593,24 +648,24 @@ class ProjectTreeWidget(QWidget):
         root = self._make_synthetic_item("全局资源", "global_root", "__global_root__", FIF.FOLDER)
 
         pipelines = self._make_synthetic_item("Pipelines", "global_group", "__global_pipelines__", FIF.DEVELOPER_TOOLS)
-        for item in global_assets.list_saved_pipelines():
+        for item in sorted(global_assets.list_saved_pipelines(), key=lambda asset: _sort_text_key(asset.name or asset.id)):
             pipelines.addChild(self._make_synthetic_item(item.name, "global_pipeline", item.id, FIF.DEVELOPER_TOOLS))
         root.addChild(pipelines)
 
         curve_styles = self._make_synthetic_item("曲线样式", "global_group", "__global_curve_styles__", FIF.PENCIL_INK)
-        for item in global_assets.list_curve_style_templates():
+        for item in sorted(global_assets.list_curve_style_templates(), key=_global_asset_sort_key):
             curve_styles.addChild(self._make_synthetic_item(item.name, "global_curve_style_template", item.id, FIF.PENCIL_INK))
         root.addChild(curve_styles)
 
         plot_themes = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
-        for item in global_assets.list_plot_themes(include_builtin=True):
+        for item in sorted(global_assets.list_plot_themes(include_builtin=True), key=_global_asset_sort_key):
             plot_themes.addChild(self._make_synthetic_item(
                 item.name,
                 "global_plot_style",
                 make_plot_style_asset_key("theme", item.id or item.name),
                 FIF.PIE_SINGLE,
             ))
-        for item in global_assets.list_figure_templates():
+        for item in sorted(global_assets.list_figure_templates(), key=lambda asset: _sort_text_key(asset.name or asset.id)):
             plot_themes.addChild(self._make_synthetic_item(
                 item.name or item.id[:8],
                 "global_plot_style",
@@ -620,14 +675,99 @@ class ProjectTreeWidget(QWidget):
         root.addChild(plot_themes)
 
         reports = self._make_synthetic_item("报告模板", "global_group", "__global_reports__", FIF.DOCUMENT)
-        for item in global_assets.list_report_templates(include_builtin=True):
+        for item in sorted(global_assets.list_report_templates(include_builtin=True), key=_global_asset_sort_key):
             reports.addChild(self._make_synthetic_item(item.name, "global_report_template", item.id, FIF.DOCUMENT))
         root.addChild(reports)
+
+        extension_configs = self._make_synthetic_item(
+            "扩展配置",
+            "global_group",
+            "__global_extension_configs__",
+            getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
+        )
+        for category, label, icon in _EXTENSION_CONFIG_GROUPS:
+            category_item = self._make_synthetic_item(
+                label,
+                "global_group",
+                f"__global_extension_configs__:{category}",
+                icon,
+            )
+            for extension_item in self._build_extension_config_group_items(category):
+                category_item.addChild(extension_item)
+            extension_configs.addChild(category_item)
+        root.addChild(extension_configs)
 
         root.setExpanded(True)
         for index in range(root.childCount()):
             root.child(index).setExpanded(True)
         self._tree.addTopLevelItem(root)
+
+    def _build_extension_config_group_items(self, category: str) -> List[QTreeWidgetItem]:
+        if category == "plot":
+            entries = [build_extension_entry(extension) for extension in extension_registry.list_plot()]
+        elif category == "processing":
+            entries = [build_extension_entry(extension) for extension in extension_registry.list_processing()]
+        else:
+            entries = [build_extension_entry(extension) for extension in extension_registry.list_analysis()]
+
+        entry_by_type: Dict[str, dict] = {}
+        for entry in entries:
+            type_id = str(entry.get("type") or "").strip()
+            if not type_id:
+                continue
+            entry_by_type[type_id] = dict(entry)
+            global_assets.ensure_extension_default_config(
+                category,
+                type_id,
+                str(entry.get("name") or type_id),
+                dict(entry.get("default_options") or {}),
+            )
+
+        grouped_configs: Dict[str, List[object]] = {}
+        for item in global_assets.list_extension_configs(category=category):
+            type_id = str(item.extension_type or "").strip()
+            if not type_id:
+                continue
+            grouped_configs.setdefault(type_id, []).append(item)
+
+        items: List[QTreeWidgetItem] = []
+        sorted_type_ids = sorted(
+            grouped_configs.keys(),
+            key=lambda value: _sort_text_key(
+                str(entry_by_type.get(value, {}).get("name") or grouped_configs[value][0].extension_name or value)
+            ),
+        )
+        display_names = {
+            type_id: str(entry_by_type.get(type_id, {}).get("name") or grouped_configs[type_id][0].extension_name or type_id)
+            for type_id in sorted_type_ids
+        }
+        duplicate_counts: Dict[str, int] = {}
+        for display_name in display_names.values():
+            duplicate_key = _extension_config_name_key(display_name)
+            duplicate_counts[duplicate_key] = duplicate_counts.get(duplicate_key, 0) + 1
+
+        for type_id in sorted_type_ids:
+            extension_name = display_names[type_id]
+            extension_label = extension_name
+            if duplicate_counts.get(_extension_config_name_key(extension_name), 0) > 1:
+                extension_label = f"{extension_name}（{type_id}）"
+            extension_item = self._make_synthetic_item(
+                extension_label,
+                "global_group",
+                f"__global_extension_configs__:{category}:{type_id}",
+                getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
+            )
+            for config in sorted(grouped_configs[type_id], key=_extension_config_sort_key):
+                extension_item.addChild(
+                    self._make_synthetic_item(
+                        config.name,
+                        "global_extension_config",
+                        config.id,
+                        getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
+                    )
+                )
+            items.append(extension_item)
+        return items
 
     def _make_item(self, node, project_id: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([node.name])
@@ -691,6 +831,14 @@ class ProjectTreeWidget(QWidget):
         item.setIcon(0, FIF.PENCIL_INK.icon())
         item.setToolTip(0, label)
         return item
+
+    def _tree_node_sort_key(self, node, parent_id: Optional[str]) -> tuple[int, int, str, str]:
+        group_type = self._canonical_group_type(getattr(node, "group_type", None))
+        if parent_id is None and node.kind == "folder" and group_type in _ROOT_GROUP_ORDER:
+            return (-1, _ROOT_GROUP_ORDER[group_type], "", "")
+        name_key = _sort_text_key(getattr(node, "name", "") or "")
+        folder_rank = 0 if node.kind == "folder" else 1
+        return (folder_rank, name_key[0], name_key[1], name_key[2])
 
     def _activate_item_project(self, item: Optional[QTreeWidgetItem]) -> None:
         if item is None:
@@ -836,6 +984,8 @@ class ProjectTreeWidget(QWidget):
                 manage_entries.append((FIF.PENCIL_INK, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
             elif kind in ("global_plot_style", "global_plot_theme"):
                 manage_entries.append((FIF.PIE_SINGLE, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
+            elif kind == "global_extension_config":
+                manage_entries.append((getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "查看扩展配置", lambda: self.node_activated.emit(kind, node_id)))
             elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
                 manage_entries.append((FIF.EDIT, "在设置中查看", lambda: self.node_activated.emit(kind, node_id)))
             if self._can_edit_global_asset(kind, node_id):
@@ -868,7 +1018,7 @@ class ProjectTreeWidget(QWidget):
                     manage_entries.append((_SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id)))
             if not is_protected:
                 manage_entries.extend([
-                    (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                    (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                     (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
                 ])
             if managed_group_type in _MANAGED_FOLDER_GROUP_TYPES:
@@ -880,7 +1030,7 @@ class ProjectTreeWidget(QWidget):
                 (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("data_file_to_chart", node_id)),
                 (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("data_file_to_process", node_id)),
                 (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("data_file_to_analysis", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
             if move_choices:
@@ -894,7 +1044,7 @@ class ProjectTreeWidget(QWidget):
             ])
             manage_entries.extend([
                 (_SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
             if move_choices:
@@ -906,7 +1056,7 @@ class ProjectTreeWidget(QWidget):
                 (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("series_to_chart", node_id)),
                 (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("series_to_process", node_id)),
                 (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("series_to_analysis", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0))),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
             ])
             if move_choices:
@@ -918,7 +1068,7 @@ class ProjectTreeWidget(QWidget):
                 (FIF.ADD, "新增曲线", lambda: self.node_activated.emit("image_work_add_curve", node_id)),
                 (_OPEN_DIGITIZE_ACTION_ICON, "打开取点", lambda: self.node_activated.emit("image_work", node_id)),
                 # (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
             if move_choices:
@@ -928,7 +1078,7 @@ class ProjectTreeWidget(QWidget):
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
                 (_PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
             if move_choices:
@@ -939,7 +1089,7 @@ class ProjectTreeWidget(QWidget):
             manage_entries.extend([
                 (_IMPORT_DATA_ACTION_ICON, "导出为数据列", lambda: self.node_activated.emit("curve_export_to_data_file", node_id)),
                 (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("curve_to_chart", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._cmd_rename_virtual(kind, node_id, item.text(0))),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
             ])
             if move_choices:
@@ -948,21 +1098,21 @@ class ProjectTreeWidget(QWidget):
         elif kind == "pipeline":
             manage_entries.extend([
                 (FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit("pipeline", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
 
         elif kind == "figure_template":
             manage_entries.extend([
                 (FIF.PIE_SINGLE, "加载到可视化", lambda: self.node_activated.emit("figure_template", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
 
         elif kind == "report_template":
             manage_entries.extend([
                 (FIF.SEARCH, "加载到分析页", lambda: self.node_activated.emit("report_template", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
 
@@ -970,7 +1120,7 @@ class ProjectTreeWidget(QWidget):
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
                 (FIF.SEARCH, "发送到分析页", lambda: self.node_activated.emit("analysis_result", node_id)),
-                (FIF.EDIT, "重命名", lambda: self._tree.editItem(item, 0)),
+                (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
             if move_choices:
@@ -1261,6 +1411,9 @@ class ProjectTreeWidget(QWidget):
                 return global_assets.get_figure_template(asset_id) is not None
             item = global_assets.get_plot_theme(asset_id)
             return bool(item is not None and not item.is_builtin)
+        if kind == "global_extension_config":
+            item = global_assets.get_extension_config(node_id)
+            return bool(item is not None and not item.is_default)
         return kind in {
             "global_pipeline",
             "global_ai_prompt",
@@ -1283,6 +1436,8 @@ class ProjectTreeWidget(QWidget):
             if style_type == "template":
                 return global_assets.update_figure_template(asset_id, name=clean_name)
             return global_assets.update_plot_theme(asset_id, name=clean_name)
+        if kind == "global_extension_config":
+            return global_assets.update_extension_config(node_id, name=clean_name) is not None
         if kind == "global_ai_prompt":
             return global_assets.update_ai_prompt(node_id, name=clean_name)
         if kind == "global_ai_skill":
@@ -1305,6 +1460,8 @@ class ProjectTreeWidget(QWidget):
             if style_type == "template":
                 return global_assets.delete_figure_template(asset_id)
             return global_assets.delete_plot_theme(asset_id)
+        if kind == "global_extension_config":
+            return global_assets.delete_extension_config(node_id)
         if kind == "global_ai_prompt":
             return global_assets.delete_ai_prompt(node_id)
         if kind == "global_ai_skill":

@@ -778,6 +778,12 @@ class TestDataEngine(unittest.TestCase):
         self.assertEqual(nx, [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
         self.assertEqual(ny, nx)
 
+    def test_op_resample_by_spacing_rejects_non_positive_step(self):
+        from processing.data_engine import apply_operation
+
+        with self.assertRaisesRegex(ValueError, "坐标间距必须大于 0"):
+            apply_operation([0.0, 1.0, 2.0], [0.0, 1.0, 2.0], {"type": "resample", "params": {"mode": "spacing", "step": 0.0}})
+
     def test_op_derivative(self):
         from processing.data_engine import apply_operation
         # y = x² → dy/dx = 2x
@@ -894,21 +900,55 @@ class TestDataEngine(unittest.TestCase):
         finally:
             extension_registry.unregister_processing("test_scale")
 
-    def test_pairwise_compute_auto_aligns_and_warns(self):
+    def test_pairwise_compute_requires_prealigned_x(self):
+        from processing.data_engine import apply_pipeline_to_lines
+
+        with self.assertRaisesRegex(ValueError, "需进行坐标间距重采样"):
+            apply_pipeline_to_lines(
+                [
+                    {"name": "left", "x": [0.0, 1.0, 2.0], "y": [1.0, 3.0, 5.0]},
+                    {"name": "right", "x": [0.0, 0.5, 1.0, 1.5, 2.0], "y": [1.0, 2.0, 3.0, 4.0, 5.0]},
+                ],
+                [{"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "n": 3}}],
+            )
+
+    def test_pairwise_compute_accepts_count_resample_before_pairing(self):
         from processing.data_engine import apply_pipeline_to_lines
 
         lines, warnings = apply_pipeline_to_lines(
             [
                 {"name": "left", "x": [0.0, 1.0, 2.0], "y": [1.0, 3.0, 5.0]},
-                {"name": "right", "x": [0.0, 0.5, 1.0, 1.5, 2.0], "y": [1.0, 2.0, 3.0, 4.0, 5.0]},
+                {"name": "right", "x": [0.5, 1.0, 1.5, 2.0], "y": [1.0, 2.0, 3.0, 4.0]},
             ],
-            [{"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "n": 3}}],
+            [
+                {"type": "resample", "params": {"mode": "spacing", "spacing_mode": "point", "n": 3}},
+                {"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "n": 3}},
+            ],
         )
 
+        self.assertEqual(warnings, [])
         self.assertEqual(len(lines), 1)
-        self.assertEqual(lines[0]["x"], [0.0, 1.0, 2.0])
-        self.assertEqual(lines[0]["y"], [0.0, 0.0, 0.0])
-        self.assertTrue(warnings)
+        self.assertEqual(lines[0]["x"], [0.5, 1.25, 2.0])
+        self.assertEqual(len(lines[0]["y"]), 3)
+
+    def test_pairwise_compute_accepts_coord_spacing_resample_before_pairing(self):
+        from processing.data_engine import apply_pipeline_to_lines
+
+        lines, warnings = apply_pipeline_to_lines(
+            [
+                {"name": "left", "x": [0.0, 1.0, 2.0], "y": [1.0, 3.0, 5.0]},
+                {"name": "right", "x": [0.5, 1.0, 1.5, 2.0], "y": [1.0, 2.0, 3.0, 4.0]},
+            ],
+            [
+                {"type": "resample", "params": {"mode": "spacing", "spacing_mode": "coord", "step": 0.5}},
+                {"type": "pairwise_compute", "params": {"operator": "subtract", "align_mode": "auto", "n": 3}},
+            ],
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["x"], [0.5, 1.0, 1.5, 2.0])
+        self.assertEqual(len(lines[0]["y"]), 4)
 
     def test_custom_processing_extension_receives_lines(self):
         from core.extension_api import ProcessingExtension, extension_registry
@@ -1235,7 +1275,7 @@ class TestAnalysisEngine(unittest.TestCase):
             finally:
                 extension_registry.unregister_processing("helper_shift")
 
-    def test_load_configured_extensions_combines_builtin_and_external_directories(self):
+    def test_load_configured_extensions_reports_duplicate_type_conflicts(self):
         from core.extension_api import (
             default_extensions_directory,
             extension_registry,
@@ -1287,13 +1327,29 @@ class TestAnalysisEngine(unittest.TestCase):
                     set_external_extensions_directory(external_dir)
                     report = load_configured_extensions(builtin_dir)
 
-                self.assertEqual(report["errors"], [])
-                self.assertEqual(len(report["loaded"]), 2)
-                self.assertEqual(extension_registry.get_processing("shared_probe").name, "外部探针")
-                self.assertIsNotNone(extension_registry.get_analysis("external_probe"))
+                self.assertEqual(len(report["loaded"]), 1)
+                self.assertEqual(len(report["errors"]), 1)
+                self.assertIn("重复的 processing 扩展 type: shared_probe", report["errors"][0])
+                self.assertEqual(extension_registry.get_processing("shared_probe").name, "内置探针")
+                self.assertIsNone(extension_registry.get_analysis("external_probe"))
         finally:
             extension_registry.clear()
             extension_registry.load_from_directory(default_extensions_directory())
+
+    def test_extension_registry_rejects_duplicate_processing_name(self):
+        from core.extension_api import ExtensionRegistry, ProcessingExtension
+
+        registry = ExtensionRegistry()
+
+        def _first(xs, ys, params):
+            return list(xs), list(ys)
+
+        def _second(xs, ys, params):
+            return list(xs), list(ys)
+
+        registry.register_processing(ProcessingExtension(type="name_probe_a", name="重复名称", handler=_first))
+        with self.assertRaisesRegex(ValueError, "重复的 processing 扩展 name: 重复名称"):
+            registry.register_processing(ProcessingExtension(type="name_probe_b", name="重复名称", handler=_second))
 
     def test_load_configured_extensions_respects_builtin_extension_settings(self):
         from core.extension_api import (
@@ -1560,9 +1616,9 @@ class TestAnalysisEngine(unittest.TestCase):
         directory = default_extensions_directory()
         expected = {
             "processing_kalman_filter_demo.py": ("processing", "kalman_filter", {"lines", "process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
-            "processing_multi_curve_mean_demo.py": ("processing", "multi_curve_mean", {"lines", "align_mode", "resample_mode", "n", "step", "result_name", "line_color"}),
+            "processing_multi_curve_mean_demo.py": ("processing", "multi_curve_mean", {"lines"}),
             "analysis_spectrum_demo.py": ("analysis", "spectrum_analysis", {"lines", "sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
-            "analysis_multi_curve_correlation_demo.py": ("analysis", "multi_curve_correlation", {"lines", "method", "align_mode", "resample_mode", "n", "step", "line_color"}),
+            "analysis_multi_curve_correlation_demo.py": ("analysis", "multi_curve_correlation", {"lines", "method", "line_color"}),
             "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
             "plot_dual_curve_band_demo.py": ("plot", "plot_dual_curve_band", {"lines", "align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
             "plot_arrow_annotation_demo.py": ("plot", "plot_arrow_annotation", {"coordinate_mode", "start_x", "start_y", "end_x", "end_y", "text"}),

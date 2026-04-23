@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CaptionLabel, ComboBox, LineEdit, PrimaryPushButton, PushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QTableWidgetItem, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, CaptionLabel, ComboBox, LineEdit, PrimaryPushButton, PushButton, TableWidget
 
 from core.project_manager import project_manager
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,14 @@ class DataCreateTargetOption:
     label: str
     parent_id: Optional[str] = None
     ensure_parent_id: Optional[Callable[[], Optional[str]]] = None
+
+
+@dataclass(frozen=True)
+class BatchDataExportPlan:
+    export_names: List[str]
+    target_data_file_id: Optional[str] = None
+    new_parent_id: Optional[str] = None
+    new_data_file_name: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +70,7 @@ class _DataExportDialog(QDialog):
         self._accepted_plan: Optional[DataExportPlan] = None
         self._last_auto_file_name = _ensure_suffix(default_file_name, file_suffix)
         self._file_name_manually_edited = False
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 14)
@@ -177,6 +188,157 @@ class _DataExportDialog(QDialog):
         return self._accepted_plan
 
 
+class _BatchDataExportDialog(QDialog):
+    def __init__(
+        self,
+        parent,
+        *,
+        title: str,
+        entries: List[dict],
+        source_labels: List[str],
+        default_export_names: List[str],
+        default_file_name: str,
+        file_suffix: str,
+        current_text: Optional[str],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(560)
+        self._entries = list(entries)
+        self._file_suffix = file_suffix
+        self._accepted_plan: Optional[BatchDataExportPlan] = None
+        self._last_auto_file_name = _ensure_suffix(default_file_name, file_suffix)
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        hint_label = CaptionLabel("可逐项修改每条导出数据列的名称。", self)
+        hint_label.setWordWrap(True)
+        layout.addWidget(hint_label)
+
+        self._name_table = TableWidget(self)
+        self._name_table.setColumnCount(2)
+        self._name_table.setHorizontalHeaderLabels(["来源", "导出名称"])
+        self._name_table.setRowCount(len(default_export_names))
+        self._name_table.verticalHeader().setVisible(False)
+        self._name_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._name_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self._name_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._name_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for row, export_name in enumerate(default_export_names):
+            source_item = QTableWidgetItem(source_labels[row] if row < len(source_labels) else export_name)
+            source_item.setFlags(source_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._name_table.setItem(row, 0, source_item)
+            self._name_table.setItem(row, 1, QTableWidgetItem(export_name))
+        layout.addWidget(self._name_table)
+
+        target_row = QHBoxLayout()
+        target_row.addWidget(BodyLabel("目标:", self))
+        self._target_combo = ComboBox(self)
+        for entry in self._entries:
+            self._target_combo.addItem(entry["label"])
+        initial_index = next((index for index, entry in enumerate(self._entries) if entry["label"] == current_text), 0)
+        self._target_combo.setCurrentIndex(initial_index)
+        self._target_combo.currentIndexChanged.connect(self._on_target_changed)
+        target_row.addWidget(self._target_combo, 1)
+        layout.addLayout(target_row)
+
+        self._target_hint = CaptionLabel("", self)
+        self._target_hint.setWordWrap(True)
+        layout.addWidget(self._target_hint)
+
+        self._file_name_container = QWidget(self)
+        file_name_row = QHBoxLayout(self._file_name_container)
+        file_name_row.setContentsMargins(0, 0, 0, 0)
+        file_name_row.setSpacing(8)
+        file_name_row.addWidget(BodyLabel("数据文件名称:", self._file_name_container))
+        self._data_file_name_edit = LineEdit(self._file_name_container)
+        self._data_file_name_edit.setText(self._last_auto_file_name)
+        self._data_file_name_edit.setPlaceholderText(f"输入数据文件名称（默认 {file_suffix}）")
+        file_name_row.addWidget(self._data_file_name_edit, 1)
+        layout.addWidget(self._file_name_container)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel_btn = PushButton("取消", self)
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        confirm_btn = PrimaryPushButton("确定", self)
+        confirm_btn.clicked.connect(self._on_accept)
+        button_row.addWidget(confirm_btn)
+        layout.addLayout(button_row)
+
+        self._on_target_changed(initial_index)
+
+    def _selected_entry(self) -> Optional[dict]:
+        index = self._target_combo.currentIndex()
+        if 0 <= index < len(self._entries):
+            return self._entries[index]
+        return None
+
+    def _collect_export_names(self) -> Optional[List[str]]:
+        export_names: List[str] = []
+        for row in range(self._name_table.rowCount()):
+            item = self._name_table.item(row, 1)
+            name = item.text().strip() if item is not None else ""
+            if not name:
+                self._name_table.setCurrentCell(row, 1)
+                if item is not None:
+                    self._name_table.editItem(item)
+                return None
+            export_names.append(name)
+        return export_names
+
+    def _on_target_changed(self, _index: int) -> None:
+        entry = self._selected_entry()
+        create_new = bool(entry and entry.get("mode") == "create_file")
+        self._file_name_container.setVisible(create_new)
+        self._target_hint.setText(
+            "将多条数据列追加到已有数据文件。" if not create_new else "将创建一个新的数据文件，并写入当前批量导出数据列。"
+        )
+
+    def _on_accept(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        export_names = self._collect_export_names()
+        if export_names is None:
+            return
+        if entry.get("mode") == "append":
+            self._accepted_plan = BatchDataExportPlan(
+                export_names=export_names,
+                target_data_file_id=entry["data_file_id"],
+            )
+            self.accept()
+            return
+        file_name = _ensure_suffix(self._data_file_name_edit.text().strip(), self._file_suffix)
+        if not file_name:
+            self._data_file_name_edit.setFocus()
+            return
+        parent_id = entry.get("node_id")
+        resolver = entry.get("resolver")
+        if parent_id is None and callable(resolver):
+            parent_id = resolver()
+        if not parent_id:
+            return
+        self._accepted_plan = BatchDataExportPlan(
+            export_names=export_names,
+            new_parent_id=parent_id,
+            new_data_file_name=file_name,
+        )
+        self.accept()
+
+    @property
+    def accepted_plan(self) -> Optional[BatchDataExportPlan]:
+        return self._accepted_plan
+
+
 class _PictureExportDialog(QDialog):
     def __init__(
         self,
@@ -195,6 +357,7 @@ class _PictureExportDialog(QDialog):
         self._choice_entries = list(folder_entries) + [{"label": "新建图片子文件夹...", "mode": "create_folder", "node_id": None}]
         self._file_suffix = file_suffix
         self._accepted_plan: Optional[PictureExportPlan] = None
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 14)
@@ -320,6 +483,7 @@ class _AnalysisResultSaveDialog(QDialog):
         self._folder_entries = list(folder_entries)
         self._choice_entries = list(folder_entries) + [{"label": "新建分析结果子文件夹...", "mode": "create_folder", "node_id": None}]
         self._accepted_plan: Optional[AnalysisResultSavePlan] = None
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 14)
@@ -461,6 +625,44 @@ def choose_data_export_plan(
         file_suffix=file_suffix,
         current_text=current_text,
         show_export_name=show_export_name,
+    )
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dialog.accepted_plan
+
+
+def choose_data_export_batch_plan(
+    parent,
+    *,
+    title: str,
+    source_labels: List[str],
+    default_export_names: List[str],
+    default_file_name: str,
+    preferred_target_node_id: Optional[str] = None,
+    file_suffix: str = ".data",
+    create_target_options: Optional[List[DataCreateTargetOption]] = None,
+    allow_append_to_existing: bool = True,
+) -> Optional[BatchDataExportPlan]:
+    project = project_manager.current_project
+    if project is None or project.tree is None:
+        return None
+
+    entries = _build_data_target_entries(
+        create_target_options=create_target_options,
+        allow_append_to_existing=allow_append_to_existing,
+    )
+    if not entries:
+        return None
+    current_text = _preferred_target_label(entries, preferred_target_node_id)
+    dialog = _BatchDataExportDialog(
+        parent,
+        title=title,
+        entries=entries,
+        source_labels=source_labels,
+        default_export_names=default_export_names,
+        default_file_name=default_file_name,
+        file_suffix=file_suffix,
+        current_text=current_text,
     )
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None

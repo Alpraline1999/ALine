@@ -11,7 +11,7 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
     MessageBox, InfoBar, RoundMenu, MessageBoxBase,
     ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action)
 
-from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
+from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
@@ -920,12 +920,7 @@ class DigitizePage(QWidget):
         return tab
 
     def _border_color(self):
-        from qfluentwidgets import isDarkTheme
-        return "#3d3d3d" if isDarkTheme() else "#e0e0e0"
-
-    def _selection_background_color(self):
-        from qfluentwidgets import isDarkTheme
-        return "#3d5a80" if isDarkTheme() else "#b8d4f0"
+        return border_color()
 
     @staticmethod
     def _make_export_row_label(text: str, parent: QWidget) -> BodyLabel:

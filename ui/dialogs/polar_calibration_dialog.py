@@ -1,5 +1,7 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QFormLayout
 from qfluentwidgets import BodyLabel, LineEdit, PrimaryPushButton, PushButton
+from ui.theme import border_color, secondary_color, surface_color
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 
 class PolarCalibrationDialog(QDialog):
@@ -12,6 +14,7 @@ class PolarCalibrationDialog(QDialog):
         super().__init__(parent)
         self._calibration = calibration
         self.setup_ui()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
 
     def setup_ui(self):
         self.setWindowTitle("极坐标校准配置")
@@ -28,7 +31,10 @@ class PolarCalibrationDialog(QDialog):
             f"角度和极径点A: ({self._calibration.x_end.x():.1f}, {self._calibration.x_end.y():.1f})",
             self
         )
-        info_text.setStyleSheet("color: gray; padding: 10px; background: #f0f0f0; border-radius: 5px;")
+        info_text.setStyleSheet(
+            f"color: {secondary_color()}; padding: 10px; background: {surface_color()};"
+            f" border: 1px solid {border_color()}; border-radius: 6px;"
+        )
         layout.addWidget(info_text)
 
         form = QFormLayout()

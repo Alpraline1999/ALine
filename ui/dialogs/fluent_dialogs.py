@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from qfluentwidgets import BodyLabel, ComboBox, LineEdit, MessageBoxBase, SubtitleLabel
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 
 class TextInputDialog(MessageBoxBase):
@@ -30,6 +31,7 @@ class TextInputDialog(MessageBoxBase):
         self._edit.setClearButtonEnabled(True)
         self.viewLayout.addWidget(self._edit)
         self.widget.setMinimumWidth(360)
+        self._click_away_focus_commit = install_click_away_focus_commit(self.widget)
 
     def value(self) -> str:
         return self._edit.text()

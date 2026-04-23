@@ -15,6 +15,7 @@ from qfluentwidgets import (
 )
 
 from core.global_assets import global_assets
+from ui.widgets.focus_commit import install_click_away_focus_commit
 
 _TOOL_TYPES = ["prompt", "skill", "agent"]
 _TOOL_LABELS = ["Prompt（提示词）", "Skill（代码技能）", "Agent（自定义代理）"]
@@ -42,6 +43,7 @@ class AIToolDialog(QDialog):
         self.setWindowTitle("编辑 AI 工具" if self._is_edit else "新建 AI 工具")
         self.setMinimumSize(640, 500)
         self._setup_ui()
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
         if self._is_edit:
             self._load_existing()
 
