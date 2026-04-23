@@ -277,16 +277,18 @@ def _normalize_lines_list(raw: Any, pool_size: int) -> List[int]:
         return list(range(1, pool_size + 1))
     if isinstance(raw, str):
         text = raw.strip()
-        if text in {"", ":", "*", "all"}:
+        if text in {"", "selected"}:
             return list(range(1, pool_size + 1))
+        if text.lower() in {":", "*", "all"}:
+            raise ValueError('lines.lines_list 不再支持 "all" / ":" / "*"，请留空或显式提供曲线下标列表')
         parts = [piece.strip() for piece in text.replace(";", ",").split(",") if piece.strip()]
         return [int(piece) for piece in parts]
     if isinstance(raw, (list, tuple)):
         if not raw:
             return list(range(1, pool_size + 1))
         for item in raw:
-            if isinstance(item, str) and item.strip() in {":", "*", "all"}:
-                return list(range(1, pool_size + 1))
+            if isinstance(item, str) and item.strip().lower() in {":", "*", "all"}:
+                raise ValueError('lines.lines_list 不再支持 "all" / ":" / "*"，请显式提供曲线下标列表')
         return [int(item) for item in raw]
     return [int(raw)]
 

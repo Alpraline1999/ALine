@@ -97,15 +97,14 @@ def register_extensions(registry):
             handler=spectrum_analysis,
             description="基于 FFT 计算主曲线的频谱分布，并返回主频与频率分辨率。",
             version="0.1.0",
-            default_options={
-                "lines": {"number": 1, "lines_list": [1]},
-                "sampling_rate": 0.0,
-                "window": "hann",
-                "detrend": True,
-                "max_frequency": 0.0,
-                "line_color": "#0078D4",
-            },
             config_fields=[
+                ExtensionConfigField(
+                    key="lines",
+                    label="输入曲线",
+                    description="当前频谱分析的目标曲线；默认沿用已选择列表中的当前选中项。",
+                    field_type="lines",
+                    default={"number": 1, "lines_list": ""},
+                ),
                 ExtensionConfigField(
                     key="sampling_rate",
                     description="采样率，<= 0 时会尝试根据 X 间距自动推断。",
@@ -115,7 +114,7 @@ def register_extensions(registry):
                 ExtensionConfigField(
                     key="window",
                     description="频谱分析前使用的窗函数。",
-                    field_type="string",
+                    field_type="selective",
                     default="hann",
                     choices=("hann", "hamming", "blackman", "rect"),
                 ),
@@ -134,7 +133,7 @@ def register_extensions(registry):
                 ExtensionConfigField(
                     key="line_color",
                     description="频谱曲线颜色。",
-                    field_type="string",
+                    field_type="color",
                     default="#0078D4",
                 ),
             ],

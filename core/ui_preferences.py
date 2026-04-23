@@ -18,6 +18,7 @@ class UIPreferences(BaseModel):
     home_welcome_dismissed: bool = False
     home_onboarding_completed: bool = False
     page_onboarding_completed: dict[str, bool] = Field(default_factory=dict)
+    data_page_source_favorites: list[str] = Field(default_factory=list)
 
     @classmethod
     def load(cls) -> "UIPreferences":
@@ -89,3 +90,28 @@ def reset_all_onboarding_progress() -> None:
     prefs.home_onboarding_completed = False
     prefs.page_onboarding_completed = {}
     prefs.save()
+
+
+def get_data_page_source_favorites() -> list[str]:
+    prefs = UIPreferences.load()
+    result: list[str] = []
+    for raw_path in prefs.data_page_source_favorites:
+        clean = str(raw_path or "").strip()
+        if not clean:
+            continue
+        if clean not in result:
+            result.append(clean)
+    return result
+
+
+def set_data_page_source_favorites(paths: list[str]) -> list[str]:
+    prefs = UIPreferences.load()
+    normalized: list[str] = []
+    for raw_path in paths:
+        clean = str(raw_path or "").strip()
+        if not clean or clean in normalized:
+            continue
+        normalized.append(clean)
+    prefs.data_page_source_favorites = normalized
+    prefs.save()
+    return list(prefs.data_page_source_favorites)

@@ -713,18 +713,18 @@ class ProjectTreeWidget(QWidget):
         entry_by_type: Dict[str, dict] = {}
         for entry in entries:
             type_id = str(entry.get("type") or "").strip()
-            if not type_id:
+            if not type_id or not entry.get("listed", True):
                 continue
             entry_by_type[type_id] = dict(entry)
             global_assets.ensure_extension_default_config(
                 category,
                 type_id,
                 str(entry.get("name") or type_id),
-                dict(entry.get("default_options") or {}),
+                dict(entry.get("resolved_options") or {}),
             )
 
-        grouped_configs: Dict[str, List[ExtensionConfigPreset]] = {}
-        for item in global_assets.list_extension_configs(category=category):
+        grouped_configs: Dict[str, List[ExtensionConfigPreset]] = {type_id: [] for type_id in entry_by_type}
+        for item in global_assets.list_extension_configs(category=category, include_defaults=False):
             type_id = str(item.extension_type or "").strip()
             if not type_id or type_id not in entry_by_type:
                 continue
@@ -732,13 +732,13 @@ class ProjectTreeWidget(QWidget):
 
         items: List[QTreeWidgetItem] = []
         sorted_type_ids = sorted(
-            grouped_configs.keys(),
+            entry_by_type.keys(),
             key=lambda value: _sort_text_key(
-                str(entry_by_type.get(value, {}).get("name") or grouped_configs[value][0].extension_name or value)
+                str(entry_by_type.get(value, {}).get("name") or value)
             ),
         )
         display_names = {
-            type_id: str(entry_by_type.get(type_id, {}).get("name") or grouped_configs[type_id][0].extension_name or type_id)
+            type_id: str(entry_by_type.get(type_id, {}).get("name") or type_id)
             for type_id in sorted_type_ids
         }
         duplicate_counts: Dict[str, int] = {}
@@ -751,17 +751,7 @@ class ProjectTreeWidget(QWidget):
             extension_label = extension_name
             if duplicate_counts.get(_extension_config_name_key(extension_name), 0) > 1:
                 extension_label = f"{extension_name}（{type_id}）"
-            configs = sorted(grouped_configs[type_id], key=_extension_config_sort_key)
-            if len(configs) == 1 and bool(getattr(configs[0], "is_default", False)):
-                items.append(
-                    self._make_synthetic_item(
-                        extension_label,
-                        "global_extension_config",
-                        configs[0].id,
-                        getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
-                    )
-                )
-                continue
+            configs = sorted(grouped_configs.get(type_id, []), key=_extension_config_sort_key)
             extension_item = self._make_synthetic_item(
                 extension_label,
                 "global_group",
@@ -779,6 +769,104 @@ class ProjectTreeWidget(QWidget):
                 )
             items.append(extension_item)
         return items
+
+    @staticmethod
+    def _parse_extension_config_group_node_id(node_id: str) -> Optional[Tuple[str, str]]:
+        parts = str(node_id or "").split(":", 2)
+        if len(parts) != 3 or parts[0] != "__global_extension_configs__":
+            return None
+        category = parts[1].strip().lower()
+        extension_type = parts[2].strip()
+        if not category or not extension_type:
+            return None
+        return category, extension_type
+
+    @staticmethod
+    def _extension_entry_for_category_type(category: str, extension_type: str) -> Optional[dict]:
+        normalized_category = str(category or "").strip().lower()
+        clean_type = str(extension_type or "").strip()
+        if not normalized_category or not clean_type:
+            return None
+        if normalized_category == "plot":
+            extension = extension_registry.get_plot(clean_type)
+        elif normalized_category == "processing":
+            extension = extension_registry.get_processing(clean_type)
+        elif normalized_category == "analysis":
+            extension = extension_registry.get_analysis(clean_type)
+        else:
+            extension = None
+        if extension is None:
+            return None
+        entry = build_extension_entry(extension)
+        return dict(entry) if entry.get("listed", True) else None
+
+    @staticmethod
+    def _next_extension_config_name(category: str, extension_type: str, base_name: str) -> str:
+        clean_base = str(base_name or "").strip() or "新配置"
+        candidate = clean_base
+        suffix = 2
+        while global_assets.get_extension_config_by_name(category, extension_type, candidate) is not None:
+            candidate = f"{clean_base} {suffix}"
+            suffix += 1
+        return candidate
+
+    def _cmd_create_extension_config(self, group_node_id: str) -> None:
+        group_info = self._parse_extension_config_group_node_id(group_node_id)
+        if group_info is None:
+            return
+        category, extension_type = group_info
+        entry = self._extension_entry_for_category_type(category, extension_type)
+        if entry is None:
+            InfoBar.warning("新建失败", "当前扩展未注册，无法创建配置", parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+            return
+        default_name = self._next_extension_config_name(category, extension_type, "新配置")
+        name, ok = TextInputDialog.get_text(self._dialog_parent(), "新建扩展配置", "配置名称:", text=default_name)
+        if not ok:
+            return
+        try:
+            saved = global_assets.add_extension_config(
+                category=category,
+                extension_type=extension_type,
+                extension_name=str(entry.get("name") or extension_type),
+                extension_version=str(entry.get("version") or ""),
+                name=name,
+                options=dict(entry.get("resolved_options") or {}),
+            )
+        except ValueError as exc:
+            InfoBar.warning("新建失败", str(exc), parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+            return
+        self.refresh()
+        self.project_modified.emit()
+        self.node_activated.emit("global_extension_config", saved.id)
+
+    def _cmd_duplicate_extension_config(self, config_id: str) -> None:
+        config_item = global_assets.get_extension_config(config_id)
+        if config_item is None:
+            return
+        category = str(config_item.category or "").strip().lower()
+        extension_type = str(config_item.extension_type or "").strip()
+        if not category or not extension_type:
+            return
+        entry = self._extension_entry_for_category_type(category, extension_type)
+        default_name = self._next_extension_config_name(category, extension_type, f"{config_item.name} 副本")
+        name, ok = TextInputDialog.get_text(self._dialog_parent(), "创建配置副本", "配置名称:", text=default_name)
+        if not ok:
+            return
+        try:
+            saved = global_assets.add_extension_config(
+                category=category,
+                extension_type=extension_type,
+                extension_name=str((entry or {}).get("name") or config_item.extension_name or extension_type),
+                extension_version=str((entry or {}).get("version") or config_item.extension_version or ""),
+                name=name,
+                options=dict(config_item.options or {}),
+            )
+        except ValueError as exc:
+            InfoBar.warning("创建副本失败", str(exc), parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+            return
+        self.refresh()
+        self.project_modified.emit()
+        self.node_activated.emit("global_extension_config", saved.id)
 
     def _make_item(self, node, project_id: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([node.name])
@@ -995,8 +1083,12 @@ class ProjectTreeWidget(QWidget):
                 manage_entries.append((FIF.PENCIL_INK, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
             elif kind in ("global_plot_style", "global_plot_theme"):
                 manage_entries.append((FIF.PIE_SINGLE, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
+            elif kind == "global_group":
+                if self._parse_extension_config_group_node_id(node_id) is not None:
+                    manage_entries.append((FIF.ADD, "新建配置", lambda: self._cmd_create_extension_config(node_id)))
             elif kind == "global_extension_config":
-                manage_entries.append((getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "查看扩展配置", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "在数据管理页查看/编辑", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((FIF.COPY, "创建副本", lambda: self._cmd_duplicate_extension_config(node_id)))
             elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
                 manage_entries.append((FIF.EDIT, "在设置中查看", lambda: self.node_activated.emit(kind, node_id)))
             if self._can_edit_global_asset(kind, node_id):
@@ -1051,7 +1143,7 @@ class ProjectTreeWidget(QWidget):
             move_choices = self._move_target_choices(kind, node_id)
             import_entries.extend([
                 (_IMPORT_DATA_ACTION_ICON, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id)),
-                (FIF.PHOTO, "导入到数据化", lambda: self.node_activated.emit("source_file_to_digitize", node_id)),
+                (FIF.PHOTO, "导入到数字化", lambda: self.node_activated.emit("source_file_to_digitize", node_id)),
             ])
             manage_entries.extend([
                 (_SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
@@ -1259,7 +1351,7 @@ class ProjectTreeWidget(QWidget):
     def _cmd_import_digitize_images(self, parent_id: Optional[str] = None) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self._dialog_parent(),
-            "导入图片到数据化",
+            "导入图片到数字化",
             "",
             "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp);;所有文件 (*)",
         )
@@ -1296,7 +1388,7 @@ class ProjectTreeWidget(QWidget):
         self.project_modified.emit()
         InfoBar.success(
             "导入完成",
-            f"已导入 {len(imported_node_ids)} 张图片到数据化",
+            f"已导入 {len(imported_node_ids)} 张图片到数字化",
             parent=self._dialog_parent(),
             position=InfoBarPosition.TOP,
         )
@@ -1985,7 +2077,7 @@ class ProjectTreeWidget(QWidget):
             select_node_id = image_node_id or target_folder_id
             InfoBar.success(
                 "导入成功",
-                f"已导入到数据化: {image.name}",
+                f"已导入到数字化: {image.name}",
                 parent=self._dialog_parent(),
                 position=InfoBarPosition.TOP,
             )

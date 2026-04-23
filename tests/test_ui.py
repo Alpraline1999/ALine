@@ -236,7 +236,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertIn("默认", style_items)
         self.assertIn("样式A", style_items)
 
-    def test_global_resource_contains_extension_config_defaults(self):
+    def test_global_resource_contains_extension_config_groups_without_default_leaves(self):
         from core.extension_api import ProcessingExtension, extension_registry
 
         def _probe(xs, ys, params):
@@ -264,9 +264,33 @@ class TestProjectTreeWidget(unittest.TestCase):
                 if processing_group.child(i).text(0) == "树配置探针"
             )
             self.assertEqual(target_item.childCount(), 0)
-            self.assertEqual(target_item.data(0, Qt.ItemDataRole.UserRole)[0], "global_extension_config")
+            self.assertEqual(target_item.data(0, Qt.ItemDataRole.UserRole)[0], "global_group")
+            self.assertEqual(target_item.data(0, Qt.ItemDataRole.UserRole)[1], "__global_extension_configs__:processing:tree_extension_config_probe")
         finally:
             extension_registry.unregister_processing("tree_extension_config_probe")
+
+    def test_extension_config_group_helpers_can_create_and_duplicate_presets(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+        from core.global_assets import global_assets
+
+        def _probe(xs, ys, params):
+            return list(xs), list(ys)
+
+        extension_registry.register_processing(
+            ProcessingExtension(type="tree_extension_config_create", name="树配置新建探针", handler=_probe, default_options={"factor": 2})
+        )
+        try:
+            with mock.patch("ui.widgets.project_tree.TextInputDialog.get_text", side_effect=[("方案A", True), ("方案A 副本", True)]):
+                self.widget._cmd_create_extension_config("__global_extension_configs__:processing:tree_extension_config_create")
+                created = global_assets.get_extension_config_by_name("processing", "tree_extension_config_create", "方案A")
+                self.assertIsNotNone(created)
+
+                self.widget._cmd_duplicate_extension_config(created.id)
+                duplicated = global_assets.get_extension_config_by_name("processing", "tree_extension_config_create", "方案A 副本")
+                self.assertIsNotNone(duplicated)
+                self.assertEqual(duplicated.options, created.options)
+        finally:
+            extension_registry.unregister_processing("tree_extension_config_create")
 
     def test_builtin_report_template_cannot_be_renamed_or_deleted(self):
         restore_assets = _patch_global_assets()
@@ -407,7 +431,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.refresh()
         root = self.widget._tree.topLevelItem(0)
         labels = [root.child(i).text(0) for i in range(root.childCount())]
-        self.assertEqual(labels[:5], ["源文件", "数据集", "图片集", "分析结果", "数据化"])
+        self.assertEqual(labels[:5], ["源文件", "数据集", "图片集", "分析结果", "数字化"])
 
     def test_duplicate_extension_config_group_labels_are_disambiguated(self):
         from core.global_assets import global_assets
@@ -862,7 +886,7 @@ class TestNavigationStack(unittest.TestCase):
             project_root = widget._tree.topLevelItem(0)
             self.assertEqual(project_root.text(0), project.name)
             names = [project_root.child(i).text(0) for i in range(project_root.childCount())]
-            self.assertEqual(names, ["源文件", "数据集", "图片集", "分析结果", "数据化"])
+            self.assertEqual(names, ["源文件", "数据集", "图片集", "分析结果", "数字化"])
         finally:
             restore()
             if widget is not None:
@@ -1280,7 +1304,7 @@ class TestNavigationStack(unittest.TestCase):
         self.widget.refresh()
         project_root = self.widget._tree.topLevelItem(0)
         source_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "源文件")
-        digitize_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "数据化")
+        digitize_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "数字化")
         source_item = self.widget._find_item(source_node.id)
         image_item = next((item for item in self.p.tree.nodes if item.kind == "image_work" and item.image_work_id == image_work.id), None)
         self.assertIsNotNone(source_item)
@@ -1390,7 +1414,7 @@ class TestNavigationStack(unittest.TestCase):
                 self.widget._on_context_menu(pos)
 
             visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
-            self.assertEqual(visible_texts[:2], ["导入到数据集", "导入到数据化"])
+            self.assertEqual(visible_texts[:2], ["导入到数据集", "导入到数字化"])
             self.assertLess(visible_texts.index("删除"), visible_texts.index("移动到..."))
             self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
 
@@ -1423,6 +1447,7 @@ class TestSettingsPage(unittest.TestCase):
         self.assertIsNotNone(self.page._external_extensions_dir_edit)
         self.assertIsNotNone(self.page._refresh_external_extensions_btn)
         self.assertIsNotNone(self.page._extension_tabs)
+        self.assertIsNotNone(self.page._external_extension_tabs)
         self.assertIsNotNone(self.page._save_extension_settings_btn)
         self.assertIsInstance(self.page._builtin_extension_checkboxes, dict)
         self.assertIsInstance(self.page._external_extension_checkboxes, dict)
@@ -1534,9 +1559,11 @@ class TestSettingsPage(unittest.TestCase):
 
             self.assertIsInstance(temp_page._tabs.navigationWidget, Pivot)
             self.assertIsInstance(temp_page._extension_tabs.navigationWidget, SegmentedWidget)
+            self.assertIsInstance(temp_page._external_extension_tabs.navigationWidget, SegmentedWidget)
             self.assertEqual(temp_page._extension_tabs.tabText(0), "绘图扩展")
-            self.assertEqual(temp_page._builtin_extension_checkboxes["demo_plot_reference_line"].text(), "[内置] 圆形框")
-            self.assertEqual(temp_page._external_extension_checkboxes["external_plot_reference_line"].text(), "[外部] 外部圆角")
+            self.assertEqual(temp_page._external_extension_tabs.tabText(0), "绘图扩展")
+            self.assertEqual(temp_page._builtin_extension_checkboxes["demo_plot_reference_line"].text(), "圆形框")
+            self.assertEqual(temp_page._external_extension_checkboxes["external_plot_reference_line"].text(), "外部圆角")
         finally:
             if temp_page is not None:
                 temp_page.deleteLater()
@@ -1611,11 +1638,11 @@ class TestSettingsPage(unittest.TestCase):
                 self.page._load_extension_settings()
                 self.assertEqual(
                     self.page._builtin_extension_checkboxes["demo_plot_reference_line"].text(),
-                    "[内置] 圆形框",
+                    "圆形框",
                 )
                 self.assertEqual(
                     self.page._external_extension_checkboxes["external_plot_reference_line"].text(),
-                    "[外部] 外部圆角",
+                    "外部圆角",
                 )
                 self.page._external_extensions_dir_edit.setText(str(external_dir))
                 self.page._builtin_extension_checkboxes["demo_plot_reference_line"].setChecked(False)
@@ -1682,7 +1709,7 @@ class TestSettingsPage(unittest.TestCase):
 
             self.assertEqual(
                 temp_page._external_extension_checkboxes["external_plot_reference_line"].text(),
-                "[外部] 外部圆角",
+                "外部圆角",
             )
             success_mock.assert_called_once()
         finally:
@@ -2238,6 +2265,39 @@ class TestExtensionConfigPanel(unittest.TestCase):
             host.deleteLater()
         panel.deleteLater()
 
+    def test_help_only_mode_hides_controls_and_keeps_param_help(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel(mode="help_only")
+
+        self.assertTrue(panel._title_label.isHidden())
+        self.assertFalse(panel._extension_section_label.isHidden())
+        self.assertFalse(panel._current_entry_label.isHidden())
+        self.assertTrue(panel._selector_row_widget.isHidden())
+        self.assertTrue(panel._config_row_widget.isHidden())
+        self.assertTrue(panel._editor.isHidden())
+        self.assertTrue(panel._action_row_widget.isHidden())
+        self.assertFalse(panel._description_section_label.isHidden())
+        self.assertFalse(panel._description_label.isHidden())
+        self.assertFalse(panel._config_help_area.isHidden())
+        self.assertEqual(panel._extension_section_label.text(), "自定义扩展")
+        self.assertEqual(panel._parameter_section_label.text(), "参数说明")
+        self.assertLess(panel._config_help_area.minimumHeight(), 124)
+        panel.deleteLater()
+
+    def test_compact_mode_hides_titles_and_bottom_actions(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        panel = ExtensionConfigPanel(mode="compact", framed=False)
+
+        self.assertTrue(panel._title_label.isHidden())
+        self.assertTrue(panel._status_row_widget.isHidden())
+        self.assertTrue(panel._config_help_area.isHidden())
+        self.assertTrue(panel._action_row_widget.isHidden())
+        self.assertFalse(panel._selector_row_widget.isHidden())
+        self.assertFalse(panel._config_row_widget.isHidden())
+        panel.deleteLater()
+
     def test_report_dialog_uses_top_level_window_as_parent(self):
         from PySide6.QtWidgets import QWidget
         from ui.widgets import extension_panel
@@ -2263,6 +2323,176 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertTrue(captured["executed"])
         child.deleteLater()
         host.deleteLater()
+
+
+class TestExtensionOptionsForm(unittest.TestCase):
+
+    def test_line_selection_dialog_select_all_marks_all_items_selected(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets.extension_options_form import _LineSelectionDialog
+
+        host = QWidget()
+        dialog = _LineSelectionDialog("输入曲线", ["A", "B", "C"], selected_indices=[], number=-1, parent=host)
+        try:
+            dialog._select_all()
+
+            self.assertEqual(len(dialog._list.selectedItems()), 3)
+            self.assertEqual(dialog.value(), [1, 2, 3])
+            self.assertTrue(all(dialog._list.item(index).isSelected() for index in range(dialog._list.count())))
+
+            dialog._clear()
+
+            self.assertFalse(any(dialog._list.item(index).isSelected() for index in range(dialog._list.count())))
+            self.assertEqual(dialog.value(), [])
+        finally:
+            dialog.deleteLater()
+            host.deleteLater()
+
+    def test_line_selection_dialog_select_all_updates_current_row(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets.extension_options_form import _LineSelectionDialog
+
+        host = QWidget()
+        dialog = _LineSelectionDialog("输入曲线", ["A", "B", "C"], selected_indices=[], number=-1, parent=host)
+        try:
+            dialog._select_all()
+
+            self.assertEqual(dialog._list.currentRow(), 0)
+
+            dialog._clear()
+
+            self.assertFalse(dialog._list.selectionModel().currentIndex().isValid())
+        finally:
+            dialog.deleteLater()
+            host.deleteLater()
+
+    def test_line_field_summary_uses_semicolon_and_fluent_tooltip(self):
+        from qfluentwidgets import CaptionLabel
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_line_candidates(["项目 / 数据集 / 曲线 A", "项目 / 数据集 / 曲线 B"])
+            form.set_fields(
+                [
+                    {
+                        "key": "lines",
+                        "label": "输入曲线",
+                        "field_type": "lines",
+                        "default": {"number": -1, "lines_list": [1, 2]},
+                    }
+                ],
+                {"lines": {"number": -1, "lines_list": [1, 2]}},
+            )
+
+            summaries = [label for label in form.findChildren(CaptionLabel) if "当前:" in label.text()]
+
+            self.assertTrue(summaries)
+            self.assertEqual(summaries[0].text(), "当前: 项目 / 数据集 / 曲线 A；项目 / 数据集 / 曲线 B")
+            self.assertEqual(summaries[0].toolTip(), "项目 / 数据集 / 曲线 A；项目 / 数据集 / 曲线 B")
+            self.assertTrue(bool(summaries[0].property("_alineFluentTooltip")))
+        finally:
+            form.deleteLater()
+
+    def test_compact_field_controls_use_reduced_min_widths(self):
+        from PySide6.QtWidgets import QSlider
+        from qfluentwidgets import ComboBox, LineEdit
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_fields(
+                [
+                    {"key": "name", "label": "名称", "field_type": "string", "default": "demo"},
+                    {"key": "mode", "label": "模式", "field_type": "selective", "choices": ["A", "B"], "default": "A"},
+                    {"key": "alpha", "label": "透明度", "field_type": "limited", "min_value": 0, "max_value": 10, "default": 3},
+                ],
+                {"name": "demo", "mode": "A", "alpha": 3},
+            )
+
+            edits = form.findChildren(LineEdit)
+            combos = form.findChildren(ComboBox)
+            sliders = form.findChildren(QSlider)
+
+            self.assertTrue(any(widget.minimumWidth() == 75 for widget in edits))
+            self.assertTrue(any(widget.minimumWidth() == 75 for widget in combos))
+            self.assertTrue(any(widget.minimumWidth() == 90 for widget in sliders))
+        finally:
+            form.deleteLater()
+
+    def test_color_field_uses_fluent_tooltip_without_text_caption(self):
+        from qfluentwidgets import CaptionLabel, ColorPickerButton
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_fields(
+                [{"key": "color", "label": "颜色", "field_type": "color", "default": "#112233"}],
+                {"color": "#112233"},
+            )
+
+            button = form.findChild(ColorPickerButton)
+            self.assertIsNotNone(button)
+            self.assertEqual(button.toolTip(), "#112233")
+            self.assertFalse(any(label.text() == "#112233" for label in form.findChildren(CaptionLabel)))
+        finally:
+            form.deleteLater()
+
+    def test_fields_use_inline_row_layout_and_compact_spacing(self):
+        from PySide6.QtWidgets import QWidget
+        from qfluentwidgets import LineEdit
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_fields([
+                {
+                    "key": "factor",
+                    "label": "倍率",
+                    "field_type": "number",
+                    "default": 1.0,
+                }
+            ])
+
+            container_widget = form._flow.itemAt(0).widget()
+            container_layout = container_widget.layout() if container_widget is not None else None
+            row_widget = container_layout.itemAt(0).widget() if container_layout is not None else None
+            editors = form.findChildren(LineEdit)
+
+            self.assertIsInstance(row_widget, QWidget)
+            self.assertEqual(row_widget.objectName(), "adaptiveFieldRow")
+            self.assertEqual(form._flow.verticalSpacing(), 6)
+            self.assertTrue(editors)
+            row_widget.resize(280, row_widget.height() or 40)
+            self.assertFalse(bool(row_widget.property("wrapped")))
+        finally:
+            form.deleteLater()
+
+    def test_fields_wrap_when_label_and_editor_cannot_share_row(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_fields([
+                {
+                    "key": "very_long_factor_name",
+                    "label": "这是一个很长的扩展参数标签用于验证最小控件宽度不足时自动换行",
+                    "field_type": "number",
+                    "default": 1.0,
+                }
+            ])
+
+            container_widget = form._flow.itemAt(0).widget()
+            self.assertIsNotNone(container_widget)
+            row_widget = container_widget.layout().itemAt(0).widget()
+            self.assertIsInstance(row_widget, QWidget)
+
+            row_widget.resize(200, row_widget.height() or 40)
+            row_widget.show()
+            self.assertTrue(bool(row_widget.property("wrapped")))
+        finally:
+            form.deleteLater()
 
 
 class TestPageOnboardingController(unittest.TestCase):
@@ -2339,6 +2569,121 @@ class TestDataPage(unittest.TestCase):
 
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
+
+    def test_global_extension_config_selection_opens_json_editor_and_saves(self):
+        from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
+        from core.global_assets import global_assets
+
+        def _probe(xs, ys, params):
+            return list(xs), list(ys)
+
+        restore_assets = _patch_global_assets()
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="data_page_config_editor",
+                name="数据页配置编辑",
+                handler=_probe,
+                config_fields=[ExtensionConfigField(key="factor", field_type="number", required=True, default=2.0)],
+            )
+        )
+        try:
+            entry = extension_registry.get_processing("data_page_config_editor")
+            config = global_assets.add_extension_config(
+                category="processing",
+                extension_type="data_page_config_editor",
+                extension_name="数据页配置编辑",
+                extension_version=getattr(entry, "version", None),
+                name="方案A",
+                options={"factor": 2.0},
+            )
+
+            self.page.on_tree_node_selected("global_extension_config", config.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertEqual(self.page._preview_section_label.text(), "配置编辑")
+            self.assertFalse(self.page._text_preview.isReadOnly())
+            self.assertFalse(self.page._extension_config_action_panel.isHidden())
+            self.assertFalse(self.page._config_editor_header_panel.isHidden())
+            self.assertTrue(self.page._summary_footer.isHidden())
+            self.assertIn("配置名称", self.page._config_editor_title_label.text())
+            self.assertFalse(self.page._extension_preview_panel.isHidden())
+            self.assertIn("参数说明", self.page._extension_field_help_label.text())
+            self.assertIn("factor", self.page._extension_field_help_label.text())
+
+            self.page._text_preview.setPlainText('{"factor": 4.5}')
+            self.page._save_selected_extension_config()
+
+            self.assertEqual(global_assets.get_extension_config(config.id).options, {"factor": 4.5})
+        finally:
+            extension_registry.unregister_processing("data_page_config_editor")
+            restore_assets()
+
+    def test_global_extension_config_save_validates_json_and_required_fields(self):
+        from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
+        from core.global_assets import global_assets
+
+        def _probe(xs, ys, params):
+            return list(xs), list(ys)
+
+        restore_assets = _patch_global_assets()
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="data_page_config_validate",
+                name="数据页配置校验",
+                handler=_probe,
+                config_fields=[ExtensionConfigField(key="factor", field_type="number", required=True, default=2.0)],
+            )
+        )
+        try:
+            config = global_assets.add_extension_config(
+                category="processing",
+                extension_type="data_page_config_validate",
+                extension_name="数据页配置校验",
+                name="方案B",
+                options={"factor": 2.0},
+            )
+            self.page.on_tree_node_selected("global_extension_config", config.id)
+
+            with mock.patch("ui.pages.data_page.InfoBar.warning") as warning_mock:
+                self.page._text_preview.setPlainText('{')
+                self.page._save_selected_extension_config()
+                self.page._text_preview.setPlainText('{}')
+                self.page._save_selected_extension_config()
+
+            self.assertEqual(global_assets.get_extension_config(config.id).options, {"factor": 2.0})
+            self.assertGreaterEqual(warning_mock.call_count, 2)
+        finally:
+            extension_registry.unregister_processing("data_page_config_validate")
+            restore_assets()
+
+    def test_global_extension_group_preview_uses_extension_description_and_field_help(self):
+        from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
+
+        def _probe(xs, ys, params):
+            return list(xs), list(ys)
+
+        restore_assets = _patch_global_assets()
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="data_page_group_preview",
+                name="数据页分组预览",
+                handler=_probe,
+                description="用于验证扩展节点预览说明。",
+                config_fields=[
+                    ExtensionConfigField(key="factor", label="倍率", field_type="number", description="缩放结果。", default=2.0)
+                ],
+            )
+        )
+        try:
+            self.page.on_tree_node_selected("global_group", "__global_extension_configs__:processing:data_page_group_preview")
+
+            self.assertIn("用于验证扩展节点预览说明。", self.page._stats_label.text())
+            self.assertFalse(self.page._extension_preview_panel.isHidden())
+            self.assertIn("数据页分组预览", self.page._extension_detail_label.text())
+            self.assertIn("缩放结果。", self.page._extension_field_help_label.text())
+        finally:
+            extension_registry.unregister_processing("data_page_group_preview")
+            restore_assets()
 
     def test_management_panel_uses_left_tool_layout(self):
         from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH
@@ -3307,6 +3652,79 @@ class TestDataPage(unittest.TestCase):
 
             self.assertEqual(self.page._external_browser_dir, parent_dir)
 
+    def test_system_file_manager_can_add_directory_to_favorites_and_activate_it(self):
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            favorite_dir = base_dir / "favorite-dir"
+            favorite_dir.mkdir()
+
+            self.page.on_tree_node_selected("folder", source_root.id)
+            self.page._external_browser_dir = base_dir
+            self.page._refresh_source_browser()
+
+            self.assertTrue(self.page._add_source_favorite(str(favorite_dir)))
+            self.assertEqual(self.page._source_favorites_list.topLevelItemCount(), 1)
+            favorite_item = self.page._source_favorites_list.topLevelItem(0)
+            self.assertEqual(favorite_item.text(0), "favorite-dir")
+            self.assertEqual(favorite_item.toolTip(0), str(favorite_dir))
+
+            self.page._on_source_favorite_item_activated(favorite_item, 0)
+            self.assertEqual(self.page._external_browser_dir, favorite_dir)
+
+    def test_source_favorites_context_menu_excludes_open_directory_action(self):
+        from PySide6.QtCore import QPoint
+
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            favorite_dir = Path(temp_dir) / "favorite-dir"
+            favorite_dir.mkdir()
+
+            self.page.on_tree_node_selected("folder", source_root.id)
+            self.page._source_favorite_paths = [str(favorite_dir)]
+            self.page._refresh_source_favorites()
+            favorite_item = self.page._source_favorites_list.topLevelItem(0)
+            captured = {}
+
+            def _fake_exec(menu, *_args, **_kwargs):
+                captured["actions"] = [action.text() for action in menu.actions()]
+
+            with mock.patch.object(self.page._source_favorites_list, "itemAt", return_value=favorite_item):
+                with mock.patch("ui.pages.data_page.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+                    self.page._show_source_favorites_context_menu(QPoint(1, 1))
+
+            self.assertIn("移出收藏夹", captured["actions"])
+            self.assertNotIn("打开该目录", captured["actions"])
+
+    def test_source_favorites_persist_via_ui_preferences(self):
+        from core.ui_preferences import get_data_page_source_favorites
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "ui_preferences.json"
+            favorite_dir = Path(temp_dir) / "persisted"
+            favorite_dir.mkdir()
+
+            with mock.patch("core.ui_preferences._CONFIG_PATH", config_path):
+                page = self.page.__class__()
+                try:
+                    page._source_favorite_paths = [str(favorite_dir)]
+                    page._refresh_source_favorites()
+                    self.assertEqual(get_data_page_source_favorites(), [str(favorite_dir)])
+                finally:
+                    page.deleteLater()
+
+    def test_system_file_manager_uses_splitter_for_favorites_and_browser(self):
+        from PySide6.QtWidgets import QSplitter
+
+        self.assertIsInstance(self.page._source_browser_splitter, QSplitter)
+        self.assertIs(self.page._source_browser_splitter.widget(0), self.page._source_favorites_panel)
+        self.assertEqual(self.page._source_browser_splitter.count(), 2)
+        self.assertGreater(self.page._source_browser_splitter.handleWidth(), 0)
+
     def test_source_folder_can_add_external_files_to_pending_list(self):
         source_root = self.pm._find_folder_by_group_type("source_files")
         self.assertIsNotNone(source_root)
@@ -3872,7 +4290,10 @@ class TestChartPage(unittest.TestCase):
         try:
             self.page._style_tabs.setCurrentIndex(2)
             self.page._refresh_style_extension_panel()
-            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
+            selector_items = [
+                self.page._plot_extension_controls._selector.itemText(i)
+                for i in range(self.page._plot_extension_controls._selector.count())
+            ]
 
             self.assertIn("UI 参考线", selector_items)
         finally:
@@ -4264,8 +4685,8 @@ class TestChartPage(unittest.TestCase):
                 self.page._style_tabs.setCurrentIndex(index)
                 QApplication.processEvents()
                 selector_snapshots.append([
-                    self.page._extension_panel._selector.itemText(i)
-                    for i in range(self.page._extension_panel._selector.count())
+                    self.page._plot_extension_controls._selector.itemText(i)
+                    for i in range(self.page._plot_extension_controls._selector.count())
                 ])
 
             self.assertTrue(selector_snapshots)
@@ -4276,7 +4697,30 @@ class TestChartPage(unittest.TestCase):
             extension_registry.unregister_plot("chart_plot_extension_split")
             self.page._refresh_style_extension_panel()
 
-    def test_chart_extension_panel_applies_plot_extension_from_any_tab(self):
+    def test_chart_hidden_plot_extension_is_not_listed(self):
+        from core.extension_api import PlotExtension, extension_registry
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_hidden",
+                name="隐藏绘图扩展",
+                handler=lambda context, options: None,
+                source_kind="base",
+            )
+        )
+        try:
+            self.page._refresh_style_extension_panel()
+            selector_items = [
+                self.page._plot_extension_controls._selector.itemText(i)
+                for i in range(self.page._plot_extension_controls._selector.count())
+            ]
+
+            self.assertNotIn("隐藏绘图扩展", selector_items)
+        finally:
+            extension_registry.unregister_plot("chart_plot_hidden")
+            self.page._refresh_style_extension_panel()
+
+    def test_chart_plot_extension_applies_from_extension_tab(self):
         from core.extension_api import PlotExtension, extension_registry
 
         def _draw(axis, series, options):
@@ -4287,19 +4731,22 @@ class TestChartPage(unittest.TestCase):
                 type="chart_plot_apply_any_tab",
                 name="绘图扩展应用",
                 handler=_draw,
-                description="在任意标签页都应可通过侧栏应用。",
+                description="应通过左侧绘图扩展标签页应用。",
                 default_options={"y": 3.2},
             )
         )
         try:
             self.page.on_tree_node_activated("series", self.s.id)
 
-            self.page._style_tabs.setCurrentIndex(0)
+            self.page._style_tabs.setCurrentIndex(2)
             QApplication.processEvents()
-            plot_selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-            self.page._extension_panel._selector.setCurrentIndex(plot_selector_items.index("绘图扩展应用"))
-            self.page._extension_panel._editor.setPlainText('{"y": 4.5}')
-            self.page._extension_panel._apply_current()
+            plot_selector_items = [
+                self.page._plot_extension_controls._selector.itemText(i)
+                for i in range(self.page._plot_extension_controls._selector.count())
+            ]
+            self.page._plot_extension_controls._selector.setCurrentIndex(plot_selector_items.index("绘图扩展应用"))
+            self.page._plot_extension_controls._editor.setPlainText('{"y": 4.5}')
+            self.page._plot_extension_controls._apply_current()
 
             self.assertEqual(len(self.page._applied_plot_extensions), 1)
             self.assertEqual(self.page._applied_plot_extensions[0]["type"], "chart_plot_apply_any_tab")
@@ -4327,15 +4774,18 @@ class TestChartPage(unittest.TestCase):
         )
         try:
             self.page.on_tree_node_activated("series", self.s.id)
-            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
-            self.page._extension_panel._selector.setCurrentIndex(selector_items.index("动态高度绘图扩展"))
-            self.page._extension_panel._editor.setPlainText('{"y": 1.0}')
-            self.page._extension_panel._apply_current()
+            selector_items = [
+                self.page._plot_extension_controls._selector.itemText(i)
+                for i in range(self.page._plot_extension_controls._selector.count())
+            ]
+            self.page._plot_extension_controls._selector.setCurrentIndex(selector_items.index("动态高度绘图扩展"))
+            self.page._plot_extension_controls._editor.setPlainText('{"y": 1.0}')
+            self.page._plot_extension_controls._apply_current()
             first_min_height = self.page._plot_extension_applied_list.minimumHeight()
             first_max_height = self.page._plot_extension_applied_list.maximumHeight()
 
-            self.page._extension_panel._editor.setPlainText('{"y": 2.0}')
-            self.page._extension_panel._apply_current()
+            self.page._plot_extension_controls._editor.setPlainText('{"y": 2.0}')
+            self.page._plot_extension_controls._apply_current()
             second_min_height = self.page._plot_extension_applied_list.minimumHeight()
             second_max_height = self.page._plot_extension_applied_list.maximumHeight()
 
@@ -4577,6 +5027,11 @@ class TestChartPage(unittest.TestCase):
         self.assertIn("other.csv", second_path)
         self.assertNotEqual(first_path, second_path)
 
+        self.assertIn("test.csv", self.page._chart_list.item(0).text())
+        self.assertIn("other.csv", self.page._chart_list.item(1).text())
+        self.assertEqual(self.page._chart_list.item(0).toolTip(), self.page._chart_list.item(0).text())
+        self.assertEqual(self.page._chart_list.item(1).toolTip(), self.page._chart_list.item(1).text())
+
     def test_toggle_selected_visibility_only_affects_current_duplicate_named_curve(self):
         from models.schemas import DataFile, DataSeries
 
@@ -4596,7 +5051,7 @@ class TestChartPage(unittest.TestCase):
         self.assertFalse(state_by_obj_id[other.series[0].id])
         self.assertTrue(self.page._chart_list.item(1).text().startswith("[隐藏]"))
 
-    def test_curve_display_name_only_affects_chart_list_and_legend(self):
+    def test_curve_display_name_only_affects_legend_when_chart_list_shows_tree_path(self):
         if self.page._figure is None:
             self.skipTest("matplotlib unavailable")
 
@@ -4608,7 +5063,8 @@ class TestChartPage(unittest.TestCase):
 
         self.assertEqual(curve["name"], original_name)
         self.assertEqual(curve["display_name"], "图例显示名")
-        self.assertEqual(self.page._chart_list.item(0).text(), "图例显示名")
+        self.assertIn(original_name, self.page._chart_list.item(0).text())
+        self.assertNotEqual(self.page._chart_list.item(0).text(), "图例显示名")
 
         legend = self.page._figure.axes[0].get_legend()
         self.assertIsNotNone(legend)
@@ -4883,7 +5339,7 @@ class TestProcessPage(unittest.TestCase):
 
         self.page.on_tree_node_activated("data_file", node.id)
 
-        self.assertEqual(self.page._selected_input_list.item(0).text(), "批次A / path.csv / s_path")
+        self.assertEqual(self.page._selected_input_list.item(0).text(), "批次A/path.csv/s_path")
 
     def test_param_stack_height_tracks_selected_operation(self):
         self.page._load_ops_into_chain([
@@ -5272,8 +5728,71 @@ class TestProcessPage(unittest.TestCase):
             extension_registry.unregister_processing("ui_scale_help")
             self.page._refresh_processing_extensions()
 
+    def test_processing_multi_curve_extension_param_widget_shows_line_picker(self):
+        from qfluentwidgets import PushButton
+        from models.schemas import DataSeries
+        from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other, third])
+
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="ui_multi_line_picker",
+                name="UI 多曲线按钮",
+                handler=lambda xs, ys, params, lines=None: (list(xs), list(ys)),
+                config_fields=[
+                    ExtensionConfigField(
+                        key="lines",
+                        label="输入曲线",
+                        description="选择要参与处理的多条曲线。",
+                        field_type="lines",
+                        default={"number": -1, "lines_list": ""},
+                    )
+                ],
+            )
+        )
+        try:
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.on_tree_node_activated("series", other.id)
+            self.page.on_tree_node_activated("series", third.id)
+            self.page._refresh_processing_extensions()
+            self.page._add_op_combo.setCurrentIndex(self.page._processing_op_types.index("ui_multi_line_picker"))
+            self.page._add_op()
+
+            buttons = [button for button in self.page._param_widgets[-1].findChildren(PushButton) if "选择曲线" in button.text()]
+
+            self.assertTrue(buttons)
+            self.assertTrue(buttons[0].isEnabled())
+        finally:
+            extension_registry.unregister_processing("ui_multi_line_picker")
+            self.page._refresh_processing_extensions()
+
     def test_processing_extension_panel_uses_generic_apply_text(self):
         self.assertEqual(self.page._extension_panel._apply_btn.text(), "应用扩展")
+
+    def test_hidden_processing_extension_is_not_listed(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="ui_hidden_processing",
+                name="隐藏处理扩展",
+                handler=lambda xs, ys, params: (list(xs), list(ys)),
+                source_kind="base",
+            )
+        )
+        try:
+            self.page._refresh_processing_extensions()
+            combo_items = [self.page._add_op_combo.itemText(i) for i in range(self.page._add_op_combo.count())]
+            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
+
+            self.assertNotIn("[扩展]隐藏处理扩展", combo_items)
+            self.assertNotIn("隐藏处理扩展", selector_items)
+        finally:
+            extension_registry.unregister_processing("ui_hidden_processing")
+            self.page._refresh_processing_extensions()
 
     def test_process_page_content_splitter_keeps_two_main_panels(self):
         self.assertEqual(self.page._content_splitter.count(), 2)
@@ -5782,6 +6301,28 @@ class TestAnalysisPage(unittest.TestCase):
             extension_registry.unregister_analysis("ui_pair_lines_extension")
             self.page._refresh_analysis_type_choices()
 
+    def test_hidden_analysis_extension_is_not_listed(self):
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_hidden_analysis",
+                name="隐藏分析扩展",
+                handler=lambda inputs, params: {"analysis_type": "ui_hidden_analysis"},
+                source_kind="base",
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            combo_items = [self.page._type_combo.itemText(i) for i in range(self.page._type_combo.count())]
+            selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
+
+            self.assertNotIn("[扩展]隐藏分析扩展", combo_items)
+            self.assertNotIn("隐藏分析扩展", selector_items)
+        finally:
+            extension_registry.unregister_analysis("ui_hidden_analysis")
+            self.page._refresh_analysis_type_choices()
+
     def test_analysis_extension_can_render_custom_plot_series_and_custom_placeholders(self):
         from core.extension_api import AnalysisExtension, extension_registry
 
@@ -6279,6 +6820,56 @@ class TestDigitizePage(unittest.TestCase):
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
 
+    def test_digitize_auto_mode_lists_builtin_extensions(self):
+        items = [self.page._auto_mode_combo.itemText(i) for i in range(self.page._auto_mode_combo.count())]
+
+        self.assertIn("颜色识别", items)
+        self.assertIn("图形识别 (测试功能)", items)
+
+    def test_digitize_auto_detect_uses_selected_digitize_extension(self):
+        from core.extension_api import DigitizeExtension, extension_registry
+
+        extension_registry.register_digitize(
+            DigitizeExtension(
+                type="ui_digitize_probe",
+                name="UI 数字化探针",
+                handler=lambda image_path, params: {
+                    "points": [(12.0, 34.0)],
+                    "summary": f"探针识别 {params.get('step', 0)}",
+                    "image_path": image_path,
+                },
+            )
+        )
+        try:
+            self.page._refresh_digitize_extension_choices()
+            self.page._current_image_id = "img-probe"
+            self.page._image_viewer.get_image_path = lambda: "probe.png"
+            self.page._auto_mode_combo.setCurrentIndex(self.page._auto_mode_type_ids.index("ui_digitize_probe"))
+
+            self.page._on_auto_detect()
+
+            self.assertEqual(self.page._auto_preview_points, [(12.0, 34.0)])
+            self.assertIn("探针识别", self.page._auto_status_label.text())
+        finally:
+            extension_registry.unregister_digitize("ui_digitize_probe")
+            self.page._refresh_digitize_extension_choices()
+
+    def test_digitize_extension_panel_tracks_current_extension(self):
+        from digitize.builtin_extensions import SHAPE_DIGITIZE_EXTENSION_TYPE
+
+        self.assertTrue(self.page.supports_extension_panel_toggle())
+        self.page.set_extension_panel_visible(True)
+
+        self.assertTrue(self.page.is_extension_panel_visible())
+        self.assertFalse(self.page._extension_panel.isHidden())
+        self.assertTrue(self.page._extension_panel._selector_row_widget.isHidden())
+        self.assertTrue(self.page._extension_panel._editor.isHidden())
+        self.assertEqual(self.page._extension_panel.current_type(), self.page._current_digitize_extension_type())
+
+        self.page._auto_mode_combo.setCurrentIndex(self.page._auto_mode_type_ids.index(SHAPE_DIGITIZE_EXTENSION_TYPE))
+
+        self.assertEqual(self.page._extension_panel.current_type(), SHAPE_DIGITIZE_EXTENSION_TYPE)
+
     def test_curve_data_buttons_are_above_panel_title(self):
         layout = self.page._right_panel.layout()
 
@@ -6667,7 +7258,7 @@ class TestMainWindow(unittest.TestCase):
 
         self.win.switchTo(self.win.digitize_page)
         self.assertFalse(self.win._tree_panel.extension_toggle_btn.isHidden())
-        self.assertFalse(self.win._tree_panel.extension_toggle_btn.isEnabled())
+        self.assertTrue(self.win._tree_panel.extension_toggle_btn.isEnabled())
 
     def test_extension_toggle_button_hides_and_shows_current_page_panel(self):
         self.win.switchTo(self.win.chart_page)
@@ -6864,7 +7455,7 @@ class TestMainWindow(unittest.TestCase):
         self.win._on_tree_node_activated("global_report_template", tmpl.id)
         self.assertEqual(self.win.analysis_page._current_report_template_id, tmpl.id)
 
-    def test_tree_node_activated_extension_config_opens_matching_extension_panel(self):
+    def test_tree_node_activated_extension_config_routes_to_data_page_editor(self):
         from core.extension_api import ProcessingExtension, extension_registry
         from core.global_assets import global_assets
 
@@ -6875,7 +7466,6 @@ class TestMainWindow(unittest.TestCase):
             ProcessingExtension(type="mw_extension_route_probe", name="主窗口路由探针", handler=_probe, default_options={"factor": 2})
         )
         try:
-            self.win.process_page._refresh_processing_extensions()
             config = global_assets.add_extension_config(
                 category="processing",
                 extension_type="mw_extension_route_probe",
@@ -6884,15 +7474,13 @@ class TestMainWindow(unittest.TestCase):
                 options={"factor": 8},
             )
 
-            with mock.patch.object(self.win.process_page, "set_extension_panel_visible", wraps=self.win.process_page.set_extension_panel_visible) as visible_mock, \
-                 mock.patch.object(self.win.process_page._extension_panel, "load_config_by_id", wraps=self.win.process_page._extension_panel.load_config_by_id) as load_mock:
+            with mock.patch.object(self.win.data_page, "open_extension_config", wraps=self.win.data_page.open_extension_config) as open_mock:
                 self.win._on_tree_node_activated("global_extension_config", config.id)
 
-            self.assertIs(self.win.stackedWidget.currentWidget(), self.win.process_page)
-            visible_mock.assert_called_once_with(True)
-            load_mock.assert_called_once_with(config.id)
-            self.assertEqual(self.win.process_page._extension_panel.current_type(), "mw_extension_route_probe")
-            self.assertEqual(self.win.process_page._extension_panel.current_options(), {"factor": 8})
+            self.assertIs(self.win.stackedWidget.currentWidget(), self.win.data_page)
+            open_mock.assert_called_once_with(config.id)
+            self.assertEqual(self.win.data_page._preview_section_label.text(), "配置编辑")
+            self.assertIn('"factor": 8', self.win.data_page._text_preview.toPlainText())
         finally:
             extension_registry.unregister_processing("mw_extension_route_probe")
 
@@ -7546,7 +8134,7 @@ class TestAnalysisPageV3(unittest.TestCase):
 
         self.page.on_tree_node_activated("data_file", node.id)
 
-        self.assertEqual(self.page._input_list.item(0).text(), "分析组 / analysis_path.csv / curve_a")
+        self.assertEqual(self.page._input_list.item(0).text(), "分析组/analysis_path.csv/curve_a")
 
     def test_error_compare_uses_pair_dropdown_selection(self):
         from models.schemas import DataSeries
@@ -7567,6 +8155,49 @@ class TestAnalysisPageV3(unittest.TestCase):
         self.assertEqual(self.page._result["analysis_type"], "error_compare")
         self.assertEqual(self.page._result["name1"], self.s.name)
         self.assertEqual(self.page._result["name2"], third.name)
+
+    def test_extension_line_selection_does_not_override_current_analysis_summary(self):
+        from core.extension_api import AnalysisExtension, ExtensionConfigField, extension_registry
+        from models.schemas import DataSeries
+
+        def _probe(inputs, params, lines_list=None):
+            return {"analysis_type": "analysis_extension_state_probe", "inputs": list(lines_list or [])}
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other, third])
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="analysis_extension_state_probe",
+                name="分析状态探针",
+                handler=_probe,
+                config_fields=[
+                    ExtensionConfigField(
+                        key="lines",
+                        label="输入曲线",
+                        field_type="lines",
+                        default={"number": -1, "lines_list": ""},
+                    )
+                ],
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.on_tree_node_activated("series", other.id)
+            self.page.on_tree_node_activated("series", third.id)
+            target_index = self.page._analysis_type_ids.index("analysis_extension_state_probe")
+            self.page._type_combo.setCurrentIndex(target_index)
+            self.page._input_list.setCurrentRow(1)
+
+            self.page._extension_params_edit.optionsChanged.emit({"lines": {"number": -1, "lines_list": [1, 3]}})
+
+            self.assertIn(other.name, self.page._selected_input_state_label.text())
+            self.assertNotIn(self.s.name, self.page._selected_input_state_label.text())
+            self.assertNotIn(third.name, self.page._selected_input_state_label.text())
+        finally:
+            extension_registry.unregister_analysis("analysis_extension_state_probe")
 
     def test_peak_export_buttons_only_visible_in_peak_mode(self):
         self.page._type_combo.setCurrentIndex(0)

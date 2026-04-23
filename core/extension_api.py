@@ -19,18 +19,62 @@ _EXTENSION_CATEGORY_LABELS = {
     "processing": "处理扩展",
     "analysis": "分析扩展",
     "plot": "绘图扩展",
+    "digitize": "数字化扩展",
 }
 
 _EXTENSION_SOURCE_LABELS = {
+    "base": "基础",
     "builtin": "内置",
     "external": "外部",
+}
+
+_EXTENSION_ORIGIN_LABELS = {
+    "base": "基础",
+    "builtin": "内置",
+    "external": "外置",
 }
 
 _EXTENSION_SOURCE_HINTS = {
     "processing": ("register_processing", "ProcessingExtension"),
     "analysis": ("register_analysis", "AnalysisExtension"),
     "plot": ("register_plot", "PlotExtension"),
+    "digitize": ("register_digitize", "DigitizeExtension"),
 }
+
+_EXTENSION_SOURCE_KINDS = frozenset(_EXTENSION_ORIGIN_LABELS)
+
+
+def normalize_extension_field_type(
+    field_type: Any,
+    *,
+    key: Any = None,
+    choices: Optional[Iterable[Any]] = None,
+) -> str:
+    explicit = str(field_type or "string").strip().lower()
+    field_key = str(key or "").strip().casefold()
+    has_choices = bool(list(choices or []))
+
+    if explicit == "lines" or field_key == "lines":
+        return "lines"
+    if explicit in {"bool", "boolean", "checkbox"}:
+        return "boolean"
+    if explicit in {"int", "integer", "spinbox"}:
+        return "integer"
+    if explicit in {"float", "double", "number"}:
+        return "number"
+    if explicit in {"choice", "select", "selective", "enum", "combobox"}:
+        return "selective"
+    if explicit in {"colour", "color", "colourpicker", "colorpicker"}:
+        return "color"
+    if explicit in {"slider", "range", "limited"}:
+        return "limited"
+    if explicit in {"image", "file", "path", "figure"}:
+        return "figure"
+    if has_choices:
+        return "selective"
+    if explicit == "string" and "color" in field_key:
+        return "color"
+    return "string"
 
 
 def _extension_name_key(name: str) -> str:
@@ -41,6 +85,13 @@ def normalize_extension_version(version: str | None, *, default: str = DEFAULT_E
     clean = str(version or "").strip() or default
     if not _EXTENSION_VERSION_PATTERN.fullmatch(clean):
         raise ValueError("扩展 version 必须是 x.x.x 格式")
+    return clean
+
+
+def normalize_extension_source_kind(kind: str | None, *, default: str = "builtin") -> str:
+    clean = str(kind or "").strip().lower() or default
+    if clean not in _EXTENSION_SOURCE_KINDS:
+        raise ValueError(f"未知扩展来源分类: {clean}")
     return clean
 
 
@@ -159,9 +210,14 @@ class ExtensionConfigField:
     required: bool = False
     default: Any = None
     choices: Tuple[Any, ...] = field(default_factory=tuple)
+    min_value: Any = None
+    max_value: Any = None
+    step: Any = None
+    placeholder: str = ""
+    extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "key": self.key,
             "label": self.label,
             "description": self.description,
@@ -169,7 +225,14 @@ class ExtensionConfigField:
             "required": self.required,
             "default": self.default,
             "choices": list(self.choices),
+            "min_value": self.min_value,
+            "max_value": self.max_value,
+            "step": self.step,
+            "placeholder": self.placeholder,
         }
+        if self.extra:
+            payload["extra"] = dict(self.extra)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -184,6 +247,32 @@ class ProcessingExtension:
     line_mode: str = "single"
     min_lines: int = 1
     max_lines: Optional[int] = None
+    source_kind: str = "builtin"
+    hidden: bool = False
+
+    @property
+    def id(self) -> str:
+        return self.type
+
+    @property
+    def handle(self) -> Callable[..., Any]:
+        return self.handler
+
+    @property
+    def function_category(self) -> str:
+        return "processing"
+
+    @property
+    def listed(self) -> bool:
+        return not self.hidden and normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def closable(self) -> bool:
+        return normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def resolved_default_options(self) -> Dict[str, Any]:
+        return extension_resolved_default_options(self)
 
 
 @dataclass(frozen=True)
@@ -196,6 +285,32 @@ class AnalysisExtension:
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
     report_placeholders: List[Dict[str, Any]] = field(default_factory=list)
+    source_kind: str = "builtin"
+    hidden: bool = False
+
+    @property
+    def id(self) -> str:
+        return self.type
+
+    @property
+    def handle(self) -> Callable[..., Any]:
+        return self.handler
+
+    @property
+    def function_category(self) -> str:
+        return "analysis"
+
+    @property
+    def listed(self) -> bool:
+        return not self.hidden and normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def closable(self) -> bool:
+        return normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def resolved_default_options(self) -> Dict[str, Any]:
+        return extension_resolved_default_options(self)
 
 
 @dataclass(frozen=True)
@@ -207,6 +322,69 @@ class PlotExtension:
     version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
+    source_kind: str = "builtin"
+    hidden: bool = False
+
+    @property
+    def id(self) -> str:
+        return self.type
+
+    @property
+    def handle(self) -> Callable[..., None]:
+        return self.handler
+
+    @property
+    def function_category(self) -> str:
+        return "plot"
+
+    @property
+    def listed(self) -> bool:
+        return not self.hidden and normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def closable(self) -> bool:
+        return normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def resolved_default_options(self) -> Dict[str, Any]:
+        return extension_resolved_default_options(self)
+
+
+@dataclass(frozen=True)
+class DigitizeExtension:
+    type: str
+    name: str
+    handler: Callable[..., Any]
+    description: str = ""
+    version: str = DEFAULT_EXTENSION_VERSION
+    default_options: Dict[str, Any] = field(default_factory=dict)
+    config_fields: List[ExtensionConfigField] = field(default_factory=list)
+    source_kind: str = "builtin"
+    hidden: bool = False
+
+    @property
+    def id(self) -> str:
+        return self.type
+
+    @property
+    def handle(self) -> Callable[..., Any]:
+        return self.handler
+
+    @property
+    def function_category(self) -> str:
+        return "digitize"
+
+    @property
+    def listed(self) -> bool:
+        return not self.hidden and normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def closable(self) -> bool:
+        return normalize_extension_source_kind(self.source_kind) != "base"
+
+    @property
+    def resolved_default_options(self) -> Dict[str, Any]:
+        return extension_resolved_default_options(self)
 
 
 @dataclass
@@ -310,11 +488,133 @@ class CurveStyleExtension:
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
 
 
+def extension_function_category(extension: Any) -> str:
+    explicit = str(getattr(extension, "function_category", "") or "").strip().lower()
+    if explicit in _EXTENSION_CATEGORY_LABELS:
+        return explicit
+    if isinstance(extension, ProcessingExtension):
+        return "processing"
+    if isinstance(extension, AnalysisExtension):
+        return "analysis"
+    if isinstance(extension, PlotExtension):
+        return "plot"
+    if isinstance(extension, DigitizeExtension):
+        return "digitize"
+    return ""
+
+
+def _coerce_config_field(field_item: Any) -> Dict[str, Any]:
+    if hasattr(field_item, "to_dict"):
+        normalized = dict(field_item.to_dict())
+    elif isinstance(field_item, dict):
+        normalized = dict(field_item)
+    else:
+        raise TypeError(f"不支持的扩展字段定义: {field_item!r}")
+
+    normalized["field_type"] = normalize_extension_field_type(
+        normalized.get("field_type"),
+        key=normalized.get("key"),
+        choices=normalized.get("choices"),
+    )
+    if normalized.get("field_type") == "lines":
+        normalized["default"] = normalize_extension_lines_config(
+            normalized.get("default"),
+            preserve_legacy_all=True,
+        )
+    return normalized
+
+
+def normalize_extension_lines_config(raw: Any, *, preserve_legacy_all: bool = False) -> Dict[str, Any]:
+    config = dict(raw or {}) if isinstance(raw, dict) else {}
+    try:
+        number = int(config.get("number", 0) or 0)
+    except (TypeError, ValueError):
+        number = 0
+
+    lines_list = config.get("lines_list", "")
+    if isinstance(lines_list, str):
+        text = lines_list.strip()
+        normalized_lines = "" if text.lower() in {"all", ":", "*"} else text
+    elif isinstance(lines_list, (list, tuple)):
+        normalized_lines = []
+        for item in lines_list:
+            if isinstance(item, str) and item.strip().lower() in {"all", ":", "*"}:
+                continue
+            try:
+                normalized_lines.append(int(item))
+            except (TypeError, ValueError):
+                continue
+    elif lines_list in (None, False):
+        normalized_lines = ""
+    else:
+        try:
+            normalized_lines = [int(lines_list)]
+        except (TypeError, ValueError):
+            normalized_lines = ""
+
+    return {
+        "number": number,
+        "lines_list": normalized_lines,
+    }
+
+
+def extension_config_fields(extension: Any, *, include_implicit_lines: bool = False) -> List[Dict[str, Any]]:
+    normalized_fields: List[Dict[str, Any]] = []
+    for field_item in getattr(extension, "config_fields", []) or []:
+        normalized = _coerce_config_field(field_item)
+        normalized_fields.append(normalized)
+
+    category = extension_function_category(extension)
+    if not include_implicit_lines or category not in {"processing", "analysis", "plot"}:
+        return normalized_fields
+
+    for field_item in normalized_fields:
+        if str(field_item.get("key") or "").strip() == "lines":
+            field_item["field_type"] = field_item.get("field_type") or "lines"
+            field_item["default"] = normalize_extension_lines_config(
+                field_item.get("default"),
+                preserve_legacy_all=True,
+            )
+            return normalized_fields
+
+    legacy_options = dict(getattr(extension, "default_options", {}) or {})
+    normalized_fields.insert(
+        0,
+        ExtensionConfigField(
+            key="lines",
+            label="输入曲线",
+            description="扩展输入曲线协议。未显式配置时默认不直接暴露曲线参数。",
+            field_type="lines",
+            default=normalize_extension_lines_config(legacy_options.get("lines"), preserve_legacy_all=True),
+        ).to_dict(),
+    )
+    return normalized_fields
+
+
+def extension_resolved_default_options(extension: Any) -> Dict[str, Any]:
+    defaults: Dict[str, Any] = {}
+    for field_item in extension_config_fields(extension, include_implicit_lines=True):
+        key = str(field_item.get("key") or "").strip()
+        if not key:
+            continue
+        if "default" not in field_item:
+            continue
+        defaults[key] = copy.deepcopy(field_item.get("default"))
+
+    legacy_defaults = dict(getattr(extension, "default_options", {}) or {})
+    if isinstance(legacy_defaults.get("lines"), dict):
+        legacy_defaults["lines"] = normalize_extension_lines_config(legacy_defaults.get("lines"), preserve_legacy_all=True)
+    if not legacy_defaults:
+        return defaults
+    return _merge_nested_dict(defaults, legacy_defaults)
+
+
 class ExtensionRegistry:
     def __init__(self) -> None:
         self._processing: Dict[str, ProcessingExtension] = {}
         self._analysis: Dict[str, AnalysisExtension] = {}
         self._plot: Dict[str, PlotExtension] = {}
+        self._digitize: Dict[str, DigitizeExtension] = {}
         self._last_load_report: Dict[str, List[str]] = {"loaded": [], "errors": []}
         self._last_load_details: Dict[str, List[Dict[str, Any]]] = {"loaded": [], "errors": []}
 
@@ -322,6 +622,7 @@ class ExtensionRegistry:
         self._processing.clear()
         self._analysis.clear()
         self._plot.clear()
+        self._digitize.clear()
         self._last_load_report = {"loaded": [], "errors": []}
         self._last_load_details = {"loaded": [], "errors": []}
 
@@ -339,12 +640,14 @@ class ExtensionRegistry:
             "processing": dict(self._processing),
             "analysis": dict(self._analysis),
             "plot": dict(self._plot),
+            "digitize": dict(self._digitize),
         }
 
     def _restore_registry_state(self, state: Dict[str, Dict[str, Any]]) -> None:
         self._processing = dict(state.get("processing", {}))
         self._analysis = dict(state.get("analysis", {}))
         self._plot = dict(state.get("plot", {}))
+        self._digitize = dict(state.get("digitize", {}))
 
     @staticmethod
     def _ensure_unique_identity(category: str, mapping: Dict[str, Any], extension: Any) -> None:
@@ -373,6 +676,10 @@ class ExtensionRegistry:
         self._ensure_unique_identity("plot", self._plot, extension)
         self._plot[extension.type.strip()] = extension
 
+    def register_digitize(self, extension: DigitizeExtension) -> None:
+        self._ensure_unique_identity("digitize", self._digitize, extension)
+        self._digitize[extension.type.strip()] = extension
+
     def unregister_processing(self, type_id: str) -> None:
         self._processing.pop(type_id, None)
 
@@ -381,6 +688,9 @@ class ExtensionRegistry:
 
     def unregister_plot(self, type_id: str) -> None:
         self._plot.pop(type_id, None)
+
+    def unregister_digitize(self, type_id: str) -> None:
+        self._digitize.pop(type_id, None)
 
     def get_processing(self, type_id: str) -> Optional[ProcessingExtension]:
         return self._processing.get(type_id)
@@ -391,6 +701,9 @@ class ExtensionRegistry:
     def get_plot(self, type_id: str) -> Optional[PlotExtension]:
         return self._plot.get(type_id)
 
+    def get_digitize(self, type_id: str) -> Optional[DigitizeExtension]:
+        return self._digitize.get(type_id)
+
     def list_processing(self) -> List[ProcessingExtension]:
         return list(self._processing.values())
 
@@ -400,11 +713,15 @@ class ExtensionRegistry:
     def list_plot(self) -> List[PlotExtension]:
         return list(self._plot.values())
 
+    def list_digitize(self) -> List[DigitizeExtension]:
+        return list(self._digitize.values())
+
     def _registry_snapshot(self) -> Dict[str, set[str]]:
         return {
             "processing": {extension.type for extension in self.list_processing()},
             "analysis": {extension.type for extension in self.list_analysis()},
             "plot": {extension.type for extension in self.list_plot()},
+            "digitize": {extension.type for extension in self.list_digitize()},
         }
 
     @staticmethod
@@ -597,6 +914,7 @@ def _extension_entries_by_category(registry: ExtensionRegistry) -> Dict[str, Lis
         "processing": [{"type": item.type, "name": item.name} for item in registry.list_processing()],
         "analysis": [{"type": item.type, "name": item.name} for item in registry.list_analysis()],
         "plot": [{"type": item.type, "name": item.name} for item in registry.list_plot()],
+        "digitize": [{"type": item.type, "name": item.name} for item in registry.list_digitize()],
     }
 
 
@@ -607,20 +925,37 @@ def _inspect_extension_file(path: str | Path) -> Dict[str, List[Dict[str, str]]]
 
 
 def build_extension_entry(extension: Any) -> Dict[str, Any]:
-    config_fields = []
-    for field_item in getattr(extension, "config_fields", []) or []:
-        if hasattr(field_item, "to_dict"):
-            config_fields.append(field_item.to_dict())
-        elif isinstance(field_item, dict):
-            config_fields.append(dict(field_item))
+    function_category = extension_function_category(extension)
+    source_kind = normalize_extension_source_kind(getattr(extension, "source_kind", "builtin"))
+    config_fields = extension_config_fields(extension)
+    normalized_config_fields = extension_config_fields(extension, include_implicit_lines=True)
+    legacy_default_options = dict(getattr(extension, "default_options", {}) or {})
+    if isinstance(legacy_default_options.get("lines"), dict):
+        legacy_default_options["lines"] = normalize_extension_lines_config(legacy_default_options.get("lines"))
+    resolved_default_options = extension_resolved_default_options(extension)
+    hidden = bool(getattr(extension, "hidden", False))
+    listed = bool(getattr(extension, "listed", not hidden and source_kind != "base"))
+    closable = bool(getattr(extension, "closable", source_kind != "base"))
     return {
+        "id": extension.id,
         "type": extension.type,
         "name": extension.name,
         "label": extension.name,
         "description": extension.description,
         "version": normalize_extension_version(getattr(extension, "version", DEFAULT_EXTENSION_VERSION)),
-        "default_options": dict(getattr(extension, "default_options", {}) or {}),
+        "source_kind": source_kind,
+        "source_label": _EXTENSION_SOURCE_LABELS.get(source_kind, source_kind),
+        "origin_kind": source_kind,
+        "origin_label": _EXTENSION_ORIGIN_LABELS.get(source_kind, source_kind),
+        "function_category": function_category,
+        "function_label": _EXTENSION_CATEGORY_LABELS.get(function_category, function_category),
+        "hidden": hidden,
+        "listed": listed,
+        "closable": closable,
+        "resolved_options": resolved_default_options,
+        "legacy_default_options": legacy_default_options,
         "config_fields": config_fields,
+        "normalized_config_fields": normalized_config_fields,
         "line_mode": str(getattr(extension, "line_mode", "single") or "single"),
         "min_lines": int(getattr(extension, "min_lines", 1) or 1),
         "max_lines": getattr(extension, "max_lines", None),
@@ -878,6 +1213,9 @@ def configured_extension_directories(
 
 
 def load_builtin_extensions(directory: str | Path | None = None) -> Dict[str, List[str]]:
+    from core.builtin_extensions import register_core_builtin_extensions
+
+    register_core_builtin_extensions(extension_registry)
     return extension_registry.load_from_directory(default_extensions_directory(directory), source_kind="builtin")
 
 
@@ -890,10 +1228,14 @@ def load_configured_extensions(
     base_dir: str | Path | None = None,
     external_dir: str | Path | None = None,
 ) -> Dict[str, List[str]]:
+    from core.builtin_extensions import register_core_builtin_extensions
+
     builtin_files = configured_builtin_extension_files(base_dir)
     external_files = configured_external_extension_files(external_dir)
     report = {"loaded": [], "errors": []}
     detail_report: Dict[str, List[Dict[str, Any]]] = {"loaded": [], "errors": []}
+
+    register_core_builtin_extensions(extension_registry)
 
     for file_group, source_kind in ((builtin_files, "builtin"), (external_files, "external")):
         group_report, group_detail = extension_registry._scan_paths(file_group, source_kind=source_kind)
@@ -948,17 +1290,23 @@ def get_extension_load_status(category: Optional[str] = None) -> Dict[str, Any]:
     details = get_last_extension_load_details(normalized)
     source_summary = _summarize_extension_sources(details, normalized)
 
+    def _listed_count(items: List[Any]) -> int:
+        return len([item for item in items if bool(getattr(item, "listed", True))])
+
     if normalized == "processing":
-        registered_count = len(extension_registry.list_processing())
+        registered_count = _listed_count(extension_registry.list_processing())
     elif normalized == "analysis":
-        registered_count = len(extension_registry.list_analysis())
+        registered_count = _listed_count(extension_registry.list_analysis())
     elif normalized == "plot":
-        registered_count = len(extension_registry.list_plot())
+        registered_count = _listed_count(extension_registry.list_plot())
+    elif normalized == "digitize":
+        registered_count = _listed_count(extension_registry.list_digitize())
     else:
         registered_count = sum([
-            len(extension_registry.list_processing()),
-            len(extension_registry.list_analysis()),
-            len(extension_registry.list_plot()),
+            _listed_count(extension_registry.list_processing()),
+            _listed_count(extension_registry.list_analysis()),
+            _listed_count(extension_registry.list_plot()),
+            _listed_count(extension_registry.list_digitize()),
         ])
 
     return {
@@ -1020,3 +1368,7 @@ def register_analysis_extension(extension: AnalysisExtension) -> None:
 
 def register_plot_extension(extension: PlotExtension) -> None:
     extension_registry.register_plot(extension)
+
+
+def register_digitize_extension(extension: DigitizeExtension) -> None:
+    extension_registry.register_digitize(extension)

@@ -62,8 +62,11 @@ class SettingsPage(QWidget):
         self._refresh_external_extensions_btn = None
         self._builtin_extensions_enabled_checkbox = None
         self._extension_tabs = None
+        self._external_extension_tabs = None
         self._extension_empty_hints: dict[str, BodyLabel] = {}
         self._extension_option_layouts: dict[str, QVBoxLayout] = {}
+        self._external_extension_empty_hints: dict[str, BodyLabel] = {}
+        self._external_extension_option_layouts: dict[str, QVBoxLayout] = {}
         self._builtin_extension_checkboxes: dict[str, CheckBox] = {}
         self._builtin_extension_checkbox_groups: dict[str, list[CheckBox]] = {}
         self._external_extension_checkboxes: dict[str, CheckBox] = {}
@@ -158,6 +161,35 @@ class SettingsPage(QWidget):
             f" border: 1px solid {accent_color()}; border-radius: 8px; padding: 4px 8px;"
         )
 
+    def _build_extension_category_tabs(
+        self,
+        parent: QWidget,
+        *,
+        empty_hints: dict[str, BodyLabel],
+        option_layouts: dict[str, QVBoxLayout],
+    ) -> SegmentedStackWidget:
+        tabs = SegmentedStackWidget(parent)
+        for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展")):
+            page = QWidget(parent)
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 0, 0, 0)
+            page_layout.setSpacing(6)
+            empty_hint = BodyLabel(f"当前未发现{label}。", page)
+            empty_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+            page_layout.addWidget(empty_hint)
+            empty_hints[category] = empty_hint
+
+            options_widget = QWidget(page)
+            options_layout = QVBoxLayout(options_widget)
+            options_layout.setContentsMargins(0, 0, 0, 0)
+            options_layout.setSpacing(6)
+            page_layout.addWidget(options_widget)
+            option_layouts[category] = options_layout
+
+            page_layout.addStretch(1)
+            tabs.addTab(page, label, route_key=category)
+        return tabs
+
     def _build_general_tab(self) -> QWidget:
         outer = SmoothScrollArea()
         outer.setWidgetResizable(True)
@@ -212,7 +244,7 @@ class SettingsPage(QWidget):
         self._onboarding_label.setStyleSheet(body_text_style_sheet())
         onboarding_layout.addWidget(self._onboarding_label)
 
-        self._onboarding_hint = BodyLabel("点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数据化页面的 TeachingTip 状态。", content)
+        self._onboarding_hint = BodyLabel("点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数字化页面的 TeachingTip 状态。", content)
         self._onboarding_hint.setWordWrap(True)
         self._onboarding_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         onboarding_layout.addWidget(self._onboarding_hint)
@@ -233,12 +265,49 @@ class SettingsPage(QWidget):
         extension_layout.addWidget(self._extension_title)
 
         self._extension_hint = BodyLabel(
-            "扩展按绘图/处理/分析分段显示；内置和外部扩展都可以统一启用、逐项禁用，并在保存后一起重载。",
+            "内置扩展和外部扩展分块管理；两类扩展分别按绘图/处理/分析分段显示，并在保存后一起重载。",
             self._extension_card,
         )
         self._extension_hint.setWordWrap(True)
         self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         extension_layout.addWidget(self._extension_hint)
+
+        builtin_section_label = BodyLabel("内置扩展", self._extension_card)
+        builtin_section_label.setStyleSheet(body_text_style_sheet())
+        extension_layout.addWidget(builtin_section_label)
+
+        builtin_hint = BodyLabel("管理仓库自带扩展的总开关和逐项启用状态。", self._extension_card)
+        builtin_hint.setWordWrap(True)
+        builtin_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        extension_layout.addWidget(builtin_hint)
+
+        builtin_toggle_row = QHBoxLayout()
+        self._builtin_extensions_enabled_checkbox = CheckBox("启用内置扩展", self._extension_card)
+        self._builtin_extensions_enabled_checkbox.stateChanged.connect(self._on_builtin_extensions_enabled_changed)
+        builtin_toggle_row.addWidget(self._builtin_extensions_enabled_checkbox)
+        builtin_toggle_row.addStretch(1)
+        extension_layout.addLayout(builtin_toggle_row)
+
+        self._extension_tabs = self._build_extension_category_tabs(
+            self._extension_card,
+            empty_hints=self._extension_empty_hints,
+            option_layouts=self._extension_option_layouts,
+        )
+        extension_layout.addWidget(self._extension_tabs)
+
+        separator = QFrame(self._extension_card)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet(f"color: {border_color()};")
+        extension_layout.addWidget(separator)
+
+        external_section_label = BodyLabel("外部扩展", self._extension_card)
+        external_section_label.setStyleSheet(body_text_style_sheet())
+        extension_layout.addWidget(external_section_label)
+
+        external_hint = BodyLabel("单独管理外部扩展目录、扫描结果和逐项启用状态。", self._extension_card)
+        external_hint.setWordWrap(True)
+        external_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        extension_layout.addWidget(external_hint)
 
         external_dir_row = QHBoxLayout()
         self._external_extensions_dir_label = BodyLabel("外部扩展目录", self._extension_card)
@@ -253,10 +322,6 @@ class SettingsPage(QWidget):
         extension_layout.addLayout(external_dir_row)
 
         source_toggle_row = QHBoxLayout()
-        self._builtin_extensions_enabled_checkbox = CheckBox("启用内置扩展", self._extension_card)
-        self._builtin_extensions_enabled_checkbox.stateChanged.connect(self._on_builtin_extensions_enabled_changed)
-        source_toggle_row.addWidget(self._builtin_extensions_enabled_checkbox)
-
         self._external_extensions_enabled_checkbox = CheckBox("启用外部扩展", self._extension_card)
         self._external_extensions_enabled_checkbox.stateChanged.connect(self._on_external_extensions_enabled_changed)
         source_toggle_row.addWidget(self._external_extensions_enabled_checkbox)
@@ -267,27 +332,12 @@ class SettingsPage(QWidget):
         source_toggle_row.addStretch(1)
         extension_layout.addLayout(source_toggle_row)
 
-        self._extension_tabs = SegmentedStackWidget(self._extension_card)
-        for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展")):
-            page = QWidget(self._extension_card)
-            page_layout = QVBoxLayout(page)
-            page_layout.setContentsMargins(0, 0, 0, 0)
-            page_layout.setSpacing(6)
-            empty_hint = BodyLabel(f"当前未发现{label}。", page)
-            empty_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-            page_layout.addWidget(empty_hint)
-            self._extension_empty_hints[category] = empty_hint
-
-            options_widget = QWidget(page)
-            options_layout = QVBoxLayout(options_widget)
-            options_layout.setContentsMargins(0, 0, 0, 0)
-            options_layout.setSpacing(6)
-            page_layout.addWidget(options_widget)
-            self._extension_option_layouts[category] = options_layout
-
-            page_layout.addStretch(1)
-            self._extension_tabs.addTab(page, label, route_key=category)
-        extension_layout.addWidget(self._extension_tabs)
+        self._external_extension_tabs = self._build_extension_category_tabs(
+            self._extension_card,
+            empty_hints=self._external_extension_empty_hints,
+            option_layouts=self._external_extension_option_layouts,
+        )
+        extension_layout.addWidget(self._external_extension_tabs)
 
         extension_btn_row = QHBoxLayout()
         self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", self._extension_card)
@@ -738,7 +788,7 @@ class SettingsPage(QWidget):
         self._builtin_extension_checkbox_groups.clear()
         self._external_extension_checkboxes.clear()
         self._external_extension_checkbox_groups.clear()
-        for layout in self._extension_option_layouts.values():
+        for layout in [*self._extension_option_layouts.values(), *self._external_extension_option_layouts.values()]:
             while layout.count() > 0:
                 item = layout.takeAt(0)
                 widget = item.widget()
@@ -799,24 +849,37 @@ class SettingsPage(QWidget):
             "external": bool(self._external_extensions_enabled_checkbox is not None and self._external_extensions_enabled_checkbox.isChecked()),
         }
         for category, layout in self._extension_option_layouts.items():
-            category_specs = []
-            for source, specs in (("builtin", builtin_specs), ("external", external_specs)):
-                for spec in specs:
-                    if category in list(spec.get("categories") or []):
-                        category_specs.append((source, spec))
+            category_specs = [spec for spec in builtin_specs if category in list(spec.get("categories") or [])]
             hint = self._extension_empty_hints.get(category)
             if hint is not None:
                 hint.setVisible(not category_specs)
-            for source, spec in category_specs:
+            for spec in category_specs:
                 spec_id = str(spec.get("id") or "").strip()
                 if not spec_id:
                     continue
-                checkbox = CheckBox(f"[{spec.get('source_label')}] {self._extension_spec_display_name(spec, category)}", self._extension_card)
-                checkbox.setChecked(spec_id not in disabled_markers[source])
-                checkbox.setEnabled(source_enabled[source])
+                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._extension_card)
+                checkbox.setChecked(spec_id not in disabled_markers["builtin"])
+                checkbox.setEnabled(source_enabled["builtin"])
                 checkbox.setToolTip(self._extension_spec_tooltip(spec, category))
                 install_fluent_tooltip(checkbox, delay=400)
-                self._register_extension_checkbox(source, spec_id, checkbox)
+                self._register_extension_checkbox("builtin", spec_id, checkbox)
+                layout.addWidget(checkbox)
+
+        for category, layout in self._external_extension_option_layouts.items():
+            category_specs = [spec for spec in external_specs if category in list(spec.get("categories") or [])]
+            hint = self._external_extension_empty_hints.get(category)
+            if hint is not None:
+                hint.setVisible(not category_specs)
+            for spec in category_specs:
+                spec_id = str(spec.get("id") or "").strip()
+                if not spec_id:
+                    continue
+                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._extension_card)
+                checkbox.setChecked(spec_id not in disabled_markers["external"])
+                checkbox.setEnabled(source_enabled["external"])
+                checkbox.setToolTip(self._extension_spec_tooltip(spec, category))
+                install_fluent_tooltip(checkbox, delay=400)
+                self._register_extension_checkbox("external", spec_id, checkbox)
                 layout.addWidget(checkbox)
 
     def _on_builtin_extensions_enabled_changed(self) -> None:

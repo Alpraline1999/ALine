@@ -233,7 +233,7 @@ class TestProjectManager(unittest.TestCase):
         }
         self.assertIn(("数据集", "datasets", None), folder_map)
         self.assertIn(("源文件", "source_files", None), folder_map)
-        self.assertIn(("数据化", "images", None), folder_map)
+        self.assertIn(("数字化", "images", None), folder_map)
         self.assertIn(("图片集", "pictures", None), folder_map)
         self.assertIn(("分析结果", "analysis_result_group", None), folder_map)
         self.assertEqual(len(folder_map), 5)
@@ -1731,6 +1731,121 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertTrue(builtin_extensions)
         for extension in builtin_extensions:
             self.assertEqual(extension.version, "0.1.0", extension.type)
+
+    def test_core_builtin_analysis_wrappers_expose_extension_metadata(self):
+        from core.builtin_extensions import register_core_builtin_extensions
+        from core.extension_api import ExtensionRegistry, build_extension_entry
+
+        registry = ExtensionRegistry()
+        register_core_builtin_extensions(registry)
+
+        curve_fit_entry = build_extension_entry(registry.get_analysis("curve_fit"))
+        peak_detect_entry = build_extension_entry(registry.get_analysis("peak_detect"))
+        correlation_entry = build_extension_entry(registry.get_analysis("correlation"))
+
+        self.assertEqual(curve_fit_entry["source_kind"], "base")
+        self.assertFalse(curve_fit_entry["listed"])
+        self.assertEqual(curve_fit_entry["resolved_options"]["model"], "linear")
+        self.assertTrue(any(field.get("key") == "model" for field in curve_fit_entry["config_fields"]))
+        self.assertTrue(any(field.get("key") == "p0" for field in curve_fit_entry["config_fields"]))
+        self.assertIn("拟合", curve_fit_entry["description"])
+
+        peak_field_keys = [field.get("key") for field in peak_detect_entry["config_fields"]]
+        self.assertEqual(peak_detect_entry["resolved_options"]["min_distance"], 1)
+        self.assertIn("min_height", peak_field_keys)
+        self.assertIn("min_distance", peak_field_keys)
+        self.assertIn("min_distance_x", peak_field_keys)
+        self.assertIn("min_depth", peak_field_keys)
+        self.assertIn("prominence", peak_field_keys)
+
+        corr_fields = {field.get("key"): field for field in correlation_entry["config_fields"]}
+        self.assertEqual(correlation_entry["resolved_options"]["method"], "pearson")
+        self.assertEqual(list(corr_fields["method"].get("choices") or []), ["pearson", "spearman"])
+
+    def test_build_extension_entry_exposes_normalized_metadata_and_resolved_options(self):
+        from core.extension_api import ExtensionConfigField, ProcessingExtension, build_extension_entry
+
+        def _noop(xs, ys, params):
+            return list(xs), list(ys)
+
+        entry = build_extension_entry(
+            ProcessingExtension(
+                type="schema_probe",
+                name="Schema Probe",
+                handler=_noop,
+                config_fields=[
+                    ExtensionConfigField(
+                        key="factor",
+                        field_type="number",
+                        default=2.5,
+                    )
+                ],
+            )
+        )
+
+        self.assertEqual(entry["id"], "schema_probe")
+        self.assertEqual(entry["function_category"], "processing")
+        self.assertEqual(entry["function_label"], "处理扩展")
+        self.assertEqual(entry["source_kind"], "builtin")
+        self.assertEqual(entry["origin_label"], "内置")
+        self.assertEqual(entry["resolved_options"], {"factor": 2.5, "lines": {"number": 0, "lines_list": ""}})
+        self.assertNotIn("default_options", entry)
+        self.assertFalse(any(field.get("key") == "lines" for field in entry["config_fields"]))
+        self.assertTrue(any(field.get("key") == "lines" for field in entry["normalized_config_fields"]))
+
+    def test_build_extension_entry_normalizes_legacy_all_lines_default(self):
+        from core.extension_api import ProcessingExtension, build_extension_entry
+
+        entry = build_extension_entry(
+            ProcessingExtension(
+                type="legacy_lines_all",
+                name="Legacy All",
+                handler=lambda xs, ys, params: (list(xs), list(ys)),
+                default_options={"lines": {"number": -1, "lines_list": "all"}},
+            )
+        )
+
+        self.assertEqual(entry["resolved_options"], {"lines": {"number": -1, "lines_list": ""}})
+        self.assertNotIn("default_options", entry)
+
+    def test_extension_registry_supports_digitize_extensions(self):
+        from core.extension_api import DigitizeExtension, ExtensionRegistry, build_extension_entry
+
+        def _digitize(image, params=None, mask=None):
+            return {"x": [1.0], "y": [2.0], "image": image, "params": params, "mask": mask}
+
+        registry = ExtensionRegistry()
+        registry.register_digitize(
+            DigitizeExtension(
+                type="digitize_probe",
+                name="数字化探针",
+                handler=_digitize,
+            )
+        )
+
+        extension = registry.get_digitize("digitize_probe")
+        self.assertIsNotNone(extension)
+        self.assertEqual([item.type for item in registry.list_digitize()], ["digitize_probe"])
+
+        entry = build_extension_entry(extension)
+        self.assertEqual(entry["id"], "digitize_probe")
+        self.assertEqual(entry["function_category"], "digitize")
+        self.assertEqual(entry["function_label"], "数字化扩展")
+        self.assertEqual(entry["resolved_options"], {})
+        self.assertNotIn("default_options", entry)
+
+    def test_reload_configured_extensions_registers_hidden_base_builtin_wrappers(self):
+        from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
+
+        reload_configured_extensions()
+
+        processing_entry = build_extension_entry(extension_registry.get_processing("crop"))
+        analysis_entry = build_extension_entry(extension_registry.get_analysis("statistics"))
+
+        self.assertEqual(processing_entry["source_kind"], "base")
+        self.assertFalse(processing_entry["listed"])
+        self.assertEqual(analysis_entry["source_kind"], "base")
+        self.assertFalse(analysis_entry["listed"])
 
     def test_global_asset_extension_configs_preserve_extension_version(self):
         from core.global_assets import GlobalAssetManager

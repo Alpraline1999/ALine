@@ -223,7 +223,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.chart_page,    FIF.PIE_SINGLE,      "数据可视化",   NavigationItemPosition.TOP)
         self.addSubInterface(self.process_page,  FIF.DEVELOPER_TOOLS, "数据处理", NavigationItemPosition.TOP)
         self.addSubInterface(self.analysis_page, FIF.SEARCH,          "数据分析", NavigationItemPosition.TOP)
-        self.addSubInterface(self.digitize_page, _DIGITIZE_PAGE_NAV_ICON, "图片数据化", NavigationItemPosition.TOP)
+        self.addSubInterface(self.digitize_page, _DIGITIZE_PAGE_NAV_ICON, "图片数字化", NavigationItemPosition.TOP)
         self.addSubInterface(self.settings_page, FIF.SETTING,         "设置",    NavigationItemPosition.BOTTOM)
 
         self._tree_toggle_nav_btn = NavigationToolButton(FIF.MENU, self)
@@ -703,31 +703,11 @@ class MainWindow(FluentWindow):
         config_item = global_assets.get_extension_config(config_id)
         if config_item is None:
             return False
-
-        category = str(config_item.category or "").strip().lower()
-        page = None
-        refresh = None
-        if category == "plot":
-            page = self.chart_page
-            refresh = getattr(self.chart_page, "_refresh_style_extension_panel", None)
-        elif category == "processing":
-            page = self.process_page
-            refresh = getattr(self.process_page, "_refresh_processing_extensions", None)
-        elif category == "analysis":
-            page = self.analysis_page
-            refresh = getattr(self.analysis_page, "_refresh_analysis_type_choices", None)
-        else:
-            return False
-
-        self.switchTo(page)
-        if callable(refresh):
-            refresh()
-        if hasattr(page, "set_extension_panel_visible"):
-            page.set_extension_panel_visible(True)
-        panel = getattr(page, "_extension_panel", None)
-        if panel is None or not hasattr(panel, "load_config_by_id"):
-            return False
-        return bool(panel.load_config_by_id(config_id))
+        self.switchTo(self.data_page)
+        if hasattr(self.data_page, "open_extension_config"):
+            return bool(self.data_page.open_extension_config(config_id))
+        self.data_page.on_tree_node_selected("global_extension_config", config_id)
+        return True
 
     def _on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """单击节点 → 通知当前页面。"""

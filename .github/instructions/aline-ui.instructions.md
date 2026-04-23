@@ -2,6 +2,7 @@
 description: "Use when editing ALine PySide6/qfluentwidgets UI, dialogs, pages, project tree, extension panels, or UI tests. Covers Fluent layout metrics, theme helpers, focus commit, tooltip behavior, notification parenting, and narrow UI regression testing."
 applyTo: "ui/**/*.py, tests/test_ui.py"
 ---
+
 # ALine UI Constraints
 
 - Prefer qfluentwidgets widgets plus shared helpers from `ui/theme.py` before adding new styling. Reuse `make_section_label`, `make_hint_label`, `make_card_caption`, `apply_button_metrics`, `WORKBENCH_*`, and `preview_canvas_*_color()` where possible.

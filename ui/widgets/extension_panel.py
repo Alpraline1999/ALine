@@ -27,6 +27,7 @@ from qfluentwidgets import (
 from core.global_assets import global_assets
 from core.extension_api import compare_extension_versions, format_extension_load_report, get_extension_load_status, normalize_extension_version
 from ui.dialogs.fluent_dialogs import TextInputDialog
+from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.theme import (
     WORKBENCH_BUTTON_HEIGHT,
@@ -73,7 +74,15 @@ class ExtensionConfigPanel(QWidget):
     selection_changed = Signal(str)
     configs_changed = Signal()
 
-    def __init__(self, title: str = "自定义扩展", action_text: str = "应用扩展", parent=None):
+    def __init__(
+        self,
+        title: str = "自定义扩展",
+        action_text: str = "应用扩展",
+        parent=None,
+        *,
+        mode: str = "full",
+        framed: bool = True,
+    ):
         super().__init__(parent)
         self.setMinimumWidth(280)
         self.setMaximumWidth(520)
@@ -86,7 +95,10 @@ class ExtensionConfigPanel(QWidget):
         self._status_category: Optional[str] = None
         self._config_category: Optional[str] = None
         self._status_title = title or "扩展"
+        self._inline_apply_visible = False
         self._section_dividers: List[QWidget] = []
+        self._panel_mode = mode if mode in {"full", "help_only", "compact"} else "full"
+        self._framed = bool(framed)
         self._setup_ui(title)
         self._click_away_focus_commit = install_click_away_focus_commit(self)
 
@@ -113,16 +125,20 @@ class ExtensionConfigPanel(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        card = CardWidget(self)
+        card = CardWidget(self) if self._framed else QWidget(self)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(14, 14, 14, 14) if self._framed else layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+        self._surface = card
 
         self._title_label = BodyLabel(title, card)
         self._title_label.setStyleSheet(card_title_style_sheet(font_size=17))
         layout.addWidget(self._title_label)
 
-        status_row = QHBoxLayout()
+        self._status_row_widget = QWidget(card)
+        status_row = QHBoxLayout(self._status_row_widget)
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(6)
         self._status_summary_btn = PushButton("尚未扫描扩展", card)
         self._status_summary_btn.setFlat(True)
         self._status_summary_btn.clicked.connect(self._show_status_details)
@@ -130,11 +146,20 @@ class ExtensionConfigPanel(QWidget):
         self._status_label = make_hint_label("尚未扫描扩展", card)
         self._status_label.hide()
         self._status_detail_btn = None
-        layout.addLayout(status_row)
+        layout.addWidget(self._status_row_widget)
 
-        layout.addWidget(make_section_label("扩展", card))
+        self._extension_section_label = make_section_label("扩展", card)
+        layout.addWidget(self._extension_section_label)
 
-        selector_row = QHBoxLayout()
+        self._current_entry_label = CaptionLabel("未选择扩展", card)
+        self._current_entry_label.setWordWrap(True)
+        self._current_entry_label.setStyleSheet(placeholder_text_style_sheet(font_size=12))
+        layout.addWidget(self._current_entry_label)
+
+        self._selector_row_widget = QWidget(card)
+        selector_row = QHBoxLayout(self._selector_row_widget)
+        selector_row.setContentsMargins(0, 0, 0, 0)
+        selector_row.setSpacing(6)
         self._selector = ComboBox(card)
         self._selector.currentIndexChanged.connect(self._on_selection_changed)
         selector_row.addWidget(self._selector, 1)
@@ -143,16 +168,22 @@ class ExtensionConfigPanel(QWidget):
         self._set_square_tool_button(self._reload_btn)
         self._reload_btn.clicked.connect(lambda checked=False: self.reload_requested.emit())
         selector_row.addWidget(self._reload_btn)
-        layout.addLayout(selector_row)
+        layout.addWidget(self._selector_row_widget)
 
         self._description_label = CaptionLabel("暂无可用扩展", card)
         self._description_label.setWordWrap(True)
         self._description_label.setStyleSheet(placeholder_text_style_sheet(font_size=12))
+        self._description_section_label = make_section_label("扩展说明", card)
+        layout.addWidget(self._description_section_label)
         layout.addWidget(self._description_label)
 
         self._add_section_divider(layout, card)
-        layout.addWidget(make_section_label("配置", card))
-        config_row = QHBoxLayout()
+        self._config_section_label = make_section_label("配置", card)
+        layout.addWidget(self._config_section_label)
+        self._config_row_widget = QWidget(card)
+        config_row = QHBoxLayout(self._config_row_widget)
+        config_row.setContentsMargins(0, 0, 0, 0)
+        config_row.setSpacing(6)
         self._config_selector = ComboBox(card)
         config_row.addWidget(self._config_selector, 1)
         self._config_load_btn = ToolButton(FIF.FOLDER, card)
@@ -170,12 +201,20 @@ class ExtensionConfigPanel(QWidget):
         self._set_square_tool_button(self._config_overwrite_btn)
         self._config_overwrite_btn.clicked.connect(self._overwrite_selected_config)
         config_row.addWidget(self._config_overwrite_btn)
-        layout.addLayout(config_row)
+        inline_apply_icon = getattr(FIF, "SEND", getattr(FIF, "PLAY", FIF.SYNC))
+        self._inline_apply_btn = ToolButton(inline_apply_icon, card)
+        self._install_fluent_tip(self._inline_apply_btn, self._action_text)
+        self._set_square_tool_button(self._inline_apply_btn)
+        self._inline_apply_btn.clicked.connect(self._apply_current)
+        self._inline_apply_btn.hide()
+        config_row.addWidget(self._inline_apply_btn)
+        layout.addWidget(self._config_row_widget)
 
         self._add_section_divider(layout, card)
-        layout.addWidget(make_section_label("参数", card))
+        self._parameter_section_label = make_section_label("参数", card)
+        layout.addWidget(self._parameter_section_label)
 
-        self._usage_hint_label = CaptionLabel("参数会按 JSON 传入扩展。", card)
+        self._usage_hint_label = CaptionLabel("参数会按扩展字段自动生成控件。", card)
         self._usage_hint_label.setWordWrap(True)
         layout.addWidget(self._usage_hint_label)
 
@@ -196,13 +235,15 @@ class ExtensionConfigPanel(QWidget):
         self._config_help_area.setWidget(self._config_help_container)
         layout.addWidget(self._config_help_area)
 
-        self._editor = PlainTextEdit(card)
-        self._editor.setPlaceholderText('{\n  "option": "value"\n}')
+        self._editor = ExtensionOptionsForm(card)
         self._editor.setMinimumHeight(240)
         layout.addWidget(self._editor, 1)
 
         self._add_section_divider(layout, card)
-        btn_row = QHBoxLayout()
+        self._action_row_widget = QWidget(card)
+        btn_row = QHBoxLayout(self._action_row_widget)
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(6)
         self._apply_btn = PrimaryPushButton(self._action_text, card)
         self._apply_btn.clicked.connect(self._apply_current)
         btn_row.addWidget(self._apply_btn)
@@ -220,10 +261,52 @@ class ExtensionConfigPanel(QWidget):
         self._set_square_tool_button(self._clear_btn)
         self._clear_btn.clicked.connect(self._copy_current_config)
         btn_row.addWidget(self._clear_btn)
-        layout.addLayout(btn_row)
+        layout.addWidget(self._action_row_widget)
 
         root.addWidget(card, 1)
         self._set_empty_state()
+        self._apply_panel_mode()
+
+    def set_panel_mode(self, mode: str) -> None:
+        self._panel_mode = mode if mode in {"full", "help_only", "compact"} else "full"
+        if hasattr(self, "_title_label"):
+            self._apply_panel_mode()
+
+    def _apply_panel_mode(self) -> None:
+        is_full = self._panel_mode == "full"
+        is_help_only = self._panel_mode == "help_only"
+        is_compact = self._panel_mode == "compact"
+
+        self._title_label.setVisible(is_full)
+        self._status_row_widget.setVisible(is_full)
+        self._extension_section_label.setVisible(is_full or is_help_only)
+        self._extension_section_label.setText(self._status_title if is_help_only else "扩展")
+        self._current_entry_label.setVisible(is_help_only)
+        self._selector_row_widget.setVisible(not is_help_only)
+        self._description_section_label.setVisible(is_help_only)
+        self._description_label.setVisible(is_full or is_help_only)
+        self._config_section_label.setVisible(is_full)
+        self._config_row_widget.setVisible(not is_help_only)
+        self._parameter_section_label.setVisible(not is_compact or is_help_only)
+        self._parameter_section_label.setText("参数说明" if is_help_only else "参数")
+        self._usage_hint_label.setVisible(is_full)
+        self._config_help_area.setVisible(is_full or is_help_only)
+        if is_help_only:
+            self._config_help_area.setMinimumHeight(88)
+            self._config_help_area.setMaximumHeight(136)
+        else:
+            self._config_help_area.setMinimumHeight(124)
+            self._config_help_area.setMaximumHeight(172)
+        self._editor.setVisible(not is_help_only)
+        self._action_row_widget.setVisible(is_full)
+
+        for index, divider in enumerate(self._section_dividers):
+            if is_full:
+                divider.setVisible(True)
+            elif is_help_only:
+                divider.setVisible(index == 1)
+            else:
+                divider.setVisible(False)
 
     def set_status_context(self, category: Optional[str], title: Optional[str] = None) -> None:
         self._status_category = category.strip().lower() if category else None
@@ -233,11 +316,22 @@ class ExtensionConfigPanel(QWidget):
         self._refresh_status_summary()
 
     def set_panel_title(self, title: str) -> None:
+        self._status_title = title or "扩展"
         self._title_label.setText(title or "自定义扩展")
+        self._apply_panel_mode()
 
     def set_action_text(self, text: str) -> None:
         self._action_text = text or "应用扩展"
         self._apply_btn.setText(self._action_text)
+        self._inline_apply_btn.setToolTip(self._action_text)
+
+    def set_inline_apply_action(self, *, visible: bool, tooltip: Optional[str] = None) -> None:
+        self._inline_apply_visible = bool(visible)
+        self._inline_apply_btn.setVisible(self._inline_apply_visible)
+        self._apply_btn.setVisible(not self._inline_apply_visible)
+        self._inline_apply_btn.setEnabled(self._inline_apply_visible and self._editor.isEnabled())
+        self._apply_btn.setEnabled((not self._inline_apply_visible) and self._editor.isEnabled())
+        self._install_fluent_tip(self._inline_apply_btn, tooltip or self._action_text)
 
     def set_remove_action(self, *, visible: bool, enabled: Optional[bool] = None, text: Optional[str] = None) -> None:
         self._remove_btn.setVisible(bool(visible))
@@ -305,19 +399,12 @@ class ExtensionConfigPanel(QWidget):
             self._on_selection_changed(target_index)
         self._saved_options[target_type] = dict(config_item.options or {})
         self._refresh_config_selector(target_type)
-        self._editor.setPlainText(json.dumps(dict(config_item.options or {}), ensure_ascii=False, indent=2))
+        self._set_editor_options(target_type, dict(config_item.options or {}))
         self._warn_if_outdated_config_version(self._entry_for_type(target_type), config_item)
         return True
 
     def current_options(self) -> Dict[str, Any]:
-        text = self._editor.toPlainText().strip() or "{}"
-        try:
-            data = json.loads(text)
-        except Exception as exc:
-            raise ValueError(f"扩展配置不是合法 JSON: {exc}") from exc
-        if not isinstance(data, dict):
-            raise ValueError("扩展配置必须是 JSON 对象")
-        return data
+        return self._editor.current_options()
 
     def _entry_for_type(self, type_id: Optional[str]) -> Optional[dict]:
         if not type_id:
@@ -328,7 +415,20 @@ class ExtensionConfigPanel(QWidget):
         entry = self._entry_for_type(type_id)
         if entry is None:
             return {}
-        return dict(entry.get("default_options") or {})
+        return dict(entry.get("resolved_options") or {})
+
+    def _entry_fields(self, entry: Optional[dict]) -> List[dict]:
+        if entry is None:
+            return []
+        return [
+            dict(item)
+            for item in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
+            if isinstance(item, dict)
+        ]
+
+    def _set_editor_options(self, type_id: Optional[str], options: Dict[str, Any]) -> None:
+        entry = self._entry_for_type(type_id)
+        self._editor.set_fields(self._entry_fields(entry), dict(options or {}))
 
     def _entry_version(self, entry: Optional[dict]) -> str:
         if entry is None:
@@ -373,7 +473,7 @@ class ExtensionConfigPanel(QWidget):
                 self._config_category,
                 type_id,
                 str(entry.get("name") or type_id),
-                dict(entry.get("default_options") or {}),
+                dict(entry.get("resolved_options") or {}),
                 extension_version=self._entry_version(entry),
             )
 
@@ -434,7 +534,7 @@ class ExtensionConfigPanel(QWidget):
                 lines.append(f"- {'; '.join(parts)}")
             return "\n".join(lines)
 
-        default_options = dict(entry.get("default_options") or {})
+        default_options = dict(entry.get("resolved_options") or {})
         if default_options:
             lines = ["默认字段："]
             for key, value in default_options.items():
@@ -443,11 +543,13 @@ class ExtensionConfigPanel(QWidget):
         return "无需额外参数，保留 {} 即可。"
 
     def _set_empty_state(self) -> None:
+        self._current_entry_label.setText("当前页没有可用扩展")
         self._description_label.setText("当前页没有可用扩展")
         self._config_help_label.setText("保留 {} 使用默认参数。")
-        self._editor.setPlainText("{}")
+        self._editor.set_fields([], {})
         self._editor.setEnabled(False)
         self._apply_btn.setEnabled(False)
+        self._inline_apply_btn.setEnabled(False)
         self._remove_btn.setVisible(False)
         self._remove_btn.setEnabled(False)
         self._reload_btn.setEnabled(True)
@@ -500,18 +602,21 @@ class ExtensionConfigPanel(QWidget):
             return
         entry = self._entries[idx]
         type_id = entry.get("type")
+        type_key = str(type_id or "")
+        self._current_entry_label.setText(str(entry.get("label") or entry.get("name") or type_key or "未选择扩展"))
         self._description_label.setText((entry.get("description") or "暂无说明").strip())
         self._config_help_label.setText(self._config_help_text(entry))
         self._refresh_config_selector(type_id)
         config_item = self._current_config_item()
-        options = self._saved_options.get(type_id, dict(config_item.options) if config_item is not None else self._default_options_for_type(type_id))
+        options = self._saved_options.get(type_key, dict(config_item.options) if config_item is not None else self._default_options_for_type(type_id))
         self._editor.setEnabled(True)
-        self._apply_btn.setEnabled(True)
+        self._apply_btn.setEnabled(not self._inline_apply_visible)
+        self._inline_apply_btn.setEnabled(self._inline_apply_visible)
         self._reload_btn.setEnabled(True)
         self._config_selector.setEnabled(True)
         self._reset_btn.setEnabled(True)
         self._clear_btn.setEnabled(True)
-        self._editor.setPlainText(json.dumps(options, ensure_ascii=False, indent=2))
+        self._set_editor_options(type_id, options)
         self.selection_changed.emit(type_id or "")
 
     def _reset_current(self) -> None:
@@ -522,9 +627,9 @@ class ExtensionConfigPanel(QWidget):
         if default_config is not None:
             self._selected_config_ids[type_id] = default_config.id
             self._refresh_config_selector(type_id)
-            self._editor.setPlainText(json.dumps(dict(default_config.options or {}), ensure_ascii=False, indent=2))
+            self._set_editor_options(type_id, dict(default_config.options or {}))
             return
-        self._editor.setPlainText(json.dumps(self._default_options_for_type(type_id), ensure_ascii=False, indent=2))
+        self._set_editor_options(type_id, self._default_options_for_type(type_id))
 
     def _apply_current(self) -> None:
         type_id = self.current_type()
@@ -541,7 +646,7 @@ class ExtensionConfigPanel(QWidget):
             return
         self._selected_config_ids[type_id] = config_item.id
         self._saved_options[type_id] = dict(config_item.options or {})
-        self._editor.setPlainText(json.dumps(dict(config_item.options or {}), ensure_ascii=False, indent=2))
+        self._set_editor_options(type_id, dict(config_item.options or {}))
         self._warn_if_outdated_config_version(self._entry_for_type(type_id), config_item)
 
     def _save_current_as_config(self) -> None:

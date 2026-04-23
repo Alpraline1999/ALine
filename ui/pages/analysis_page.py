@@ -37,6 +37,7 @@ from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
@@ -187,7 +188,7 @@ class AnalysisPage(QWidget):
         self._content_splitter.setSizes([320, 660])
         self._page_splitter.addWidget(self._content_splitter)
 
-        self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self)
+        self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self, mode="help_only", framed=False)
         self._extension_panel.set_context("数据分析", "未选择输入")
         self._extension_panel.set_status_context("analysis", "分析扩展")
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
@@ -277,7 +278,6 @@ class AnalysisPage(QWidget):
         self._type_combo.addItems(self._analysis_type_labels)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
 
-        lv.addWidget(make_hsep())
         lv.addWidget(make_section_label("已选择列表"))
 
         self._input_hint_label = make_hint_label("双击数据加入“已选择列表”；单曲线分析会处理列表中当前选中的项。")
@@ -378,10 +378,10 @@ class AnalysisPage(QWidget):
         lv.addWidget(self._pair_secondary_label)
         lv.addWidget(self._pair_secondary_combo)
 
-        self._extension_params_label = BodyLabel("扩展参数 JSON:")
-        self._extension_params_edit = PlainTextEdit(self)
-        self._extension_params_edit.setPlaceholderText('{\n  "option": "value"\n}')
+        self._extension_params_label = BodyLabel("扩展参数:")
+        self._extension_params_edit = ExtensionOptionsForm(self)
         self._extension_params_edit.setMinimumHeight(160)
+        self._extension_params_edit.optionsChanged.connect(self._on_extension_analysis_options_changed)
         lv.addWidget(self._extension_params_label)
         lv.addWidget(self._extension_params_edit, 1)
 
@@ -728,10 +728,18 @@ class AnalysisPage(QWidget):
         return self._analysis_label_map.get(analysis_type, analysis_type or "分析结果")
 
     def _analysis_extension_entries(self) -> List[dict]:
-        return [build_extension_entry(extension) for extension in extension_registry.list_analysis()]
+        entries: List[dict] = []
+        for extension in extension_registry.list_analysis():
+            entry = build_extension_entry(extension)
+            if not entry.get("listed", True):
+                continue
+            entries.append(entry)
+        return entries
 
     def _parse_extension_analysis_options_text(self, text: Optional[str] = None) -> Dict[str, Any]:
-        raw_text = text if text is not None else self._extension_params_edit.toPlainText()
+        if text is None:
+            return self._extension_params_edit.current_options()
+        raw_text = text
         clean_text = str(raw_text or "").strip()
         if not clean_text:
             return {}
@@ -745,7 +753,21 @@ class AnalysisPage(QWidget):
 
     def _default_extension_analysis_options(self, analysis_type: str) -> Dict[str, Any]:
         extension = extension_registry.get_analysis(analysis_type)
-        return dict(getattr(extension, "default_options", {}) or {}) if extension is not None else {}
+        if extension is None:
+            return {}
+        entry = build_extension_entry(extension)
+        return dict(entry.get("resolved_options") or {})
+
+    def _extension_analysis_fields(self, analysis_type: str) -> List[dict]:
+        extension = extension_registry.get_analysis(analysis_type)
+        if extension is None:
+            return []
+        entry = build_extension_entry(extension)
+        return [
+            dict(item)
+            for item in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
+            if isinstance(item, dict)
+        ]
 
     def _current_extension_analysis_options(self, analysis_type: Optional[str] = None, *, raise_on_error: bool = False) -> Dict[str, Any]:
         type_id = analysis_type or self._current_analysis_type()
@@ -771,14 +793,17 @@ class AnalysisPage(QWidget):
     def _sync_extension_params_editor(self, analysis_type: Optional[str] = None) -> None:
         type_id = analysis_type or self._current_analysis_type()
         options: Dict[str, Any] = {}
+        fields: List[dict] = []
         if type_id not in _TYPE_IDS:
             options = dict(self._analysis_extension_options.get(type_id, {}))
             if not options:
                 options = self._default_extension_analysis_options(type_id)
                 if options:
                     self._analysis_extension_options[type_id] = dict(options)
+            fields = self._extension_analysis_fields(type_id)
+        self._extension_params_edit.set_line_candidates([payload.get("label", "未命名曲线") for payload in self._selected_inputs])
         self._extension_params_edit.blockSignals(True)
-        self._extension_params_edit.setPlainText(json.dumps(dict(options), ensure_ascii=False, indent=2) if options else "{}")
+        self._extension_params_edit.set_fields(fields, dict(options))
         self._extension_params_edit.blockSignals(False)
 
     def _refresh_analysis_type_choices(self) -> None:
@@ -786,10 +811,12 @@ class AnalysisPage(QWidget):
         self._analysis_type_labels = list(_TYPE_LABELS)
         self._analysis_type_ids = list(_TYPE_IDS)
         self._analysis_label_map = {type_id: label for label, type_id in _ANALYSIS_TYPES}
-        for extension in extension_registry.list_analysis():
-            self._analysis_type_labels.append(f"[扩展]{extension.name}")
-            self._analysis_type_ids.append(extension.type)
-            self._analysis_label_map[extension.type] = extension.name
+        for entry in self._analysis_extension_entries():
+            type_id = str(entry.get("type") or "")
+            name = str(entry.get("name") or type_id)
+            self._analysis_type_labels.append(f"[扩展]{name}")
+            self._analysis_type_ids.append(type_id)
+            self._analysis_label_map[type_id] = name
         self._type_combo.blockSignals(True)
         self._type_combo.clear()
         self._type_combo.addItems(self._analysis_type_labels)
@@ -1051,7 +1078,7 @@ class AnalysisPage(QWidget):
 
     def _resolve_input_payloads(self, kind: str, node_id: str) -> List[dict]:
         if kind == "data_file":
-            container_name = project_manager.format_tree_path_label(node_id, separator=" / ", omit_root_group=True) or "数据文件"
+            container_name = project_manager.format_tree_path_label(node_id, separator="/", omit_root_group=True) or "数据文件"
             payloads: List[dict] = []
             for series in project_manager.get_all_series_from_node(kind, node_id):
                 if not series or not series.x:
@@ -1059,12 +1086,12 @@ class AnalysisPage(QWidget):
                 payloads.append({
                     "kind": "series",
                     "node_id": series.id,
-                    "label": f"{container_name} / {series.name}",
+                    "label": f"{container_name}/{series.name}",
                 })
             return payloads
 
         if kind == "image_work":
-            container_name = project_manager.format_tree_path_label(node_id, separator=" / ", omit_root_group=True) or "图像曲线"
+            container_name = project_manager.format_tree_path_label(node_id, separator="/", omit_root_group=True) or "图像曲线"
             payloads: List[dict] = []
             for series in project_manager.get_all_series_from_node(kind, node_id):
                 if not series or not series.x:
@@ -1074,14 +1101,14 @@ class AnalysisPage(QWidget):
                 payloads.append({
                     "kind": item_kind,
                     "node_id": item_id,
-                    "label": f"{container_name} / {series.name}",
+                    "label": f"{container_name}/{series.name}",
                 })
             return payloads
 
         series = project_manager.get_series_from_node(kind, node_id)
         if series is None or not series.x:
             return []
-        label = project_manager.format_series_origin_path_label(node_id, separator=" / ", omit_root_group=True) or series.name
+        label = project_manager.format_series_origin_path_label(node_id, separator="/", omit_root_group=True) or series.name
         return [{"kind": kind, "node_id": node_id, "label": label}]
 
     def _selected_input_node_ids(self) -> List[str]:
@@ -1228,21 +1255,36 @@ class AnalysisPage(QWidget):
             self._input_list.setCurrentItem(current_item, QItemSelectionModel.SelectionFlag.NoUpdate)
         self._input_list.blockSignals(False)
         self._sync_input_role_labels()
+        if self._current_analysis_type() not in _TYPE_IDS:
+            self._sync_extension_params_editor(self._current_analysis_type())
 
-    def _sync_input_role_labels(self) -> None:
+    def _current_selected_input_payload(self) -> Optional[Dict[str, Any]]:
+        current_item = self._input_list.currentItem() if hasattr(self, "_input_list") else None
+        if current_item is not None:
+            payload = current_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(payload, dict) and payload.get("node_id"):
+                current_payload = dict(payload)
+                current_payload["label"] = str(current_payload.get("label") or current_item.text() or "未命名曲线")
+                return current_payload
+        selected_ids = set(self._selected_input_node_ids())
+        if selected_ids:
+            for payload in self._selected_inputs:
+                if payload.get("node_id") in selected_ids:
+                    return payload
+        return self._selected_inputs[0] if self._selected_inputs else None
+
+    def _sync_input_role_labels(self, options: Optional[Dict[str, Any]] = None) -> None:
+        del options
         primary = self._selected_inputs[0]["label"] if self._selected_inputs else "未选择"
         secondary = self._selected_inputs[1]["label"] if len(self._selected_inputs) > 1 else "未使用"
         self._primary_input_label.setText(f"主输入: {primary}")
         self._secondary_input_label.setText(f"对比输入: {secondary}")
         self._refresh_pair_input_choices()
-        active_payloads = self._analysis_input_payloads()
-        if not self._selected_inputs:
+        current_payload = self._current_selected_input_payload()
+        if current_payload is None:
             self._selected_input_state_label.setText("当前分析: 未选择")
-        elif not active_payloads:
-            self._selected_input_state_label.setText("当前分析: 全部已选择项")
         else:
-            labels = [payload["label"] for payload in active_payloads]
-            self._selected_input_state_label.setText("当前分析: " + "；".join(labels[:3]) + (" …" if len(labels) > 3 else ""))
+            self._selected_input_state_label.setText(f"当前分析: {current_payload.get('label', '未命名曲线')}")
         if hasattr(self, "_extension_panel"):
             if not self._selected_inputs:
                 target = "未选择输入"
@@ -1259,6 +1301,13 @@ class AnalysisPage(QWidget):
     def _on_pair_input_changed(self, _index: int) -> None:
         if getattr(self, "_is_refreshing_pair_inputs", False):
             return
+        self._sync_input_role_labels()
+
+    def _on_extension_analysis_options_changed(self, options: Dict[str, Any]) -> None:
+        type_id = self._current_analysis_type()
+        if type_id in _TYPE_IDS:
+            return
+        self._analysis_extension_options[type_id] = dict(options or {})
         self._sync_input_role_labels()
 
     def _current_analysis_type(self) -> str:
@@ -1291,8 +1340,6 @@ class AnalysisPage(QWidget):
                     continue
                 if 0 <= offset < len(self._selected_inputs):
                     payloads.append(self._selected_inputs[offset])
-        elif str(lines_list).strip().lower() == "all":
-            payloads = list(self._selected_inputs)
         else:
             payloads = self._active_input_payloads()
             if not payloads:

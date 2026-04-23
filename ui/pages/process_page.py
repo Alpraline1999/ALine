@@ -37,6 +37,7 @@ from ui.theme import (
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.dialogs.export_flow import choose_data_export_batch_plan, choose_data_export_plan
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.global_assets import global_assets
@@ -167,7 +168,7 @@ class ProcessPage(QWidget):
         self._content_splitter.setSizes([360, 620])
         self._page_splitter.addWidget(self._content_splitter)
 
-        self._extension_panel = ExtensionConfigPanel("处理扩展", "应用扩展", self)
+        self._extension_panel = ExtensionConfigPanel("处理扩展", "应用扩展", self, mode="help_only", framed=False)
         self._extension_panel.set_context("数据处理", "当前操作链")
         self._extension_panel.set_status_context("processing", "处理扩展")
         self._extension_panel.apply_requested.connect(self._on_processing_extension_apply)
@@ -294,7 +295,6 @@ class ProcessPage(QWidget):
         self._selected_input_state_label.setWordWrap(True)
         self._selected_input_state_label.setStyleSheet(f"color: {secondary_color()};")
 
-        mv.addWidget(make_hsep())
         mv.addWidget(make_section_label("已选择列表"))
         self._selected_input_list = ListWidget(self)
         self._selected_input_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -514,7 +514,7 @@ class ProcessPage(QWidget):
 
     def _resolve_input_payloads(self, kind: str, node_id: str) -> List[Dict[str, Any]]:
         if kind == "data_file":
-            container_name = project_manager.format_tree_path_label(node_id, separator=" / ", omit_root_group=True) or "数据文件"
+            container_name = project_manager.format_tree_path_label(node_id, separator="/", omit_root_group=True) or "数据文件"
             payloads = []
             for series in project_manager.get_all_series_from_node(kind, node_id):
                 if not series or not series.x:
@@ -522,12 +522,12 @@ class ProcessPage(QWidget):
                 payloads.append({
                     "kind": "series",
                     "node_id": series.id,
-                    "label": f"{container_name} / {series.name}",
+                    "label": f"{container_name}/{series.name}",
                 })
             return payloads
 
         if kind == "image_work":
-            container_name = project_manager.format_tree_path_label(node_id, separator=" / ", omit_root_group=True) or "图像曲线"
+            container_name = project_manager.format_tree_path_label(node_id, separator="/", omit_root_group=True) or "图像曲线"
             payloads = []
             for series in project_manager.get_all_series_from_node(kind, node_id):
                 if not series or not series.x:
@@ -537,14 +537,14 @@ class ProcessPage(QWidget):
                 payloads.append({
                     "kind": item_kind,
                     "node_id": item_id,
-                    "label": f"{container_name} / {series.name}",
+                    "label": f"{container_name}/{series.name}",
                 })
             return payloads
 
         series = project_manager.get_series_from_node(kind, node_id)
         if series is None or not series.x:
             return []
-        label = project_manager.format_series_origin_path_label(node_id, separator=" / ", omit_root_group=True) or series.name
+        label = project_manager.format_series_origin_path_label(node_id, separator="/", omit_root_group=True) or series.name
         return [{"kind": kind, "node_id": node_id, "label": label}]
 
     def _build_series_batch_from_payloads(self, payloads: List[Dict[str, Any]]) -> List[DataSeries]:
@@ -1152,6 +1152,12 @@ class ProcessPage(QWidget):
             return
         op_type = self._processing_op_types[idx]
         self._add_op_combo.setToolTip(self._processing_op_hints.get(op_type, ""))
+        if hasattr(self, "_extension_panel"):
+            self._extension_panel.set_entries(
+                self._processing_extension_entries(),
+                saved_options=self._processing_extension_options,
+                current_type=op_type if extension_registry.get_processing(op_type) else None,
+            )
 
     def _build_preview_output_series(self, name: str) -> Optional[DataSeries]:
         preview_series = self._out_series_batch[0] if self._out_series_batch else None
@@ -1253,7 +1259,13 @@ class ProcessPage(QWidget):
         InfoBar.success("已保存", message, parent=self, position=InfoBarPosition.TOP)
 
     def _processing_extension_entries(self) -> List[dict]:
-        return [build_extension_entry(extension) for extension in extension_registry.list_processing()]
+        entries: List[dict] = []
+        for extension in extension_registry.list_processing():
+            entry = build_extension_entry(extension)
+            if not entry.get("listed", True):
+                continue
+            entries.append(entry)
+        return entries
 
     def _refresh_processing_extensions(self) -> None:
         current_type = None
@@ -1262,10 +1274,12 @@ class ProcessPage(QWidget):
         self._processing_op_labels = [label for label, _op_type in _OPS]
         self._processing_op_types = [op_type for _label, op_type in _OPS]
         self._processing_op_hints = dict(_OP_HINTS)
-        for extension in extension_registry.list_processing():
-            self._processing_op_labels.append(f"[扩展]{extension.name}")
-            self._processing_op_types.append(extension.type)
-            self._processing_op_hints[extension.type] = extension.description or f"自定义处理扩展：{extension.name}"
+        for entry in self._processing_extension_entries():
+            type_id = str(entry.get("type") or "")
+            name = str(entry.get("name") or type_id)
+            self._processing_op_labels.append(f"[扩展]{name}")
+            self._processing_op_types.append(type_id)
+            self._processing_op_hints[type_id] = str(entry.get("description") or f"自定义处理扩展：{name}")
         self._add_op_combo.blockSignals(True)
         self._add_op_combo.clear()
         self._add_op_combo.addItems(self._processing_op_labels)
@@ -1312,7 +1326,8 @@ class ProcessPage(QWidget):
         extension = extension_registry.get_processing(op_type)
         if extension is None:
             return {}
-        return dict(self._processing_extension_options.get(op_type, extension.default_options))
+        entry = build_extension_entry(extension)
+        return dict(self._processing_extension_options.get(op_type, entry.get("resolved_options") or {}))
 
     def _set_add_op_combo_type(self, op_type: str) -> None:
         if op_type not in self._processing_op_types:
@@ -2019,38 +2034,38 @@ class _FilterParam(_ParamWidget):
 
 
 class _JsonParam(_ParamWidget):
-    def __init__(self, parent, on_change, *, description: str = "", default_params: Optional[dict] = None):
+    def __init__(self, parent, on_change, *, description: str = "", default_params: Optional[dict] = None, fields: Optional[List[dict]] = None):
         super().__init__(parent)
+        self._page = parent if hasattr(parent, "_selected_inputs") else None
+        self._fields = [dict(item) for item in (fields or []) if isinstance(item, dict)]
         self._last_valid = dict(default_params or {})
         lv = QVBoxLayout(self)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(4)
-        if description:
-            label = CaptionLabel(description, self)
-            label.setWordWrap(True)
-            label.setStyleSheet(f"color: {secondary_color()};")
-            lv.addWidget(label)
-        self._editor = _CommitPlainTextEdit(self)
-        self._editor.setPlaceholderText('{\n  "option": "value"\n}')
+        del description
+        self._editor = ExtensionOptionsForm(self)
         self._editor.setFixedHeight(180)
-        self._editor.commitRequested.connect(on_change)
+        self._editor.optionsCommitted.connect(lambda _options: on_change())
         lv.addWidget(self._editor)
         self.set_params(self._last_valid)
+        self.refresh_input_choices()
 
     def get_params(self) -> dict:
-        text = self._editor.toPlainText().strip() or "{}"
         try:
-            data = json.loads(text)
-        except Exception:
-            return dict(self._last_valid)
-        if not isinstance(data, dict):
+            data = self._editor.current_options()
+        except ValueError:
             return dict(self._last_valid)
         self._last_valid = dict(data)
         return dict(self._last_valid)
 
     def set_params(self, params: dict) -> None:
         self._last_valid = dict(params or {})
-        self._editor.setPlainText(json.dumps(self._last_valid, ensure_ascii=False, indent=2))
+        self._editor.set_fields(self._fields, self._last_valid)
+        self.refresh_input_choices()
+
+    def refresh_input_choices(self) -> None:
+        labels = [payload.get("label", "未命名曲线") for payload in getattr(self._page, "_selected_inputs", [])]
+        self._editor.set_line_candidates(labels)
 
 
 def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:
@@ -2071,10 +2086,12 @@ def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:
         return widget_cls(parent, on_change)
     extension = extension_registry.get_processing(op_type)
     if extension is not None:
+        entry = build_extension_entry(extension)
         return _JsonParam(
             parent,
             on_change,
             description=extension.description,
-            default_params=extension.default_options,
+            default_params=dict(entry.get("resolved_options") or {}),
+            fields=list(entry.get("normalized_config_fields") or entry.get("config_fields") or []),
         )
     return _EmptyParam(parent, on_change)

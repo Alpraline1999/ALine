@@ -71,7 +71,7 @@ _GROUP_TYPE_ALIASES = {
 _GROUP_DISPLAY_NAMES = {
     "datasets": "数据集",
     "source_files": "源文件",
-    "images": "数据化",
+    "images": "数字化",
     "pictures": "图片集",
     "tools": "工具集",
     "pipeline_group": "Pipelines",
@@ -1365,7 +1365,7 @@ class ProjectManager:
 
         - 已有 tree 则跳过（幂等）
         - datasets → DataFile + DataFileNode（挂在"数据集"文件夹）
-        - images   → ImageWorkNode（挂在"数据化"文件夹）
+        - images   → ImageWorkNode（挂在"数字化"文件夹）
         """
         p = project or self.current_project
         if p is None:
@@ -1398,9 +1398,9 @@ class ProjectManager:
                 )
                 p.tree.nodes.append(df_node)
 
-        # 数据化文件夹
+        # 数字化文件夹
         if p.images:
-            img_folder = FolderNode(name="数据化", order=order, group_type="images")
+            img_folder = FolderNode(name="数字化", order=order, group_type="images")
             p.tree.nodes.append(img_folder)
             order += 1
 
@@ -1462,7 +1462,7 @@ class ProjectManager:
             "源文件": "source_files",
             "数据集": "datasets",
             "图片集": "pictures",
-            "数据化": "images",
+            "数字化": "images",
             "工具集": "tools",
             "Pipelines": "pipeline_group",
             "绘图模板": "figure_template_group",

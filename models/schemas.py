@@ -463,7 +463,7 @@ class _NodeBase(BaseModel):
 # group_type 语义：
 #   None / "user"            = 用户创建的普通文件夹
 #   "datasets"/"dataset_set" = 系统数据集容器（兼容旧值）
-#   "images"/"image_set"    = 系统数据化容器（兼容旧值）
+#   "images"/"image_set"    = 系统数字化容器（兼容旧值）
 #   "pictures"/"picture_set" = 系统图片集容器
 #   "tools"/"tool_set"      = 系统工具集容器（兼容旧值）
 #   "pipeline_group"         = 工具集内 Pipelines 子文件夹

@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import math
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontMetrics, QIntValidator, QPixmap
@@ -42,10 +43,11 @@ from ui.theme import (
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.matplotlib_fonts import configure_matplotlib_cjk
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from core.extension_api import extension_registry
+from core.extension_api import build_extension_entry, extension_registry
 from core.global_assets import global_assets, parse_plot_style_asset_key
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
+from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
 from models.schemas import DataFile, DataSeries, Dataset, Curve
 
 try:
@@ -119,12 +121,14 @@ class DataPage(QWidget):
             "datasets": _PendingImportQueueState(),
             "images": _PendingImportQueueState(),
         }
+        self._source_favorite_paths: list[str] = get_data_page_source_favorites()
         self._external_browser_dir: Optional[Path] = None
         self._show_hidden_browser_entries = False
         self._data_file_preview_node_id: Optional[str] = None
         self._preview_image_path: Optional[str] = None
         self._node_preview_states: dict[str, _NodePreviewState] = {}
         self._current_source_preview_total_rows = 0
+        self._current_extension_config_id: Optional[str] = None
         self._fluent_tooltip = None
         self._fluent_tooltip_views: dict[QWidget, TreeWidget] = {}
         self._shortcut_bindings = ShortcutBindingSet()
@@ -466,7 +470,7 @@ class DataPage(QWidget):
         source_file_action_row.setSpacing(6)
         self._btn_import_source_to_data = PrimaryPushButton(FIF.DOWNLOAD, "导入到数据集", self._source_file_action_panel)
         self._btn_import_source_to_data.clicked.connect(self._import_current_source_file_to_dataset)
-        self._btn_import_source_to_digitize = PushButton(FIF.PHOTO, "导入到数据化", self._source_file_action_panel)
+        self._btn_import_source_to_digitize = PushButton(FIF.PHOTO, "导入到数字化", self._source_file_action_panel)
         self._btn_import_source_to_digitize.clicked.connect(self._import_current_source_file_to_digitize)
         self._apply_panel_button_metrics(
             self._btn_import_source_to_data,
@@ -544,10 +548,22 @@ class DataPage(QWidget):
         preview_layout = QVBoxLayout(self._preview_card)
         preview_layout.setContentsMargins(14, 14, 14, 14)
         preview_layout.setSpacing(10)
+        self._preview_layout = preview_layout
 
         preview_header = QHBoxLayout()
-        preview_header.addWidget(make_section_label("数据预览"))
+        self._preview_section_label = make_section_label("数据预览")
+        preview_header.addWidget(self._preview_section_label)
         preview_header.addStretch()
+        self._extension_config_action_panel = QWidget(self._preview_card)
+        extension_config_action_layout = QHBoxLayout(self._extension_config_action_panel)
+        extension_config_action_layout.setContentsMargins(0, 0, 0, 0)
+        extension_config_action_layout.setSpacing(6)
+        self._btn_save_extension_config = PrimaryPushButton("保存配置", self._extension_config_action_panel)
+        self._btn_save_extension_config.clicked.connect(self._save_selected_extension_config)
+        apply_button_metrics(self._btn_save_extension_config, min_width=96)
+        self._btn_save_extension_config.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        extension_config_action_layout.addWidget(self._btn_save_extension_config)
+        self._extension_config_action_panel.hide()
         self._source_file_preview_controls = QWidget(self._preview_card)
         source_file_preview_layout = QHBoxLayout(self._source_file_preview_controls)
         source_file_preview_layout.setContentsMargins(0, 0, 0, 0)
@@ -572,6 +588,26 @@ class DataPage(QWidget):
         preview_plot_type_layout.addWidget(self._preview_type_combo)
         preview_header.addWidget(self._preview_plot_type_controls)
         preview_layout.addLayout(preview_header)
+
+        self._config_editor_header_panel = QWidget(self._preview_card)
+        config_editor_header_layout = QVBoxLayout(self._config_editor_header_panel)
+        config_editor_header_layout.setContentsMargins(0, 0, 0, 0)
+        config_editor_header_layout.setSpacing(4)
+
+        self._config_editor_title_label = BodyLabel("", self._config_editor_header_panel)
+        self._config_editor_title_label.setWordWrap(True)
+        self._config_editor_title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._apply_summary_label_style(self._config_editor_title_label)
+        config_editor_header_layout.addWidget(self._config_editor_title_label)
+
+        self._config_editor_meta_label = CaptionLabel("", self._config_editor_header_panel)
+        self._config_editor_meta_label.setWordWrap(True)
+        self._config_editor_meta_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._apply_muted_summary_label_style(self._config_editor_meta_label)
+        config_editor_header_layout.addWidget(self._config_editor_meta_label)
+
+        self._config_editor_header_panel.hide()
+        preview_layout.addWidget(self._config_editor_header_panel)
 
         self._source_file_detail_controls = QWidget(self._preview_card)
         source_file_detail_layout = QHBoxLayout(self._source_file_detail_controls)
@@ -633,6 +669,26 @@ class DataPage(QWidget):
         source_file_detail_layout.addStretch()
         preview_layout.addWidget(self._source_file_detail_controls)
 
+        self._extension_preview_panel = QWidget(self._preview_card)
+        extension_preview_layout = QVBoxLayout(self._extension_preview_panel)
+        extension_preview_layout.setContentsMargins(0, 0, 0, 0)
+        extension_preview_layout.setSpacing(4)
+
+        self._extension_detail_label = BodyLabel("", self._extension_preview_panel)
+        self._extension_detail_label.setWordWrap(True)
+        self._extension_detail_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._apply_summary_label_style(self._extension_detail_label)
+        extension_preview_layout.addWidget(self._extension_detail_label)
+
+        self._extension_field_help_label = CaptionLabel("", self._extension_preview_panel)
+        self._extension_field_help_label.setWordWrap(True)
+        self._extension_field_help_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._apply_muted_summary_label_style(self._extension_field_help_label)
+        extension_preview_layout.addWidget(self._extension_field_help_label)
+
+        self._extension_preview_panel.hide()
+        preview_layout.addWidget(self._extension_preview_panel)
+
         self._preview_stack = QStackedWidget(self._preview_card)
         preview_layout.addWidget(self._preview_stack, stretch=3)
 
@@ -688,7 +744,8 @@ class DataPage(QWidget):
         self._parsed_preview_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._preview_stack.addWidget(self._parsed_preview_table)
 
-        preview_layout.addWidget(make_hsep())
+        self._preview_summary_divider = make_hsep()
+        preview_layout.addWidget(self._preview_summary_divider)
 
         self._summary_footer = QWidget(self._preview_card)
         summary_footer_layout = QVBoxLayout(self._summary_footer)
@@ -733,6 +790,7 @@ class DataPage(QWidget):
 
         summary_footer_layout.addWidget(self._source_path_panel)
         preview_layout.addWidget(self._summary_footer)
+        preview_layout.addWidget(self._extension_config_action_panel)
 
         self._source_manager_card = self._build_source_manager_card(panel)
         self._right_mode_stack.addWidget(self._preview_card)
@@ -760,6 +818,25 @@ class DataPage(QWidget):
     def _set_source_file_skip_rows_enabled(self, enabled: bool) -> None:
         self._source_file_skip_rows_label.setEnabled(enabled)
         self._source_file_skip_rows_edit.setEnabled(enabled)
+
+    def _set_extension_preview_help(self, description: str = "", field_help: str = "") -> None:
+        description_text = str(description or "").strip()
+        field_help_text = str(field_help or "").strip()
+        self._extension_detail_label.setText(description_text)
+        self._extension_field_help_label.setText(field_help_text)
+        self._extension_detail_label.setVisible(bool(description_text))
+        self._extension_field_help_label.setVisible(bool(field_help_text))
+        self._extension_preview_panel.setVisible(bool(description_text or field_help_text))
+
+    def _set_extension_config_editor_mode(self, enabled: bool) -> None:
+        if not enabled:
+            self._current_extension_config_id = None
+        self._preview_section_label.setText("配置编辑" if enabled else "数据预览")
+        self._extension_config_action_panel.setVisible(enabled)
+        self._config_editor_header_panel.setVisible(enabled)
+        self._preview_summary_divider.setVisible(not enabled)
+        self._summary_footer.setVisible(not enabled)
+        self._text_preview.setReadOnly(not enabled)
 
     @staticmethod
     def _preview_numeric_input_value(line_edit: LineEdit, *, minimum: int, fallback: int) -> int:
@@ -1084,30 +1161,74 @@ class DataPage(QWidget):
         system_layout.setSpacing(10)
         self._update_hidden_browser_toggle_button()
 
+        self._source_browser_splitter = QSplitter(Qt.Orientation.Horizontal, system_page)
+        self._source_browser_splitter.setContentsMargins(0, 0, 0, 0)
+        self._source_browser_splitter.setHandleWidth(4)
+        self._source_browser_splitter.setChildrenCollapsible(False)
+
+        self._source_favorites_panel = QWidget(system_page)
+        self._source_favorites_panel.setMinimumWidth(120)
+        favorites_layout = QVBoxLayout(self._source_favorites_panel)
+        favorites_layout.setContentsMargins(0, 0, 0, 0)
+        favorites_layout.setSpacing(6)
+        favorites_header = QHBoxLayout()
+        favorites_header.setContentsMargins(0, 0, 0, 0)
+        favorites_header.setSpacing(0)
+        self._source_favorites_icon = ToolButton(FIF.HEART, self._source_favorites_panel)
+        self._source_favorites_icon.setEnabled(False)
+        self._source_favorites_icon.setToolTip("收藏夹")
+        self._source_favorites_icon.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+        favorites_header.addWidget(self._source_favorites_icon)
+        favorites_header.addStretch(1)
+        favorites_layout.addLayout(favorites_header)
+        self._source_favorites_list = TreeWidget(self._source_favorites_panel)
+        self._source_favorites_list.setHeaderHidden(True)
+        self._source_favorites_list.setMinimumHeight(220)
+        self._source_favorites_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._source_favorites_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._source_favorites_list.itemDoubleClicked.connect(self._on_source_favorite_item_activated)
+        self._source_favorites_list.customContextMenuRequested.connect(self._show_source_favorites_context_menu)
+        self._install_item_view_tooltip_filter(self._source_favorites_list)
+        favorites_layout.addWidget(self._source_favorites_list, 1)
+        self._source_browser_splitter.addWidget(self._source_favorites_panel)
+
+        browser_panel = QWidget(system_page)
+        browser_layout = QVBoxLayout(browser_panel)
+        browser_layout.setContentsMargins(0, 0, 0, 0)
+        browser_layout.setSpacing(6)
+
         self._source_breadcrumb_bar = BreadcrumbBar(system_page)
         self._source_breadcrumb_bar.currentItemChanged.connect(self._on_source_breadcrumb_changed)
-        system_layout.addWidget(self._source_breadcrumb_bar)
+        browser_layout.addWidget(self._source_breadcrumb_bar)
 
         self._source_browser = TreeWidget(system_page)
         self._source_browser.setHeaderHidden(True)
         self._source_browser.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._source_browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._source_browser.itemSelectionChanged.connect(self._refresh_source_browser_controls)
         self._source_browser.itemDoubleClicked.connect(self._on_source_browser_item_activated)
+        self._source_browser.customContextMenuRequested.connect(self._show_source_browser_context_menu)
         self._install_item_view_tooltip_filter(self._source_browser)
-        system_layout.addWidget(self._source_browser, 1)
+        browser_layout.addWidget(self._source_browser, 1)
 
         self._source_browser_detail_label = CaptionLabel("未选择系统文件", system_page)
         self._source_browser_detail_label.setWordWrap(True)
         self._source_browser_detail_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._apply_summary_label_style(self._source_browser_detail_label)
-        system_layout.addWidget(self._source_browser_detail_label)
+        browser_layout.addWidget(self._source_browser_detail_label)
 
         system_action_row = QHBoxLayout()
         self._btn_add_selected_sources = PrimaryPushButton(FIF.ADD, "添加选中文件", system_page)
         self._btn_add_selected_sources.clicked.connect(self._add_selected_browser_source_files_to_pending)
         self._apply_panel_button_metrics(self._btn_add_selected_sources)
         system_action_row.addWidget(self._btn_add_selected_sources, 1)
-        system_layout.addLayout(system_action_row)
+        browser_layout.addLayout(system_action_row)
+
+        self._source_browser_splitter.addWidget(browser_panel)
+        self._source_browser_splitter.setStretchFactor(0, 0)
+        self._source_browser_splitter.setStretchFactor(1, 1)
+        self._source_browser_splitter.setSizes([160, 560])
+        system_layout.addWidget(self._source_browser_splitter, 1)
         self._source_browser_tabs.addTab(system_page, "系统文件")
 
         layout.addWidget(self._source_browser_tabs, 1)
@@ -1445,6 +1566,80 @@ class DataPage(QWidget):
         if not use_project_sources:
             self._source_browser_tabs.setCurrentIndex(1)
         self._refresh_source_browser_controls()
+
+    def _save_source_favorites(self) -> None:
+        self._source_favorite_paths = set_data_page_source_favorites(self._source_favorite_paths)
+
+    def _refresh_source_favorites(self) -> None:
+        self._source_favorites_list.clear()
+        valid_paths: list[str] = []
+        for raw_path in self._source_favorite_paths:
+            path = Path(raw_path)
+            if not path.exists() or not path.is_dir():
+                continue
+            valid_paths.append(str(path))
+            item = QTreeWidgetItem([path.name or str(path)])
+            item.setData(0, Qt.ItemDataRole.UserRole, str(path))
+            item.setToolTip(0, str(path))
+            item.setIcon(0, FIF.FOLDER.icon())
+            self._source_favorites_list.addTopLevelItem(item)
+        self._source_favorite_paths = valid_paths
+        self._save_source_favorites()
+
+    def _add_source_favorite(self, dir_path: str) -> bool:
+        candidate = Path(str(dir_path or "").strip())
+        if not candidate.exists() or not candidate.is_dir():
+            return False
+        normalized = str(candidate)
+        if normalized in self._source_favorite_paths:
+            return False
+        self._source_favorite_paths.append(normalized)
+        self._refresh_source_favorites()
+        return True
+
+    def _remove_source_favorite(self, dir_path: str) -> None:
+        normalized = str(dir_path or "").strip()
+        self._source_favorite_paths = [path for path in self._source_favorite_paths if path != normalized]
+        self._refresh_source_favorites()
+
+    def _on_source_favorite_item_activated(self, item, _column: int) -> None:
+        if item is None:
+            return
+        dir_path = str(item.data(0, Qt.ItemDataRole.UserRole) or "").strip()
+        if not dir_path:
+            return
+        candidate = Path(dir_path)
+        if not candidate.exists() or not candidate.is_dir():
+            self._remove_source_favorite(dir_path)
+            return
+        self._external_browser_dir = candidate
+        self._remember_current_external_browser_dir()
+        self._refresh_source_browser()
+
+    def _show_source_favorites_context_menu(self, pos) -> None:
+        item = self._source_favorites_list.itemAt(pos)
+        if item is None:
+            return
+        dir_path = str(item.data(0, Qt.ItemDataRole.UserRole) or "").strip()
+        if not dir_path:
+            return
+        menu = RoundMenu(parent=self)
+        menu.addAction(Action(FIF.DELETE, "移出收藏夹", self, triggered=lambda: self._remove_source_favorite(dir_path)))
+        menu.exec(self._source_favorites_list.viewport().mapToGlobal(pos))
+
+    def _show_source_browser_context_menu(self, pos) -> None:
+        item = self._source_browser.itemAt(pos)
+        if item is None:
+            return
+        entry_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if entry_type != "dir":
+            return
+        dir_path = str(item.data(0, Qt.ItemDataRole.UserRole) or "").strip()
+        if not dir_path:
+            return
+        menu = RoundMenu(parent=self)
+        menu.addAction(Action(FIF.ADD, "加入收藏夹", self, triggered=lambda: self._add_source_favorite(dir_path)))
+        menu.exec(self._source_browser.viewport().mapToGlobal(pos))
         self._refresh_project_source_controls()
 
     # ─────────────────────────────────────────────────────────
@@ -1462,6 +1657,7 @@ class DataPage(QWidget):
         self._refresh_management_panel()
 
     def _clear_preview(self):
+        self._set_extension_config_editor_mode(False)
         self._show_preview_mode()
         self._preview_xs = []
         self._preview_ys = []
@@ -1496,6 +1692,7 @@ class DataPage(QWidget):
 
     def _show_preview_mode(self) -> None:
         self._right_mode_stack.setCurrentWidget(self._preview_card)
+        self._set_extension_preview_help()
 
     def _show_source_manager_mode(self) -> None:
         self._right_mode_stack.setCurrentWidget(self._source_manager_card)
@@ -1679,6 +1876,7 @@ class DataPage(QWidget):
 
     def _refresh_source_browser(self) -> None:
         browser_dir = self._ensure_external_browser_dir()
+        self._refresh_source_favorites()
         self._source_browser.clear()
         self._source_browser_detail_label.setText("未选择系统文件")
         group_type = self._current_import_group()
@@ -1821,7 +2019,7 @@ class DataPage(QWidget):
         if group_type == "datasets":
             self._btn_import_pending.setText("导入到数据集")
         elif group_type == "images":
-            self._btn_import_pending.setText("导入到数据化")
+            self._btn_import_pending.setText("导入到数字化")
         elif group_type == "source_files":
             self._btn_import_pending.setText("导入为源文件")
         else:
@@ -1838,7 +2036,7 @@ class DataPage(QWidget):
                 )
             elif group_type == "images":
                 self._pending_source_hint.setText(
-                    f"当前共 {len(self._pending_import_paths)} 个待导入文件，将导入到数据化；可双击或右键重命名导入名。"
+                    f"当前共 {len(self._pending_import_paths)} 个待导入文件，将导入到数字化；可双击或右键重命名导入名。"
                 )
             else:
                 self._pending_source_hint.setText(f"当前共 {len(self._pending_import_paths)} 个待导入文件。")
@@ -1942,7 +2140,7 @@ class DataPage(QWidget):
         self._refresh_pending_source_list()
         group_label = {
             "datasets": "数据集",
-            "images": "数据化",
+            "images": "数字化",
             "source_files": "源文件",
         }.get(group_key, "-")
         self._source_manager_target_label.setText(f"导入目标: {group_label} / {target_name}")
@@ -1951,12 +2149,13 @@ class DataPage(QWidget):
             self._set_preview_summary(["文件管理", "在这里浏览系统文件并导入到当前数据集文件夹。"])
         elif group_type == "images":
             self._source_browser_tabs.setCurrentIndex(0)
-            self._set_preview_summary(["文件管理", "在这里浏览系统图片并导入到当前数据化文件夹。"])
+            self._set_preview_summary(["文件管理", "在这里浏览系统图片并导入到当前数字化文件夹。"])
         else:
             self._source_browser_tabs.setCurrentIndex(1)
             self._set_preview_summary(["文件管理", "在这里浏览系统文件并导入为当前源文件文件夹下的源文件节点。"])
         self._refresh_source_manager_tab_state()
         self._refresh_project_source_browser()
+        self._refresh_source_favorites()
         self._refresh_source_browser()
 
     def _current_data_file_node(self):
@@ -2085,6 +2284,7 @@ class DataPage(QWidget):
         self._preview_stack.setCurrentWidget(self._picture_preview_tree)
 
     def _show_structure_tree_preview(self, root_item: QTreeWidgetItem, summary_lines: list[str], *, preview_name: str = "") -> None:
+        self._set_extension_config_editor_mode(False)
         self._reset_structure_preview()
         self._picture_preview_tree.addTopLevelItem(root_item)
         self._picture_preview_tree.expandAll()
@@ -2188,22 +2388,258 @@ class DataPage(QWidget):
             name_map[type_id] = str(getattr(extension, "name", "") or type_id)
         return name_map
 
+    @staticmethod
+    def _extension_entry_for_category_type(category: str, extension_type: str) -> Optional[dict[str, Any]]:
+        normalized_category = str(category or "").strip().lower()
+        clean_type = str(extension_type or "").strip()
+        if not normalized_category or not clean_type:
+            return None
+        if normalized_category == "plot":
+            extension = extension_registry.get_plot(clean_type)
+        elif normalized_category == "processing":
+            extension = extension_registry.get_processing(clean_type)
+        elif normalized_category == "analysis":
+            extension = extension_registry.get_analysis(clean_type)
+        else:
+            extension = None
+        if extension is None:
+            return None
+        entry = build_extension_entry(extension)
+        return dict(entry) if entry.get("listed", True) else None
+
+    def _extension_entry_for_config_item(self, config_item) -> Optional[dict[str, Any]]:
+        if config_item is None:
+            return None
+        return self._extension_entry_for_category_type(
+            str(getattr(config_item, "category", "") or ""),
+            str(getattr(config_item, "extension_type", "") or ""),
+        )
+
+    def _extension_entry_for_global_group_node(self, node_id: Optional[str]) -> Optional[dict[str, Any]]:
+        parts = str(node_id or "").split(":")
+        if len(parts) < 3 or parts[0] != "__global_extension_configs__":
+            return None
+        return self._extension_entry_for_category_type(parts[1], parts[2])
+
+    def _extension_preview_description(self, entry: Optional[dict[str, Any]], *, category: str = "") -> str:
+        if entry is None:
+            return ""
+        lines: list[str] = []
+        category_label = self._global_extension_category_label(category) if category else "扩展"
+        extension_name = str(entry.get("name") or entry.get("label") or entry.get("type") or "扩展")
+        lines.append(f"{category_label} · {extension_name}")
+        type_id = str(entry.get("type") or "").strip()
+        if type_id:
+            lines.append(f"类型 ID: {type_id}")
+        version = str(entry.get("version") or "").strip()
+        if version:
+            lines.append(f"版本: {version}")
+        description = str(entry.get("description") or "").strip()
+        if description:
+            lines.append(description)
+        return "\n".join(lines)
+
+    def _extension_field_help_text(self, entry: Optional[dict[str, Any]]) -> str:
+        if entry is None:
+            return ""
+        fields = [
+            dict(item)
+            for item in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
+            if isinstance(item, dict)
+        ]
+        if not fields:
+            return "该扩展未声明额外参数。"
+        lines: list[str] = ["参数说明:"]
+        for field in fields:
+            key = str(field.get("key") or "option").strip() or "option"
+            label = str(field.get("label") or key).strip() or key
+            field_type = str(field.get("field_type") or "string").strip() or "string"
+            required = "必填" if field.get("required") else "可选"
+            parts = [f"{label}（{key}，{field_type}，{required}）"]
+            description = str(field.get("description") or "").strip()
+            if description:
+                parts.append(description)
+            choices = [str(item) for item in (field.get("choices") or []) if str(item)]
+            if choices:
+                parts.append(f"可选值: {', '.join(choices)}")
+            default = field.get("default")
+            if default not in (None, "", []):
+                parts.append(f"默认值: {default}")
+            lines.append("- " + "；".join(parts))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extension_field_error_message(field_key: str, message: str) -> str:
+        return f"参数 {field_key}: {message}"
+
+    def _validate_extension_config_payload(self, entry: Optional[dict[str, Any]], payload: dict[str, Any]) -> None:
+        if entry is None:
+            return
+        fields = [
+            dict(item)
+            for item in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
+            if isinstance(item, dict)
+        ]
+        errors: list[str] = []
+        for field in fields:
+            key = str(field.get("key") or "").strip()
+            if not key:
+                continue
+            field_type = str(field.get("field_type") or "string").strip().lower()
+            required = bool(field.get("required"))
+            has_value = key in payload
+            value = payload.get(key)
+            if required and (
+                not has_value
+                or value is None
+                or (isinstance(value, str) and not value.strip())
+            ):
+                errors.append(self._extension_field_error_message(key, "缺少必填值"))
+                continue
+            if not has_value or value is None:
+                continue
+            if field_type in {"string", "figure", "color"}:
+                if not isinstance(value, str):
+                    errors.append(self._extension_field_error_message(key, "必须是字符串"))
+            elif field_type == "boolean":
+                if not isinstance(value, bool):
+                    errors.append(self._extension_field_error_message(key, "必须是布尔值"))
+            elif field_type == "integer":
+                if isinstance(value, bool) or not isinstance(value, int):
+                    errors.append(self._extension_field_error_message(key, "必须是整数"))
+            elif field_type in {"number", "limited"}:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    errors.append(self._extension_field_error_message(key, "必须是数值"))
+                else:
+                    min_value = field.get("min_value")
+                    max_value = field.get("max_value")
+                    if min_value is not None and float(value) < float(min_value):
+                        errors.append(self._extension_field_error_message(key, f"不能小于 {min_value}"))
+                    if max_value is not None and float(value) > float(max_value):
+                        errors.append(self._extension_field_error_message(key, f"不能大于 {max_value}"))
+            elif field_type == "selective":
+                if not isinstance(value, str):
+                    errors.append(self._extension_field_error_message(key, "必须是字符串选项"))
+                else:
+                    choices = [str(item) for item in (field.get("choices") or []) if str(item)]
+                    if choices and value not in choices:
+                        errors.append(self._extension_field_error_message(key, f"必须是以下值之一: {', '.join(choices)}"))
+            elif field_type == "lines":
+                if not isinstance(value, dict):
+                    errors.append(self._extension_field_error_message(key, "必须是包含 number 和 lines_list 的对象"))
+                else:
+                    number = value.get("number")
+                    lines_list = value.get("lines_list")
+                    if isinstance(number, bool) or not isinstance(number, int):
+                        errors.append(self._extension_field_error_message(key, "number 必须是整数"))
+                    if not isinstance(lines_list, (str, list, tuple, int, type(None))):
+                        errors.append(self._extension_field_error_message(key, "lines_list 必须是字符串、列表或整数"))
+        if errors:
+            raise ValueError("；".join(errors))
+
+    def _show_extension_config_editor(self, config_id: str) -> bool:
+        config_item = global_assets.get_extension_config(config_id)
+        if config_item is None:
+            return False
+        entry = self._extension_entry_for_config_item(config_item)
+        self._show_preview_mode()
+        self._current_extension_config_id = config_id
+        self._set_extension_config_editor_mode(True)
+        self._preview_image_path = None
+        self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
+        self._set_preview_plot_type_controls_visible(False)
+        self._hide_source_path_links()
+        self._preview_xs = []
+        self._preview_ys = []
+        self._preview_name = str(getattr(config_item, "name", "") or "扩展配置")
+        self._preview_x_label = "X"
+        self._preview_y_label = "Y"
+        self._text_preview.setPlainText(json.dumps(dict(getattr(config_item, "options", {}) or {}), ensure_ascii=False, indent=2, sort_keys=True))
+        self._preview_stack.setCurrentWidget(self._text_preview)
+        summary_lines = [
+            f"配置名称: {getattr(config_item, 'name', '') or '未命名配置'}",
+            f"扩展: {getattr(config_item, 'extension_name', '') or getattr(config_item, 'extension_type', '') or '未知扩展'}",
+            f"类别: {self._node_kind_label('global_group')} / {str(getattr(config_item, 'category', '') or '').strip() or 'unknown'}",
+            f"类型 ID: {getattr(config_item, 'extension_type', '') or 'unknown'}",
+            f"参数项: {len(dict(getattr(config_item, 'options', {}) or {}))}",
+        ]
+        if entry is not None:
+            required_keys = [
+                str(field.get("key") or "").strip()
+                for field in (entry.get("normalized_config_fields") or [])
+                if isinstance(field, dict) and field.get("required") and str(field.get("key") or "").strip()
+            ]
+            if required_keys:
+                summary_lines.append(f"必填参数: {', '.join(required_keys)}")
+        else:
+            summary_lines.append("当前扩展未注册，无法执行字段级校验")
+        self._config_editor_title_label.setText(summary_lines[0])
+        self._config_editor_meta_label.setText("\n".join(summary_lines[1:]))
+        self._set_preview_summary(summary_lines)
+        self._set_extension_preview_help(
+            self._extension_preview_description(entry, category=str(getattr(config_item, "category", "") or "")),
+            self._extension_field_help_text(entry),
+        )
+        return True
+
+    def _save_selected_extension_config(self) -> None:
+        config_id = self._current_extension_config_id or self._selected_node_id
+        if not config_id:
+            return
+        config_item = global_assets.get_extension_config(config_id)
+        if config_item is None:
+            InfoBar.warning("保存失败", "当前扩展配置不存在", parent=self, position=InfoBarPosition.TOP)
+            return
+        if bool(getattr(config_item, "is_default", False)):
+            InfoBar.warning("保存失败", "默认配置不支持直接修改，请先创建副本", parent=self, position=InfoBarPosition.TOP)
+            return
+        raw_text = self._text_preview.toPlainText().strip() or "{}"
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            InfoBar.warning(
+                "保存失败",
+                f"JSON 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列附近",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return
+        if not isinstance(payload, dict):
+            InfoBar.warning("保存失败", "配置内容必须是 JSON 对象", parent=self, position=InfoBarPosition.TOP)
+            return
+        entry = self._extension_entry_for_config_item(config_item)
+        try:
+            self._validate_extension_config_payload(entry, payload)
+            updated = global_assets.update_extension_config(
+                config_id,
+                options=payload,
+                extension_version=(str(entry.get("version") or "") if entry is not None else getattr(config_item, "extension_version", None)),
+            )
+        except ValueError as exc:
+            InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        if updated is None:
+            InfoBar.warning("保存失败", "扩展配置未能更新", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.project_modified.emit()
+        self._show_extension_config_editor(config_id)
+        self._refresh_management_panel()
+        InfoBar.success("已保存", f'配置 "{updated.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+
     def _build_global_extension_items(self, category: str) -> list[QTreeWidgetItem]:
         items: list[QTreeWidgetItem] = []
         name_map = self._extension_registry_name_map(category)
-        grouped: dict[str, list[object]] = {}
-        for config in global_assets.list_extension_configs(category=category):
+        grouped: dict[str, list[object]] = {type_id: [] for type_id in name_map}
+        for config in global_assets.list_extension_configs(category=category, include_defaults=False):
             type_id = str(getattr(config, "extension_type", "") or "").strip()
             if not type_id or type_id not in name_map:
                 continue
             grouped.setdefault(type_id, []).append(config)
 
-        for type_id in sorted(grouped, key=lambda value: (name_map.get(value, value).lower(), value)):
-            configs = sorted(grouped[type_id], key=lambda item: (not bool(getattr(item, "is_default", False)), str(getattr(item, "name", "") or "").lower(), str(getattr(item, "id", "") or "")))
+        for type_id in sorted(name_map, key=lambda value: (name_map.get(value, value).lower(), value)):
+            configs = sorted(grouped.get(type_id, []), key=lambda item: (str(getattr(item, "name", "") or "").lower(), str(getattr(item, "id", "") or "")))
             extension_label = name_map.get(type_id, type_id)
-            if len(configs) == 1 and bool(getattr(configs[0], "is_default", False)):
-                items.append(self._build_global_preview_item("global_extension_config", getattr(configs[0], "id", "")))
-                continue
             group_item = self._make_preview_tree_item(extension_label, getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), extension_label)
             for config in configs:
                 group_item.addChild(self._build_global_preview_item("global_extension_config", getattr(config, "id", "")))
@@ -2250,6 +2686,17 @@ class DataPage(QWidget):
                 parts = node_id.split(":")
                 category = parts[1] if len(parts) >= 2 else ""
                 if len(parts) >= 3:
+                    entry = self._extension_entry_for_category_type(category, parts[2])
+                    if entry is not None:
+                        description = str(entry.get("description") or "").strip()
+                        if description:
+                            item.addChild(self._make_preview_tree_item(f"说明: {description}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                        field_count = len([
+                            field
+                            for field in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
+                            if isinstance(field, dict)
+                        ])
+                        item.addChild(self._make_preview_tree_item(f"参数字段: {field_count}", getattr(FIF, "INFO", FIF.DOCUMENT)))
                     configs = [
                         config
                         for config in global_assets.list_extension_configs(category=category, extension_type=parts[2])
@@ -2322,6 +2769,11 @@ class DataPage(QWidget):
                 item.addChild(self._make_preview_tree_item(f"分类: {self._global_extension_category_label(getattr(config, 'category', ''))}", getattr(FIF, "INFO", FIF.DOCUMENT)))
                 item.addChild(self._make_preview_tree_item(f"默认配置: {'是' if bool(getattr(config, 'is_default', False)) else '否'}", getattr(FIF, "INFO", FIF.DOCUMENT)))
                 item.addChild(self._make_preview_tree_item(f"参数项: {len(getattr(config, 'options', {}) or {})}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                entry = self._extension_entry_for_config_item(config)
+                if entry is not None:
+                    description = str(entry.get("description") or "").strip()
+                    if description:
+                        item.addChild(self._make_preview_tree_item(f"说明: {description}", getattr(FIF, "INFO", FIF.DOCUMENT)))
             return item
 
         return item
@@ -2331,6 +2783,8 @@ class DataPage(QWidget):
             return False
         root_item = self._build_global_preview_item(kind, node_id)
         summary_lines = [f"{self._node_kind_label(kind)}: {root_item.text(0)}"]
+        extension_entry = None
+        extension_category = ""
         if kind == "global_root":
             summary_lines.extend([
                 f"Pipelines: {len(global_assets.list_saved_pipelines())}",
@@ -2340,7 +2794,14 @@ class DataPage(QWidget):
                 f"扩展配置: {len(global_assets.list_extension_configs())}",
             ])
         elif kind == "global_group":
-            summary_lines.append(f"子节点数量: {root_item.childCount()}")
+            parts = str(node_id or "").split(":")
+            if len(parts) >= 3 and parts[0] == "__global_extension_configs__":
+                extension_category = parts[1]
+                extension_entry = self._extension_entry_for_global_group_node(node_id)
+                description = "" if extension_entry is None else str(extension_entry.get("description") or "").strip()
+                summary_lines.append(description or f"配置数量: {max(root_item.childCount() - 1, 0)}")
+            else:
+                summary_lines.append(f"子节点数量: {root_item.childCount()}")
         elif kind == "global_pipeline":
             pipeline = global_assets.get_saved_pipeline(node_id)
             if pipeline is not None:
@@ -2352,13 +2813,22 @@ class DataPage(QWidget):
         elif kind == "global_extension_config":
             config = global_assets.get_extension_config(node_id)
             if config is not None:
+                extension_category = str(getattr(config, "category", "") or "")
+                extension_entry = self._extension_entry_for_config_item(config)
                 summary_lines.append(f"参数项: {len(getattr(config, 'options', {}) or {})}")
         self._show_structure_tree_preview(root_item, summary_lines, preview_name=root_item.text(0))
+        self._set_extension_preview_help(
+            self._extension_preview_description(extension_entry, category=extension_category),
+            self._extension_field_help_text(extension_entry),
+        )
         return True
 
     def _can_rename_current_node(self) -> bool:
         if not self._selected_node_kind or not self._selected_node_id:
             return False
+        if self._selected_node_kind == "global_extension_config":
+            config_item = global_assets.get_extension_config(self._selected_node_id)
+            return bool(config_item is not None and not bool(getattr(config_item, "is_default", False)))
         if self._selected_node_kind in {"source_file", "data_file", "series", "curve", "image_work", "picture"}:
             return True
         if self._selected_node_kind == "folder":
@@ -2368,6 +2838,9 @@ class DataPage(QWidget):
     def _can_delete_current_node(self) -> bool:
         if not self._selected_node_kind or not self._selected_node_id:
             return False
+        if self._selected_node_kind == "global_extension_config":
+            config_item = global_assets.get_extension_config(self._selected_node_id)
+            return bool(config_item is not None and not bool(getattr(config_item, "is_default", False)))
         if self._selected_node_kind in {"source_file", "data_file", "series", "curve", "image_work", "picture"}:
             return True
         if self._selected_node_kind == "folder":
@@ -2406,17 +2879,22 @@ class DataPage(QWidget):
             self._btn_export.setEnabled(False)
         if not enabled:
             self._manage_help_label.setText("当前节点仅支持预览，不支持直接管理操作。")
+        elif self._selected_node_kind == "global_extension_config":
+            self._btn_export.setEnabled(False)
+            self._btn_to_vis.setEnabled(False)
+            self._btn_to_proc.setEnabled(False)
+            self._manage_help_label.setText("该扩展配置已切换到右侧 JSON 编辑器；保存前会检查 JSON 格式和必填参数。")
         elif is_source_file_leaf:
             source_path = self._current_source_file_path()
             self._btn_import_source_to_data.setEnabled(bool(source_path) and self._supports_dataset_import(source_path))
             self._btn_import_source_to_digitize.setEnabled(bool(source_path) and self._supports_digitize_import(source_path))
-            self._manage_help_label.setText("源文件节点支持重命名、删除，以及按文件类型直接导入到数据集或数据化。")
+            self._manage_help_label.setText("源文件节点支持重命名、删除，以及按文件类型直接导入到数据集或数字化。")
         elif import_group == "source_files":
             self._manage_help_label.setText("源文件文件夹可重命名/删除；右侧文件管理器用于浏览系统文件并导入为源文件。")
         elif import_group == "datasets":
             self._manage_help_label.setText("数据集文件夹可重命名/删除；右侧文件管理器用于浏览外部数据文件并导入到当前数据集目录。")
         elif import_group == "images":
-            self._manage_help_label.setText("数据化文件夹可重命名/删除；右侧文件管理器用于浏览系统图片并导入到当前数据化目录。")
+            self._manage_help_label.setText("数字化文件夹可重命名/删除；右侧文件管理器用于浏览系统图片并导入到当前数字化目录。")
         else:
             self._manage_help_label.setText("数据文件、系列、图像、图片和分析结果按当前节点能力开放重命名、删除、导出或继续流转。")
         self._refresh_pending_source_controls()
@@ -2527,6 +3005,7 @@ class DataPage(QWidget):
 
     def _show_xy_preview(self, xs, ys, name: str, x_label: str = "X", y_label: str = "Y"):
         """填充绘图预览和统计摘要。"""
+        self._set_extension_config_editor_mode(False)
         self._show_preview_mode()
         self._preview_image_path = None
         self._set_source_file_preview_mode_controls_visible(False)
@@ -2558,6 +3037,7 @@ class DataPage(QWidget):
             ])
 
     def _show_text_preview(self, title: str, content: str, stats_text: str | list[str], *, show_source_file_controls: bool = False) -> None:
+        self._set_extension_config_editor_mode(False)
         self._show_preview_mode()
         self._preview_image_path = None
         self._set_source_file_preview_mode_controls_visible(show_source_file_controls)
@@ -2833,6 +3313,7 @@ class DataPage(QWidget):
         return True
 
     def _show_image_preview(self, image_id: str, image_name: str) -> bool:
+        self._set_extension_config_editor_mode(False)
         self._show_preview_mode()
         self._preview_image_path = None
         self._set_source_file_preview_mode_controls_visible(False)
@@ -2862,6 +3343,7 @@ class DataPage(QWidget):
         return True
 
     def _show_picture_preview(self, node_id: str) -> bool:
+        self._set_extension_config_editor_mode(False)
         project = project_manager.current_project
         if project is None or project.tree is None:
             return False
@@ -3124,7 +3606,7 @@ class DataPage(QWidget):
         asset = self._current_source_file_asset()
         source_path = self._current_source_file_path()
         if asset is None or not source_path or not self._supports_digitize_import(source_path):
-            InfoBar.warning("提示", "当前源文件类型不支持导入到数据化", parent=self, position=InfoBarPosition.TOP)
+            InfoBar.warning("提示", "当前源文件类型不支持导入到数字化", parent=self, position=InfoBarPosition.TOP)
             return
         current_selection = (self._selected_node_kind, self._selected_node_id)
         try:
@@ -3136,7 +3618,7 @@ class DataPage(QWidget):
         self.refresh()
         if current_selection[0] and current_selection[1]:
             self.on_tree_node_selected(current_selection[0], current_selection[1])
-        InfoBar.success("导入成功", f"已导入到数据化: {asset.name}", parent=self, position=InfoBarPosition.TOP)
+        InfoBar.success("导入成功", f"已导入到数字化: {asset.name}", parent=self, position=InfoBarPosition.TOP)
 
     def _clone_series(self, series: DataSeries, *, name: Optional[str] = None) -> DataSeries:
         return DataSeries(
@@ -3196,6 +3678,12 @@ class DataPage(QWidget):
                 ok = project_manager.rename_picture(picture_id, new_name)
                 if ok:
                     node.name = new_name
+        elif self._selected_node_kind == "global_extension_config":
+            try:
+                ok = global_assets.update_extension_config(self._selected_node_id, name=new_name) is not None
+            except ValueError as exc:
+                InfoBar.warning("重命名失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+                return
         if not ok:
             InfoBar.warning(
                 "重命名失败",
@@ -3241,6 +3729,8 @@ class DataPage(QWidget):
                 ok = project_manager.remove_picture(picture_id) is not None
                 if ok:
                     ok = project_manager.delete_node(self._selected_node_id)
+        elif self._selected_node_kind == "global_extension_config":
+            ok = global_assets.delete_extension_config(self._selected_node_id)
         if not ok:
             InfoBar.warning("提示", "当前节点删除失败或不支持删除", parent=self, position=InfoBarPosition.TOP)
             return
@@ -3252,6 +3742,19 @@ class DataPage(QWidget):
         self.project_modified.emit()
         self.refresh()
         InfoBar.success("已删除", target_name, parent=self, position=InfoBarPosition.TOP)
+
+    def open_extension_config(self, config_id: str) -> bool:
+        self._selected_node_kind = "global_extension_config"
+        self._selected_node_id = config_id
+        self._selected_type = None
+        self._selected_id = None
+        if not self._show_extension_config_editor(config_id):
+            self._clear_preview()
+            self._refresh_management_panel()
+            return False
+        self._set_actions_enabled(False)
+        self._refresh_management_panel()
+        return True
 
     def _create_import_dialog(self, file_path: Optional[str] = None, default_file_name: Optional[str] = None):
         from ui.dialogs.import_dialog import ImportDialog
@@ -3415,7 +3918,7 @@ class DataPage(QWidget):
             if current_selection[0] and current_selection[1]:
                 self.on_tree_node_selected(current_selection[0], current_selection[1])
 
-        summary = f"成功导入 {len(completed_paths)} 个文件到数据化"
+        summary = f"成功导入 {len(completed_paths)} 个文件到数字化"
         if skipped_names:
             summary += f"，跳过 {len(skipped_names)} 个非图片文件"
         if completed_paths:
@@ -3667,6 +4170,12 @@ class DataPage(QWidget):
         """共享树选中节点 → 显示预览。"""
         self._selected_node_kind = kind
         self._selected_node_id = node_id
+        if kind == "global_extension_config" and self._show_extension_config_editor(node_id):
+            self._selected_type = None
+            self._selected_id = None
+            self._set_actions_enabled(False)
+            self._refresh_management_panel()
+            return
         if kind.startswith("global_") and self._show_global_resource_preview(kind, node_id):
             self._selected_type = None
             self._selected_id = None

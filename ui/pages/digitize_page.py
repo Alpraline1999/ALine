@@ -13,11 +13,18 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
 
 from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
+from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_plan
+from core.extension_api import build_extension_entry, extension_registry
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
+from digitize.builtin_extensions import (
+    COLOR_DIGITIZE_EXTENSION_TYPE,
+    SHAPE_DIGITIZE_EXTENSION_TYPE,
+    ensure_builtin_digitize_extensions,
+)
 from models.schemas import CalibrationData, DataFile, DataSeries
 
 
@@ -52,6 +59,8 @@ class DigitizePage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._extension_panel_visible = False
+        self._extension_panel_width = 360
         self._splitter = None
         self._left_panel = None
         self._right_panel = None
@@ -79,10 +88,12 @@ class DigitizePage(QWidget):
         self._auto_preview_points = []  # 自动检测预览点
         # 图形识别模板
         self._shape_template: dict | None = None  # preprocess_region() 返回的字典
+        self._auto_mode_type_ids: list[str] = []
         # 表格排序
         self._sort_col = -1  # -1表示未排序
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._shortcut_bindings = ShortcutBindingSet()
+        ensure_builtin_digitize_extensions(extension_registry)
         self.setup_ui()
         self._setup_viewer_signals()
         self._setup_shortcuts()
@@ -137,10 +148,37 @@ class DigitizePage(QWidget):
 
         self._splitter.addWidget(center_panel)
 
-        self._splitter.setSizes([320, 760])
+        self._extension_panel = ExtensionConfigPanel("数字化扩展", "应用扩展", self, mode="help_only", framed=False)
+        self._extension_panel.set_status_context("digitize", "数字化扩展")
+        self._extension_panel.setMinimumWidth(self._extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._extension_panel_width)
+        self._splitter.addWidget(self._extension_panel)
+
+        self._splitter.setSizes([320, 760, 0])
         self._splitter.setStretchFactor(1, 1)
 
         main_layout.addWidget(self._splitter)
+        self._refresh_digitize_extension_panel()
+        self.set_extension_panel_visible(self._extension_panel_visible)
+
+    def supports_extension_panel_toggle(self) -> bool:
+        return True
+
+    def is_extension_panel_visible(self) -> bool:
+        return bool(self._extension_panel_visible)
+
+    def set_extension_panel_visible(self, visible: bool) -> None:
+        self._extension_panel_visible = bool(visible)
+        if not hasattr(self, "_extension_panel") or self._splitter is None:
+            return
+        if self._extension_panel_visible:
+            self._extension_panel.show()
+            center_width = max(self.width() - 320 - self._extension_panel_width - 24, 640)
+            self._splitter.setSizes([320, center_width, self._extension_panel_width])
+            return
+        self._extension_panel.hide()
+        center_width = max(self.width() - 320 - 12, 760)
+        self._splitter.setSizes([320, center_width, 0])
 
     def _setup_viewer_signals(self):
         self._image_viewer.calibration_complete.connect(self._on_calibration_complete)
@@ -605,11 +643,9 @@ class DigitizePage(QWidget):
         mode_rl.setSpacing(4)
         mode_rl.addWidget(BodyLabel("识别模式:", mode_row))
         self._auto_mode_combo = ComboBox(mode_row)
-        self._auto_mode_combo.addItems(["颜色识别", "图形识别 (测试功能)"])
         self._auto_mode_combo.setFixedHeight(32)
         self._auto_mode_combo.setMinimumWidth(160)
         self._auto_mode_combo.currentIndexChanged.connect(self._on_auto_mode_changed)
-        self._auto_mode_combo.setCurrentIndex(0)
         mode_rl.addWidget(self._auto_mode_combo, 1)
         layout.addWidget(mode_row)
 
@@ -804,6 +840,7 @@ class DigitizePage(QWidget):
         self._auto_status_label.setWordWrap(True)
         layout.addWidget(self._auto_status_label)
 
+        self._refresh_digitize_extension_choices()
         self._on_auto_mode_changed(self._auto_mode_combo.currentIndex())
 
         # ══════════ 辅助选点（暂时隐藏，功能待完善）══════════
@@ -857,6 +894,80 @@ class DigitizePage(QWidget):
 
         layout.addStretch()
         return tab
+
+    def _digitize_extension_entries(self) -> list[dict]:
+        entries: list[dict] = []
+        for extension in extension_registry.list_digitize():
+            entry = build_extension_entry(extension)
+            if not entry.get("listed", True):
+                continue
+            entry["label"] = str(entry.get("name") or entry.get("type") or "数字化扩展")
+            entries.append(entry)
+        return entries
+
+    def _refresh_digitize_extension_choices(self) -> None:
+        if not hasattr(self, "_auto_mode_combo"):
+            return
+        current_type = self._current_digitize_extension_type()
+        entries = self._digitize_extension_entries()
+        self._auto_mode_combo.blockSignals(True)
+        self._auto_mode_combo.clear()
+        self._auto_mode_type_ids = []
+        for entry in entries:
+            self._auto_mode_combo.addItem(str(entry.get("label") or entry.get("name") or entry.get("type") or "数字化扩展"))
+            self._auto_mode_type_ids.append(str(entry.get("type") or ""))
+        if not self._auto_mode_type_ids:
+            self._auto_mode_combo.addItems(["颜色识别", "图形识别 (测试功能)"])
+            self._auto_mode_type_ids = [COLOR_DIGITIZE_EXTENSION_TYPE, SHAPE_DIGITIZE_EXTENSION_TYPE]
+        target_type = current_type if current_type in self._auto_mode_type_ids else self._auto_mode_type_ids[0]
+        self._auto_mode_combo.setCurrentIndex(self._auto_mode_type_ids.index(target_type))
+        self._auto_mode_combo.blockSignals(False)
+        self._refresh_digitize_extension_panel()
+
+    def _refresh_digitize_extension_panel(self) -> None:
+        if not hasattr(self, "_extension_panel"):
+            return
+        type_id = self._current_digitize_extension_type()
+        self._extension_panel.set_entries(
+            self._digitize_extension_entries(),
+            current_type=type_id if extension_registry.get_digitize(type_id) else None,
+        )
+
+    def _current_digitize_extension_type(self) -> str:
+        idx = self._auto_mode_combo.currentIndex() if hasattr(self, "_auto_mode_combo") else -1
+        if 0 <= idx < len(self._auto_mode_type_ids):
+            return self._auto_mode_type_ids[idx]
+        return COLOR_DIGITIZE_EXTENSION_TYPE
+
+    def _current_digitize_extension_params(
+        self,
+        type_id: str,
+        *,
+        step: int,
+        mask_polygons,
+        mask_include_mode: bool,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "step": int(step),
+            "mask_polygons": mask_polygons,
+            "mask_include_mode": bool(mask_include_mode),
+        }
+        if type_id == COLOR_DIGITIZE_EXTENSION_TYPE and self._sampled_color is not None:
+            params.update({
+                "sampled_color": {
+                    "r": self._sampled_color.red(),
+                    "g": self._sampled_color.green(),
+                    "b": self._sampled_color.blue(),
+                },
+                "tolerance": int(self._tol_slider.value()),
+            })
+        elif type_id == SHAPE_DIGITIZE_EXTENSION_TYPE:
+            params.update({
+                "template_info": self._shape_template,
+                "threshold": float(self._match_thr_slider.value()) / 100.0,
+                "color_weight": float(self._color_weight_slider.value()) / 100.0,
+            })
+        return params
 
     def _create_export_tab(self) -> QWidget:
         """创建数据导出功能区"""
@@ -1445,9 +1556,11 @@ class DigitizePage(QWidget):
     # ==================== 自动选点槽函数 ====================
 
     def _on_auto_mode_changed(self, index: int):
-        """识别模式切换：0=颜色识别, 1=图形识别"""
-        color_mode = index == 0
-        shape_mode = index == 1
+        """识别模式切换。"""
+        del index
+        type_id = self._current_digitize_extension_type()
+        color_mode = type_id == COLOR_DIGITIZE_EXTENSION_TYPE
+        shape_mode = type_id == SHAPE_DIGITIZE_EXTENSION_TYPE
 
         # 颜色相关控件
         self._sample_color_btn.setEnabled(color_mode)
@@ -1470,6 +1583,8 @@ class DigitizePage(QWidget):
         if not shape_mode and self._crop_template_btn.isChecked():
             self._crop_template_btn.setChecked(False)
             self._on_tool_clicked(None)
+
+        self._refresh_digitize_extension_panel()
 
     def _on_crop_template(self):
         """进入截图模板模式——在图片上框选图例形状"""
@@ -1558,7 +1673,7 @@ class DigitizePage(QWidget):
         self._auto_status_label.setText(f"已采样: {hex_str}")
 
     def _on_auto_detect(self):
-        """执行自动识别检测（颜色识别 / 图形识别 / 综合识别）"""
+        """执行自动识别检测。"""
         if self._current_image_id is None:
             InfoBar.warning(title="警告", content="请先选择一张图片", parent=self, duration=3000)
             return
@@ -1568,7 +1683,12 @@ class DigitizePage(QWidget):
             InfoBar.warning(title="警告", content="无法获取图片路径", parent=self, duration=3000)
             return
 
-        mode = self._auto_mode_combo.currentIndex()  # 0=颜色, 1=图形
+        type_id = self._current_digitize_extension_type()
+        extension = extension_registry.get_digitize(type_id)
+        if extension is None:
+            InfoBar.warning(title="警告", content="当前数字化扩展不可用，请重试", parent=self, duration=3000)
+            self._auto_status_label.setText("")
+            return
         step = self._auto_step_slider.value()
 
         # 获取蒙版多边形和模式
@@ -1580,66 +1700,24 @@ class DigitizePage(QWidget):
         from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
 
-        color_points = []
-        shape_points = []
+        params = self._current_digitize_extension_params(
+            type_id,
+            step=step,
+            mask_polygons=mask_polygons,
+            mask_include_mode=mask_include_mode,
+        )
+        try:
+            result = extension.handler(image_path, params)
+        except Exception as e:
+            self._auto_status_label.setText(f"{extension.name}失败: {e}")
+            return
 
-        # ---- 颜色识别 ----
-        if mode == 0:
-            if self._sampled_color is None:
-                InfoBar.warning(title="警告", content="请先使用取色按钮采样颜色", parent=self, duration=3000)
-                self._auto_status_label.setText("")
-                return
-            from digitize.auto_extractor import AutoExtractor
-            tol = self._tol_slider.value()
-            h_tol = max(5, tol // 2)
-            s_tol = min(255, tol * 4)
-            v_tol = min(255, tol * 4)
-            try:
-                color_points = AutoExtractor.extract(
-                    image_path,
-                    target_r=self._sampled_color.red(),
-                    target_g=self._sampled_color.green(),
-                    target_b=self._sampled_color.blue(),
-                    h_tol=h_tol,
-                    s_tol=s_tol,
-                    v_tol=v_tol,
-                    mask_polygons=mask_polygons,
-                    mask_include_mode=mask_include_mode,
-                    step=step,
-                )
-            except Exception as e:
-                self._auto_status_label.setText(f"颜色识别失败: {e}")
-                return
-
-        # ---- 图形识别 ----
-        if mode == 1:
-            if self._shape_template is None:
-                InfoBar.warning(title="警告", content="请先使用截图按钮截取图例形状", parent=self, duration=3000)
-                self._auto_status_label.setText("")
-                return
-            from digitize.shape_extractor import ShapeExtractor
-            threshold = self._match_thr_slider.value() / 100.0
-            try:
-                shape_points = ShapeExtractor.extract(
-                    image_path,
-                    template_info=self._shape_template,
-                    mask_polygons=mask_polygons,
-                    mask_include_mode=mask_include_mode,
-                    step=step,
-                    threshold=threshold,
-                    color_weight=self._color_weight_slider.value() / 100.0,
-                )
-            except Exception as e:
-                self._auto_status_label.setText(f"图形识别失败: {e}")
-                return
-
-        # ---- 汇总结果 ----
-        if mode == 1:
-            points = shape_points
-            desc = f"图形识别到 {len(points)} 个点"
+        if isinstance(result, dict):
+            points = list(result.get("points") or [])
+            desc = str(result.get("summary") or f"{extension.name}识别到 {len(points)} 个点")
         else:
-            points = color_points
-            desc = f"颜色识别到 {len(points)} 个点"
+            points = list(result or [])
+            desc = f"{extension.name}识别到 {len(points)} 个点"
 
         self._auto_preview_points = points
         self._image_viewer.set_preview_points(points)
@@ -2536,7 +2614,7 @@ class DigitizePage(QWidget):
             return False
 
         if Path(file_path).suffix.lower() not in _SUPPORTED_SOURCE_IMAGE_SUFFIXES:
-            InfoBar.warning(title="提示", content="当前源文件不是可导入到数据化的图片格式", parent=self, duration=3000)
+            InfoBar.warning(title="提示", content="当前源文件不是可导入到数字化的图片格式", parent=self, duration=3000)
             return False
 
         try:

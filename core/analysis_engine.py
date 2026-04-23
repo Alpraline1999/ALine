@@ -395,6 +395,9 @@ def run_analysis(
         }
         for item in inputs
     ]
+    custom_analysis = extension_registry.get_analysis(analysis_type)
+    if custom_analysis is not None:
+        return invoke_analysis_extension_handler(custom_analysis.handler, normalized_inputs, params)
     if analysis_type == "curve_fit":
         if not normalized_inputs:
             raise ValueError("curve_fit 需要至少一条输入数据")
@@ -454,9 +457,6 @@ def run_analysis(
         result["name1"] = first.get("name", "")
         result["name2"] = second.get("name", "")
         return result
-    custom_analysis = extension_registry.get_analysis(analysis_type)
-    if custom_analysis is not None:
-        return invoke_analysis_extension_handler(custom_analysis.handler, normalized_inputs, params)
     raise ValueError(f"未知分析类型: {analysis_type}")
 
 
