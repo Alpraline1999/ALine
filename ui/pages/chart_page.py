@@ -289,7 +289,7 @@ class ChartPage(QWidget):
 
         left_layout.addWidget(make_hsep(left_card))
 
-        self._style_tabs = SegmentedStackWidget(left_card)
+        self._style_tabs = SegmentedStackWidget(left_card, fill_width=True)
         self._style_tabs.tabBar.setAddButtonVisible(False)
         self._style_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
         self._style_tabs.addTab(self._build_curve_style_tab(left_card), "曲线样式")
@@ -871,6 +871,13 @@ class ChartPage(QWidget):
         applied_header.addWidget(self._plot_extension_help_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self._plot_extension_help_btn.hide()
         applied_header.addStretch()
+        self._clear_all_plot_extensions_btn = ToolButton(FIF.DELETE, page)
+        self._set_square_tool_button(self._clear_all_plot_extensions_btn)
+        self._clear_all_plot_extensions_btn.setToolTip("清除全部已加载扩展")
+        self._clear_all_plot_extensions_btn.clicked.connect(self._clear_all_plot_extensions)
+        self._clear_all_plot_extensions_btn.installEventFilter(ToolTipFilter(self._clear_all_plot_extensions_btn, 300, ToolTipPosition.TOP))
+        self._clear_all_plot_extensions_btn.setEnabled(False)
+        applied_header.addWidget(self._clear_all_plot_extensions_btn)
         self._remove_selected_plot_extension_btn = PushButton("撤销选中", page)
         self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
         self._remove_selected_plot_extension_btn.setEnabled(False)
@@ -1461,6 +1468,9 @@ class ChartPage(QWidget):
 
     def _on_plot_extension_instance_selection_changed(self, current, _previous) -> None:
         has_selection = current is not None
+        has_loaded = bool(self._applied_plot_extensions)
+        if hasattr(self, "_clear_all_plot_extensions_btn"):
+            self._clear_all_plot_extensions_btn.setEnabled(has_loaded)
         if hasattr(self, "_remove_selected_plot_extension_btn"):
             self._remove_selected_plot_extension_btn.setEnabled(has_selection)
         if not has_selection or not hasattr(self, "_extension_panel"):
@@ -1500,6 +1510,23 @@ class ChartPage(QWidget):
         if applied is None:
             return
         self._remove_plot_extension_instance(str(applied.get("id") or ""))
+
+    def _clear_all_plot_extensions(self) -> None:
+        if not self._applied_plot_extensions:
+            return
+        dialog = MessageBox("确认清除全部扩展", "这会移除当前图表中已加载的全部绘图扩展，是否继续？", self)
+        if not dialog.exec():
+            return
+        removed_count = len(self._applied_plot_extensions)
+        self._applied_plot_extensions = []
+        self._refresh_style_extension_panel()
+        self._redraw_now()
+        InfoBar.success(
+            "已清除",
+            f"已移除 {removed_count} 个绘图扩展",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
 
     def _extension_panel_context_target(self) -> str:
         current_tab = self._style_tabs.currentIndex()

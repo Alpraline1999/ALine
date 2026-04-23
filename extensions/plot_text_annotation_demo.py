@@ -44,6 +44,7 @@ def register_extensions(registry):
             name="文字",
             handler=draw_text_annotation,
             description="在图中添加一段文字，可用于备注说明或结论标注。",
+            version="0.1.0",
             default_options={
                 "coordinate_mode": "axes_fraction",
                 "x": 0.08,

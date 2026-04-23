@@ -45,6 +45,7 @@ def register_extensions(registry):
             name="圆形框",
             handler=draw_circle_annotation,
             description="在图中绘制圆形框，适合圈出局部特征。",
+            version="0.1.0",
             default_options={
                 "coordinate_mode": "axes_fraction",
                 "center_x": 0.5,

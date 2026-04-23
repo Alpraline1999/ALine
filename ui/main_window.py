@@ -866,6 +866,9 @@ class MainWindow(FluentWindow):
 
     def _on_send_to_visualize(self, data_type: str, obj_id: str):
         self.switchTo(self.chart_page)
+        if data_type == "picture" and hasattr(self.chart_page, "on_tree_node_activated"):
+            self.chart_page.on_tree_node_activated("picture", obj_id)
+            return
         if hasattr(self.chart_page, 'receive_data'):
             self.chart_page.receive_data(data_type, obj_id)
 

@@ -47,6 +47,7 @@ def register_extensions(registry):
             name="矩形框",
             handler=draw_rectangle_annotation,
             description="在图中绘制矩形框，可用于圈选关注区域。",
+            version="0.1.0",
             default_options={
                 "coordinate_mode": "axes_fraction",
                 "x": 0.14,

@@ -70,7 +70,7 @@ def main():
 
     from ui.main_window import MainWindow
     window = MainWindow()
-    minWidth, minHeight = 1600, 900
+    minWidth, minHeight = 1600, 1000
     window.setMinimumSize(minWidth, minHeight)
     window.resize(minWidth, minHeight)
     window.show()

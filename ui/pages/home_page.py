@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPixmap
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QFrame, QSizePolicy
 from qfluentwidgets import (HyperlinkCard, PrimaryPushButton, PushButton, FluentIcon as FIF,
     BodyLabel, LargeTitleLabel, SubtitleLabel, SmoothScrollArea,
     InfoBar, TeachingTipTailPosition, isDarkTheme)
@@ -34,28 +34,47 @@ from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 class _HomeBannerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(288)
+        self.setFixedHeight(336)
         self._background = QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "aline_home_background.png"))
+        self._card_icon_path = str(Path(__file__).resolve().parents[2] / "assets" / "aline_icon.png")
         self._link_cards = []
+        self._hero_title = None
+        self._hero_subtitle = None
+        self._hero_hint = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 22, 22, 22)
-        layout.setSpacing(0)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        self._hero_title = LargeTitleLabel("ALine", self)
+        layout.addWidget(self._hero_title, 0, Qt.AlignLeft | Qt.AlignTop)
+
+        self._hero_subtitle = SubtitleLabel("科研数据管理与可视化工作台", self)
+        layout.addWidget(self._hero_subtitle, 0, Qt.AlignLeft | Qt.AlignTop)
+
+        self._hero_hint = BodyLabel("项目、数据、绘图和分析结果在同一工作台内流转。", self)
+        self._hero_hint.setWordWrap(True)
+        self._hero_hint.setMaximumWidth(760)
+        self._hero_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout.addWidget(self._hero_hint, 0, Qt.AlignLeft | Qt.AlignTop)
+
         layout.addStretch(1)
 
         card_row = QHBoxLayout()
         card_row.setSpacing(14)
         card_row.setContentsMargins(0, 0, 0, 0)
-        for title, icon in (
-            ("软件主页", getattr(FIF, "HOME", FIF.LINK)),
-            ("GitHub 仓库", FIF.GITHUB),
+        for title, content in (
+            ("软件主页", "预留软件主页入口，后续替换为正式介绍页面。"),
+            ("GitHub 仓库", "预留代码仓库入口，后续替换为正式仓库地址。"),
         ):
-            card = HyperlinkCard("", "", icon, title, "", self)
-            card.setFixedWidth(250)
+            card = HyperlinkCard("https://example.com", "占位链接", self._card_icon_path, title, content, self)
+            card.setFixedWidth(288)
             self._link_cards.append(card)
             card_row.addWidget(card)
         card_row.addStretch(1)
         layout.addLayout(card_row)
+        self.update_theme()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -68,22 +87,45 @@ class _HomeBannerWidget(QWidget):
         path.addRoundedRect(rect, 18, 18)
 
         if not self._background.isNull():
-            pixmap = self._background.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            painter.fillPath(path, QBrush(pixmap))
+            target_rect = self.rect()
+            pixmap = self._background.scaledToWidth(
+                max(1, target_rect.width()),
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            if pixmap.height() < target_rect.height():
+                pixmap = self._background.scaled(
+                    target_rect.size(),
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            draw_x = target_rect.x() + (target_rect.width() - pixmap.width()) // 2
+            draw_y = target_rect.y() + target_rect.height() - pixmap.height()
+            painter.save()
+            painter.setClipPath(path)
+            painter.drawPixmap(draw_x, draw_y, pixmap)
+            painter.restore()
         else:
             fallback = QColor(224, 232, 242) if not isDarkTheme() else QColor(24, 28, 34)
             painter.fillPath(path, fallback)
 
         gradient = QLinearGradient(0, 0, 0, self.height())
         if isDarkTheme():
-            gradient.setColorAt(0.0, QColor(0, 0, 0, 96))
+            gradient.setColorAt(0.0, QColor(0, 0, 0, 116))
+            gradient.setColorAt(0.5, QColor(0, 0, 0, 84))
             gradient.setColorAt(1.0, QColor(0, 0, 0, 168))
         else:
-            gradient.setColorAt(0.0, QColor(255, 255, 255, 18))
-            gradient.setColorAt(1.0, QColor(255, 255, 255, 148))
+            gradient.setColorAt(0.0, QColor(17, 27, 43, 120))
+            gradient.setColorAt(0.42, QColor(27, 39, 58, 68))
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 152))
         painter.fillPath(path, QBrush(gradient))
 
     def update_theme(self) -> None:
+        if self._hero_title is not None:
+            self._hero_title.setStyleSheet("font-size: 44px; font-weight: 700; color: #f8fbff; background: transparent;")
+        if self._hero_subtitle is not None:
+            self._hero_subtitle.setStyleSheet("font-size: 18px; color: rgba(248, 251, 255, 0.96); background: transparent;")
+        if self._hero_hint is not None:
+            self._hero_hint.setStyleSheet("font-size: 13px; color: rgba(248, 251, 255, 0.88); background: transparent;")
         self.update()
 
 
@@ -127,15 +169,7 @@ class HomePage(QWidget):
         self._banner = _HomeBannerWidget(self)
         layout.addWidget(self._banner)
 
-        # 标题
-        self._title = LargeTitleLabel("ALine", self)
-        layout.addWidget(self._title, alignment=Qt.AlignCenter)
-
-        # 副标题
-        self._subtitle = SubtitleLabel("科研数据管理工具", self)
-        layout.addWidget(self._subtitle, alignment=Qt.AlignCenter)
-
-        layout.addSpacing(24)
+        layout.addSpacing(8)
 
         # 按钮区域
         btn_layout = QHBoxLayout()
@@ -150,9 +184,11 @@ class HomePage(QWidget):
         self._open_btn.setFixedWidth(150)
         self._open_btn.clicked.connect(self.on_open_project)
         btn_layout.addWidget(self._open_btn)
+        btn_layout.addStretch(1)
+        btn_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._action_button_layout = btn_layout
 
         layout.addLayout(btn_layout)
-        btn_layout.setAlignment(Qt.AlignCenter)
 
         # 最近项目
         layout.addSpacing(12)
@@ -221,8 +257,6 @@ class HomePage(QWidget):
         tc = text_color()
         sc = secondary_color()
         pc = placeholder_color()
-        self._title.setStyleSheet(f"font-size: 48px; font-weight: 700; color: {tc};")
-        self._subtitle.setStyleSheet(f"font-size: 18px; color: {sc};")
         self._recent_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {tc};")
         self._no_recent.setStyleSheet(f"color: {pc}; font-size: 12px;")
         if self._status_bar is not None:

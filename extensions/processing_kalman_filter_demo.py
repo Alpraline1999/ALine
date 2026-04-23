@@ -37,6 +37,7 @@ def register_extensions(registry):
             handler=kalman_filter_series,
             line_mode="single",
             description="对一维序列执行标量卡尔曼滤波，适合平滑含噪测量数据。",
+            version="0.1.0",
             default_options={
                 "lines": {"number": 1, "lines_list": [1]},
                 "process_variance": 1e-4,

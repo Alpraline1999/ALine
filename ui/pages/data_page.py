@@ -42,6 +42,8 @@ from ui.theme import (
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.matplotlib_fonts import configure_matplotlib_cjk
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
+from core.extension_api import extension_registry
+from core.global_assets import global_assets, parse_plot_style_asset_key
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, Dataset, Curve
@@ -661,6 +663,13 @@ class DataPage(QWidget):
         self._image_preview_label.setMinimumHeight(240)
         self._image_preview_label.setWordWrap(True)
         self._preview_stack.addWidget(self._image_preview_label)
+
+        self._picture_preview_tree = TreeWidget(self._preview_card)
+        self._picture_preview_tree.setHeaderHidden(True)
+        self._picture_preview_tree.setMinimumHeight(240)
+        self._picture_preview_tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._install_item_view_tooltip_filter(self._picture_preview_tree)
+        self._preview_stack.addWidget(self._picture_preview_tree)
 
         self._text_preview = PlainTextEdit(self._preview_card)
         self._text_preview.setReadOnly(True)
@@ -1467,6 +1476,7 @@ class DataPage(QWidget):
         self._parsed_preview_table.clear()
         self._parsed_preview_table.setRowCount(0)
         self._parsed_preview_table.setColumnCount(0)
+        self._picture_preview_tree.clear()
         self._image_preview_label.clear()
         self._image_preview_label.setText("选择节点后显示预览")
         self._set_preview_summary(["（选择数据后显示统计信息）"])
@@ -1497,8 +1507,12 @@ class DataPage(QWidget):
         return project.tree.get_node(self._selected_node_id)
 
     def _current_node_name(self) -> str:
+        if not self._selected_node_kind or not self._selected_node_id:
+            return ""
+        if self._selected_node_kind.startswith("global_"):
+            return self._global_preview_node_label(self._selected_node_kind, self._selected_node_id)
         project = project_manager.current_project
-        if project is None or not self._selected_node_kind or not self._selected_node_id:
+        if project is None:
             return ""
         if self._selected_node_kind == "series":
             series = project.find_series(self._selected_node_id)
@@ -1987,15 +2001,365 @@ class DataPage(QWidget):
             "data_file": "数据文件",
             "series": "数据系列",
             "image_work": "图像",
+            "picture": "图片",
             "curve": "图像曲线",
             "analysis_result": "分析结果",
+            "global_root": "全局资源",
+            "global_group": "全局分组",
+            "global_pipeline": "全局流程链",
+            "global_curve_style_template": "全局曲线样式",
+            "global_plot_style": "全局绘图样式",
+            "global_plot_theme": "全局绘图样式",
+            "global_report_template": "全局报告模板",
+            "global_extension_config": "全局扩展配置",
         }
         return mapping.get(kind or "", "-")
+
+    @staticmethod
+    def _global_extension_category_label(category: str) -> str:
+        mapping = {
+            "plot": "绘图扩展",
+            "processing": "处理扩展",
+            "analysis": "分析扩展",
+        }
+        return mapping.get(category, category or "扩展配置")
+
+    @classmethod
+    def _global_preview_node_label(cls, kind: Optional[str], node_id: Optional[str]) -> str:
+        if kind == "global_root":
+            return "全局资源"
+        if kind == "global_group":
+            mapping = {
+                "__global_root__": "全局资源",
+                "__global_pipelines__": "Pipelines",
+                "__global_curve_styles__": "曲线样式",
+                "__global_plot_styles__": "绘图样式",
+                "__global_reports__": "报告模板",
+                "__global_extension_configs__": "扩展配置",
+            }
+            if node_id in mapping:
+                return mapping[node_id]
+            if node_id and node_id.startswith("__global_extension_configs__:"):
+                parts = node_id.split(":")
+                if len(parts) >= 2:
+                    return cls._global_extension_category_label(parts[1])
+            return "全局分组"
+        if kind == "global_pipeline" and node_id:
+            item = global_assets.get_saved_pipeline(node_id)
+            return item.name or node_id
+        if kind == "global_curve_style_template" and node_id:
+            item = global_assets.get_curve_style_template(node_id)
+            return item.name or node_id
+        if kind in {"global_plot_style", "global_plot_theme"} and node_id:
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                item = global_assets.get_figure_template(asset_id)
+            else:
+                item = global_assets.get_plot_theme(asset_id)
+            return "" if item is None else getattr(item, "name", asset_id) or asset_id
+        if kind == "global_report_template" and node_id:
+            item = global_assets.get_report_template(node_id)
+            return item.name or node_id if item is not None else node_id
+        if kind == "global_extension_config" and node_id:
+            item = global_assets.get_extension_config(node_id)
+            if item is None:
+                return node_id
+            if bool(getattr(item, "is_default", False)):
+                return getattr(item, "extension_name", "") or item.name or node_id
+            return item.name or getattr(item, "extension_name", "") or node_id
+        return ""
+
+    def _reset_structure_preview(self) -> None:
+        self._show_preview_mode()
+        self._preview_image_path = None
+        self._preview_xs = []
+        self._preview_ys = []
+        self._preview_x_label = "X"
+        self._preview_y_label = "Y"
+        self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
+        self._set_source_file_sheet_controls_visible(False)
+        self._set_preview_plot_type_controls_visible(False)
+        self._hide_source_path_links()
+        self._picture_preview_tree.clear()
+        self._preview_stack.setCurrentWidget(self._picture_preview_tree)
+
+    def _show_structure_tree_preview(self, root_item: QTreeWidgetItem, summary_lines: list[str], *, preview_name: str = "") -> None:
+        self._reset_structure_preview()
+        self._picture_preview_tree.addTopLevelItem(root_item)
+        self._picture_preview_tree.expandAll()
+        self._preview_name = preview_name or root_item.text(0)
+        self._set_preview_summary(summary_lines)
+
+    @staticmethod
+    def _preview_tree_icon_for_kind(kind: Optional[str]):
+        mapping = {
+            "folder": FIF.FOLDER,
+            "source_file": FIF.DOCUMENT,
+            "data_file": FIF.DOCUMENT,
+            "series": getattr(FIF, "DATA_HISTOGRAM", FIF.DOCUMENT),
+            "image_work": FIF.PHOTO,
+            "picture": FIF.PHOTO,
+            "curve": FIF.PENCIL_INK,
+            "analysis_result": FIF.DOCUMENT,
+            "global_root": FIF.FOLDER,
+            "global_group": getattr(FIF, "FOLDER", FIF.DOCUMENT),
+            "global_pipeline": FIF.DEVELOPER_TOOLS,
+            "global_curve_style_template": FIF.PENCIL_INK,
+            "global_plot_style": FIF.PIE_SINGLE,
+            "global_plot_theme": FIF.PIE_SINGLE,
+            "global_report_template": FIF.DOCUMENT,
+            "global_extension_config": getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
+        }
+        return mapping.get(kind or "", getattr(FIF, "INFO", FIF.DOCUMENT))
+
+    def _build_project_structure_preview_item(self, node) -> QTreeWidgetItem:
+        node_name = getattr(node, "name", "") or "未命名节点"
+        item = self._make_preview_tree_item(
+            node_name,
+            self._preview_tree_icon_for_kind(getattr(node, "kind", None)),
+            node_name,
+        )
+        if getattr(node, "kind", None) == "folder":
+            children = self._sorted_node_children(getattr(node, "id", ""))
+            if not children:
+                item.addChild(self._make_preview_tree_item("空文件夹", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                return item
+            for child in children:
+                if getattr(child, "kind", None) == "folder":
+                    item.addChild(self._build_project_structure_preview_item(child))
+                    continue
+                child_item = self._make_preview_tree_item(
+                    getattr(child, "name", "") or "未命名节点",
+                    self._preview_tree_icon_for_kind(getattr(child, "kind", None)),
+                    getattr(child, "name", "") or "未命名节点",
+                )
+                item.addChild(child_item)
+            return item
+
+        if getattr(node, "kind", None) == "picture":
+            picture = project_manager.get_picture(getattr(node, "picture_id", ""))
+            if picture is not None and getattr(picture, "plot_snapshot", None) is not None:
+                snapshot = picture.plot_snapshot
+                item.addChild(self._make_preview_tree_item(f"绘图快照: {len(snapshot.series)} 条曲线", FIF.PIE_SINGLE))
+            return item
+
+        if getattr(node, "kind", None) == "analysis_result":
+            project = project_manager.current_project
+            analysis = None if project is None else project.find_analysis(getattr(node, "analysis_id", ""))
+            if analysis is not None:
+                analysis_type = getattr(analysis, "analysis_type", "") or getattr(analysis, "summary", {}).get("analysis_type", "")
+                if analysis_type:
+                    item.addChild(self._make_preview_tree_item(f"类型: {analysis_type}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            return item
+
+        if getattr(node, "kind", None) == "image_work":
+            image = project_manager.get_image(getattr(node, "image_work_id", ""))
+            if image is not None:
+                item.addChild(self._make_preview_tree_item(f"曲线数量: {len(image.curves)}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            return item
+
+        if getattr(node, "kind", None) == "data_file":
+            project = project_manager.current_project
+            data_file = None if project is None else project.find_data_file(getattr(node, "data_file_id", ""))
+            if data_file is not None:
+                item.addChild(self._make_preview_tree_item(f"系列数量: {len(data_file.series)}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            return item
+
+        return item
+
+    def _show_project_structure_preview(self, node, *, title: str, summary_lines: list[str]) -> None:
+        root_item = self._build_project_structure_preview_item(node)
+        self._show_structure_tree_preview(root_item, summary_lines, preview_name=title)
+
+    @staticmethod
+    def _extension_registry_name_map(category: str) -> dict[str, str]:
+        if category == "plot":
+            extensions = extension_registry.list_plot()
+        elif category == "processing":
+            extensions = extension_registry.list_processing()
+        else:
+            extensions = extension_registry.list_analysis()
+        name_map: dict[str, str] = {}
+        for extension in extensions:
+            type_id = str(getattr(extension, "type", "") or "").strip()
+            if not type_id:
+                continue
+            name_map[type_id] = str(getattr(extension, "name", "") or type_id)
+        return name_map
+
+    def _build_global_extension_items(self, category: str) -> list[QTreeWidgetItem]:
+        items: list[QTreeWidgetItem] = []
+        name_map = self._extension_registry_name_map(category)
+        grouped: dict[str, list[object]] = {}
+        for config in global_assets.list_extension_configs(category=category):
+            type_id = str(getattr(config, "extension_type", "") or "").strip()
+            if not type_id or type_id not in name_map:
+                continue
+            grouped.setdefault(type_id, []).append(config)
+
+        for type_id in sorted(grouped, key=lambda value: (name_map.get(value, value).lower(), value)):
+            configs = sorted(grouped[type_id], key=lambda item: (not bool(getattr(item, "is_default", False)), str(getattr(item, "name", "") or "").lower(), str(getattr(item, "id", "") or "")))
+            extension_label = name_map.get(type_id, type_id)
+            if len(configs) == 1 and bool(getattr(configs[0], "is_default", False)):
+                items.append(self._build_global_preview_item("global_extension_config", getattr(configs[0], "id", "")))
+                continue
+            group_item = self._make_preview_tree_item(extension_label, getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), extension_label)
+            for config in configs:
+                group_item.addChild(self._build_global_preview_item("global_extension_config", getattr(config, "id", "")))
+            items.append(group_item)
+        return items
+
+    def _build_global_preview_item(self, kind: str, node_id: str) -> QTreeWidgetItem:
+        label = self._global_preview_node_label(kind, node_id) or "未命名节点"
+        item = self._make_preview_tree_item(label, self._preview_tree_icon_for_kind(kind), label)
+
+        if kind == "global_root":
+            for child_kind, child_id in (
+                ("global_group", "__global_pipelines__"),
+                ("global_group", "__global_curve_styles__"),
+                ("global_group", "__global_plot_styles__"),
+                ("global_group", "__global_reports__"),
+                ("global_group", "__global_extension_configs__"),
+            ):
+                item.addChild(self._build_global_preview_item(child_kind, child_id))
+            return item
+
+        if kind == "global_group":
+            if node_id == "__global_pipelines__":
+                children = [self._build_global_preview_item("global_pipeline", pipeline.id) for pipeline in global_assets.list_saved_pipelines()]
+            elif node_id == "__global_curve_styles__":
+                children = [self._build_global_preview_item("global_curve_style_template", style.id) for style in global_assets.list_curve_style_templates()]
+            elif node_id == "__global_plot_styles__":
+                children = [
+                    self._build_global_preview_item("global_plot_style", f"theme:{style.id or style.name}")
+                    for style in global_assets.list_plot_themes(include_builtin=True)
+                ]
+                children.extend(
+                    self._build_global_preview_item("global_plot_style", f"template:{style.id}")
+                    for style in global_assets.list_figure_templates()
+                )
+            elif node_id == "__global_reports__":
+                children = [self._build_global_preview_item("global_report_template", template.id) for template in global_assets.list_report_templates(include_builtin=True)]
+            elif node_id == "__global_extension_configs__":
+                children = [
+                    self._build_global_preview_item("global_group", f"__global_extension_configs__:{category}")
+                    for category in ("plot", "processing", "analysis")
+                ]
+            elif node_id.startswith("__global_extension_configs__:"):
+                parts = node_id.split(":")
+                category = parts[1] if len(parts) >= 2 else ""
+                if len(parts) >= 3:
+                    configs = [
+                        config
+                        for config in global_assets.list_extension_configs(category=category, extension_type=parts[2])
+                        if str(getattr(config, "extension_type", "") or "").strip() == parts[2]
+                    ]
+                    children = [self._build_global_preview_item("global_extension_config", getattr(config, "id", "")) for config in configs]
+                else:
+                    children = self._build_global_extension_items(category)
+            else:
+                children = []
+            if not children:
+                item.addChild(self._make_preview_tree_item("空分组", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                return item
+            for child in children:
+                item.addChild(child)
+            return item
+
+        if kind == "global_pipeline":
+            pipeline = global_assets.get_saved_pipeline(node_id)
+            if pipeline is not None:
+                item.addChild(self._make_preview_tree_item(f"步骤数: {len(getattr(pipeline, 'ops', []) or [])}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                if getattr(pipeline, "description", ""):
+                    item.addChild(self._make_preview_tree_item(f"说明: {pipeline.description}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            return item
+
+        if kind == "global_curve_style_template":
+            template = global_assets.get_curve_style_template(node_id)
+            if template is not None:
+                if getattr(template, "description", ""):
+                    item.addChild(self._make_preview_tree_item(f"说明: {template.description}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                if getattr(template, "created_at", ""):
+                    item.addChild(self._make_preview_tree_item(f"创建时间: {template.created_at}", getattr(FIF, "DATE_TIME", FIF.DOCUMENT)))
+            return item
+
+        if kind in {"global_plot_style", "global_plot_theme"}:
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                template = global_assets.get_figure_template(asset_id)
+                if template is not None:
+                    item.addChild(self._make_preview_tree_item("类型: 图形模板", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                    if getattr(template, "theme", ""):
+                        item.addChild(self._make_preview_tree_item(f"主题: {template.theme}", FIF.PIE_SINGLE))
+                    typed_axis = getattr(template, "typed_axis_config", None)
+                    if typed_axis is not None:
+                        if getattr(typed_axis, "x_label", ""):
+                            item.addChild(self._make_preview_tree_item(f"X 轴: {typed_axis.x_label}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                        if getattr(typed_axis, "y_label", ""):
+                            item.addChild(self._make_preview_tree_item(f"Y 轴: {typed_axis.y_label}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            else:
+                theme = global_assets.get_plot_theme(asset_id)
+                if theme is not None:
+                    item.addChild(self._make_preview_tree_item("类型: 主题样式", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                    if getattr(theme, "description", ""):
+                        item.addChild(self._make_preview_tree_item(f"说明: {theme.description}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                    item.addChild(self._make_preview_tree_item(f"内置: {'是' if bool(getattr(theme, 'is_builtin', False)) else '否'}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            return item
+
+        if kind == "global_report_template":
+            template = global_assets.get_report_template(node_id)
+            if template is not None:
+                item.addChild(self._make_preview_tree_item(f"内置: {'是' if bool(getattr(template, 'is_builtin', False)) else '否'}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                line_count = len((getattr(template, "content", "") or "").splitlines())
+                item.addChild(self._make_preview_tree_item(f"内容行数: {line_count}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            return item
+
+        if kind == "global_extension_config":
+            config = global_assets.get_extension_config(node_id)
+            if config is not None:
+                item.addChild(self._make_preview_tree_item(f"扩展: {getattr(config, 'extension_name', '') or getattr(config, 'extension_type', '-')}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                item.addChild(self._make_preview_tree_item(f"分类: {self._global_extension_category_label(getattr(config, 'category', ''))}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                item.addChild(self._make_preview_tree_item(f"默认配置: {'是' if bool(getattr(config, 'is_default', False)) else '否'}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                item.addChild(self._make_preview_tree_item(f"参数项: {len(getattr(config, 'options', {}) or {})}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            return item
+
+        return item
+
+    def _show_global_resource_preview(self, kind: str, node_id: str) -> bool:
+        if not kind.startswith("global_"):
+            return False
+        root_item = self._build_global_preview_item(kind, node_id)
+        summary_lines = [f"{self._node_kind_label(kind)}: {root_item.text(0)}"]
+        if kind == "global_root":
+            summary_lines.extend([
+                f"Pipelines: {len(global_assets.list_saved_pipelines())}",
+                f"曲线样式: {len(global_assets.list_curve_style_templates())}",
+                f"绘图样式: {len(global_assets.list_plot_themes(include_builtin=True)) + len(global_assets.list_figure_templates())}",
+                f"报告模板: {len(global_assets.list_report_templates(include_builtin=True))}",
+                f"扩展配置: {len(global_assets.list_extension_configs())}",
+            ])
+        elif kind == "global_group":
+            summary_lines.append(f"子节点数量: {root_item.childCount()}")
+        elif kind == "global_pipeline":
+            pipeline = global_assets.get_saved_pipeline(node_id)
+            if pipeline is not None:
+                summary_lines.append(f"步骤数: {len(getattr(pipeline, 'ops', []) or [])}")
+        elif kind == "global_report_template":
+            template = global_assets.get_report_template(node_id)
+            if template is not None:
+                summary_lines.append(f"内置: {'是' if bool(getattr(template, 'is_builtin', False)) else '否'}")
+        elif kind == "global_extension_config":
+            config = global_assets.get_extension_config(node_id)
+            if config is not None:
+                summary_lines.append(f"参数项: {len(getattr(config, 'options', {}) or {})}")
+        self._show_structure_tree_preview(root_item, summary_lines, preview_name=root_item.text(0))
+        return True
 
     def _can_rename_current_node(self) -> bool:
         if not self._selected_node_kind or not self._selected_node_id:
             return False
-        if self._selected_node_kind in {"source_file", "data_file", "series", "curve", "image_work"}:
+        if self._selected_node_kind in {"source_file", "data_file", "series", "curve", "image_work", "picture"}:
             return True
         if self._selected_node_kind == "folder":
             return not self._is_protected_folder_node(self._current_tree_node())
@@ -2004,7 +2368,7 @@ class DataPage(QWidget):
     def _can_delete_current_node(self) -> bool:
         if not self._selected_node_kind or not self._selected_node_id:
             return False
-        if self._selected_node_kind in {"source_file", "data_file", "series", "curve", "image_work"}:
+        if self._selected_node_kind in {"source_file", "data_file", "series", "curve", "image_work", "picture"}:
             return True
         if self._selected_node_kind == "folder":
             return not self._is_protected_folder_node(self._current_tree_node())
@@ -2054,7 +2418,7 @@ class DataPage(QWidget):
         elif import_group == "images":
             self._manage_help_label.setText("数据化文件夹可重命名/删除；右侧文件管理器用于浏览系统图片并导入到当前数据化目录。")
         else:
-            self._manage_help_label.setText("数据文件、系列、图像和分析结果按当前节点能力开放重命名、删除、导出或继续流转。")
+            self._manage_help_label.setText("数据文件、系列、图像、图片和分析结果按当前节点能力开放重命名、删除、导出或继续流转。")
         self._refresh_pending_source_controls()
 
     # ─────────────────────────────────────────────────────────
@@ -2512,19 +2876,12 @@ class DataPage(QWidget):
             return False
 
         picture_path = project_manager.get_picture_path(picture.id)
-        self._show_preview_mode()
-        self._preview_image_path = None
-        self._set_source_file_preview_mode_controls_visible(False)
-        self._set_source_file_detail_controls_visible(False)
-        self._set_preview_plot_type_controls_visible(False)
-        self._hide_source_path_links()
-        self._preview_stack.setCurrentWidget(self._image_preview_label)
-        if not self._update_preview_image_from_path(picture_path):
-            self._image_preview_label.setPixmap(QPixmap())
-            self._image_preview_label.setText(f"无法加载图片预览\n\n{picture_path or '未找到图片路径'}")
+        pixmap = QPixmap(picture_path) if picture_path else QPixmap()
+        self._reset_structure_preview()
+        self._populate_picture_preview_tree(picture, picture_path, pixmap)
+        if pixmap.isNull():
             stats_lines = [f"图片名称: {picture.name}", "预览状态: 加载失败"]
         else:
-            pixmap = QPixmap(picture_path)
             stats_lines = [
                 f"图片名称: {picture.name}",
                 f"尺寸: {pixmap.width()} × {pixmap.height()} px",
@@ -2540,6 +2897,76 @@ class DataPage(QWidget):
         self._set_preview_summary(stats_lines)
         return True
 
+    @staticmethod
+    def _make_preview_tree_item(label: str, icon_fif=None, tooltip: Optional[str] = None) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([label])
+        if icon_fif is not None:
+            item.setIcon(0, icon_fif.icon())
+        item.setToolTip(0, tooltip or label)
+        return item
+
+    def _populate_picture_preview_tree(self, picture, picture_path: str, pixmap: QPixmap) -> None:
+        picture_name = picture.name or "未命名图片"
+        root_item = self._make_preview_tree_item(picture_name, FIF.PHOTO, picture_path or picture_name)
+        self._picture_preview_tree.addTopLevelItem(root_item)
+
+        file_item = self._make_preview_tree_item("图片文件", FIF.PHOTO, picture_path or "未记录图片路径")
+        root_item.addChild(file_item)
+        display_path = picture_path or "未记录路径"
+        file_item.addChild(self._make_preview_tree_item(Path(display_path).name if picture_path else display_path, FIF.DOCUMENT, display_path))
+        if picture_path:
+            try:
+                size_text = self._format_file_size(Path(picture_path).stat().st_size)
+                file_item.addChild(self._make_preview_tree_item(f"大小: {size_text}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            except OSError:
+                pass
+        if not pixmap.isNull():
+            file_item.addChild(self._make_preview_tree_item(f"尺寸: {pixmap.width()} × {pixmap.height()} px", getattr(FIF, "INFO", FIF.DOCUMENT)))
+        if getattr(picture, "created_at", ""):
+            file_item.addChild(self._make_preview_tree_item(f"创建时间: {picture.created_at}", getattr(FIF, "DATE_TIME", FIF.DOCUMENT)))
+
+        snapshot_item = self._make_preview_tree_item("绘图快照", FIF.PIE_SINGLE)
+        root_item.addChild(snapshot_item)
+        snapshot = picture.plot_snapshot
+        if snapshot is None:
+            snapshot_item.addChild(self._make_preview_tree_item("未保存", getattr(FIF, "INFO", FIF.DOCUMENT)))
+        else:
+            snapshot_item.addChild(self._make_preview_tree_item(f"主题: {snapshot.figure_state.theme or '-'}", getattr(FIF, "BRUSH", FIF.DOCUMENT)))
+            if snapshot.selected_curve_key:
+                snapshot_item.addChild(self._make_preview_tree_item(f"当前选中曲线: {snapshot.selected_curve_key}", getattr(FIF, "TARGET", FIF.DOCUMENT)))
+            if snapshot.applied_plot_style_ref:
+                snapshot_item.addChild(self._make_preview_tree_item(f"绘图样式引用: {snapshot.applied_plot_style_ref}", FIF.PIE_SINGLE))
+            if snapshot.active_template_id:
+                snapshot_item.addChild(self._make_preview_tree_item(f"模板: {snapshot.active_template_id}", FIF.DOCUMENT))
+
+            series_group = self._make_preview_tree_item(f"曲线 ({len(snapshot.series)})", FIF.PENCIL_INK)
+            snapshot_item.addChild(series_group)
+            if not snapshot.series:
+                series_group.addChild(self._make_preview_tree_item("无", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            for series in snapshot.series:
+                series_name = series.display_name or series.name or series.curve_key or "未命名曲线"
+                series_item = self._make_preview_tree_item(series_name, FIF.PENCIL_INK, series_name)
+                series_group.addChild(series_item)
+                series_item.addChild(self._make_preview_tree_item(f"点数: {len(series.x)}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                series_item.addChild(self._make_preview_tree_item(f"可见: {'是' if series.visible else '否'}", getattr(FIF, "VIEW", FIF.DOCUMENT)))
+                if series.source:
+                    series_item.addChild(self._make_preview_tree_item(f"来源: {series.source}", getattr(FIF, "LINK", FIF.DOCUMENT)))
+
+            extension_group = self._make_preview_tree_item(f"绘图扩展 ({len(snapshot.applied_extensions)})", FIF.DEVELOPER_TOOLS)
+            snapshot_item.addChild(extension_group)
+            if not snapshot.applied_extensions:
+                extension_group.addChild(self._make_preview_tree_item("无", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            for applied in sorted(snapshot.applied_extensions, key=lambda item: (item.sequence, item.id, item.type)):
+                target_name = applied.curve_display_name or applied.curve_name or "全部曲线"
+                extension_label = f"{applied.type or '未命名扩展'} -> {target_name}"
+                extension_item = self._make_preview_tree_item(extension_label, FIF.DEVELOPER_TOOLS, extension_label)
+                extension_group.addChild(extension_item)
+                extension_item.addChild(self._make_preview_tree_item(f"参数项: {len(applied.options)}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                if applied.extension_version:
+                    extension_item.addChild(self._make_preview_tree_item(f"版本: {applied.extension_version}", getattr(FIF, "INFO", FIF.DOCUMENT)))
+
+        self._picture_preview_tree.expandAll()
+
     def _show_folder_preview(self, node) -> None:
         project = project_manager.current_project
         if project is None or project.tree is None or node is None:
@@ -2554,14 +2981,13 @@ class DataPage(QWidget):
         analysis_count = sum(1 for child in child_nodes if child.kind == "analysis_result")
         preview_lines = [
             f"文件夹: {node.name or '未命名文件夹'}",
-            "",
             f"直接子文件夹: {folder_count}",
             f"源文件: {source_count}",
             f"数据文件: {data_count}",
             f"图像: {image_count}",
             f"分析结果: {analysis_count}",
         ]
-        self._show_text_preview(node.name or "文件夹", "\n".join(preview_lines), "当前节点为文件夹，支持摘要预览和管理操作。")
+        self._show_project_structure_preview(node, title=node.name or "文件夹", summary_lines=preview_lines)
 
     def _show_analysis_result_preview(self, node_id: str) -> bool:
         project = project_manager.current_project
@@ -2763,6 +3189,13 @@ class DataPage(QWidget):
                 ok = project_manager.rename_image(node.image_work_id, new_name)
                 if ok:
                     node.name = new_name
+        elif self._selected_node_kind == "picture":
+            node = self._current_tree_node()
+            picture_id = getattr(node, "picture_id", None) if node is not None else None
+            if picture_id:
+                ok = project_manager.rename_picture(picture_id, new_name)
+                if ok:
+                    node.name = new_name
         if not ok:
             InfoBar.warning(
                 "重命名失败",
@@ -2799,6 +3232,13 @@ class DataPage(QWidget):
             node = self._current_tree_node()
             if node is not None:
                 ok = project_manager.remove_image(node.image_work_id) is not None
+                if ok:
+                    ok = project_manager.delete_node(self._selected_node_id)
+        elif self._selected_node_kind == "picture":
+            node = self._current_tree_node()
+            picture_id = getattr(node, "picture_id", None) if node is not None else None
+            if picture_id:
+                ok = project_manager.remove_picture(picture_id) is not None
                 if ok:
                     ok = project_manager.delete_node(self._selected_node_id)
         if not ok:
@@ -3179,6 +3619,9 @@ class DataPage(QWidget):
     def _send_to_visualize(self):
         if self._selected_type and self._selected_id:
             self.send_to_visualize.emit(self._selected_type, self._selected_id)
+            return
+        if self._selected_node_kind == "picture" and self._selected_node_id:
+            self.send_to_visualize.emit("picture", self._selected_node_id)
 
     def _send_to_process(self):
         if self._selected_type and self._selected_id:
@@ -3224,6 +3667,12 @@ class DataPage(QWidget):
         """共享树选中节点 → 显示预览。"""
         self._selected_node_kind = kind
         self._selected_node_id = node_id
+        if kind.startswith("global_") and self._show_global_resource_preview(kind, node_id):
+            self._selected_type = None
+            self._selected_id = None
+            self._set_actions_enabled(False)
+            self._refresh_management_panel()
+            return
         if kind == "source_file":
             self._selected_type = None
             self._selected_id = None
@@ -3258,6 +3707,7 @@ class DataPage(QWidget):
             self._selected_type = None
             self._selected_id = None
             self._set_actions_enabled(False)
+            self._btn_to_vis.setEnabled(True)
             self._refresh_management_panel()
             return
         if kind == "analysis_result" and self._show_analysis_result_preview(node_id):

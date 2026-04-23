@@ -1717,6 +1717,21 @@ class TestAnalysisEngine(unittest.TestCase):
                 ProcessingExtension(type="invalid_version_probe", name="非法版本", handler=_noop, version="1.0")
             )
 
+    def test_builtin_extensions_declare_explicit_versions(self):
+        from core.extension_api import extension_registry, reload_builtin_extensions
+
+        report = reload_builtin_extensions()
+        self.assertEqual(report["errors"], [])
+
+        builtin_extensions = [
+            *extension_registry.list_plot(),
+            *extension_registry.list_processing(),
+            *extension_registry.list_analysis(),
+        ]
+        self.assertTrue(builtin_extensions)
+        for extension in builtin_extensions:
+            self.assertEqual(extension.version, "0.1.0", extension.type)
+
     def test_global_asset_extension_configs_preserve_extension_version(self):
         from core.global_assets import GlobalAssetManager
 

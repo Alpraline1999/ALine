@@ -123,11 +123,11 @@ class ExtensionConfigPanel(QWidget):
         layout.addWidget(self._title_label)
 
         status_row = QHBoxLayout()
-        self._status_summary_btn = PushButton("尚未扫描扩展。", card)
+        self._status_summary_btn = PushButton("尚未扫描扩展", card)
         self._status_summary_btn.setFlat(True)
         self._status_summary_btn.clicked.connect(self._show_status_details)
         status_row.addWidget(self._status_summary_btn, 1)
-        self._status_label = make_hint_label("尚未扫描扩展。", card)
+        self._status_label = make_hint_label("尚未扫描扩展", card)
         self._status_label.hide()
         self._status_detail_btn = None
         layout.addLayout(status_row)
@@ -443,7 +443,7 @@ class ExtensionConfigPanel(QWidget):
         return "无需额外参数，保留 {} 即可。"
 
     def _set_empty_state(self) -> None:
-        self._description_label.setText("当前页没有可用扩展。")
+        self._description_label.setText("当前页没有可用扩展")
         self._config_help_label.setText("保留 {} 使用默认参数。")
         self._editor.setPlainText("{}")
         self._editor.setEnabled(False)
@@ -475,11 +475,11 @@ class ExtensionConfigPanel(QWidget):
             else ""
         )
         if error_count:
-            status_text = f"{label} {registered_count} 项可用{source_suffix}，{error_count} 项失败。"
+            status_text = f"{label} {registered_count} 项可用{source_suffix}，{error_count} 项失败"
         elif registered_count:
-            status_text = f"{label} {registered_count} 项可用{source_suffix}。"
+            status_text = f"{label} {registered_count} 项可用{source_suffix}"
         else:
-            status_text = f"{label} 暂无可用项。"
+            status_text = f"{label} 暂无可用项"
         self._status_label.setText(status_text)
         self._status_summary_btn.setText(status_text)
         has_details = bool(status["details"].get("loaded") or status["details"].get("errors"))

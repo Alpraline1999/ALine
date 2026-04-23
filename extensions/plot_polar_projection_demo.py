@@ -153,6 +153,7 @@ def register_extensions(registry):
             name="极坐标绘图",
             handler=draw_polar_projection,
             description="将当前选中曲线或首条可见曲线重绘为极坐标图，并提供常用极坐标参数。",
+            version="0.1.0",
             default_options={
                 "theta_unit": "degree",
                 "theta_label": "角度",

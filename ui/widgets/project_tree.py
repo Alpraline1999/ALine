@@ -20,7 +20,7 @@ from qfluentwidgets import (
 from qfluentwidgets.components.widgets.tree_view import TreeItemDelegate
 from PySide6.QtWidgets import QTreeWidgetItem
 
-from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
+from core.global_assets import ExtensionConfigPreset, global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
 from core.extension_api import build_extension_entry, extension_registry
 from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
@@ -62,11 +62,11 @@ _ROOT_GROUP_ORDER = {
     "source_files": 0,
     "datasets": 1,
     "dataset_set": 1,
-    "images": 2,
-    "image_set": 2,
-    "pictures": 3,
-    "picture_set": 3,
-    "analysis_result_group": 4,
+    "pictures": 2,
+    "picture_set": 2,
+    "analysis_result_group": 3,
+    "images": 4,
+    "image_set": 4,
     "tools": 5,
     "tool_set": 5,
 }
@@ -723,10 +723,10 @@ class ProjectTreeWidget(QWidget):
                 dict(entry.get("default_options") or {}),
             )
 
-        grouped_configs: Dict[str, List[object]] = {}
+        grouped_configs: Dict[str, List[ExtensionConfigPreset]] = {}
         for item in global_assets.list_extension_configs(category=category):
             type_id = str(item.extension_type or "").strip()
-            if not type_id:
+            if not type_id or type_id not in entry_by_type:
                 continue
             grouped_configs.setdefault(type_id, []).append(item)
 
@@ -751,13 +751,24 @@ class ProjectTreeWidget(QWidget):
             extension_label = extension_name
             if duplicate_counts.get(_extension_config_name_key(extension_name), 0) > 1:
                 extension_label = f"{extension_name}（{type_id}）"
+            configs = sorted(grouped_configs[type_id], key=_extension_config_sort_key)
+            if len(configs) == 1 and bool(getattr(configs[0], "is_default", False)):
+                items.append(
+                    self._make_synthetic_item(
+                        extension_label,
+                        "global_extension_config",
+                        configs[0].id,
+                        getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
+                    )
+                )
+                continue
             extension_item = self._make_synthetic_item(
                 extension_label,
                 "global_group",
                 f"__global_extension_configs__:{category}:{type_id}",
                 getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
             )
-            for config in sorted(grouped_configs[type_id], key=_extension_config_sort_key):
+            for config in configs:
                 extension_item.addChild(
                     self._make_synthetic_item(
                         config.name,

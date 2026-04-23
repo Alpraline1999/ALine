@@ -124,6 +124,7 @@ def register_extensions(registry):
             name="双曲线差异带",
             handler=draw_dual_curve_band,
             description="演示如何在绘图阶段对前两条可见曲线自动对齐，并绘制双曲线差异带。",
+            version="0.1.0",
             default_options={
                 "lines": {"number": 2, "lines_list": [1, 2]},
                 "align_mode": "auto",

@@ -32,7 +32,7 @@ _PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJ_ROOT not in sys.path:
     sys.path.insert(0, _PROJ_ROOT)
 
-from PySide6.QtWidgets import QApplication, QAbstractItemView
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QWidget
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
 
@@ -258,12 +258,13 @@ class TestProjectTreeWidget(unittest.TestCase):
                 for i in range(extension_root.childCount())
                 if extension_root.child(i).text(0) == "处理扩展"
             )
-            target_group = next(
+            target_item = next(
                 processing_group.child(i)
                 for i in range(processing_group.childCount())
                 if processing_group.child(i).text(0) == "树配置探针"
             )
-            self.assertEqual([target_group.child(i).text(0) for i in range(target_group.childCount())], ["默认配置"])
+            self.assertEqual(target_item.childCount(), 0)
+            self.assertEqual(target_item.data(0, Qt.ItemDataRole.UserRole)[0], "global_extension_config")
         finally:
             extension_registry.unregister_processing("tree_extension_config_probe")
 
@@ -406,7 +407,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.refresh()
         root = self.widget._tree.topLevelItem(0)
         labels = [root.child(i).text(0) for i in range(root.childCount())]
-        self.assertEqual(labels[:5], ["源文件", "数据集", "数据化", "图片集", "分析结果"])
+        self.assertEqual(labels[:5], ["源文件", "数据集", "图片集", "分析结果", "数据化"])
 
     def test_duplicate_extension_config_group_labels_are_disambiguated(self):
         from core.global_assets import global_assets
@@ -428,7 +429,49 @@ class TestProjectTreeWidget(unittest.TestCase):
         )
         labels = [plot_group.child(i).text(0) for i in range(plot_group.childCount()) if plot_group.child(i).text(0).startswith("重复文字")]
 
-        self.assertEqual(labels, ["重复文字（orphan_text_a）", "重复文字（orphan_text_b）"])
+        self.assertEqual(labels, [])
+
+    def test_orphan_extension_configs_are_hidden(self):
+        from core.global_assets import global_assets
+
+        global_assets.ensure_extension_default_config("processing", "panel_extension_probe", "面板配置探针", {"probe": True})
+
+        self.widget.refresh()
+        global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
+        extension_root = next(
+            global_root.child(i)
+            for i in range(global_root.childCount())
+            if global_root.child(i).text(0) == "扩展配置"
+        )
+        processing_group = next(
+            extension_root.child(i)
+            for i in range(extension_root.childCount())
+            if extension_root.child(i).text(0) == "处理扩展"
+        )
+        labels = [processing_group.child(i).text(0) for i in range(processing_group.childCount())]
+
+        self.assertNotIn("面板配置探针", labels)
+
+
+class TestNavigationStack(unittest.TestCase):
+
+    def test_navigation_widgets_keep_content_width(self):
+        from ui.widgets.navigation_stack import PivotStackWidget, SegmentedStackWidget
+
+        for widget_cls in (PivotStackWidget, SegmentedStackWidget):
+            widget = widget_cls()
+            widget.resize(820, 420)
+            widget.addTab(QWidget(widget), "绘图扩展")
+            widget.addTab(QWidget(widget), "处理扩展")
+            widget.addTab(QWidget(widget), "分析扩展")
+            widget.show()
+            QApplication.processEvents()
+
+            navigation = widget.navigationWidget
+            self.assertEqual(navigation.minimumWidth(), navigation.maximumWidth())
+            self.assertGreater(navigation.width(), 0)
+            self.assertLess(navigation.width(), widget.width())
+            widget.deleteLater()
 
     def test_add_source_files_creates_source_nodes_under_source_group(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -819,7 +862,7 @@ class TestProjectTreeWidget(unittest.TestCase):
             project_root = widget._tree.topLevelItem(0)
             self.assertEqual(project_root.text(0), project.name)
             names = [project_root.child(i).text(0) for i in range(project_root.childCount())]
-            self.assertEqual(names, ["源文件", "数据集", "数据化", "图片集", "分析结果"])
+            self.assertEqual(names, ["源文件", "数据集", "图片集", "分析结果", "数据化"])
         finally:
             restore()
             if widget is not None:
@@ -1698,7 +1741,23 @@ class TestHomePage(unittest.TestCase):
         try:
             self.assertIsNotNone(page._banner)
             self.assertFalse(page._banner._background.isNull())
+            self.assertEqual(page._banner._hero_title.text(), "ALine")
+            self.assertEqual(page._banner._hero_subtitle.text(), "科研数据管理与可视化工作台")
+            self.assertEqual(page._banner._hero_hint.maximumWidth(), 760)
             self.assertEqual([card.titleLabel.text() for card in page._banner._link_cards], ["软件主页", "GitHub 仓库"])
+            self.assertEqual([card.linkButton.text() for card in page._banner._link_cards], ["占位链接", "占位链接"])
+        finally:
+            page.deleteLater()
+
+    def test_home_page_action_buttons_are_left_aligned(self):
+        from ui.pages.home_page import HomePage
+
+        page = HomePage()
+        try:
+            self.assertEqual(page._action_button_layout.spacing(), 20)
+            self.assertTrue(bool(page._action_button_layout.alignment() & Qt.AlignmentFlag.AlignLeft))
+            self.assertEqual(page._new_btn.width(), 150)
+            self.assertEqual(page._open_btn.width(), 150)
         finally:
             page.deleteLater()
 
@@ -2315,7 +2374,7 @@ class TestDataPage(unittest.TestCase):
         self.page.on_tree_node_selected("series", self.s.id)
         self.assertFalse(self.page._preview_plot_type_controls.isHidden())
 
-    def test_picture_node_selection_shows_image_preview(self):
+    def test_picture_node_selection_shows_tree_preview(self):
         from PySide6.QtGui import QImage
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2328,9 +2387,140 @@ class TestDataPage(unittest.TestCase):
             self.assertIsNotNone(picture_node)
             self.page.on_tree_node_selected("picture", picture_node.id)
 
-        self.assertIs(self.page._preview_stack.currentWidget(), self.page._image_preview_label)
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._picture_preview_tree)
         self.assertEqual(self.page._stats_title_label.text(), "图片名称: preview.png")
         self.assertIn("绘图快照: 未保存", self.page._stats_label.text())
+        root = self.page._picture_preview_tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.text(0), "preview.png")
+        self.assertEqual([root.child(i).text(0) for i in range(root.childCount())], ["图片文件", "绘图快照"])
+
+    def test_picture_tree_preview_shows_snapshot_content(self):
+        from PySide6.QtGui import QImage
+        from models.schemas import PicturePlotExtensionSnapshot, PicturePlotSeriesSnapshot, PicturePlotSnapshot
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "snapshot.png"
+            image = QImage(24, 24, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(picture_path)))
+
+            snapshot = PicturePlotSnapshot(
+                selected_curve_key="curve-1",
+                series=[
+                    PicturePlotSeriesSnapshot(
+                        curve_key="curve-1",
+                        name="curve-1",
+                        display_name="曲线 1",
+                        x=[1.0, 2.0],
+                        y=[3.0, 4.0],
+                        source="picture",
+                        visible=True,
+                    )
+                ],
+                applied_extensions=[
+                    PicturePlotExtensionSnapshot(
+                        id="ext-1",
+                        type="plot_text_annotation",
+                        sequence=1,
+                        options={"text": "A"},
+                        curve_display_name="曲线 1",
+                        extension_version="0.1.0",
+                    )
+                ],
+            )
+            picture_node = self.pm.add_picture(str(picture_path), name="snapshot.png", plot_snapshot=snapshot)
+
+            self.assertIsNotNone(picture_node)
+            self.page.on_tree_node_selected("picture", picture_node.id)
+
+        root = self.page._picture_preview_tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        snapshot_item = root.child(1)
+        self.assertEqual(snapshot_item.text(0), "绘图快照")
+        labels = [snapshot_item.child(i).text(0) for i in range(snapshot_item.childCount())]
+        self.assertIn("当前选中曲线: curve-1", labels)
+        self.assertIn("曲线 (1)", labels)
+        self.assertIn("绘图扩展 (1)", labels)
+
+    def test_picture_root_folder_selection_uses_tree_preview(self):
+        pictures_root = self.pm._find_folder_by_group_type("pictures")
+        self.assertIsNotNone(pictures_root)
+
+        self.page.on_tree_node_selected("folder", pictures_root.id)
+
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._picture_preview_tree)
+        root = self.page._picture_preview_tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.text(0), "图片集")
+        self.assertIn("文件夹: 图片集", self.page._stats_title_label.text())
+
+    def test_analysis_root_folder_selection_uses_tree_preview(self):
+        analysis_root = self.pm._find_folder_by_group_type("analysis_result_group")
+        self.assertIsNotNone(analysis_root)
+
+        self.page.on_tree_node_selected("folder", analysis_root.id)
+
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._picture_preview_tree)
+        root = self.page._picture_preview_tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.text(0), "分析结果")
+        self.assertIn("文件夹: 分析结果", self.page._stats_title_label.text())
+
+    def test_global_root_selection_uses_tree_preview(self):
+        self.page.on_tree_node_selected("global_root", "__global_root__")
+
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._picture_preview_tree)
+        root = self.page._picture_preview_tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.text(0), "全局资源")
+        self.assertGreaterEqual(root.childCount(), 5)
+
+    def test_global_report_template_selection_uses_tree_preview(self):
+        from core.global_assets import global_assets
+        from models.schemas import ReportTemplate
+
+        template = global_assets.ensure_report_template(ReportTemplate(name="全局报告预览", content="# report preview"))
+        self.page.on_tree_node_selected("global_report_template", template.id)
+
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._picture_preview_tree)
+        root = self.page._picture_preview_tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.text(0), "全局报告预览")
+        self.assertGreaterEqual(root.childCount(), 2)
+
+    def test_picture_node_management_actions_enable_rename_delete_and_visualize(self):
+        from PySide6.QtGui import QImage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "preview.png"
+            image = QImage(48, 32, QImage.Format.Format_RGB32)
+            image.fill(Qt.GlobalColor.white)
+            self.assertTrue(image.save(str(picture_path)))
+            picture_node = self.pm.add_picture(str(picture_path), name="preview.png")
+
+            self.assertIsNotNone(picture_node)
+            picture_id = picture_node.picture_id
+            self.page.on_tree_node_selected("picture", picture_node.id)
+
+            self.assertTrue(self.page._btn_to_vis.isEnabled())
+            self.assertTrue(self.page._btn_apply_name.isEnabled())
+            self.assertTrue(self.page._btn_delete_node.isEnabled())
+
+            sent: list[tuple[str, str]] = []
+            self.page.send_to_visualize.connect(lambda kind, node_id: sent.append((kind, node_id)))
+            self.page._send_to_visualize()
+            self.assertEqual(sent, [("picture", picture_node.id)])
+
+            self.page._manage_name_edit.setText("renamed.png")
+            self.page._apply_rename_current_node()
+            self.assertEqual(self.pm.get_picture(picture_id).name, "renamed.png")
+
+            with mock.patch("ui.pages.data_page.MessageBox.exec", return_value=True):
+                self.page._delete_current_node()
+
+            self.assertIsNone(self.pm.get_picture(picture_id))
+            self.assertIsNone(self.pm.get_node_by_id(picture_node.id))
 
     def test_source_file_data_preview_switches_between_parsed_and_source_modes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2824,14 +3014,17 @@ class TestDataPage(unittest.TestCase):
         if node:
             self.page.on_tree_node_selected("folder", node.id)
 
-    def test_on_tree_node_selected_folder_shows_summary_preview(self):
+    def test_on_tree_node_selected_folder_shows_structure_preview(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "folder" and getattr(n, "group_type", None) == "pictures"), None)
         self.assertIsNotNone(node)
 
         self.page.on_tree_node_selected("folder", node.id)
 
-        self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
-        self.assertIn("文件夹:", self.page._text_preview.toPlainText())
+        self.assertIs(self.page._preview_stack.currentWidget(), self.page._picture_preview_tree)
+        root = self.page._picture_preview_tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.text(0), "图片集")
+        self.assertIn("文件夹: 图片集", self.page._stats_title_label.text())
 
     def test_picture_root_cannot_be_renamed_from_management_panel(self):
         self.pm.migrate_to_v3(self.p)
@@ -3436,6 +3629,15 @@ class TestChartPage(unittest.TestCase):
         vertical_policies = [tab_page.widget().sizePolicy().verticalPolicy() for tab_page in tab_pages]
         self.assertEqual(vertical_policies[:2], [QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum])
         self.assertEqual(vertical_policies[2], QSizePolicy.Policy.Expanding)
+
+    def test_style_tabs_navigation_remains_fill_width(self):
+        from PySide6.QtWidgets import QSizePolicy
+
+        navigation = self.page._style_tabs.navigationWidget
+
+        self.assertEqual(navigation.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertEqual(navigation.minimumWidth(), 0)
+        self.assertGreater(navigation.maximumWidth(), 1000000)
 
     def test_plot_extension_repeat_hint_is_directly_under_loaded_header(self):
         container_layout = self.page._style_tabs.widget(2).widget().layout()
@@ -4174,6 +4376,40 @@ class TestChartPage(unittest.TestCase):
             self.assertEqual(self.page._applied_plot_extensions, [])
         finally:
             extension_registry.unregister_plot("chart_plot_remove")
+            self.page._refresh_style_extension_panel()
+
+    def test_plot_extension_can_clear_all_after_confirmation(self):
+        from qfluentwidgets import ToolButton
+        from core.extension_api import PlotExtension, extension_registry
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_clear_all",
+                name="绘图扩展清空",
+                handler=lambda context, options: None,
+                default_options={"enabled": True},
+            )
+        )
+        try:
+            self.assertIsInstance(self.page._clear_all_plot_extensions_btn, ToolButton)
+            self.assertFalse(self.page._clear_all_plot_extensions_btn.isEnabled())
+
+            self.page._style_tabs.setCurrentIndex(2)
+            QApplication.processEvents()
+            self.page._on_chart_extension_apply("chart_plot_clear_all", {"enabled": True})
+            self.page._on_chart_extension_apply("chart_plot_clear_all", {"enabled": False})
+
+            self.assertEqual(len(self.page._applied_plot_extensions), 2)
+            self.assertTrue(self.page._clear_all_plot_extensions_btn.isEnabled())
+
+            with mock.patch("ui.pages.chart_page.MessageBox.exec", return_value=True):
+                self.page._clear_all_plot_extensions_btn.click()
+
+            self.assertEqual(self.page._applied_plot_extensions, [])
+            self.assertFalse(self.page._clear_all_plot_extensions_btn.isEnabled())
+        finally:
+            extension_registry.unregister_plot("chart_plot_clear_all")
+            self.page._plot_extension_options.pop("chart_plot_clear_all", None)
             self.page._refresh_style_extension_panel()
 
     def test_plot_extension_supports_multiple_instances_with_different_params(self):
@@ -6744,6 +6980,38 @@ class TestMainWindowPictureRoute(unittest.TestCase):
         self.assertIs(self.win.stackedWidget.currentWidget(), self.win.chart_page)
         self.assertEqual(len(self.win.chart_page._chart_series), 1)
         self.assertEqual(self.win.chart_page._chart_series[0]["name"], "restored")
+
+    def test_send_to_visualize_picture_routes_to_chart_restore(self):
+        from models.schemas import FigureState, PicturePlotSeriesSnapshot, PicturePlotSnapshot
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            picture_path = Path(temp_dir) / "restore_send.png"
+            picture_path.write_bytes(b"png")
+            picture_node = self.pm.add_picture(
+                str(picture_path),
+                name="restore_send.png",
+                plot_snapshot=PicturePlotSnapshot(
+                    figure_state=FigureState(x_label="Restored X"),
+                    series=[
+                        PicturePlotSeriesSnapshot(
+                            curve_key="restored-curve",
+                            curve_identity="restored-curve",
+                            name="restored-send",
+                            display_name="restored-send",
+                            x=[1.0, 2.0],
+                            y=[3.0, 4.0],
+                        )
+                    ],
+                ),
+            )
+
+            self.assertIsNotNone(picture_node)
+            with mock.patch("ui.pages.chart_page.MessageBox.exec", return_value=True):
+                self.win._on_send_to_visualize("picture", picture_node.id)
+
+        self.assertIs(self.win.stackedWidget.currentWidget(), self.win.chart_page)
+        self.assertEqual(len(self.win.chart_page._chart_series), 1)
+        self.assertEqual(self.win.chart_page._chart_series[0]["name"], "restored-send")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

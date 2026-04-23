@@ -37,6 +37,7 @@ def register_extensions(registry):
             line_mode="multi",
             min_lines=2,
             description="对已选择列表中的多条已对齐曲线计算逐点均值；若坐标未对齐，请先显式重采样。",
+            version="0.1.0",
             default_options={
                 "lines": {"number": -1, "lines_list": "all"},
             },

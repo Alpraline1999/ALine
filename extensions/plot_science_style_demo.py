@@ -117,6 +117,7 @@ def register_extensions(registry):
             name="Science 图幅样式",
             handler=apply_science_style,
             description="通过 plt.style.use('science') 套用 scienceplots 论文风格，并叠加当前图幅的少量覆盖设置。",
+            version="0.1.0",
             default_options={
                 "x_label": "",
                 "y_label": "",

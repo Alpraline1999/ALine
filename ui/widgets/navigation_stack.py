@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Type
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import Pivot, SegmentedWidget
 
 
@@ -23,9 +23,14 @@ class _NavigationTabBarAdapter:
 class _BaseNavigationStack(QWidget):
     currentChanged = Signal(int)
 
-    def __init__(self, navigation_cls: Type[QWidget], parent=None):
+    def __init__(self, navigation_cls: Type[QWidget], parent=None, *, fill_width: bool = False):
         super().__init__(parent)
+        self._fill_width = bool(fill_width)
         self.navigationWidget = navigation_cls(self)
+        if self._fill_width:
+            self.navigationWidget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        else:
+            self.navigationWidget.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.stackedWidget = QStackedWidget(self)
         self.tabBar = _NavigationTabBarAdapter(self)
         self._route_keys: list[str] = []
@@ -34,7 +39,10 @@ class _BaseNavigationStack(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        layout.addWidget(self.navigationWidget)
+        if self._fill_width:
+            layout.addWidget(self.navigationWidget)
+        else:
+            layout.addWidget(self.navigationWidget, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.stackedWidget, 1)
 
         self.stackedWidget.currentChanged.connect(self._on_stack_changed)
@@ -45,9 +53,21 @@ class _BaseNavigationStack(QWidget):
         self._route_keys.append(key)
         self._labels.append(text)
         self.navigationWidget.addItem(key, text, onClick=lambda checked=False, i=index: self.setCurrentIndex(i))
+        self._sync_navigation_width()
         if self.count() == 1:
             self.setCurrentIndex(0)
         return index
+
+    def _sync_navigation_width(self) -> None:
+        if self._fill_width:
+            self.navigationWidget.setMinimumWidth(0)
+            self.navigationWidget.setMaximumWidth(16777215)
+            return
+        self.navigationWidget.adjustSize()
+        hint_width = max(self.navigationWidget.sizeHint().width(), self.navigationWidget.minimumSizeHint().width())
+        if hint_width <= 0:
+            return
+        self.navigationWidget.setFixedWidth(min(hint_width + 4, 420))
 
     def count(self) -> int:
         return self.stackedWidget.count()
@@ -79,10 +99,10 @@ class _BaseNavigationStack(QWidget):
 
 
 class PivotStackWidget(_BaseNavigationStack):
-    def __init__(self, parent=None):
-        super().__init__(Pivot, parent)
+    def __init__(self, parent=None, *, fill_width: bool = False):
+        super().__init__(Pivot, parent, fill_width=fill_width)
 
 
 class SegmentedStackWidget(_BaseNavigationStack):
-    def __init__(self, parent=None):
-        super().__init__(SegmentedWidget, parent)
+    def __init__(self, parent=None, *, fill_width: bool = False):
+        super().__init__(SegmentedWidget, parent, fill_width=fill_width)

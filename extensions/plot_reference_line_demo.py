@@ -108,6 +108,7 @@ def register_extensions(registry):
             name="峰值标注",
             handler=draw_reference_overlay,
             description="演示 PlotExtensionContext 的 before_plot/after_plot 两阶段绘制能力。",
+            version="0.1.0",
             default_options={
                 "show_reference_line": True,
                 "show_band": True,
