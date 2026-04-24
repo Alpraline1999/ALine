@@ -7,7 +7,7 @@
   {"type": "normalize",  "params": {"mode": "minmax"}}   # "minmax" | "zscore"
     {"type": "resample",   "params": {"mode": "spacing", "spacing_mode": "point", "n": 200}}
     {"type": "resample",   "params": {"mode": "spacing", "spacing_mode": "coord", "step": 0.1}}
-    {"type": "resample",   "params": {"mode": "align", "target_index": 1, "algorithm": "linear"}}
+    {"type": "resample",   "params": {"mode": "align", "target_line": 1, "algorithm": "linear"}}
   {"type": "fft",        "params": {"output": "amplitude", "detrend": True}}
   {"type": "derivative", "params": {}}
   {"type": "integral",   "params": {"cumulative": True}}
@@ -27,7 +27,7 @@ apply_pipeline_to_lines(lines, ops, *, selected_lines=None) → (processed_lines
 - 存在此算子时：上游单曲线算子对算子引用的输入子集做参数共享的广播，
     中间由双/多曲线算子消费并输出，随后下游算子对输出做常规广播。
 - selected_lines 提供完整"已选择列表"池，用于多曲线扩展的 lines_list，
-    以及 resample mode=align 的 target_index 查表。
+    以及 resample mode=align 的 target_line 查表。
 """
 from __future__ import annotations
 
@@ -710,7 +710,7 @@ def _op_resample(xs: List[float], ys: List[float], p: dict) -> XY:
         pool = list(_pipeline_pool.get() or [])
         if not pool:
             return x_sorted, y_sorted
-        target_idx = p.get("target_index", 1)
+        target_idx = p.get("target_line", p.get("target_index", 1))
         try:
             target = _pick_from_pool(pool, target_idx)
         except (ValueError, IndexError):

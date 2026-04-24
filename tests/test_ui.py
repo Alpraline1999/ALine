@@ -993,6 +993,12 @@ class TestNavigationStack(unittest.TestCase):
         choices = self.widget._move_target_choices("data_file", node.id)
         self.assertIn((self.widget._folder_path_label(folder.id), folder.id), choices)
 
+    def test_root_folder_path_label_uses_group_display_name(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        self.assertEqual(self.widget._folder_path_label(datasets_root.id), "数据集")
+
     def test_move_data_file_to_nested_dataset_folder(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
@@ -1902,6 +1908,17 @@ class TestHomePage(unittest.TestCase):
         finally:
             page.deleteLater()
 
+    def test_home_page_recent_scroll_expands_to_fill_remaining_height(self):
+        from PySide6.QtWidgets import QSizePolicy
+        from ui.pages.home_page import HomePage
+
+        page = HomePage()
+        try:
+            self.assertEqual(page._recent_scroll.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
+            self.assertEqual(page._recent_scroll.maximumHeight(), 16777215)
+        finally:
+            page.deleteLater()
+
     def test_home_page_recent_rows_use_shared_hover_color(self):
         from ui.pages.home_page import HomePage
         from ui.theme import hover_color
@@ -2373,14 +2390,15 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertFalse(panel._description_label.isHidden())
         self.assertFalse(panel._config_help_area.isHidden())
         self.assertEqual(panel._extension_section_label.text(), "自定义扩展")
-        self.assertEqual(panel._current_entry_label.text(), "未选择扩展")
+        self.assertEqual(panel._current_entry_label.text(), "当前扩展: 未选择扩展")
         self.assertEqual(panel._description_label.text(), "在左侧选择扩展后，这里会显示扩展说明。")
         self.assertEqual(panel._parameter_section_label.text(), "参数说明")
         self.assertEqual(panel._config_help_area.minimumHeight(), 124)
-        self.assertEqual(panel._config_help_area.maximumHeight(), 172)
+        self.assertEqual(panel._config_help_area.maximumHeight(), 16777215)
         self.assertEqual(panel._current_entry_label.styleSheet(), "")
         self.assertIsInstance(panel._surface, CardWidget)
-        self.assertEqual(panel._surface.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Maximum)
+        self.assertEqual(panel._surface.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertEqual(panel._config_help_area.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
         panel.deleteLater()
 
     def test_compact_mode_hides_titles_and_bottom_actions(self):
@@ -2496,6 +2514,42 @@ class TestExtensionOptionsForm(unittest.TestCase):
         finally:
             dialog.deleteLater()
             host.deleteLater()
+
+    def test_line_selection_dialog_wraps_lists_with_frames(self):
+        from PySide6.QtWidgets import QFrame, QWidget
+        from ui.widgets.extension_options_form import _LineSelectionDialog
+
+        host = QWidget()
+        dialog = _LineSelectionDialog("输入曲线", ["A", "B"], selected_indices=[1], lines_number=(1, -1), parent=host)
+        try:
+            self.assertIsInstance(dialog._available_list.parentWidget(), QFrame)
+            self.assertIsInstance(dialog._selected_list.parentWidget(), QFrame)
+            self.assertEqual(dialog._available_list.parentWidget().objectName(), "selectionListFrame")
+            self.assertEqual(dialog._selected_list.parentWidget().objectName(), "selectionListFrame")
+        finally:
+            dialog.deleteLater()
+            host.deleteLater()
+
+    def test_single_line_field_uses_dedicated_selector(self):
+        from qfluentwidgets import PushButton
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_line_candidates(["A", "B", "C"])
+            form.set_fields(
+                [{"key": "target_line", "label": "对齐曲线", "field_type": "line", "default": 1}],
+                {"target_line": 1},
+            )
+            button = next(button for button in form.findChildren(PushButton) if button.text() == "选择曲线")
+
+            with mock.patch("ui.widgets.extension_options_form._SingleLineSelectionDialog.get_index", return_value=(2, True)):
+                button.click()
+
+            self.assertEqual(form.current_options()["target_line"], 2)
+            self.assertEqual(button.toolTip(), "当前参数曲线: B")
+        finally:
+            form.deleteLater()
 
     def test_line_field_summary_uses_semicolon_and_fluent_tooltip(self):
         from qfluentwidgets import CaptionLabel
@@ -4010,6 +4064,7 @@ class TestDataPage(unittest.TestCase):
         self.assertIs(self.page._source_browser_splitter.widget(0), self.page._source_favorites_panel)
         self.assertEqual(self.page._source_browser_splitter.count(), 2)
         self.assertGreater(self.page._source_browser_splitter.handleWidth(), 0)
+        self.assertIn("QSplitter::handle", self.page._source_browser_splitter.styleSheet())
 
     def test_source_folder_can_add_external_files_to_pending_list(self):
         source_root = self.pm._find_folder_by_group_type("source_files")
@@ -4054,6 +4109,8 @@ class TestDataPage(unittest.TestCase):
         self.assertGreater(self.page._btn_add_selected_sources.y(), self.page._source_browser_detail_label.y())
 
     def test_dataset_folder_switches_to_external_file_manager_mode(self):
+        from qfluentwidgets import SegmentedWidget
+
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
@@ -4062,6 +4119,7 @@ class TestDataPage(unittest.TestCase):
         self.assertIs(self.page._right_mode_stack.currentWidget(), self.page._source_manager_card)
         self.assertFalse(self.page._import_queue_panel.isHidden())
         self.assertEqual(self.page._btn_import_pending.text(), "导入到数据集")
+        self.assertIsInstance(self.page._source_browser_tabs.navigationWidget, SegmentedWidget)
         self.assertFalse(self.page._source_browser_tabs.tabBar.isHidden())
         self.assertTrue(self.page._source_manager_hint.isHidden())
         self.assertTrue(self.page._pending_source_hint.isHidden())
@@ -5652,6 +5710,16 @@ class TestProcessPage(unittest.TestCase):
         self.assertEqual(pairwise_height, self.page._param_widgets[1].sizeHint().height())
         self.assertNotEqual(derivative_height, pairwise_height)
 
+    def test_json_param_widget_uses_content_height_with_fixed_upper_bound(self):
+        self.page._load_ops_into_chain([
+            {"type": "resample", "params": {"mode": "spacing", "spacing_mode": "coord", "step": 0.25}},
+        ])
+
+        widget = self.page._param_widgets[0]
+
+        self.assertLessEqual(widget.maximumHeight(), 180)
+        self.assertLessEqual(self.page._param_stack.maximumHeight(), 180)
+
     def test_on_tree_node_selected_curve(self):
         self.page.on_tree_node_selected("curve", "fake-curve-id")
 
@@ -5708,6 +5776,17 @@ class TestProcessPage(unittest.TestCase):
             self.page._param_widgets[0].get_params(),
             {"mode": "spacing", "spacing_mode": "coord", "step": 0.25},
         )
+
+    def test_load_ops_with_resample_align_legacy_target_index_maps_to_target_line(self):
+        ops = [{"type": "resample", "params": {"mode": "align", "target_index": 2}}]
+
+        self.page._load_ops_into_chain(ops)
+
+        params = self.page._param_widgets[0].get_params()
+
+        self.assertEqual(params["mode"], "align")
+        self.assertEqual(params["target_line"], 2)
+        self.assertNotIn("target_index", params)
 
     def test_resample_coord_spacing_waits_for_edit_commit(self):
         from ui.pages.process_page import _ResampleParam
@@ -6231,8 +6310,10 @@ class TestAnalysisPage(unittest.TestCase):
 
     def test_result_tabs_use_segmented_navigation_and_report_combos_share_width(self):
         from qfluentwidgets import SegmentedWidget
+        from PySide6.QtWidgets import QSizePolicy
 
         self.assertIsInstance(self.page._result_tabs.navigationWidget, SegmentedWidget)
+        self.assertEqual(self.page._result_tabs.navigationWidget.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
         self.assertEqual(self.page._report_template_combo.width(), self.page._report_placeholder_combo.width())
 
     def test_analysis_canvas_draws_chinese_without_glyph_warnings(self):

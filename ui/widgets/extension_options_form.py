@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QIntValidator
-from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -42,6 +42,7 @@ from ui.theme import (
     WORKBENCH_BUTTON_HEIGHT,
     WORKBENCH_INLINE_LABEL_WIDTH,
     apply_button_metrics,
+    border_color,
     install_fluent_tooltip,
     make_hint_label,
     make_inline_label,
@@ -82,6 +83,8 @@ def _normalize_field_type(field: Dict[str, Any]) -> str:
         return "figure"
     if explicit == "lines":
         return "lines"
+    if explicit == "line":
+        return "line"
     if explicit == "string" and "color" in str(field.get("key") or "").casefold():
         return "color"
     return "string"
@@ -226,6 +229,19 @@ class _AdaptiveFieldRow(QWidget):
         self._grid.setColumnStretch(1, 1)
 
 
+def _build_list_frame(parent: QWidget) -> tuple[QFrame, QVBoxLayout]:
+    frame = QFrame(parent)
+    frame.setObjectName("selectionListFrame")
+    frame.setFrameShape(QFrame.Shape.NoFrame)
+    frame.setStyleSheet(
+        f"QFrame#selectionListFrame {{ border: 1px solid {border_color()}; border-radius: 8px; background: transparent; }}"
+    )
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(4, 4, 4, 4)
+    layout.setSpacing(0)
+    return frame, layout
+
+
 class _LineSelectionDialog(MessageBoxBase):
     def __init__(
         self,
@@ -260,12 +276,14 @@ class _LineSelectionDialog(MessageBoxBase):
         left_column.setSpacing(6)
         self._available_title_label = BodyLabel(available_label, self.widget)
         left_column.addWidget(self._available_title_label)
-        self._available_list = ListWidget(self.widget)
+        available_frame, available_frame_layout = _build_list_frame(self.widget)
+        self._available_list = ListWidget(available_frame)
         self._available_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._available_list.setMinimumHeight(236)
         self._available_list.itemDoubleClicked.connect(lambda _item: self._move_to_selected())
         self._available_list.itemSelectionChanged.connect(self._refresh_button_states)
-        left_column.addWidget(self._available_list, 1)
+        available_frame_layout.addWidget(self._available_list, 1)
+        left_column.addWidget(available_frame, 1)
         lists_row.addLayout(left_column, 1)
 
         center_column = QVBoxLayout()
@@ -305,12 +323,14 @@ class _LineSelectionDialog(MessageBoxBase):
         right_list_row = QHBoxLayout()
         right_list_row.setContentsMargins(0, 0, 0, 0)
         right_list_row.setSpacing(6)
-        self._selected_list = ListWidget(self.widget)
+        selected_frame, selected_frame_layout = _build_list_frame(self.widget)
+        self._selected_list = ListWidget(selected_frame)
         self._selected_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._selected_list.setMinimumHeight(236)
         self._selected_list.itemDoubleClicked.connect(lambda _item: self._move_to_available())
         self._selected_list.itemSelectionChanged.connect(self._refresh_button_states)
-        right_list_row.addWidget(self._selected_list, 1)
+        selected_frame_layout.addWidget(self._selected_list, 1)
+        right_list_row.addWidget(selected_frame, 1)
         order_column = QVBoxLayout()
         order_column.setContentsMargins(0, 0, 0, 0)
         order_column.setSpacing(6)
@@ -517,6 +537,121 @@ class _LineSelectionDialog(MessageBoxBase):
         return dialog.value(), accepted
 
 
+class _SingleLineSelectionDialog(MessageBoxBase):
+    def __init__(
+        self,
+        title: str,
+        candidates: List[str],
+        *,
+        selected_index: Optional[int],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._candidates = list(candidates or [])
+        self._selected_index = None
+
+        self._title_label = SubtitleLabel(title, self.widget)
+        self.viewLayout.addWidget(self._title_label)
+
+        self._status = CaptionLabel("", self.widget)
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(f"color: {secondary_color()}; font-size: 11px;")
+        self.viewLayout.addWidget(self._status)
+
+        self._list_title_label = BodyLabel("候选曲线", self.widget)
+        self.viewLayout.addWidget(self._list_title_label)
+
+        frame, frame_layout = _build_list_frame(self.widget)
+        self._list = ListWidget(frame)
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._list.setMinimumHeight(236)
+        self._list.itemDoubleClicked.connect(lambda _item: self._accept_selection())
+        self._list.itemSelectionChanged.connect(self._on_selection_changed)
+        frame_layout.addWidget(self._list, 1)
+        self.viewLayout.addWidget(frame)
+
+        self.widget.setMinimumWidth(420)
+        self.widget.setMinimumHeight(340)
+        self.yesButton.setText("确认")
+        self.cancelButton.setText("取消")
+
+        self._populate_list()
+        self._set_selected_index(selected_index)
+        self._update_status()
+
+    def _label_for_index(self, index: int) -> str:
+        return f"{index}. {self._candidates[index - 1]}"
+
+    def _populate_list(self) -> None:
+        self._list.clear()
+        for index, candidate in enumerate(self._candidates, start=1):
+            del candidate
+            item_text = self._label_for_index(index)
+            self._list.addItem(item_text)
+            item = self._list.item(self._list.count() - 1)
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            item.setToolTip(item_text)
+
+    def _set_selected_index(self, selected_index: Optional[int]) -> None:
+        try:
+            normalized = int(selected_index) if selected_index not in (None, "") else None
+        except (TypeError, ValueError):
+            normalized = None
+        self._selected_index = normalized if normalized is not None and 1 <= normalized <= len(self._candidates) else None
+        current_item = None
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            is_selected = item.data(Qt.ItemDataRole.UserRole) == self._selected_index
+            item.setSelected(is_selected)
+            if is_selected:
+                current_item = item
+        if current_item is not None:
+            self._list.setCurrentItem(current_item)
+
+    def _on_selection_changed(self) -> None:
+        current = self._list.currentItem()
+        if current is None:
+            selected_items = self._list.selectedItems()
+            current = selected_items[0] if selected_items else None
+        if current is None:
+            self._selected_index = None
+        else:
+            try:
+                self._selected_index = int(current.data(Qt.ItemDataRole.UserRole))
+            except (TypeError, ValueError):
+                self._selected_index = None
+        self._update_status()
+
+    def _update_status(self) -> None:
+        if self._selected_index is None:
+            self._status.setText("请选择 1 条曲线作为参数。")
+            self.yesButton.setEnabled(False)
+            return
+        self._status.setText(f"当前已选: {self._label_for_index(self._selected_index)}")
+        self.yesButton.setEnabled(True)
+
+    def _accept_selection(self) -> None:
+        if self._selected_index is None:
+            return
+        self.accept()
+
+    def value(self) -> Optional[int]:
+        return self._selected_index
+
+    @classmethod
+    def get_index(
+        cls,
+        parent,
+        title: str,
+        candidates: List[str],
+        *,
+        selected_index: Optional[int],
+    ) -> tuple[Optional[int], bool]:
+        dialog = cls(title, candidates, selected_index=selected_index, parent=parent)
+        accepted = bool(dialog.exec())
+        return dialog.value(), accepted
+
+
 class ExtensionOptionsForm(QWidget):
     optionsChanged = Signal(dict)
     optionsCommitted = Signal(dict)
@@ -605,7 +740,7 @@ class ExtensionOptionsForm(QWidget):
     def set_line_candidates(self, candidates: List[str]) -> None:
         self._line_candidates = list(candidates or [])
         for binding in self._bindings.values():
-            if binding.field.get("field_type") == "lines" and binding.refresh is not None:
+            if binding.field.get("field_type") in {"line", "lines"} and binding.refresh is not None:
                 binding.refresh()
 
     def set_settings_context(self, category: Optional[str], entry: Optional[Dict[str, Any]]) -> None:
@@ -916,6 +1051,8 @@ class ExtensionOptionsForm(QWidget):
             return self._create_limited_binding(field)
         if field_type == "figure":
             return self._create_figure_binding(field)
+        if field_type == "line":
+            return self._create_line_binding(field)
         if field_type == "lines":
             return self._create_lines_binding(field)
         return self._create_string_binding(field)
@@ -1211,6 +1348,76 @@ class ExtensionOptionsForm(QWidget):
             field=field,
             getter=lambda: state["path"],
             setter=_set,
+        )
+
+    def _create_line_binding(self, field: Dict[str, Any]) -> _FieldBinding:
+        container, _layout, field_row = self._make_field_card(field, min_width=168, min_control_width=96)
+        button = PushButton("选择曲线", container)
+        self._set_expanding_control(button, 96)
+        field_row.addWidget(button, 1)
+
+        state = {"line": None}
+
+        def _selected_label() -> str:
+            value = state["line"]
+            try:
+                index = int(value)
+            except (TypeError, ValueError):
+                return ""
+            offset = index - 1
+            if 0 <= offset < len(self._line_candidates):
+                return self._line_candidates[offset]
+            return ""
+
+        def _tooltip_text() -> str:
+            if not self._line_candidates:
+                return "当前没有可选曲线"
+            label = _selected_label()
+            if label:
+                return f"当前参数曲线: {label}"
+            if state["line"] not in (None, ""):
+                return "当前参数曲线已不可用，请重新选择"
+            return "请选择 1 条曲线作为内部参数"
+
+        def _refresh() -> None:
+            button.setEnabled(bool(self._line_candidates))
+            button.setText("选择曲线")
+            button.setToolTip(_tooltip_text())
+            install_fluent_tooltip(button, delay=300, position=ToolTipPosition.BOTTOM)
+
+        def _set(value: Any) -> None:
+            if value in (None, ""):
+                state["line"] = None
+            else:
+                try:
+                    state["line"] = int(value)
+                except (TypeError, ValueError):
+                    state["line"] = None
+            _refresh()
+
+        def _choose() -> None:
+            if not self._line_candidates:
+                return
+            result, accepted = _SingleLineSelectionDialog.get_index(
+                self.window() if self.window() is not None else self,
+                _field_label(field),
+                self._line_candidates,
+                selected_index=state["line"],
+            )
+            if not accepted:
+                return
+            state["line"] = result
+            _refresh()
+            self._emit_change(committed=True)
+
+        button.clicked.connect(_choose)
+        _refresh()
+        return _FieldBinding(
+            key=str(field.get("key")),
+            field=field,
+            getter=lambda: state["line"],
+            setter=_set,
+            refresh=_refresh,
         )
 
     def _create_lines_binding(self, field: Dict[str, Any]) -> _FieldBinding:

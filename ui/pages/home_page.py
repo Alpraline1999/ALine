@@ -207,7 +207,7 @@ class HomePage(QWidget):
         self._recent_scroll.setWidgetResizable(True)
         self._recent_scroll.setFrameShape(QFrame.NoFrame)
         self._recent_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._recent_scroll.setMaximumHeight(280)
+        self._recent_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._recent_scroll.hide()
 
         self._recent_items_widget = QWidget()
@@ -218,9 +218,7 @@ class HomePage(QWidget):
         self._recent_scroll.setWidget(self._recent_items_widget)
         self._recent_scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
         self._recent_items_widget.setStyleSheet("background: transparent;")
-        layout.addWidget(self._recent_scroll)
-
-        layout.addStretch(1)
+        layout.addWidget(self._recent_scroll, 1)
 
         # 初始应用主题颜色 & 加载最近项目
         self._apply_theme_colors()

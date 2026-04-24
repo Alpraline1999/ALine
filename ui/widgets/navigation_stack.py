@@ -8,16 +8,27 @@ from qfluentwidgets import Pivot, SegmentedWidget
 
 
 class _NavigationTabBarAdapter:
-    def __init__(self, parent: QWidget):
+    def __init__(self, parent: QWidget, navigation_widget: QWidget, count_getter):
         self.addButton = QWidget(parent)
         self.addButton.hide()
         self.closeButtonDisplayMode = None
+        self._navigation_widget = navigation_widget
+        self._count_getter = count_getter
 
     def setAddButtonVisible(self, visible: bool) -> None:
         self.addButton.setVisible(bool(visible))
 
     def setCloseButtonDisplayMode(self, mode) -> None:
         self.closeButtonDisplayMode = mode
+
+    def setVisible(self, visible: bool) -> None:
+        self._navigation_widget.setVisible(bool(visible))
+
+    def isHidden(self) -> bool:
+        return self._navigation_widget.isHidden()
+
+    def count(self) -> int:
+        return int(self._count_getter())
 
 
 class _BaseNavigationStack(QWidget):
@@ -32,7 +43,7 @@ class _BaseNavigationStack(QWidget):
         else:
             self.navigationWidget.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.stackedWidget = QStackedWidget(self)
-        self.tabBar = _NavigationTabBarAdapter(self)
+        self.tabBar = _NavigationTabBarAdapter(self, self.navigationWidget, lambda: self.count())
         self._route_keys: list[str] = []
         self._labels: list[str] = []
 

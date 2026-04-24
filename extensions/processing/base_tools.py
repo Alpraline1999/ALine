@@ -52,7 +52,7 @@ def resample_xy(
         if not pool:
             return x_sorted, y_sorted
         try:
-            target_idx = int(options.get("target_index", 1) or 1)
+            target_idx = int(options.get("target_line", options.get("target_index", 1)) or 1)
         except Exception:
             target_idx = 1
         if target_idx < 1 or target_idx > len(pool):
@@ -278,3 +278,7 @@ __all__ = [
     "resample_xy",
     "transform_xy",
 ]
+
+
+def register_extensions(registry) -> None:
+    del registry

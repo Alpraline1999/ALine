@@ -852,6 +852,41 @@ class TestDataEngine(unittest.TestCase):
         self.assertEqual(nx, [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
         self.assertEqual(ny, nx)
 
+    def test_op_resample_align_accepts_target_line(self):
+        from processing.data_engine import apply_pipeline_to_lines
+
+        lines = [
+            {"name": "A", "x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0]},
+            {"name": "B", "x": [0.0, 0.5, 1.0, 1.5, 2.0], "y": [0.0, 0.5, 1.0, 1.5, 2.0]},
+        ]
+
+        rebuilt, warnings = apply_pipeline_to_lines(
+            lines,
+            [{"type": "resample", "params": {"mode": "align", "target_line": 2}}],
+            selected_lines=lines,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(rebuilt[0]["x"], [0.0, 0.5, 1.0, 1.5, 2.0])
+        self.assertEqual(rebuilt[1]["x"], [0.0, 0.5, 1.0, 1.5, 2.0])
+
+    def test_op_resample_align_keeps_legacy_target_index_compatible(self):
+        from processing.data_engine import apply_pipeline_to_lines
+
+        lines = [
+            {"name": "A", "x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0]},
+            {"name": "B", "x": [0.0, 0.5, 1.0, 1.5, 2.0], "y": [0.0, 0.5, 1.0, 1.5, 2.0]},
+        ]
+
+        rebuilt, warnings = apply_pipeline_to_lines(
+            lines,
+            [{"type": "resample", "params": {"mode": "align", "target_index": 2}}],
+            selected_lines=lines,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(rebuilt[0]["x"], [0.0, 0.5, 1.0, 1.5, 2.0])
+
     def test_op_resample_by_spacing_rejects_non_positive_step(self):
         from processing.data_engine import apply_operation
 

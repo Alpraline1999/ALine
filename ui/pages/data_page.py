@@ -27,7 +27,7 @@ from qfluentwidgets import (
     TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit, RoundMenu, TableWidget, HyperlinkButton,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit, TabCloseButtonDisplayMode,
-    TabWidget, TeachingTipTailPosition, ToolTip, ToolTipFilter, ToolTipPosition,
+    TeachingTipTailPosition, ToolTip, ToolTipFilter, ToolTipPosition,
     SmoothScrollArea, SubtitleLabel, isDarkTheme,
 )
 
@@ -43,6 +43,7 @@ from ui.theme import (
 )
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.matplotlib_fonts import configure_matplotlib_cjk
+from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.extension_api import (
     build_extension_entry,
@@ -1205,10 +1206,10 @@ class DataPage(QWidget):
         self._apply_summary_label_style(self._source_manager_target_label)
         layout.addWidget(self._source_manager_target_label)
 
-        self._source_browser_tabs = TabWidget(card)
+        self._source_browser_tabs = SegmentedStackWidget(card)
         self._source_browser_tabs.tabBar.setAddButtonVisible(False)
         self._source_browser_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
-        self._source_browser_tabs.stackedWidget.currentChanged.connect(self._refresh_source_manager_tab_state)
+        self._source_browser_tabs.currentChanged.connect(self._refresh_source_manager_tab_state)
 
         project_source_page = QWidget(card)
         project_source_layout = QVBoxLayout(project_source_page)
@@ -1273,6 +1274,12 @@ class DataPage(QWidget):
         self._source_browser_splitter.setContentsMargins(0, 0, 0, 0)
         self._source_browser_splitter.setHandleWidth(4)
         self._source_browser_splitter.setChildrenCollapsible(False)
+        self._source_browser_splitter.setStyleSheet(
+            "QSplitter::handle {"
+            f"background: {border_color()};"
+            "margin: 6px 0;"
+            "}"
+        )
 
         self._source_favorites_panel = QWidget(system_page)
         self._source_favorites_panel.setMinimumWidth(120)
@@ -1319,24 +1326,24 @@ class DataPage(QWidget):
         self._install_item_view_tooltip_filter(self._source_browser)
         browser_layout.addWidget(self._source_browser, 1)
 
+        self._source_browser_splitter.addWidget(browser_panel)
+        self._source_browser_splitter.setStretchFactor(0, 0)
+        self._source_browser_splitter.setStretchFactor(1, 1)
+        self._source_browser_splitter.setSizes([160, 560])
+        system_layout.addWidget(self._source_browser_splitter, 1)
+
         self._source_browser_detail_label = CaptionLabel("未选择系统文件", system_page)
         self._source_browser_detail_label.setWordWrap(True)
         self._source_browser_detail_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._apply_summary_label_style(self._source_browser_detail_label)
-        browser_layout.addWidget(self._source_browser_detail_label)
+        system_layout.addWidget(self._source_browser_detail_label)
 
         system_action_row = QHBoxLayout()
         self._btn_add_selected_sources = PrimaryPushButton(FIF.ADD, "添加选中文件", system_page)
         self._btn_add_selected_sources.clicked.connect(self._add_selected_browser_source_files_to_pending)
         self._apply_panel_button_metrics(self._btn_add_selected_sources)
         system_action_row.addWidget(self._btn_add_selected_sources, 1)
-        browser_layout.addLayout(system_action_row)
-
-        self._source_browser_splitter.addWidget(browser_panel)
-        self._source_browser_splitter.setStretchFactor(0, 0)
-        self._source_browser_splitter.setStretchFactor(1, 1)
-        self._source_browser_splitter.setSizes([160, 560])
-        system_layout.addWidget(self._source_browser_splitter, 1)
+        system_layout.addLayout(system_action_row)
         self._source_browser_tabs.addTab(system_page, "系统文件")
 
         layout.addWidget(self._source_browser_tabs, 1)

@@ -42,7 +42,13 @@ def register_extensions(registry) -> None:
                 ),
                 ExtensionConfigField(key="n", label="目标点数", field_type="integer", default=200, min_value=2),
                 ExtensionConfigField(key="step", label="目标步长", field_type="number", default=1.0),
-                ExtensionConfigField(key="target_index", label="对齐参考序号", field_type="integer", default=1, min_value=1),
+                ExtensionConfigField(
+                    key="target_line",
+                    label="对齐曲线",
+                    field_type="line",
+                    default=1,
+                    description="从当前数据集中选择 1 条曲线作为对齐参考。",
+                ),
             ],
         )
     )

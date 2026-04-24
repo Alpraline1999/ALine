@@ -10,7 +10,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QItemSelectionModel, Qt, QTimer, Signal
-from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListWidgetItem, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem
+from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListWidgetItem, QSizePolicy, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem
 from qfluentwidgets import (
     BodyLabel, CaptionLabel, ComboBox, FluentIcon as FIF,
     CardWidget,
@@ -679,8 +679,11 @@ class ProcessPage(QWidget):
             self._param_stack.updateGeometry()
             return
         target_height = max(0, current_widget.sizeHint().height())
-        self._param_stack.setMinimumHeight(target_height)
-        self._param_stack.setMaximumHeight(target_height)
+        max_height = current_widget.maximumHeight()
+        if max_height <= 0 or max_height >= 16777215:
+            max_height = target_height
+        self._param_stack.setMinimumHeight(min(target_height, max_height))
+        self._param_stack.setMaximumHeight(max_height)
         self._param_stack.updateGeometry()
 
     def _rebuild_source_series_batch(self) -> None:
@@ -719,6 +722,8 @@ class ProcessPage(QWidget):
 
     def _normalized_operation_params(self, op_type: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         normalized = dict(params or {})
+        if op_type == "resample" and "target_line" not in normalized and "target_index" in normalized:
+            normalized["target_line"] = normalized.pop("target_index")
         explicit_lines = self._pipeline_lines_list() or (
             normalize_extension_lines_list(normalized.get("lines_list")) if "lines_list" in normalized else []
         )
@@ -1657,7 +1662,10 @@ class _JsonParam(_ParamWidget):
         lv.setSpacing(4)
         del description
         self._editor = ExtensionOptionsForm(self)
-        self._editor.setFixedHeight(180)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self.setMaximumHeight(180)
+        self._editor.setMaximumHeight(180)
+        self._editor.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._editor.set_settings_context("processing", self._entry)
         self._editor.optionsCommitted.connect(lambda _options: on_change())
         lv.addWidget(self._editor)
@@ -1673,7 +1681,11 @@ class _JsonParam(_ParamWidget):
         return dict(self._last_valid)
 
     def set_params(self, params: dict) -> None:
-        self._last_valid = dict(params or {})
+        normalized_params = dict(params or {})
+        entry_type = str((self._entry or {}).get("type") or "")
+        if entry_type == "resample" and "target_line" not in normalized_params and "target_index" in normalized_params:
+            normalized_params["target_line"] = normalized_params.pop("target_index")
+        self._last_valid = normalized_params
         known_keys = {str(field.get("key") or "").strip() for field in self._fields}
         infer_unknown_fields = any(key not in known_keys for key in self._last_valid)
         self._editor.set_fields(self._fields, self._last_valid, infer_unknown_fields=infer_unknown_fields)

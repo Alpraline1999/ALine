@@ -388,7 +388,7 @@ class AnalysisPage(QWidget):
         rv = QVBoxLayout(panel)
         rv.setContentsMargins(14, 14, 14, 14)
         rv.setSpacing(8)
-        self._result_tabs = SegmentedStackWidget(panel)
+        self._result_tabs = SegmentedStackWidget(panel, fill_width=True)
         self._result_tabs.tabBar.setAddButtonVisible(False)
         self._result_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
 

@@ -305,8 +305,8 @@ class ExtensionConfigPanel(QWidget):
         self._config_help_area.setVisible(is_full or is_help_only)
         if is_help_only:
             self._config_help_area.setMinimumHeight(124)
-            self._config_help_area.setMaximumHeight(172)
-            self._config_help_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            self._config_help_area.setMaximumHeight(16777215)
+            self._config_help_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         else:
             self._config_help_area.setMinimumHeight(124)
             self._config_help_area.setMaximumHeight(172)
@@ -315,10 +315,10 @@ class ExtensionConfigPanel(QWidget):
         self._action_row_widget.setVisible(is_full)
         self._surface.setSizePolicy(
             QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum if is_help_only else QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
         )
         self._root_layout.setAlignment(self._surface, Qt.AlignmentFlag(0))
-        self._surface_layout.setStretchFactor(self._config_help_area, 0)
+        self._surface_layout.setStretchFactor(self._config_help_area, 1 if is_help_only else 0)
 
         for index, divider in enumerate(self._section_dividers):
             if is_full:
@@ -573,7 +573,7 @@ class ExtensionConfigPanel(QWidget):
         self._config_entry_visible = False
         self._set_entry_summary(None)
         if self._panel_mode == "help_only":
-            self._current_entry_label.setText("未选择扩展")
+            self._current_entry_label.setText("当前扩展: 未选择扩展")
             self._description_label.setText("在左侧选择扩展后，这里会显示扩展说明。")
         else:
             self._current_entry_label.setText("当前扩展: 当前页没有可用扩展")
@@ -634,7 +634,7 @@ class ExtensionConfigPanel(QWidget):
         info = extension_entry_display_info(entry, category_label=self._status_title)
         panel_title = info.get("panel_title") or "未选择扩展"
         self._extension_section_label.setText(info.get("category_label") or self._status_title or "扩展")
-        self._current_entry_label.setText(panel_title if self._panel_mode == "help_only" else f"当前扩展: {panel_title}")
+        self._current_entry_label.setText(f"当前扩展: {panel_title}")
         self._description_label.setText(
             info.get("description") or ("在左侧选择扩展后，这里会显示扩展说明。" if self._panel_mode == "help_only" else "暂无说明")
         )

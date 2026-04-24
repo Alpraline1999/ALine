@@ -2290,7 +2290,19 @@ class ProjectTreeWidget(QWidget):
         self._drag_source_item_key = None
 
     def _folder_path_label(self, folder_id: str) -> str:
-        return project_manager.format_tree_path_label(folder_id, separator="/", omit_root_group=True)
+        label = project_manager.format_tree_path_label(folder_id, separator="/", omit_root_group=True)
+        if label and label != folder_id:
+            return label
+        folder = project_manager.get_node_by_id(folder_id)
+        group_type = getattr(folder, "group_type", None) if folder is not None else None
+        fallback = _ROOT_GROUP_LABELS.get(str(group_type or ""), "")
+        if fallback:
+            return fallback
+        if folder is not None:
+            name = str(getattr(folder, "name", "") or "").strip()
+            if name:
+                return name
+        return folder_id
 
     def _current_item_key(self) -> Optional[str]:
         return self._item_key(self._tree.currentItem())

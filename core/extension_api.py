@@ -56,6 +56,8 @@ def normalize_extension_field_type(
 
     if explicit == "lines":
         return "lines"
+    if explicit == "line":
+        return "line"
     if explicit in {"bool", "boolean", "checkbox"}:
         return "boolean"
     if explicit in {"int", "integer", "spinbox"}:
@@ -1170,6 +1172,14 @@ def extension_entry_parameter_help_text(entry: Optional[Dict[str, Any]]) -> str:
                 lines_number = normalize_extension_lines_number(extra.get("lines_number"))
                 description = f"本扩展支持的曲线数量为 {extension_lines_support_text(lines_number)}。" if lines_number else "本扩展支持曲线输入。"
             lines.append(f"- lines: {description}")
+            continue
+        if field_type.lower() == "line":
+            description = str(field.get("description") or "").strip() or "从当前数据集中选择 1 条曲线作为内部参数。"
+            default = field.get("default")
+            parts = [f"{str(field.get('label') or key).strip() or key}（line，可选）", description]
+            if default not in (None, "", []):
+                parts.append(f"默认值: {default}")
+            lines.append("- " + "；".join(parts))
             continue
 
         label = str(field.get("label") or key).strip() or key
