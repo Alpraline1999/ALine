@@ -1,7 +1,55 @@
 from __future__ import annotations
 
+import cmath
+import math
+
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from extensions.processing.builtin_ops import VERSION, build_single_line_handler
+from extensions.processing.base_tools import VERSION, _resolve_sample_rate
+
+
+def _fft_handler(xs, ys, params, lines=None):
+    del lines
+    x_values = list(xs)
+    y_values = list(ys)
+    count = len(y_values)
+    if count < 2:
+        return x_values, y_values
+
+    options = dict(params or {})
+    output = options.get("output", "amplitude")
+    detrend = bool(options.get("detrend", True))
+    sample_rate = _resolve_sample_rate(x_values, options)
+    try:
+        import numpy as np
+
+        y_arr = np.asarray(y_values, dtype=float)
+        if detrend:
+            y_arr = y_arr - y_arr.mean()
+        step = 1.0 / sample_rate if sample_rate and sample_rate > 0 else 1.0
+        freq = np.fft.rfftfreq(count, d=step)
+        spectrum = np.fft.rfft(y_arr)
+        if output == "power":
+            values = (np.abs(spectrum) ** 2 / max(1, count)).tolist()
+        else:
+            values = (np.abs(spectrum) / max(1, count)).tolist()
+        return freq.tolist(), values
+    except ImportError:
+        step = 1.0 / sample_rate if sample_rate and sample_rate > 0 else 1.0
+        signal = list(y_values)
+        if detrend:
+            mean = sum(signal) / len(signal)
+            signal = [value - mean for value in signal]
+        half = count // 2
+        freq: list[float] = []
+        values: list[float] = []
+        for k in range(half + 1):
+            total = 0j
+            for index, sample in enumerate(signal):
+                total += sample * cmath.exp(-2j * math.pi * k * index / count)
+            amp = abs(total) / max(1, count)
+            freq.append(k / (count * step))
+            values.append(amp * amp if output == "power" else amp)
+        return freq, values
 
 
 def register_extensions(registry) -> None:
@@ -9,7 +57,7 @@ def register_extensions(registry) -> None:
         ProcessingExtension(
             type="fft",
             name="FFT",
-            handler=build_single_line_handler("fft"),
+            handler=_fft_handler,
             description="将时域或空间域信号转换为频域频谱。",
             version=VERSION,
             lines_number=(1, 1),

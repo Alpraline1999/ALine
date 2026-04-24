@@ -382,6 +382,17 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertTrue(root_children)
         self.assertTrue(all(not child.isExpanded() for child in root_children))
 
+    def test_root_group_folder_uses_category_label_instead_of_node_id(self):
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+        source_root.name = source_root.id
+
+        self.widget.refresh()
+
+        project_root = self.widget._tree.topLevelItem(0)
+        child_labels = [project_root.child(i).text(0) for i in range(project_root.childCount())]
+        self.assertIn("源文件", child_labels)
+
     def test_tree_sorts_siblings_with_folders_first_and_english_before_chinese(self):
         from models.schemas import DataFile, DataSeries
 
@@ -505,6 +516,22 @@ class TestProjectTreeWidget(unittest.TestCase):
 
 
 class TestNavigationStack(unittest.TestCase):
+
+    def setUp(self):
+        self._restore_assets = _patch_global_assets()
+        self.pm, self.p, self.df, self.s = _make_project("navigation_stack")
+        self._restore = _patch_pm(self.pm)
+        from ui.widgets.project_tree import ProjectTreeWidget
+
+        self.widget = ProjectTreeWidget()
+        self.widget.resize(320, 640)
+        self.widget.show()
+        QApplication.processEvents()
+
+    def tearDown(self):
+        self._restore()
+        self._restore_assets()
+        self.widget.deleteLater()
 
     def test_navigation_widgets_keep_content_width(self):
         from ui.widgets.navigation_stack import PivotStackWidget, SegmentedStackWidget
@@ -1156,7 +1183,8 @@ class TestNavigationStack(unittest.TestCase):
         actions = captured["actions"]
         visible_texts = [action.text() for action in actions if not action.isSeparator()]
         self.assertIn("seperator", captured["separator_marks"])
-        self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
+        self.assertNotIn("全部展开", visible_texts)
+        self.assertNotIn("全部折叠", visible_texts)
 
     def test_dataset_folder_context_menu_keeps_delete_above_prune_action(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
@@ -1165,6 +1193,10 @@ class TestNavigationStack(unittest.TestCase):
         self.assertIsNotNone(folder)
 
         self.widget.refresh()
+        root_item = self.widget._find_item(datasets_root.id)
+        self.assertIsNotNone(root_item)
+        root_item.setExpanded(True)
+        QApplication.processEvents()
         item = self.widget._find_item(folder.id)
         self.assertIsNotNone(item)
         pos = self.widget._tree.visualItemRect(item).center()
@@ -1179,7 +1211,8 @@ class TestNavigationStack(unittest.TestCase):
         visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
         self.assertEqual(visible_texts[:3], ["新建数据集", "导入数据文件...", "新建子文件夹"])
         self.assertLess(visible_texts.index("删除"), visible_texts.index("清理空子文件夹"))
-        self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
+        self.assertNotIn("全部展开", visible_texts)
+        self.assertNotIn("全部折叠", visible_texts)
 
     def test_images_folder_context_menu_exposes_import_image_action(self):
         images_root = self.pm._find_folder_by_group_type("images")
@@ -1443,7 +1476,8 @@ class TestNavigationStack(unittest.TestCase):
             visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
             self.assertEqual(visible_texts[:2], ["导入到数据集", "导入到数字化"])
             self.assertLess(visible_texts.index("删除"), visible_texts.index("移动到..."))
-            self.assertEqual(visible_texts[-2:], ["全部展开", "全部折叠"])
+            self.assertNotIn("全部展开", visible_texts)
+            self.assertNotIn("全部折叠", visible_texts)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2339,8 +2373,12 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertFalse(panel._description_label.isHidden())
         self.assertFalse(panel._config_help_area.isHidden())
         self.assertEqual(panel._extension_section_label.text(), "自定义扩展")
+        self.assertEqual(panel._current_entry_label.text(), "未选择扩展")
+        self.assertEqual(panel._description_label.text(), "在左侧选择扩展后，这里会显示扩展说明。")
         self.assertEqual(panel._parameter_section_label.text(), "参数说明")
-        self.assertLess(panel._config_help_area.minimumHeight(), 124)
+        self.assertEqual(panel._config_help_area.minimumHeight(), 124)
+        self.assertEqual(panel._config_help_area.maximumHeight(), 172)
+        self.assertEqual(panel._current_entry_label.styleSheet(), "")
         self.assertIsInstance(panel._surface, CardWidget)
         self.assertEqual(panel._surface.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Maximum)
         panel.deleteLater()
@@ -2436,6 +2474,9 @@ class TestExtensionOptionsForm(unittest.TestCase):
         host = QWidget()
         dialog = _LineSelectionDialog("输入曲线", ["A", "B", "C", "D"], selected_indices=[2, 4], lines_number=(2, -1), parent=host)
         try:
+            self.assertEqual(dialog._available_title_label.text(), "候选区")
+            self.assertEqual(dialog._selected_title_label.text(), "已选中")
+
             dialog._available_list.setCurrentRow(0)
             dialog._move_to_selected()
             self.assertEqual(dialog.value(), [2, 4, 1])
@@ -2443,6 +2484,7 @@ class TestExtensionOptionsForm(unittest.TestCase):
             dialog._selected_list.setCurrentRow(2)
             dialog._move_selected_up()
             self.assertEqual(dialog.value(), [2, 1, 4])
+            self.assertEqual(dialog._selected_list.currentItem().data(Qt.ItemDataRole.UserRole), 1)
 
             dialog._selected_list.setCurrentRow(1)
             dialog._move_to_available()
@@ -2900,7 +2942,7 @@ class TestDataPage(unittest.TestCase):
 
             self.assertFalse(self.page._extension_preview_panel.isHidden())
             self.assertTrue(self.page._summary_footer.isHidden())
-            self.assertEqual(self.page._extension_field_help_area.maximumHeight(), 202)
+            self.assertEqual(self.page._extension_field_help_area.maximumHeight(), 324)
             self.assertEqual(self.page._extension_detail_label.text(), "处理扩展·数据页分组预览")
             self.assertIn("ID: data_page_group_preview", self.page._extension_detail_meta_label.text())
             self.assertIn("描述: 用于验证扩展节点预览说明。", self.page._extension_detail_meta_label.text())
@@ -3673,6 +3715,26 @@ class TestDataPage(unittest.TestCase):
         self.assertTrue(self.page._btn_apply_name.isEnabled())
         self.assertTrue(self.page._btn_delete_node.isEnabled())
         self.assertFalse(hasattr(self.page, "_btn_copy_to_data_file"))
+
+    def test_management_target_label_opens_node_detail_dialog(self):
+        node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
+        self.assertIsNotNone(node)
+
+        self.page.resize(1280, 820)
+        self.page.show()
+        self.page.on_tree_node_selected("data_file", node.id)
+        QApplication.processEvents()
+
+        with mock.patch("ui.pages.data_page._NodeDetailDialog") as dialog_cls:
+            dialog = dialog_cls.return_value
+            QTest.mouseClick(self.page._manage_target_label, Qt.MouseButton.LeftButton)
+            QApplication.processEvents()
+
+        dialog_cls.assert_called_once()
+        self.assertIn("节点信息", dialog_cls.call_args.args[0])
+        self.assertIn("数据文件", dialog_cls.call_args.args[1])
+        self.assertIn("系列数量: 1", dialog_cls.call_args.args[1])
+        dialog.exec.assert_called_once()
 
     def test_management_primary_buttons_use_new_labels_and_export_sits_after_delete(self):
         self.page.resize(1280, 820)
@@ -6012,6 +6074,29 @@ class TestProcessPage(unittest.TestCase):
 
         self.assertEqual(params["lines_list"], [1, 3])
 
+    def test_process_page_choose_pipeline_lines_uses_dialog_result(self):
+        from unittest import mock
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other, third])
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other.id)
+        self.page.on_tree_node_activated("series", third.id)
+        self.page._add_op_combo.setCurrentIndex(self.page._processing_op_types.index("pairwise_compute"))
+        self.page._add_op()
+
+        with mock.patch(
+            "ui.widgets.extension_options_form._LineSelectionDialog.get_indices",
+            return_value=([2, 3], True),
+        ) as patched:
+            self.page._choose_pipeline_lines()
+
+        patched.assert_called_once()
+        self.assertEqual(self.page._pipeline_selected_node_ids, [other.id, third.id])
+
     def test_process_page_load_pipeline_restores_extension_config_id(self):
         from core.extension_api import ProcessingExtension, extension_registry
         from core.global_assets import global_assets
@@ -7492,9 +7577,38 @@ class TestMainWindow(unittest.TestCase):
         self.assertIs(self.win.stackedWidget.currentWidget(), self.win.digitize_page)
         import_mock.assert_called_once_with(str(source_path.resolve()), name=node.name)
 
-    def test_tree_panel_does_not_expose_expand_and_collapse_buttons(self):
+    def test_tree_panel_exposes_single_expand_toggle_button(self):
+        self.assertTrue(hasattr(self.win._tree_panel, "tree_expand_toggle_btn"))
         self.assertFalse(hasattr(self.win._tree_panel, "tree_expand_btn"))
         self.assertFalse(hasattr(self.win._tree_panel, "tree_collapse_btn"))
+
+    def test_tree_panel_expand_toggle_button_sits_left_of_manage_button(self):
+        self.win.resize(1320, 900)
+        self.win.show()
+        QApplication.processEvents()
+
+        right_group = self.win._tree_panel._toolbar_right_group
+        self.assertLess(
+            right_group.indexOf(self.win._tree_panel.tree_expand_toggle_btn),
+            right_group.indexOf(self.win._tree_panel.tree_manage_btn),
+        )
+
+    def test_tree_panel_expand_toggle_button_switches_tooltip_after_click(self):
+        self.win.resize(1320, 900)
+        self.win.show()
+        self.win._tree_panel.tree.refresh()
+        QApplication.processEvents()
+
+        button = self.win._tree_panel.tree_expand_toggle_btn
+
+        self.assertEqual(button.toolTip(), "全部展开")
+        button.click()
+        QApplication.processEvents()
+        self.assertEqual(button.toolTip(), "全部折叠")
+
+        button.click()
+        QApplication.processEvents()
+        self.assertEqual(button.toolTip(), "全部展开")
 
     def test_navigation_has_tree_toggle_button(self):
         self.assertIsNotNone(self.win._tree_toggle_nav_btn)

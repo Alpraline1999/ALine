@@ -293,6 +293,7 @@ class ExtensionConfigPanel(QWidget):
         self._extension_section_label.setVisible(is_full or is_help_only)
         self._extension_section_label.setText(self._status_title)
         self._current_entry_label.setVisible(is_help_only)
+        self._current_entry_label.setStyleSheet("" if is_help_only else card_title_style_sheet(font_size=14))
         self._selector_row_widget.setVisible(not is_help_only)
         self._description_section_label.setVisible(is_help_only)
         self._description_label.setVisible(is_full or is_help_only)
@@ -303,9 +304,9 @@ class ExtensionConfigPanel(QWidget):
         self._usage_hint_label.setVisible(is_full)
         self._config_help_area.setVisible(is_full or is_help_only)
         if is_help_only:
-            self._config_help_area.setMinimumHeight(0)
-            self._config_help_area.setMaximumHeight(16777215)
-            self._config_help_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+            self._config_help_area.setMinimumHeight(124)
+            self._config_help_area.setMaximumHeight(172)
+            self._config_help_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         else:
             self._config_help_area.setMinimumHeight(124)
             self._config_help_area.setMaximumHeight(172)
@@ -317,7 +318,7 @@ class ExtensionConfigPanel(QWidget):
             QSizePolicy.Policy.Maximum if is_help_only else QSizePolicy.Policy.Expanding,
         )
         self._root_layout.setAlignment(self._surface, Qt.AlignmentFlag(0))
-        self._surface_layout.setStretchFactor(self._config_help_area, 1 if is_help_only else 0)
+        self._surface_layout.setStretchFactor(self._config_help_area, 0)
 
         for index, divider in enumerate(self._section_dividers):
             if is_full:
@@ -571,8 +572,12 @@ class ExtensionConfigPanel(QWidget):
     def _set_empty_state(self) -> None:
         self._config_entry_visible = False
         self._set_entry_summary(None)
-        self._current_entry_label.setText("当前扩展: 当前页没有可用扩展")
-        self._description_label.setText("当前页没有可用扩展")
+        if self._panel_mode == "help_only":
+            self._current_entry_label.setText("未选择扩展")
+            self._description_label.setText("在左侧选择扩展后，这里会显示扩展说明。")
+        else:
+            self._current_entry_label.setText("当前扩展: 当前页没有可用扩展")
+            self._description_label.setText("当前页没有可用扩展")
         self._config_help_label.setText("保留 {} 使用默认参数。")
         self._editor.set_fields([], {})
         self._editor.setEnabled(False)
@@ -629,8 +634,10 @@ class ExtensionConfigPanel(QWidget):
         info = extension_entry_display_info(entry, category_label=self._status_title)
         panel_title = info.get("panel_title") or "未选择扩展"
         self._extension_section_label.setText(info.get("category_label") or self._status_title or "扩展")
-        self._current_entry_label.setText(f"当前扩展: {panel_title}")
-        self._description_label.setText(info.get("description") or "暂无说明")
+        self._current_entry_label.setText(panel_title if self._panel_mode == "help_only" else f"当前扩展: {panel_title}")
+        self._description_label.setText(
+            info.get("description") or ("在左侧选择扩展后，这里会显示扩展说明。" if self._panel_mode == "help_only" else "暂无说明")
+        )
 
     def _on_selection_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._entries):

@@ -234,6 +234,8 @@ class _LineSelectionDialog(MessageBoxBase):
         *,
         selected_indices: List[int],
         lines_number: Tuple[int, int],
+        available_label: str = "候选区",
+        selected_label: str = "已选中",
         parent=None,
     ):
         super().__init__(parent)
@@ -242,23 +244,7 @@ class _LineSelectionDialog(MessageBoxBase):
         self._title_label = SubtitleLabel(title, self.widget)
         self.viewLayout.addWidget(self._title_label)
 
-        support_text = extension_lines_support_text(self._lines_number)
-        hint = BodyLabel(f"本扩展支持的曲线数量为 {support_text}。请从左侧挑选要传给扩展的曲线，并在右侧调整输入顺序。", self.widget)
-        hint.setWordWrap(True)
-        self.viewLayout.addWidget(hint)
-
-        lower, upper = self._lines_number
-        if upper == -1 and bool(self._candidates):
-            btn_row = QHBoxLayout()
-            self._select_all_btn = PushButton("全选", self.widget)
-            self._clear_btn = PushButton("清空", self.widget)
-            apply_button_metrics(self._select_all_btn, self._clear_btn, min_width=0, height=WORKBENCH_BUTTON_HEIGHT)
-            self._select_all_btn.clicked.connect(self._select_all)
-            self._clear_btn.clicked.connect(self._clear)
-            btn_row.addWidget(self._select_all_btn)
-            btn_row.addWidget(self._clear_btn)
-            btn_row.addStretch(1)
-            self.viewLayout.addLayout(btn_row)
+        _lower, upper = self._lines_number
 
         self._status = CaptionLabel("", self.widget)
         self._status.setWordWrap(True)
@@ -272,7 +258,8 @@ class _LineSelectionDialog(MessageBoxBase):
         left_column = QVBoxLayout()
         left_column.setContentsMargins(0, 0, 0, 0)
         left_column.setSpacing(6)
-        left_column.addWidget(BodyLabel("已选择列表中的曲线", self.widget))
+        self._available_title_label = BodyLabel(available_label, self.widget)
+        left_column.addWidget(self._available_title_label)
         self._available_list = ListWidget(self.widget)
         self._available_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._available_list.setMinimumHeight(236)
@@ -284,21 +271,37 @@ class _LineSelectionDialog(MessageBoxBase):
         center_column = QVBoxLayout()
         center_column.setContentsMargins(0, 24, 0, 0)
         center_column.setSpacing(6)
+        self._select_all_btn = PushButton("全选", self.widget)
         self._move_right_btn = PushButton("添加 →", self.widget)
         self._move_left_btn = PushButton("← 移除", self.widget)
-        apply_button_metrics(self._move_right_btn, self._move_left_btn, min_width=0, height=WORKBENCH_BUTTON_HEIGHT)
+        self._clear_btn = PushButton("清空", self.widget)
+        apply_button_metrics(
+            self._select_all_btn,
+            self._move_right_btn,
+            self._move_left_btn,
+            self._clear_btn,
+            min_width=0,
+            height=WORKBENCH_BUTTON_HEIGHT,
+        )
+        self._select_all_btn.clicked.connect(self._select_all)
         self._move_right_btn.clicked.connect(self._move_to_selected)
         self._move_left_btn.clicked.connect(self._move_to_available)
+        self._clear_btn.clicked.connect(self._clear)
+        self._select_all_btn.setVisible(upper == -1 and bool(self._candidates))
+        self._clear_btn.setVisible(upper == -1 and bool(self._candidates))
         center_column.addStretch(1)
+        center_column.addWidget(self._select_all_btn)
         center_column.addWidget(self._move_right_btn)
         center_column.addWidget(self._move_left_btn)
+        center_column.addWidget(self._clear_btn)
         center_column.addStretch(1)
         lists_row.addLayout(center_column)
 
         right_column = QVBoxLayout()
         right_column.setContentsMargins(0, 0, 0, 0)
         right_column.setSpacing(6)
-        right_column.addWidget(BodyLabel("递交给扩展的曲线", self.widget))
+        self._selected_title_label = BodyLabel(selected_label, self.widget)
+        right_column.addWidget(self._selected_title_label)
         right_list_row = QHBoxLayout()
         right_list_row.setContentsMargins(0, 0, 0, 0)
         right_list_row.setSpacing(6)
@@ -359,6 +362,23 @@ class _LineSelectionDialog(MessageBoxBase):
         self._populate_list(self._selected_list, self._selected_indices)
 
     @staticmethod
+    def _restore_list_selection(widget: ListWidget, selected_values: List[int], current_value: Optional[int]) -> None:
+        selected_set = set(selected_values)
+        current_item = None
+        for row in range(widget.count()):
+            item = widget.item(row)
+            raw_value = item.data(Qt.ItemDataRole.UserRole)
+            try:
+                numeric = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            item.setSelected(numeric in selected_set)
+            if current_value is not None and numeric == current_value:
+                current_item = item
+        if current_item is not None:
+            widget.setCurrentItem(current_item)
+
+    @staticmethod
     def _selected_index_values(widget: ListWidget) -> List[int]:
         values: List[int] = []
         for item in widget.selectedItems():
@@ -415,26 +435,36 @@ class _LineSelectionDialog(MessageBoxBase):
         chosen = set(self._selected_index_values(self._selected_list))
         if not chosen:
             return
+        current_item = self._selected_list.currentItem()
+        current_value = None
+        if current_item is not None:
+            try:
+                current_value = int(current_item.data(Qt.ItemDataRole.UserRole))
+            except (TypeError, ValueError):
+                current_value = None
         for index in range(1, len(self._selected_indices)):
             if self._selected_indices[index] in chosen and self._selected_indices[index - 1] not in chosen:
                 self._selected_indices[index - 1], self._selected_indices[index] = self._selected_indices[index], self._selected_indices[index - 1]
         self._rebuild_lists()
-        for row, index_value in enumerate(self._selected_indices):
-            if index_value in chosen:
-                self._selected_list.item(row).setSelected(True)
+        self._restore_list_selection(self._selected_list, list(chosen), current_value)
         self._refresh_button_states()
 
     def _move_selected_down(self) -> None:
         chosen = set(self._selected_index_values(self._selected_list))
         if not chosen:
             return
+        current_item = self._selected_list.currentItem()
+        current_value = None
+        if current_item is not None:
+            try:
+                current_value = int(current_item.data(Qt.ItemDataRole.UserRole))
+            except (TypeError, ValueError):
+                current_value = None
         for index in range(len(self._selected_indices) - 2, -1, -1):
             if self._selected_indices[index] in chosen and self._selected_indices[index + 1] not in chosen:
                 self._selected_indices[index + 1], self._selected_indices[index] = self._selected_indices[index], self._selected_indices[index + 1]
         self._rebuild_lists()
-        for row, index_value in enumerate(self._selected_indices):
-            if index_value in chosen:
-                self._selected_list.item(row).setSelected(True)
+        self._restore_list_selection(self._selected_list, list(chosen), current_value)
         self._refresh_button_states()
 
     def _refresh_button_states(self) -> None:
@@ -471,8 +501,18 @@ class _LineSelectionDialog(MessageBoxBase):
         *,
         selected_indices: List[int],
         lines_number: Tuple[int, int],
+        available_label: str = "候选区",
+        selected_label: str = "已选中",
     ) -> tuple[List[int], bool]:
-        dialog = cls(title, candidates, selected_indices=selected_indices, lines_number=lines_number, parent=parent)
+        dialog = cls(
+            title,
+            candidates,
+            selected_indices=selected_indices,
+            lines_number=lines_number,
+            available_label=available_label,
+            selected_label=selected_label,
+            parent=parent,
+        )
         accepted = bool(dialog.exec())
         return dialog.value(), accepted
 

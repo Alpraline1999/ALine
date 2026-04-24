@@ -1,7 +1,42 @@
 from __future__ import annotations
 
+import math
+
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from extensions.processing.builtin_ops import VERSION, build_single_line_handler
+from extensions.processing.base_tools import VERSION
+
+
+def _normalize_handler(xs, ys, params, lines=None):
+    del lines
+    options = dict(params or {})
+    mode = options.get("mode", "minmax")
+    if not ys:
+        return list(xs), list(ys)
+    try:
+        import numpy as np
+
+        ay = np.asarray(ys, dtype=float)
+        if mode == "minmax":
+            mn, mx = ay.min(), ay.max()
+            normalized = ((ay - mn) / (mx - mn or 1.0)).tolist()
+        elif mode == "zscore":
+            std = ay.std() or 1.0
+            normalized = ((ay - ay.mean()) / std).tolist()
+        else:
+            normalized = list(ys)
+    except ImportError:
+        count = len(ys)
+        if mode == "minmax":
+            mn, mx = min(ys), max(ys)
+            rng = mx - mn or 1.0
+            normalized = [(value - mn) / rng for value in ys]
+        elif mode == "zscore":
+            mean = sum(ys) / count
+            std = math.sqrt(sum((value - mean) ** 2 for value in ys) / count) or 1.0
+            normalized = [(value - mean) / std for value in ys]
+        else:
+            normalized = list(ys)
+    return list(xs), normalized
 
 
 def register_extensions(registry) -> None:
@@ -9,7 +44,7 @@ def register_extensions(registry) -> None:
         ProcessingExtension(
             type="normalize",
             name="归一化",
-            handler=build_single_line_handler("normalize"),
+            handler=_normalize_handler,
             description="按 min-max 或 z-score 归一化 Y 序列。",
             version=VERSION,
             lines_number=(1, 1),

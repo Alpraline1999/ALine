@@ -71,6 +71,19 @@ _ROOT_GROUP_ORDER = {
     "tool_set": 5,
 }
 
+_ROOT_GROUP_LABELS = {
+    "source_files": "源文件",
+    "datasets": "数据集",
+    "dataset_set": "数据集",
+    "pictures": "图片集",
+    "picture_set": "图片集",
+    "analysis_result_group": "分析结果",
+    "images": "数字化",
+    "image_set": "数字化",
+    "tools": "工具",
+    "tool_set": "工具",
+}
+
 
 def _sort_name_bucket(text: str) -> int:
     clean = str(text or "").strip()
@@ -312,6 +325,7 @@ class ProjectTreeWidget(QWidget):
     node_selected    = Signal(str, str)
     node_activated   = Signal(str, str)
     project_modified = Signal()
+    refreshed = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -370,6 +384,7 @@ class ProjectTreeWidget(QWidget):
             self._restore_expansion_state(expansion_state)
             self._restore_selection(selected_key)
             self._tree.blockSignals(False)
+            self.refreshed.emit()
             return
 
         for project in project_manager.projects:
@@ -396,12 +411,26 @@ class ProjectTreeWidget(QWidget):
         self._tree.updateGeometry()
         if self._name_display_mode == "wrap":
             QTimer.singleShot(0, self._update_wrapped_item_size_hints)
+        self.refreshed.emit()
 
     def expand_all_items(self) -> None:
         self._expand_all_items()
 
     def collapse_all_items(self) -> None:
         self._collapse_all_items()
+
+    def all_expandable_items_expanded(self) -> bool:
+        root = self._tree.invisibleRootItem()
+        stack = [root.child(index) for index in range(root.childCount())]
+        has_expandable_item = False
+        while stack:
+            item = stack.pop()
+            if item.childCount() > 0:
+                has_expandable_item = True
+                if not item.isExpanded():
+                    return False
+                stack.extend(item.child(index) for index in range(item.childCount()))
+        return has_expandable_item
 
     def select_node(self, node_id: str) -> None:
         """程序化选中节点（不触发 node_selected 信号）。"""
@@ -874,13 +903,16 @@ class ProjectTreeWidget(QWidget):
         self.node_activated.emit("global_extension_config", saved.id)
 
     def _make_item(self, node, project_id: str) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([node.name])
+        group_type = self._canonical_group_type(getattr(node, "group_type", None))
+        label = str(getattr(node, "name", "") or "")
+        if getattr(node, "kind", None) == "folder" and getattr(node, "parent_id", None) is None:
+            label = _ROOT_GROUP_LABELS.get(group_type or "", label)
+        item = QTreeWidgetItem([label])
         item.setData(0, _ROLE, (node.kind, node.id))
         item.setData(0, _PROJECT_ROLE, project_id)
-        item.setToolTip(0, node.name)
+        item.setToolTip(0, label)
 
         # 系统文件夹不可内联编辑
-        group_type = self._canonical_group_type(getattr(node, "group_type", None))
         is_protected = self._is_protected_folder(node)
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if node.kind == "folder":
@@ -1865,8 +1897,6 @@ class ProjectTreeWidget(QWidget):
         if separated and menu.actions():
             menu.addSeparator()
         self._add_menu_action(menu, FIF.SYNC, "清理空文件夹", self._cmd_prune_empty_folders)
-        self._add_menu_action(menu, FIF.ZOOM_IN, "全部展开", self._expand_all_items)
-        self._add_menu_action(menu, FIF.ZOOM_OUT, "全部折叠", self._collapse_all_items)
 
     def _expand_all_items(self) -> None:
         self._tree.expandAll()

@@ -293,16 +293,6 @@ class ProcessPage(QWidget):
         mv.addWidget(self._selected_input_list)
         mv.addWidget(self._selected_input_state_label)
 
-        self._pipeline_lines_button = PushButton(FIF.LINK, "选择曲线", self)
-        apply_button_metrics(self._pipeline_lines_button, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        self._pipeline_lines_button.clicked.connect(self._choose_pipeline_lines)
-        mv.addWidget(self._pipeline_lines_button)
-
-        self._pipeline_lines_summary_label = CaptionLabel("当前扩展输入: 跟随当前选中项", self)
-        self._pipeline_lines_summary_label.setWordWrap(True)
-        self._pipeline_lines_summary_label.setStyleSheet(f"color: {secondary_color()};")
-        mv.addWidget(self._pipeline_lines_summary_label)
-
         selected_row = QHBoxLayout()
         self._btn_clear_inputs = PushButton(FIF.DELETE, "清除", self)
         apply_button_metrics(self._btn_clear_inputs, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
@@ -327,6 +317,11 @@ class ProcessPage(QWidget):
 
         mv.addWidget(make_hsep())
         mv.addWidget(make_section_label("操作链"))
+
+        self._pipeline_lines_button = PushButton(FIF.LINK, "选择曲线", self)
+        apply_button_metrics(self._pipeline_lines_button, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        self._pipeline_lines_button.clicked.connect(self._choose_pipeline_lines)
+        mv.addWidget(self._pipeline_lines_button)
 
         template_row = QHBoxLayout()
         self._pipeline_combo = ComboBox(self)
@@ -633,18 +628,18 @@ class ProcessPage(QWidget):
         requires_multiline_selection = upper == -1 or upper > 1
         self._pipeline_lines_button.setEnabled(requires_multiline_selection and bool(self._selected_inputs))
         if not requires_multiline_selection:
-            self._pipeline_lines_summary_label.setText("当前扩展输入: 跟随当前选中项")
+            self._pipeline_lines_button.setToolTip("当前操作链按已选择列表中的当前选中项运行")
             return
         labels = self._pipeline_selected_labels()
         if labels:
             preview = "；".join(labels[:3]) + (" …" if len(labels) > 3 else "")
-            self._pipeline_lines_summary_label.setText(f"当前扩展输入: {preview}")
+            self._pipeline_lines_button.setToolTip(f"当前已选曲线: {preview}")
             return
         if not self._selected_inputs:
-            self._pipeline_lines_summary_label.setText("当前扩展输入: 暂无可选曲线")
+            self._pipeline_lines_button.setToolTip("当前没有可选曲线")
             return
         range_text = f"{lower} 条以上" if upper == -1 else (f"{lower}-{upper} 条" if lower != upper else f"{lower} 条")
-        self._pipeline_lines_summary_label.setText(f"当前扩展输入: 未选择（需要 {range_text}）")
+        self._pipeline_lines_button.setToolTip(f"当前操作链需要选择 {range_text} 曲线")
 
     def _choose_pipeline_lines(self) -> None:
         definition = self._current_pipeline_definition()
@@ -657,16 +652,16 @@ class ProcessPage(QWidget):
         from ui.widgets.extension_options_form import _LineSelectionDialog
 
         selected = self._pipeline_lines_list()
-        chosen = _LineSelectionDialog.get_indices(
+        chosen, accepted = _LineSelectionDialog.get_indices(
             self,
+            "选择曲线",
             labels,
-            selected,
+            selected_indices=selected,
             lines_number=definition.lines_number,
-            title="选择曲线",
-            selected_label="递交给 Pipeline 的曲线",
-            available_label="已选择列表中的曲线",
+            selected_label="已选中",
+            available_label="候选区",
         )
-        if chosen is None:
+        if not accepted:
             return
         self._pipeline_selected_node_ids = [
             self._selected_inputs[index - 1]["node_id"]

@@ -60,6 +60,8 @@ _EXTENSION_PANEL_SHOW_ICON = getattr(FIF, "VIEW", FIF.SEARCH)
 _EXTENSION_PANEL_HIDE_ICON = getattr(FIF, "HIDE", FIF.CANCEL)
 _DATA_PAGE_NAV_ICON = getattr(FIF, "APPLICATION", FIF.FOLDER)
 _DIGITIZE_PAGE_NAV_ICON = getattr(FIF, "LABEL", FIF.EDIT)
+_TREE_EXPAND_ALL_ICON = getattr(FIF, "CHEVRON_DOWN_MED", getattr(FIF, "DOWN", FIF.ZOOM_IN))
+_TREE_COLLAPSE_ALL_ICON = getattr(FIF, "CHEVRON_RIGHT_MED", getattr(FIF, "RIGHT_ARROW", FIF.ZOOM_OUT))
 
 
 class _TreeSelectablePage(Protocol):
@@ -133,6 +135,11 @@ class _SharedTreePanel(QWidget):
         right_group = QHBoxLayout()
         right_group.setContentsMargins(0, 0, 0, 0)
         right_group.setSpacing(2)
+        self._toolbar_right_group = right_group
+
+        self.tree_expand_toggle_btn = ToolButton(_TREE_EXPAND_ALL_ICON, self)
+        self.tree_expand_toggle_btn.setToolTip("全部展开")
+        right_group.addWidget(self.tree_expand_toggle_btn)
 
         self.tree_manage_btn = ToolButton(FIF.ALIGNMENT, self)
         self.tree_manage_btn.setToolTip("项目树管理")
@@ -165,17 +172,43 @@ class _SharedTreePanel(QWidget):
         self.tree = ProjectTreeWidget(self)
         layout.addWidget(self.tree)
 
+        self.tree_expand_toggle_btn.clicked.connect(self._toggle_tree_expansion)
+        self.tree._tree.itemExpanded.connect(self._sync_tree_expand_toggle_button)
+        self.tree._tree.itemCollapsed.connect(self._sync_tree_expand_toggle_button)
+        self.tree.refreshed.connect(self._sync_tree_expand_toggle_button)
+
         # 安装 Fluent 风格 Tooltip
         for btn in [self.new_project_btn, self.open_project_btn, self.save_project_btn,
-            self.close_project_btn, self.tree_manage_btn, self.add_dataset_btn, self.import_file_btn,
+            self.close_project_btn, self.tree_expand_toggle_btn, self.tree_manage_btn,
+            self.add_dataset_btn, self.import_file_btn,
             self.extension_toggle_btn,
                     self.ai_toggle_btn]:
             btn.setFixedSize(32, 32)
             btn.installEventFilter(ToolTipFilter(btn, 500, ToolTipPosition.BOTTOM))
 
+        self._sync_tree_expand_toggle_button()
+
     def set_data_actions_visible(self, visible: bool) -> None:
         """保持兼容接口 — 数据操作按钮在所有业务页都始终可见，此方法保留但不作任何更改。"""
         pass
+
+    @staticmethod
+    def _tool_button_icon(icon_source):
+        return icon_source.icon() if hasattr(icon_source, "icon") else icon_source
+
+    def _sync_tree_expand_toggle_button(self, *_args) -> None:
+        expanded = self.tree.all_expandable_items_expanded()
+        icon_source = _TREE_COLLAPSE_ALL_ICON if expanded else _TREE_EXPAND_ALL_ICON
+        tooltip = "全部折叠" if expanded else "全部展开"
+        self.tree_expand_toggle_btn.setIcon(self._tool_button_icon(icon_source))
+        self.tree_expand_toggle_btn.setToolTip(tooltip)
+
+    def _toggle_tree_expansion(self) -> None:
+        if self.tree.all_expandable_items_expanded():
+            self.tree.collapse_all_items()
+        else:
+            self.tree.expand_all_items()
+        self._sync_tree_expand_toggle_button()
 
 
 class MainWindow(FluentWindow):

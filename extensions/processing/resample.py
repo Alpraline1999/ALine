@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from extensions.processing.builtin_ops import VERSION, build_single_line_handler
+from extensions.processing.base_tools import VERSION, resample_xy
+
+
+def resample_handler(xs, ys, params, lines=None):
+    return resample_xy(list(xs), list(ys), dict(params or {}), lines=list(lines or []))
 
 
 def register_extensions(registry) -> None:
@@ -9,7 +13,7 @@ def register_extensions(registry) -> None:
         ProcessingExtension(
             type="resample",
             name="重采样",
-            handler=build_single_line_handler("resample"),
+            handler=resample_handler,
             description="支持按点数或间距重采样，便于多曲线对齐。",
             version=VERSION,
             lines_number=(1, 1),

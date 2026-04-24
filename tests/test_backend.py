@@ -795,9 +795,9 @@ class TestDataEngine(unittest.TestCase):
         self.assertEqual(ny, [])
 
     def test_crop_extension_ignores_empty_bounds(self):
-        from extensions.processing.builtin_ops import build_single_line_handler
+        from extensions.processing.crop import crop_handler
 
-        handler = build_single_line_handler("crop")
+        handler = crop_handler
         xs = [0.0, 1.0, 2.0, 3.0]
         ys = [2.0, 3.0, 4.0, 5.0]
 

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from extensions.processing.builtin_ops import VERSION, build_single_line_handler
+from extensions.processing.base_tools import VERSION, transform_xy
+
+
+def transform_handler(xs, ys, params, lines=None):
+    del lines
+    return transform_xy(list(xs), list(ys), dict(params or {}))
 
 
 def register_extensions(registry) -> None:
@@ -9,7 +14,7 @@ def register_extensions(registry) -> None:
         ProcessingExtension(
             type="transform",
             name="数学变换",
-            handler=build_single_line_handler("transform"),
+            handler=transform_handler,
             description="用表达式批量变换 X/Y 数据。",
             version=VERSION,
             lines_number=(1, 1),

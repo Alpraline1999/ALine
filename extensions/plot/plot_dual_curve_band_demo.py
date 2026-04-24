@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.processing.builtin_ops import align_lines_to_common_x
+from extensions.processing.base_tools import align_lines_to_common_x
 
 
 def _as_float(value, default):

@@ -27,7 +27,8 @@ from qfluentwidgets import (
     TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit, RoundMenu, TableWidget, HyperlinkButton,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit, TabCloseButtonDisplayMode,
-    TabWidget, TeachingTipTailPosition, ToolTip, ToolTipFilter, ToolTipPosition, SmoothScrollArea, isDarkTheme,
+    TabWidget, TeachingTipTailPosition, ToolTip, ToolTipFilter, ToolTipPosition,
+    SmoothScrollArea, SubtitleLabel, isDarkTheme,
 )
 
 from ui.theme import (
@@ -83,6 +84,23 @@ _TYPE_ANALYSIS = "analysis"
 _SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 _TEXT_PREVIEW_SUFFIXES = {".csv", ".txt", ".dat", ".tsv", ".json", ".md", ".log", ".py", ".yaml", ".yml", ".ini"}
 _TABULAR_PREVIEW_SUFFIXES = {".xlsx", ".xls", ".npy", ".npz"}
+_EXTENSION_FIELD_HELP_COMPACT_HEIGHT = 202
+_EXTENSION_FIELD_HELP_EXPANDED_HEIGHT = math.ceil(_EXTENSION_FIELD_HELP_COMPACT_HEIGHT * 1.6)
+_FOLDER_GROUP_LABELS = {
+    "source_files": "源文件",
+    "datasets": "数据集",
+    "images": "数字化",
+    "pictures": "图片集",
+    "tools": "工具",
+    "pipeline_group": "Pipelines",
+    "figure_template_group": "绘图模板",
+    "report_template_group": "报告模板",
+    "analysis_result_group": "分析结果",
+    "ai_group": "AI 工具",
+    "prompt_group": "Prompts",
+    "skill_group": "Skills",
+    "agent_group": "Agents",
+}
 
 
 @dataclass
@@ -101,6 +119,46 @@ class _NodePreviewState:
 class _PendingImportQueueState:
     paths: list[str] = field(default_factory=list)
     names: dict[str, str] = field(default_factory=dict)
+
+
+class _TextActionLabel(CaptionLabel):
+    clicked = Signal()
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setText(text)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self.isEnabled() and event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if self.isEnabled() and event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _NodeDetailDialog(MessageBoxBase):
+    def __init__(self, title: str, detail_text: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._title_label = SubtitleLabel(title, self.widget)
+        self.viewLayout.addWidget(self._title_label)
+
+        self._detail_edit = PlainTextEdit(self.widget)
+        self._detail_edit.setReadOnly(True)
+        self._detail_edit.setPlainText(detail_text)
+        self._detail_edit.setMinimumSize(620, 420)
+        self.viewLayout.addWidget(self._detail_edit)
+
+        self.widget.setMinimumWidth(660)
+        self.yesButton.setText("关闭")
+        self.cancelButton.hide()
 
 
 class DataPage(QWidget):
@@ -418,16 +476,17 @@ class DataPage(QWidget):
         manage_layout.setSpacing(10)
 
         manage_layout.addWidget(make_section_label("节点管理"))
-        self._manage_target_label = CaptionLabel("[未选择] 节点", panel)
+        self._manage_target_label = _TextActionLabel("[未选择] 节点", panel)
         self._manage_target_label.setWordWrap(True)
-        self._manage_target_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._manage_target_label.clicked.connect(self._show_current_node_details)
         manage_layout.addWidget(self._manage_target_label)
 
         self._manage_type_label = CaptionLabel("", panel)
         self._manage_type_label.setWordWrap(True)
         self._manage_type_label.hide()
         manage_layout.addWidget(self._manage_type_label)
-        self._apply_muted_summary_label_style(self._manage_target_label, self._manage_type_label)
+        self._apply_manage_target_action_style(False)
+        self._apply_muted_summary_label_style(self._manage_type_label)
 
         self._manage_help_label = CaptionLabel("数据文件、系列、图像和源文件会按当前节点能力开放管理动作。", panel)
         self._manage_help_label.setWordWrap(True)
@@ -706,8 +765,8 @@ class DataPage(QWidget):
         self._extension_field_help_area = SmoothScrollArea(self._extension_preview_panel)
         self._extension_field_help_area.setWidgetResizable(True)
         self._extension_field_help_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._extension_field_help_area.setMinimumHeight(202)
-        self._extension_field_help_area.setMaximumHeight(202)
+        self._extension_field_help_area.setMinimumHeight(_EXTENSION_FIELD_HELP_COMPACT_HEIGHT)
+        self._extension_field_help_area.setMaximumHeight(_EXTENSION_FIELD_HELP_COMPACT_HEIGHT)
         self._extension_field_help_area.setStyleSheet("background: transparent; border: none;")
         self._extension_field_help_container = QWidget(self._extension_field_help_area)
         extension_help_layout = QVBoxLayout(self._extension_field_help_container)
@@ -1304,6 +1363,29 @@ class DataPage(QWidget):
                 continue
             label.setStyleSheet(style)
 
+    def _apply_manage_target_action_style(self, enabled: bool) -> None:
+        color = accent_color() if enabled else secondary_color()
+        hover_color_value = accent_color() if enabled else secondary_color()
+        self._manage_target_label.setEnabled(enabled)
+        self._manage_target_label.setCursor(
+            Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor
+        )
+        self._manage_target_label.setStyleSheet(
+            "QLabel {"
+            f"color: {color};"
+            "font-size: 11px;"
+            f"font-weight: {'500' if enabled else '400'};"
+            "}"
+            "QLabel:hover {"
+            f"color: {hover_color_value};"
+            f"text-decoration: {'underline' if enabled else 'none'};"
+            "}"
+        )
+
+    def _set_extension_field_help_height(self, height: int) -> None:
+        self._extension_field_help_area.setMinimumHeight(height)
+        self._extension_field_help_area.setMaximumHeight(height)
+
     def _create_path_link_button(self, parent: QWidget) -> HyperlinkButton:
         button = HyperlinkButton(parent)
         button.setFlat(True)
@@ -1742,6 +1824,7 @@ class DataPage(QWidget):
 
     def _show_preview_mode(self) -> None:
         self._right_mode_stack.setCurrentWidget(self._preview_card)
+        self._set_extension_field_help_height(_EXTENSION_FIELD_HELP_COMPACT_HEIGHT)
         self._set_extension_preview_help()
         if not self._extension_config_action_panel.isVisible():
             self._set_preview_footer_visible(True)
@@ -1754,6 +1837,13 @@ class DataPage(QWidget):
         if project is None or project.tree is None or not self._selected_node_id:
             return None
         return project.tree.get_node(self._selected_node_id)
+
+    @classmethod
+    def _folder_group_label(cls, group_type: Optional[str]) -> Optional[str]:
+        canonical = cls._canonical_folder_group(group_type)
+        if canonical is None and group_type:
+            canonical = str(group_type)
+        return _FOLDER_GROUP_LABELS.get(canonical or "")
 
     def _current_node_name(self) -> str:
         if not self._selected_node_kind or not self._selected_node_id:
@@ -1776,7 +1866,222 @@ class DataPage(QWidget):
             image = project_manager.get_image(node.image_work_id)
             return image.name if image is not None else node.name
         node = self._current_tree_node()
-        return "" if node is None else node.name
+        if node is None:
+            return ""
+        if getattr(node, "kind", None) == "folder":
+            return self._folder_group_label(getattr(node, "group_type", None)) or node.name
+        return node.name
+
+    @staticmethod
+    def _append_node_detail_section(lines: list[str], title: str) -> None:
+        if lines:
+            lines.append("")
+        lines.append(f"【{title}】")
+
+    @staticmethod
+    def _detail_value_text(value: Any) -> Optional[str]:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return "是" if value else "否"
+        if isinstance(value, (list, tuple, set)):
+            if not value:
+                return "0 项"
+            if len(value) <= 4 and all(isinstance(item, (str, int, float, bool)) for item in value):
+                return "、".join("是" if item is True else "否" if item is False else str(item) for item in value)
+            return f"{len(value)} 项"
+        if isinstance(value, dict):
+            return f"{len(value)} 项"
+        return str(value)
+
+    @classmethod
+    def _append_node_detail_field(cls, lines: list[str], label: str, value: Any) -> None:
+        value_text = cls._detail_value_text(value)
+        if value_text is None:
+            return
+        lines.append(f"{label}: {value_text}")
+
+    @staticmethod
+    def _find_series_owner(project, series_id: str) -> tuple[str, Optional[Any]]:
+        for data_file in getattr(project, "data_files", []):
+            if any(series.id == series_id for series in data_file.series):
+                return "data_file", data_file
+        for dataset in getattr(project, "datasets", []):
+            if any(series.id == series_id for series in dataset.series):
+                return "dataset", dataset
+        return "", None
+
+    @staticmethod
+    def _find_curve_owner_image(project, curve_id: str):
+        for image in getattr(project, "images", []):
+            if any(curve.id == curve_id for curve in image.curves):
+                return image
+        return None
+
+    def _current_node_detail_text(self) -> str:
+        if not self._selected_node_kind or not self._selected_node_id:
+            return ""
+
+        project = project_manager.current_project
+        kind = self._selected_node_kind
+        node_id = self._selected_node_id
+        node = self._current_tree_node()
+        lines: list[str] = []
+
+        self._append_node_detail_section(lines, "节点")
+        self._append_node_detail_field(lines, "节点类型", self._node_kind_label(kind))
+        self._append_node_detail_field(lines, "显示名称", self._current_node_name() or "未命名节点")
+        if node is not None:
+            self._append_node_detail_field(lines, "树节点 ID", getattr(node, "id", None))
+            self._append_node_detail_field(lines, "父节点 ID", getattr(node, "parent_id", None))
+            self._append_node_detail_field(lines, "排序", getattr(node, "order", None))
+        else:
+            self._append_node_detail_field(lines, "标识", node_id)
+
+        if kind == "folder" and node is not None:
+            self._append_node_detail_section(lines, "文件夹")
+            self._append_node_detail_field(
+                lines,
+                "分组",
+                self._folder_group_label(getattr(node, "group_type", None)) or getattr(node, "group_type", None) or "普通文件夹",
+            )
+            self._append_node_detail_field(lines, "所在集合", self._folder_group_label(self._folder_collection_group(node)))
+            self._append_node_detail_field(lines, "受保护", self._is_protected_folder_node(node))
+            if project is not None and project.tree is not None:
+                self._append_node_detail_field(lines, "子节点数量", len(project.tree.find_nodes(parent_id=node.id)))
+            return "\n".join(lines)
+
+        if project is None:
+            return "\n".join(lines)
+
+        if kind == "data_file" and node is not None:
+            data_file = project.find_data_file(node.data_file_id)
+            if data_file is not None:
+                self._append_node_detail_section(lines, "数据文件")
+                self._append_node_detail_field(lines, "数据文件 ID", data_file.id)
+                self._append_node_detail_field(lines, "导入路径", data_file.source_path)
+                self._append_node_detail_field(lines, "导入时间", data_file.import_time)
+                self._append_node_detail_field(lines, "系列数量", len(data_file.series))
+                self._append_node_detail_field(lines, "备注", data_file.notes)
+        elif kind == "source_file" and node is not None:
+            source_file = project_manager.get_source_file(node.source_file_id)
+            if source_file is not None:
+                self._append_node_detail_section(lines, "源文件")
+                self._append_node_detail_field(lines, "源文件 ID", source_file.id)
+                self._append_node_detail_field(lines, "当前路径", project_manager.resolve_source_file_path(source_file, project))
+                self._append_node_detail_field(lines, "原始路径", project_manager.resolve_source_file_origin_path(source_file, project))
+                self._append_node_detail_field(lines, "导入时间", source_file.import_time)
+                if source_file.file_size:
+                    self._append_node_detail_field(lines, "文件大小", self._format_file_size(source_file.file_size))
+                self._append_node_detail_field(lines, "备注", source_file.notes)
+        elif kind == "series":
+            series = project.find_series(node_id)
+            if series is not None:
+                owner_kind, owner = self._find_series_owner(project, node_id)
+                self._append_node_detail_section(lines, "数据系列")
+                self._append_node_detail_field(lines, "系列 ID", series.id)
+                self._append_node_detail_field(lines, "所属容器", getattr(owner, "name", None))
+                self._append_node_detail_field(lines, "所属容器类型", "数据文件" if owner_kind == "data_file" else "数据集" if owner_kind == "dataset" else None)
+                self._append_node_detail_field(lines, "X 标签", series.x_label)
+                self._append_node_detail_field(lines, "Y 标签", series.y_label)
+                self._append_node_detail_field(lines, "X 点数", len(series.x))
+                self._append_node_detail_field(lines, "Y 点数", len(series.y))
+                self._append_node_detail_field(lines, "误差棒点数", len(series.y_err or []))
+                self._append_node_detail_field(lines, "可见", series.visible)
+                self._append_node_detail_field(lines, "来源", series.source)
+                self._append_node_detail_field(lines, "来源曲线 ID", series.source_curve_id)
+        elif kind == "curve":
+            curve = self._find_curve(project, node_id)
+            if curve is not None:
+                owner_image = self._find_curve_owner_image(project, node_id)
+                calibration = getattr(curve, "calibration", None)
+                self._append_node_detail_section(lines, "图像曲线")
+                self._append_node_detail_field(lines, "曲线 ID", curve.id)
+                self._append_node_detail_field(lines, "所属图像", getattr(owner_image, "name", None))
+                self._append_node_detail_field(lines, "像素点数量", len(curve.x_data))
+                self._append_node_detail_field(lines, "真实点数量", len(curve.x_actual))
+                self._append_node_detail_field(lines, "颜色", curve.color)
+                self._append_node_detail_field(lines, "点形", curve.point_shape)
+                self._append_node_detail_field(lines, "源图像 ID", curve.source_image_id)
+                self._append_node_detail_field(lines, "校准坐标系", getattr(calibration, "coord_type", None))
+        elif kind == "image_work" and node is not None:
+            image = project_manager.get_image(node.image_work_id)
+            if image is not None:
+                self._append_node_detail_section(lines, "图像")
+                self._append_node_detail_field(lines, "图像 ID", image.id)
+                self._append_node_detail_field(lines, "图像路径", image.image_path)
+                self._append_node_detail_field(lines, "源图路径", image.source_image_path)
+                self._append_node_detail_field(lines, "曲线数量", len(image.curves))
+                self._append_node_detail_field(lines, "遮罩多边形数", len(getattr(getattr(image, "mask", None), "polygons", []) or []))
+        elif kind == "picture" and node is not None:
+            picture = project_manager.get_picture(node.picture_id)
+            if picture is not None:
+                snapshot = getattr(picture, "plot_snapshot", None)
+                self._append_node_detail_section(lines, "图片")
+                self._append_node_detail_field(lines, "图片 ID", picture.id)
+                self._append_node_detail_field(lines, "图片路径", picture.image_path)
+                self._append_node_detail_field(lines, "创建时间", picture.created_at)
+                self._append_node_detail_field(lines, "快照曲线数", len(getattr(snapshot, "series", []) or []))
+                self._append_node_detail_field(lines, "已应用扩展数", len(getattr(snapshot, "applied_extensions", []) or []))
+        elif kind == "analysis_result" and node is not None:
+            analysis = project.find_analysis(node.analysis_id)
+            if analysis is not None:
+                self._append_node_detail_section(lines, "分析结果")
+                self._append_node_detail_field(lines, "分析 ID", analysis.id)
+                self._append_node_detail_field(lines, "分析类型", analysis.analysis_type)
+                self._append_node_detail_field(lines, "输入系列数", len(analysis.input_series_ids))
+                self._append_node_detail_field(lines, "参数项数", len(analysis.params))
+                self._append_node_detail_field(lines, "摘要项数", len(analysis.summary))
+                self._append_node_detail_field(lines, "结果系列 ID", analysis.result_series_id)
+                self._append_node_detail_field(lines, "创建时间", analysis.created_at)
+        elif kind == "global_extension_config":
+            config_item = global_assets.get_extension_config(node_id)
+            if config_item is not None:
+                self._append_node_detail_section(lines, "扩展配置")
+                self._append_node_detail_field(lines, "配置 ID", config_item.id)
+                self._append_node_detail_field(lines, "类别", self._global_extension_category_label(config_item.category))
+                self._append_node_detail_field(lines, "扩展类型", config_item.extension_type)
+                self._append_node_detail_field(lines, "扩展名称", config_item.extension_name)
+                self._append_node_detail_field(lines, "版本", config_item.extension_version)
+                self._append_node_detail_field(lines, "参数项数", len(config_item.options))
+                self._append_node_detail_field(lines, "默认配置", config_item.is_default)
+        elif kind == "global_pipeline":
+            pipeline = global_assets.get_saved_pipeline(node_id)
+            if pipeline is not None:
+                self._append_node_detail_section(lines, "全局流程链")
+                self._append_node_detail_field(lines, "流程链 ID", pipeline.id)
+                self._append_node_detail_field(lines, "步骤数", len(pipeline.ops))
+                self._append_node_detail_field(lines, "创建时间", pipeline.created_at)
+                self._append_node_detail_field(lines, "描述", pipeline.description)
+        elif kind == "global_report_template":
+            template = global_assets.get_report_template(node_id)
+            if template is not None:
+                self._append_node_detail_section(lines, "全局报告模板")
+                self._append_node_detail_field(lines, "模板 ID", template.id)
+                self._append_node_detail_field(lines, "内置模板", template.is_builtin)
+                self._append_node_detail_field(lines, "内容行数", len((template.content or "").splitlines()))
+        elif kind == "global_group":
+            self._append_node_detail_section(lines, "全局分组")
+            self._append_node_detail_field(lines, "分组标识", node_id)
+            if node_id.startswith("__global_extension_configs__:"):
+                parts = node_id.split(":")
+                category = parts[1] if len(parts) >= 2 else ""
+                self._append_node_detail_field(lines, "类别", self._global_extension_category_label(category))
+                self._append_node_detail_field(
+                    lines,
+                    "配置数量",
+                    len(global_assets.list_extension_configs(category=category, include_defaults=True)),
+                )
+
+        return "\n".join(lines)
+
+    def _show_current_node_details(self) -> None:
+        detail_text = self._current_node_detail_text()
+        if not detail_text:
+            return
+        title = self._current_node_name() or self._node_kind_label(self._selected_node_kind)
+        dialog = _NodeDetailDialog(f"节点信息 · {title}", detail_text, parent=self._dialog_parent())
+        dialog.exec()
 
     @staticmethod
     def _canonical_folder_group(group_type: Optional[str]) -> Optional[str]:
@@ -2465,7 +2770,8 @@ class DataPage(QWidget):
         if extension is None:
             return None
         entry = build_extension_entry(extension)
-        return dict(entry) if entry.get("listed", True) and entry.get("settings") else None
+        has_config_fields = bool(entry.get("normalized_config_fields") or entry.get("config_fields"))
+        return dict(entry) if entry.get("listed", True) and (entry.get("settings") or has_config_fields) else None
 
     def _extension_entry_for_config_item(self, config_item) -> Optional[dict[str, Any]]:
         if config_item is None:
@@ -2615,10 +2921,12 @@ class DataPage(QWidget):
         self._config_editor_title_label.setText(summary_lines[0])
         self._config_editor_meta_label.setText("\n".join(summary_lines[1:]))
         self._set_preview_summary(summary_lines)
+        self._set_extension_field_help_height(_EXTENSION_FIELD_HELP_COMPACT_HEIGHT)
         self._set_extension_preview_help(
             self._extension_preview_description(entry, category=str(getattr(config_item, "category", "") or "")),
             self._extension_field_help_text(entry),
         )
+        self._extension_preview_panel.setVisible(True)
         return True
 
     def _reset_selected_extension_config_edit(self) -> None:
@@ -2860,6 +3168,11 @@ class DataPage(QWidget):
                 extension_entry = self._extension_entry_for_config_item(config)
                 summary_lines.append(f"参数项: {len(getattr(config, 'options', {}) or {})}")
         self._show_structure_tree_preview(root_item, summary_lines, preview_name=root_item.text(0))
+        self._set_extension_field_help_height(
+            _EXTENSION_FIELD_HELP_EXPANDED_HEIGHT
+            if extension_entry is not None and kind != "global_extension_config"
+            else _EXTENSION_FIELD_HELP_COMPACT_HEIGHT
+        )
         self._set_extension_preview_help(
             self._extension_preview_description(extension_entry, category=extension_category),
             self._extension_field_help_text(extension_entry),
@@ -2902,6 +3215,7 @@ class DataPage(QWidget):
 
         if not self._selected_node_kind or not self._selected_node_id:
             self._manage_target_label.setText("[未选择] 节点")
+            self._apply_manage_target_action_style(False)
             self._manage_type_label.setText("")
             self._manage_name_edit.clear()
             self._set_management_actions_enabled(False)
@@ -2913,6 +3227,7 @@ class DataPage(QWidget):
 
         current_name = self._current_node_name() or "未命名节点"
         self._manage_target_label.setText(f"[{self._node_kind_label(self._selected_node_kind)}] {current_name}")
+        self._apply_manage_target_action_style(True)
         self._manage_type_label.setText("")
         self._manage_name_edit.setText(current_name)
         enabled = self._can_rename_current_node() or self._can_delete_current_node()
