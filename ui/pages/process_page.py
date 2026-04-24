@@ -59,34 +59,18 @@ except Exception:
 
 # ── 操作定义 ─────────────────────────────────────────────────
 
-_OPS = [
-    ("裁剪 (Crop)",            "crop"),
-    ("平滑 (Smooth)",          "smooth"),
-    ("归一化 (Normalize)",     "normalize"),
-    ("重采样 (Resample)",      "resample"),
-    ("双曲线计算 (Pairwise)",  "pairwise_compute"),
-    ("FFT 频谱 (FFT)",        "fft"),
-    ("求导 (Derivative)",      "derivative"),
-    ("积分 (Integral)",        "integral"),
-    ("变换表达式 (Transform)", "transform"),
-    ("低/高通滤波 (Filter)", "filter"),
-]
-_OP_LABELS = [o[0] for o in _OPS]
-_OP_TYPES  = [o[1] for o in _OPS]
-_OP_TYPE_TO_LABEL = {op_type: label for label, op_type in _OPS}
-
-_OP_HINTS = {
-    "crop": "按 X 轴范围裁剪数据，只保留指定区间。",
-    "smooth": "对 Y 序列做平滑处理，适合去噪。",
-    "normalize": "按 min-max 或 z-score 归一化 Y 序列。",
-    "resample": "支持对齐、点间距和坐标间距三种重采样模式。",
-    "pairwise_compute": "从已选择列表中选择两条曲线，用 x1/y1/x2/y2 表达式执行双曲线计算。",
-    "fft": "将时域/空间域信号转换为频域频谱，可选指定采样频率。",
-    "derivative": "计算一阶导数，观察变化速率。",
-    "integral": "计算积分或累积积分。",
-    "transform": "用表达式批量变换 X/Y 数据。",
-    "filter": "进行低通或高通滤波，去除不需要的频率成分。",
-}
+_PREFERRED_PROCESSING_ORDER = (
+    "crop",
+    "smooth",
+    "normalize",
+    "resample",
+    "pairwise_compute",
+    "fft",
+    "derivative",
+    "integral",
+    "transform",
+    "filter",
+)
 
 
 def _install_fluent_tip(widget, text: str, position=ToolTipPosition.RIGHT) -> None:
@@ -125,9 +109,10 @@ class ProcessPage(QWidget):
         self._pipeline_warnings: List[str] = []
         self._ops: List[Dict[str, Any]] = []
         self._param_widgets: List[_ParamWidget] = []
-        self._processing_op_labels: List[str] = list(_OP_LABELS)
-        self._processing_op_types: List[str] = list(_OP_TYPES)
-        self._processing_op_hints: Dict[str, str] = dict(_OP_HINTS)
+        self._processing_op_labels: List[str] = []
+        self._processing_op_types: List[str] = []
+        self._processing_label_map: Dict[str, str] = {}
+        self._processing_op_hints: Dict[str, str] = {}
         self._processing_extension_options: Dict[str, Dict[str, Any]] = {}
         self._selected_src_id: Optional[str] = None
         self._selected_source_kind: Optional[str] = None
@@ -1311,21 +1296,32 @@ class ProcessPage(QWidget):
             if not entry.get("listed", True):
                 continue
             entries.append(entry)
-        return entries
+        return sorted(entries, key=self._processing_entry_sort_key)
+
+    @staticmethod
+    def _processing_entry_sort_key(entry: dict) -> tuple[int, int, str, str]:
+        type_id = str(entry.get("type") or "")
+        if type_id in _PREFERRED_PROCESSING_ORDER:
+            return (0, _PREFERRED_PROCESSING_ORDER.index(type_id), "", type_id)
+        return (1, len(_PREFERRED_PROCESSING_ORDER), str(entry.get("name") or type_id).casefold(), type_id)
 
     def _refresh_processing_extensions(self) -> None:
         current_type = None
         if hasattr(self, "_add_op_combo") and 0 <= self._add_op_combo.currentIndex() < len(self._processing_op_types):
             current_type = self._processing_op_types[self._add_op_combo.currentIndex()]
-        self._processing_op_labels = [label for label, _op_type in _OPS]
-        self._processing_op_types = [op_type for _label, op_type in _OPS]
-        self._processing_op_hints = dict(_OP_HINTS)
-        for entry in self._processing_extension_entries():
-            type_id = str(entry.get("type") or "")
-            name = str(entry.get("name") or type_id)
-            self._processing_op_labels.append(f"[扩展]{name}")
-            self._processing_op_types.append(type_id)
-            self._processing_op_hints[type_id] = str(entry.get("description") or f"自定义处理扩展：{name}")
+        entries = self._processing_extension_entries()
+        self._processing_op_labels = [str(entry.get("name") or entry.get("type") or "处理") for entry in entries]
+        self._processing_op_types = [str(entry.get("type") or "") for entry in entries]
+        self._processing_label_map = {
+            str(entry.get("type") or ""): str(entry.get("name") or entry.get("type") or "处理")
+            for entry in entries
+            if str(entry.get("type") or "")
+        }
+        self._processing_op_hints = {
+            str(entry.get("type") or ""): str(entry.get("description") or self._processing_label_map.get(str(entry.get("type") or ""), "处理扩展"))
+            for entry in entries
+            if str(entry.get("type") or "")
+        }
         self._add_op_combo.blockSignals(True)
         self._add_op_combo.clear()
         self._add_op_combo.addItems(self._processing_op_labels)
@@ -1361,11 +1357,11 @@ class ProcessPage(QWidget):
         )
 
     def _op_label_for_type(self, op_type: str) -> str:
-        if op_type in _OP_TYPE_TO_LABEL:
-            return _OP_TYPE_TO_LABEL[op_type]
+        if op_type in self._processing_label_map:
+            return self._processing_label_map[op_type]
         extension = extension_registry.get_processing(op_type)
         if extension is not None:
-            return f"[扩展]{extension.name}"
+            return extension.name
         return op_type or "?"
 
     def _default_params_for_processing_type(self, op_type: str) -> Dict[str, Any]:

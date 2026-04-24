@@ -10,6 +10,8 @@ def _handler(inputs, params):
     first = dict(inputs[0] or {})
     xs = list(first.get("x", []) or [])
     ys = list(first.get("y", []) or [])
+    distance_mode = "x_distance" if params.get("min_distance_x") not in (None, "") else "points"
+    distance_value = params.get("min_distance_x") if distance_mode == "x_distance" else params.get("min_distance", 1)
     result = detect_peaks(
         xs,
         ys,
@@ -30,6 +32,8 @@ def _handler(inputs, params):
     result["valley_count"] = valleys.get("count", 0)
     result["analysis_type"] = "peak_detect"
     result["source_name"] = first.get("name", "")
+    result["distance_mode"] = distance_mode
+    result["distance_value"] = distance_value
     return result
 
 

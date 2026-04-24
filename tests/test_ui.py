@@ -5828,7 +5828,7 @@ class TestProcessPage(unittest.TestCase):
             combo_items = [self.page._add_op_combo.itemText(i) for i in range(self.page._add_op_combo.count())]
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
-            self.assertIn("[扩展]UI 缩放测试", combo_items)
+            self.assertIn("UI 缩放测试", combo_items)
             self.assertIn("UI 缩放测试", selector_items)
         finally:
             extension_registry.unregister_processing("ui_scale_test")
@@ -5962,7 +5962,7 @@ class TestProcessPage(unittest.TestCase):
             combo_items = [self.page._add_op_combo.itemText(i) for i in range(self.page._add_op_combo.count())]
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
-            self.assertNotIn("[扩展]隐藏处理扩展", combo_items)
+            self.assertNotIn("隐藏处理扩展", combo_items)
             self.assertNotIn("隐藏处理扩展", selector_items)
         finally:
             extension_registry.unregister_processing("ui_hidden_processing")
@@ -6307,7 +6307,7 @@ class TestAnalysisPage(unittest.TestCase):
             combo_items = [self.page._type_combo.itemText(i) for i in range(self.page._type_combo.count())]
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
-            self.assertIn("[扩展]UI 跨度选择", combo_items)
+            self.assertIn("UI 跨度选择", combo_items)
             self.assertIn("UI 跨度选择", selector_items)
         finally:
             extension_registry.unregister_analysis("ui_span_selector")
@@ -6377,7 +6377,7 @@ class TestAnalysisPage(unittest.TestCase):
         try:
             self.page._refresh_analysis_type_choices()
             combo_items = [self.page._type_combo.itemText(i) for i in range(self.page._type_combo.count())]
-            self.assertIn("[扩展]UI 左侧参数执行", combo_items)
+            self.assertIn("UI 左侧参数执行", combo_items)
 
             self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_span_left_json"))
             self.assertFalse(self.page._extension_params_edit.isHidden())
@@ -6538,7 +6538,7 @@ class TestAnalysisPage(unittest.TestCase):
             combo_items = [self.page._type_combo.itemText(i) for i in range(self.page._type_combo.count())]
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
 
-            self.assertNotIn("[扩展]隐藏分析扩展", combo_items)
+            self.assertNotIn("隐藏分析扩展", combo_items)
             self.assertNotIn("隐藏分析扩展", selector_items)
         finally:
             extension_registry.unregister_analysis("ui_hidden_analysis")
@@ -6653,7 +6653,7 @@ class TestAnalysisPage(unittest.TestCase):
         try:
             combo_items = [page._type_combo.itemText(i) for i in range(page._type_combo.count())]
             selector_items = [page._extension_panel._selector.itemText(i) for i in range(page._extension_panel._selector.count())]
-            self.assertIn("[扩展]初始化分析扩展", combo_items)
+            self.assertIn("初始化分析扩展", combo_items)
             self.assertIn("初始化分析扩展", selector_items)
         finally:
             page.deleteLater()
@@ -6916,9 +6916,11 @@ class TestAnalysisPage(unittest.TestCase):
         )
         self.df.series.append(target)
 
-        self.page._type_combo.setCurrentIndex(1)
-        self.page._peak_dist_mode_combo.setCurrentIndex(1)
-        self.page._peak_dist_edit.setText("0.7")
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("peak_detect"))
+        options = dict(self.page._extension_params_edit.current_options())
+        options["min_distance_x"] = 0.7
+        self.page._extension_params_edit.set_options(options)
+        self.page._on_extension_analysis_options_changed(options)
         self.page.on_tree_node_activated("series", target.id)
         self.page._run_analysis()
 

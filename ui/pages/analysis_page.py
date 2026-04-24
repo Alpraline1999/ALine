@@ -66,15 +66,13 @@ try:
 except Exception:
     _HAS_MPL = False
 
-_ANALYSIS_TYPES = [
-    ("曲线拟合",   "curve_fit"),
-    ("峰值检测",   "peak_detect"),
-    ("统计分析",   "statistics"),
-    ("相关性分析", "correlation"),
-    ("误差比较",   "error_compare"),
-]
-_TYPE_LABELS = [t[0] for t in _ANALYSIS_TYPES]
-_TYPE_IDS    = [t[1] for t in _ANALYSIS_TYPES]
+_PREFERRED_ANALYSIS_ORDER = (
+    "curve_fit",
+    "peak_detect",
+    "statistics",
+    "correlation",
+    "error_compare",
+)
 
 class _SelectableResultTable(TableWidget):
     def __init__(self, parent=None):
@@ -145,9 +143,9 @@ class AnalysisPage(QWidget):
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._result: Optional[Dict[str, Any]] = None
-        self._analysis_type_labels: List[str] = list(_TYPE_LABELS)
-        self._analysis_type_ids: List[str] = list(_TYPE_IDS)
-        self._analysis_label_map: Dict[str, str] = {type_id: label for label, type_id in _ANALYSIS_TYPES}
+        self._analysis_type_labels: List[str] = []
+        self._analysis_type_ids: List[str] = []
+        self._analysis_label_map: Dict[str, str] = {}
         self._analysis_extension_options: Dict[str, Dict[str, Any]] = {}
         # 已选分析数据列表：List[{"kind": str, "node_id": str, "label": str}]
         self._selected_inputs: List[dict] = []
@@ -688,6 +686,13 @@ class AnalysisPage(QWidget):
     def _analysis_type_label(self, analysis_type: str) -> str:
         return self._analysis_label_map.get(analysis_type, analysis_type or "分析结果")
 
+    @staticmethod
+    def _analysis_entry_sort_key(entry: dict) -> tuple[int, int, str, str]:
+        type_id = str(entry.get("type") or "")
+        if type_id in _PREFERRED_ANALYSIS_ORDER:
+            return (0, _PREFERRED_ANALYSIS_ORDER.index(type_id), "", type_id)
+        return (1, len(_PREFERRED_ANALYSIS_ORDER), str(entry.get("name") or type_id).casefold(), type_id)
+
     def _analysis_extension_entries(self) -> List[dict]:
         entries: List[dict] = []
         for extension in extension_registry.list_analysis():
@@ -695,7 +700,7 @@ class AnalysisPage(QWidget):
             if not entry.get("listed", True):
                 continue
             entries.append(entry)
-        return entries
+        return sorted(entries, key=self._analysis_entry_sort_key)
 
     def _parse_extension_analysis_options_text(self, text: Optional[str] = None) -> Dict[str, Any]:
         if text is None:
@@ -775,15 +780,14 @@ class AnalysisPage(QWidget):
 
     def _refresh_analysis_type_choices(self) -> None:
         current_type = self._current_analysis_type() if hasattr(self, "_type_combo") else None
-        self._analysis_type_labels = list(_TYPE_LABELS)
-        self._analysis_type_ids = list(_TYPE_IDS)
-        self._analysis_label_map = {type_id: label for label, type_id in _ANALYSIS_TYPES}
-        for entry in self._analysis_extension_entries():
-            type_id = str(entry.get("type") or "")
-            name = str(entry.get("name") or type_id)
-            self._analysis_type_labels.append(f"[扩展]{name}")
-            self._analysis_type_ids.append(type_id)
-            self._analysis_label_map[type_id] = name
+        entries = self._analysis_extension_entries()
+        self._analysis_type_labels = [str(entry.get("name") or entry.get("type") or "分析") for entry in entries]
+        self._analysis_type_ids = [str(entry.get("type") or "") for entry in entries]
+        self._analysis_label_map = {
+            str(entry.get("type") or ""): str(entry.get("name") or entry.get("type") or "分析")
+            for entry in entries
+            if str(entry.get("type") or "")
+        }
         self._type_combo.blockSignals(True)
         self._type_combo.clear()
         self._type_combo.addItems(self._analysis_type_labels)
@@ -1279,29 +1283,40 @@ class AnalysisPage(QWidget):
             active = self._active_input_payloads(prefer_current=True)
             return active[:1] if active else list(self._selected_inputs[:1])
 
+        picker_visible = extension_lines_picker_visible(lines_number)
+
+        def _implicit_payloads() -> List[dict]:
+            payloads = self._active_input_payloads(prefer_current=True) or list(self._selected_inputs)
+            upper = lines_number[1]
+            if upper == 0:
+                return []
+            if upper != -1:
+                return payloads[:upper]
+            return payloads
+
         try:
             explicit_lines = normalize_extension_lines_list(config.get("lines_list")) if "lines_list" in config else []
         except ValueError:
             explicit_lines = []
 
         if "lines_list" in config:
-            payloads = []
-            for index in explicit_lines:
-                try:
-                    offset = int(index) - 1
-                except Exception:
-                    continue
-                if 0 <= offset < len(self._selected_inputs):
-                    payloads.append(self._selected_inputs[offset])
-        elif extension_lines_picker_visible(lines_number):
+            if explicit_lines:
+                payloads = []
+                for index in explicit_lines:
+                    try:
+                        offset = int(index) - 1
+                    except Exception:
+                        continue
+                    if 0 <= offset < len(self._selected_inputs):
+                        payloads.append(self._selected_inputs[offset])
+            elif picker_visible:
+                payloads = []
+            else:
+                payloads = _implicit_payloads()
+        elif picker_visible:
             payloads = []
         else:
-            payloads = self._active_input_payloads(prefer_current=True) or list(self._selected_inputs)
-            upper = lines_number[1]
-            if upper == 0:
-                payloads = []
-            elif upper != -1:
-                payloads = payloads[:upper]
+            payloads = _implicit_payloads()
         return payloads
 
     def _payload_indices(self, payloads: List[dict]) -> List[int]:
@@ -1387,14 +1402,11 @@ class AnalysisPage(QWidget):
         extension_options: Optional[Dict[str, Any]] = None
         effective_extension_options: Optional[Dict[str, Any]] = None
         input_payloads: List[dict]
-        if analysis_type not in _TYPE_IDS:
+        if extension_registry.get_analysis(analysis_type) is not None:
             extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
             input_payloads, effective_extension_options = self._effective_extension_analysis_options(analysis_type, extension_options)
             selected = self._get_data_for_inputs(input_payloads)
         else:
-            if extension_registry.get_analysis(analysis_type) is not None:
-                extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
-                effective_extension_options = dict(extension_options)
             input_payloads = self._analysis_input_payloads(analysis_type)
             selected = self._get_data_for_inputs(input_payloads)
         if not selected:

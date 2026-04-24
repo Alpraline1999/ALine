@@ -1755,7 +1755,7 @@ class TestAnalysisEngine(unittest.TestCase):
         correlation_entry = build_extension_entry(registry.get_analysis("correlation"))
 
         self.assertEqual(curve_fit_entry["source_kind"], "builtin")
-        self.assertFalse(curve_fit_entry["listed"])
+        self.assertTrue(curve_fit_entry["listed"])
         self.assertEqual(curve_fit_entry["resolved_options"]["model"], "linear")
         self.assertTrue(any(field.get("key") == "model" for field in curve_fit_entry["config_fields"]))
         self.assertTrue(any(field.get("key") == "p0" for field in curve_fit_entry["config_fields"]))
@@ -1843,7 +1843,7 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(entry["resolved_options"], {})
         self.assertNotIn("default_options", entry)
 
-    def test_reload_configured_extensions_registers_hidden_builtin_wrappers(self):
+    def test_reload_configured_extensions_registers_listed_builtin_wrappers(self):
         from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 
         reload_configured_extensions()
@@ -1852,9 +1852,9 @@ class TestAnalysisEngine(unittest.TestCase):
         analysis_entry = build_extension_entry(extension_registry.get_analysis("statistics"))
 
         self.assertEqual(processing_entry["source_kind"], "builtin")
-        self.assertFalse(processing_entry["listed"])
+        self.assertTrue(processing_entry["listed"])
         self.assertEqual(analysis_entry["source_kind"], "builtin")
-        self.assertFalse(analysis_entry["listed"])
+        self.assertTrue(analysis_entry["listed"])
 
     def test_global_asset_extension_configs_preserve_extension_version(self):
         from core.global_assets import GlobalAssetManager
