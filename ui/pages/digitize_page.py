@@ -148,7 +148,7 @@ class DigitizePage(QWidget):
 
         self._splitter.addWidget(center_panel)
 
-        self._extension_panel = ExtensionConfigPanel("数字化扩展", "应用扩展", self, mode="help_only", framed=False)
+        self._extension_panel = ExtensionConfigPanel("数字化扩展", "应用扩展", self, mode="help_only", framed=True)
         self._extension_panel.set_status_context("digitize", "数字化扩展")
         self._extension_panel.setMinimumWidth(self._extension_panel_width)
         self._extension_panel.setMaximumWidth(self._extension_panel_width)

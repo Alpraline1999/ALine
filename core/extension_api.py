@@ -54,7 +54,7 @@ def normalize_extension_field_type(
     field_key = str(key or "").strip().casefold()
     has_choices = bool(list(choices or []))
 
-    if explicit == "lines" or field_key == "lines":
+    if explicit == "lines":
         return "lines"
     if explicit in {"bool", "boolean", "checkbox"}:
         return "boolean"
@@ -119,6 +119,132 @@ def _merge_nested_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str,
             continue
         result[key] = copy.deepcopy(value)
     return result
+
+
+def normalize_extension_lines_number(raw: Any) -> Optional[Tuple[int, int]]:
+    if raw is None:
+        return None
+    if isinstance(raw, str) and not raw.strip():
+        return (1, 1)
+    if isinstance(raw, (list, tuple)) and len(raw) == 0:
+        return (1, 1)
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        raise ValueError("lines_number 必须是包含上下限的 [min, max] 列表或元组")
+
+    try:
+        lower = int(raw[0])
+        upper = int(raw[1])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lines_number 的上下限必须是整数") from exc
+
+    if lower < 0:
+        raise ValueError("lines_number 下限不能小于 0")
+    if upper < -1:
+        raise ValueError("lines_number 上限只能是 -1 或非负整数")
+    if upper != -1 and lower > upper:
+        raise ValueError("lines_number 下限不能大于上限")
+    return (lower, upper)
+
+
+def extension_lines_number(extension: Any) -> Optional[Tuple[int, int]]:
+    return normalize_extension_lines_number(getattr(extension, "lines_number", None))
+
+
+def extension_lines_support_text(lines_number: Optional[Tuple[int, int]]) -> str:
+    if lines_number is None:
+        return ""
+    lower, upper = lines_number
+    if lower == upper:
+        return f"{lower} 条"
+    if upper == -1:
+        return f"{lower} 条及以上"
+    if lower == 0:
+        return f"0 到 {upper} 条"
+    return f"{lower} 到 {upper} 条"
+
+
+def extension_lines_picker_visible(lines_number: Optional[Tuple[int, int]]) -> bool:
+    if lines_number is None:
+        return False
+    _lower, upper = lines_number
+    return upper == -1 or upper > 1
+
+
+def normalize_extension_lines_list(raw: Any) -> List[int]:
+    if isinstance(raw, dict):
+        raw = raw.get("lines_list")
+    if raw in (None, "", False):
+        return []
+
+    items: List[Any]
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        if text.lower() in {"all", ":", "*", "selected"}:
+            raise ValueError('lines_list 不再支持 "all" / ":" / "*" / "selected" 哨兵值，请显式提供曲线下标列表')
+        items = [piece.strip() for piece in text.replace(";", ",").split(",") if piece.strip()]
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        items = [raw]
+
+    normalized: List[int] = []
+    for item in items:
+        try:
+            index = int(item)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"lines_list 包含无效曲线下标: {item!r}") from exc
+        if index <= 0:
+            raise ValueError("lines_list 中的曲线下标必须从 1 开始")
+        if index not in normalized:
+            normalized.append(index)
+    return normalized
+
+
+def validate_extension_lines_list(
+    value: Any,
+    lines_number: Optional[Tuple[int, int]],
+    *,
+    present: bool,
+) -> List[int]:
+    normalized = normalize_extension_lines_list(value)
+    if lines_number is None:
+        if present and normalized:
+            raise ValueError("当前扩展未声明 lines_number，不支持 lines_list 参数")
+        return normalized
+
+    lower, upper = lines_number
+    if not present:
+        return normalized
+
+    count = len(normalized)
+    if count < lower:
+        raise ValueError(f"lines_list 需要至少 {lower} 条曲线，当前为 {count} 条")
+    if upper != -1 and count > upper:
+        raise ValueError(f"lines_list 最多支持 {upper} 条曲线，当前为 {count} 条")
+    return normalized
+
+
+def normalize_extension_lines_config(raw: Any, *, preserve_legacy_all: bool = False) -> Dict[str, Any]:
+    del preserve_legacy_all
+    config = dict(raw or {}) if isinstance(raw, dict) else {}
+    number = config.get("number")
+    if "lines_number" in config:
+        number = config.get("lines_number")
+    try:
+        normalized_number = normalize_extension_lines_number(number)
+    except ValueError:
+        normalized_number = None
+    lines_list = config.get("lines_list")
+    try:
+        normalized_lines = normalize_extension_lines_list(lines_list)
+    except ValueError:
+        normalized_lines = []
+    return {
+        "number": normalized_number[1] if normalized_number is not None and normalized_number[0] == normalized_number[1] else (normalized_number[1] if normalized_number is not None and normalized_number[1] == -1 else (normalized_number[0] if normalized_number is not None else 0)),
+        "lines_list": normalized_lines,
+    }
 
 
 def _path_is_within(path: Path, parent: Path) -> bool:
@@ -244,11 +370,13 @@ class ProcessingExtension:
     version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
-    line_mode: str = "single"
-    min_lines: int = 1
-    max_lines: Optional[int] = None
+    lines_number: Optional[Tuple[int, int] | List[int]] = None
+    settings: bool = False
     source_kind: str = "builtin"
     hidden: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
 
     @property
     def id(self) -> str:
@@ -284,9 +412,14 @@ class AnalysisExtension:
     version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
+    lines_number: Optional[Tuple[int, int] | List[int]] = None
     report_placeholders: List[Dict[str, Any]] = field(default_factory=list)
+    settings: bool = False
     source_kind: str = "builtin"
     hidden: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
 
     @property
     def id(self) -> str:
@@ -322,8 +455,13 @@ class PlotExtension:
     version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
+    lines_number: Optional[Tuple[int, int] | List[int]] = None
+    settings: bool = False
     source_kind: str = "builtin"
     hidden: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
 
     @property
     def id(self) -> str:
@@ -359,6 +497,7 @@ class DigitizeExtension:
     version: str = DEFAULT_EXTENSION_VERSION
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
+    settings: bool = False
     source_kind: str = "builtin"
     hidden: bool = False
 
@@ -516,46 +655,10 @@ def _coerce_config_field(field_item: Any) -> Dict[str, Any]:
         key=normalized.get("key"),
         choices=normalized.get("choices"),
     )
-    if normalized.get("field_type") == "lines":
-        normalized["default"] = normalize_extension_lines_config(
-            normalized.get("default"),
-            preserve_legacy_all=True,
-        )
+    field_key = str(normalized.get("key") or "").strip().casefold()
+    if field_key in {"lines", "lines_list", "lines_number"} or normalized.get("field_type") == "lines":
+        raise ValueError("lines_number 与 lines_list 已改为扩展内置参数，不能再通过 ExtensionConfigField 注册")
     return normalized
-
-
-def normalize_extension_lines_config(raw: Any, *, preserve_legacy_all: bool = False) -> Dict[str, Any]:
-    config = dict(raw or {}) if isinstance(raw, dict) else {}
-    try:
-        number = int(config.get("number", 0) or 0)
-    except (TypeError, ValueError):
-        number = 0
-
-    lines_list = config.get("lines_list", "")
-    if isinstance(lines_list, str):
-        text = lines_list.strip()
-        normalized_lines = "" if text.lower() in {"all", ":", "*"} else text
-    elif isinstance(lines_list, (list, tuple)):
-        normalized_lines = []
-        for item in lines_list:
-            if isinstance(item, str) and item.strip().lower() in {"all", ":", "*"}:
-                continue
-            try:
-                normalized_lines.append(int(item))
-            except (TypeError, ValueError):
-                continue
-    elif lines_list in (None, False):
-        normalized_lines = ""
-    else:
-        try:
-            normalized_lines = [int(lines_list)]
-        except (TypeError, ValueError):
-            normalized_lines = ""
-
-    return {
-        "number": number,
-        "lines_list": normalized_lines,
-    }
 
 
 def extension_config_fields(extension: Any, *, include_implicit_lines: bool = False) -> List[Dict[str, Any]]:
@@ -568,24 +671,25 @@ def extension_config_fields(extension: Any, *, include_implicit_lines: bool = Fa
     if not include_implicit_lines or category not in {"processing", "analysis", "plot"}:
         return normalized_fields
 
-    for field_item in normalized_fields:
-        if str(field_item.get("key") or "").strip() == "lines":
-            field_item["field_type"] = field_item.get("field_type") or "lines"
-            field_item["default"] = normalize_extension_lines_config(
-                field_item.get("default"),
-                preserve_legacy_all=True,
-            )
-            return normalized_fields
+    lines_number = extension_lines_number(extension)
+    if lines_number is None:
+        return normalized_fields
 
     legacy_options = dict(getattr(extension, "default_options", {}) or {})
+    default_lines = validate_extension_lines_list(
+        legacy_options.get("lines_list"),
+        lines_number,
+        present="lines_list" in legacy_options,
+    )
     normalized_fields.insert(
         0,
         ExtensionConfigField(
-            key="lines",
-            label="输入曲线",
-            description="扩展输入曲线协议。未显式配置时默认不直接暴露曲线参数。",
+            key="lines_list",
+            label="lines",
+            description=f"本扩展支持的曲线数量为 {extension_lines_support_text(lines_number)}。",
             field_type="lines",
-            default=normalize_extension_lines_config(legacy_options.get("lines"), preserve_legacy_all=True),
+            default=default_lines,
+            extra={"lines_number": list(lines_number)},
         ).to_dict(),
     )
     return normalized_fields
@@ -602,11 +706,39 @@ def extension_resolved_default_options(extension: Any) -> Dict[str, Any]:
         defaults[key] = copy.deepcopy(field_item.get("default"))
 
     legacy_defaults = dict(getattr(extension, "default_options", {}) or {})
-    if isinstance(legacy_defaults.get("lines"), dict):
-        legacy_defaults["lines"] = normalize_extension_lines_config(legacy_defaults.get("lines"), preserve_legacy_all=True)
+    if "lines" in legacy_defaults:
+        raw_legacy_lines = legacy_defaults.pop("lines")
+        legacy_lines = dict(raw_legacy_lines or {}) if isinstance(raw_legacy_lines, dict) else {}
+        if "lines_list" not in legacy_defaults and legacy_lines:
+            legacy_defaults["lines_list"] = legacy_lines.get("lines_list")
+    lines_number = extension_lines_number(extension)
+    if "lines_list" in legacy_defaults:
+        legacy_defaults["lines_list"] = validate_extension_lines_list(
+            legacy_defaults.get("lines_list"),
+            lines_number,
+            present=True,
+        )
     if not legacy_defaults:
         return defaults
     return _merge_nested_dict(defaults, legacy_defaults)
+
+
+def _validate_extension_contract(category: str, extension: Any) -> None:
+    normalize_extension_version(getattr(extension, "version", DEFAULT_EXTENSION_VERSION))
+    if not isinstance(getattr(extension, "settings", False), bool):
+        raise ValueError("settings 必须是布尔值")
+    lines_number = extension_lines_number(extension) if category in {"processing", "analysis", "plot"} else None
+    extension_config_fields(extension, include_implicit_lines=False)
+    legacy_defaults = dict(getattr(extension, "default_options", {}) or {})
+    if category in {"processing", "analysis", "plot"}:
+        if "lines_number" in legacy_defaults:
+            raise ValueError("lines_number 已改为扩展注册参数，不能放在 default_options 中")
+        if "lines" in legacy_defaults:
+            raise ValueError("lines 内嵌协议已废弃，请改用扩展注册参数 lines_number 与顶层 lines_list")
+        if "lines_list" in legacy_defaults:
+            validate_extension_lines_list(legacy_defaults.get("lines_list"), lines_number, present=True)
+        elif lines_number is not None:
+            validate_extension_lines_list([], lines_number, present=False)
 
 
 class ExtensionRegistry:
@@ -665,18 +797,22 @@ class ExtensionRegistry:
             raise ValueError(f"重复的 {category} 扩展 name: {name}")
 
     def register_processing(self, extension: ProcessingExtension) -> None:
+        _validate_extension_contract("processing", extension)
         self._ensure_unique_identity("processing", self._processing, extension)
         self._processing[extension.type.strip()] = extension
 
     def register_analysis(self, extension: AnalysisExtension) -> None:
+        _validate_extension_contract("analysis", extension)
         self._ensure_unique_identity("analysis", self._analysis, extension)
         self._analysis[extension.type.strip()] = extension
 
     def register_plot(self, extension: PlotExtension) -> None:
+        _validate_extension_contract("plot", extension)
         self._ensure_unique_identity("plot", self._plot, extension)
         self._plot[extension.type.strip()] = extension
 
     def register_digitize(self, extension: DigitizeExtension) -> None:
+        _validate_extension_contract("digitize", extension)
         self._ensure_unique_identity("digitize", self._digitize, extension)
         self._digitize[extension.type.strip()] = extension
 
@@ -757,7 +893,7 @@ class ExtensionRegistry:
         target = Path(directory)
         if not target.exists() or not target.is_dir():
             return {"loaded": [], "errors": []}, {"loaded": [], "errors": []}
-        return self._scan_paths(sorted(target.glob("*.py")), source_directory=target, source_kind=source_kind)
+        return self._scan_paths(_extension_python_files(target), source_directory=target, source_kind=source_kind)
 
     def _scan_paths(
         self,
@@ -930,8 +1066,14 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
     config_fields = extension_config_fields(extension)
     normalized_config_fields = extension_config_fields(extension, include_implicit_lines=True)
     legacy_default_options = dict(getattr(extension, "default_options", {}) or {})
-    if isinstance(legacy_default_options.get("lines"), dict):
-        legacy_default_options["lines"] = normalize_extension_lines_config(legacy_default_options.get("lines"))
+    if "lines" in legacy_default_options:
+        raw_legacy_lines = legacy_default_options.pop("lines")
+        legacy_lines = dict(raw_legacy_lines or {}) if isinstance(raw_legacy_lines, dict) else {}
+        if "lines_list" not in legacy_default_options and legacy_lines:
+            legacy_default_options["lines_list"] = legacy_lines.get("lines_list")
+    if "lines_list" in legacy_default_options:
+        legacy_default_options["lines_list"] = normalize_extension_lines_list(legacy_default_options.get("lines_list"))
+    lines_number = extension_lines_number(extension)
     resolved_default_options = extension_resolved_default_options(extension)
     hidden = bool(getattr(extension, "hidden", False))
     listed = bool(getattr(extension, "listed", not hidden and source_kind != "base"))
@@ -943,6 +1085,7 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "label": extension.name,
         "description": extension.description,
         "version": normalize_extension_version(getattr(extension, "version", DEFAULT_EXTENSION_VERSION)),
+        "settings": bool(getattr(extension, "settings", False)),
         "source_kind": source_kind,
         "source_label": _EXTENSION_SOURCE_LABELS.get(source_kind, source_kind),
         "origin_kind": source_kind,
@@ -956,11 +1099,93 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "legacy_default_options": legacy_default_options,
         "config_fields": config_fields,
         "normalized_config_fields": normalized_config_fields,
-        "line_mode": str(getattr(extension, "line_mode", "single") or "single"),
-        "min_lines": int(getattr(extension, "min_lines", 1) or 1),
-        "max_lines": getattr(extension, "max_lines", None),
+        "lines_number": list(lines_number) if lines_number is not None else None,
         "report_placeholders": [dict(item) for item in getattr(extension, "report_placeholders", []) or [] if isinstance(item, dict)],
     }
+
+
+def extension_entry_display_info(
+    entry: Optional[Dict[str, Any]],
+    *,
+    category_label: Optional[str] = None,
+) -> Dict[str, str]:
+    if not isinstance(entry, dict):
+        return {
+            "category_label": "",
+            "name": "",
+            "source_label": "",
+            "version_label": "",
+            "type_id": "",
+            "description": "",
+            "panel_title": "",
+            "data_title": "",
+        }
+
+    resolved_category = str(category_label or entry.get("function_label") or "扩展").strip() or "扩展"
+    name = str(entry.get("name") or entry.get("label") or entry.get("type") or "扩展").strip() or "扩展"
+    source_label = str(entry.get("source_label") or entry.get("origin_label") or "").strip()
+    version = str(entry.get("version") or "").strip()
+    version_label = f"v{version}" if version and not version.startswith(("v", "V")) else version
+    type_id = str(entry.get("type") or "").strip()
+    description = str(entry.get("description") or "").strip()
+
+    panel_title_parts = [name]
+    if source_label:
+        panel_title_parts.append(source_label)
+    if version_label:
+        panel_title_parts.append(version_label)
+
+    return {
+        "category_label": resolved_category,
+        "name": name,
+        "source_label": source_label,
+        "version_label": version_label,
+        "type_id": type_id,
+        "description": description,
+        "panel_title": "·".join(panel_title_parts),
+        "data_title": f"{resolved_category}·{name}",
+    }
+
+
+def extension_entry_parameter_help_text(entry: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(entry, dict):
+        return ""
+
+    fields = [
+        dict(item)
+        for item in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
+        if isinstance(item, dict)
+    ]
+    if not fields:
+        return "该扩展未声明额外参数。"
+
+    lines: List[str] = []
+    for field in fields:
+        key = str(field.get("key") or "option").strip() or "option"
+        field_type = str(field.get("field_type") or "string").strip() or "string"
+        if field_type.lower() == "lines" or key == "lines_list":
+            description = str(field.get("description") or "").strip()
+            if not description:
+                extra = dict(field.get("extra") or {}) if isinstance(field.get("extra"), dict) else {}
+                lines_number = normalize_extension_lines_number(extra.get("lines_number"))
+                description = f"本扩展支持的曲线数量为 {extension_lines_support_text(lines_number)}。" if lines_number else "本扩展支持曲线输入。"
+            lines.append(f"- lines: {description}")
+            continue
+
+        label = str(field.get("label") or key).strip() or key
+        required = "必填" if field.get("required") else "可选"
+        parts = [f"{label}（{field_type}，{required}）"]
+        description = str(field.get("description") or "").strip()
+        if description:
+            parts.append(description)
+        choices = [str(item) for item in (field.get("choices") or []) if str(item)]
+        if choices:
+            parts.append(f"可选值: {', '.join(choices)}")
+        default = field.get("default")
+        if default not in (None, "", []):
+            parts.append(f"默认值: {default}")
+        lines.append("- " + "；".join(parts))
+    return "\n".join(lines)
 
 
 def _invoke_handler_with_optional_payload(
@@ -1052,20 +1277,23 @@ def default_extensions_directory(base_dir: str | Path | None = None) -> Path:
     return Path(__file__).resolve().parent.parent / "extensions"
 
 
+def _extension_python_files(directory: str | Path) -> List[Path]:
+    target = Path(directory)
+    if not target.exists() or not target.is_dir():
+        return []
+    return [path for path in sorted(target.rglob("*.py")) if not path.name.startswith("_")]
+
+
 def builtin_extension_files(base_dir: str | Path | None = None) -> List[Path]:
     directory = default_extensions_directory(base_dir)
-    if not directory.exists() or not directory.is_dir():
-        return []
-    return [path for path in sorted(directory.glob("*.py")) if not path.name.startswith("_")]
+    return _extension_python_files(directory)
 
 
 def external_extension_files(directory: str | Path | None = None) -> List[Path]:
     from core.extension_settings import get_external_extensions_directory
 
     target = Path(directory) if directory is not None else get_external_extensions_directory()
-    if not target.exists() or not target.is_dir():
-        return []
-    return [path for path in sorted(target.glob("*.py")) if not path.name.startswith("_")]
+    return _extension_python_files(target)
 
 
 def configured_builtin_extension_files(
@@ -1213,9 +1441,6 @@ def configured_extension_directories(
 
 
 def load_builtin_extensions(directory: str | Path | None = None) -> Dict[str, List[str]]:
-    from core.builtin_extensions import register_core_builtin_extensions
-
-    register_core_builtin_extensions(extension_registry)
     return extension_registry.load_from_directory(default_extensions_directory(directory), source_kind="builtin")
 
 
@@ -1228,14 +1453,10 @@ def load_configured_extensions(
     base_dir: str | Path | None = None,
     external_dir: str | Path | None = None,
 ) -> Dict[str, List[str]]:
-    from core.builtin_extensions import register_core_builtin_extensions
-
     builtin_files = configured_builtin_extension_files(base_dir)
     external_files = configured_external_extension_files(external_dir)
     report = {"loaded": [], "errors": []}
     detail_report: Dict[str, List[Dict[str, Any]]] = {"loaded": [], "errors": []}
-
-    register_core_builtin_extensions(extension_registry)
 
     for file_group, source_kind in ((builtin_files, "builtin"), (external_files, "external")):
         group_report, group_detail = extension_registry._scan_paths(file_group, source_kind=source_kind)

@@ -781,6 +781,18 @@ class TestDataEngine(unittest.TestCase):
         self.assertEqual(nx, [])
         self.assertEqual(ny, [])
 
+    def test_crop_extension_ignores_empty_bounds(self):
+        from extensions.processing.builtin_ops import build_single_line_handler
+
+        handler = build_single_line_handler("crop")
+        xs = [0.0, 1.0, 2.0, 3.0]
+        ys = [2.0, 3.0, 4.0, 5.0]
+
+        nx, ny = handler(xs, ys, {"x_min": None, "x_max": ""})
+
+        self.assertEqual(nx, xs)
+        self.assertEqual(ny, ys)
+
     def test_op_normalize_minmax(self):
         from processing.data_engine import apply_operation
         xs, ys = [0.0, 1.0, 2.0], [0.0, 5.0, 10.0]
@@ -1021,8 +1033,7 @@ class TestDataEngine(unittest.TestCase):
                 type="test_mean",
                 name="测试均值",
                 handler=_mean,
-                line_mode="multi",
-                min_lines=2,
+                lines_number=(2, -1),
             )
         )
         try:
@@ -1743,7 +1754,7 @@ class TestAnalysisEngine(unittest.TestCase):
         peak_detect_entry = build_extension_entry(registry.get_analysis("peak_detect"))
         correlation_entry = build_extension_entry(registry.get_analysis("correlation"))
 
-        self.assertEqual(curve_fit_entry["source_kind"], "base")
+        self.assertEqual(curve_fit_entry["source_kind"], "builtin")
         self.assertFalse(curve_fit_entry["listed"])
         self.assertEqual(curve_fit_entry["resolved_options"]["model"], "linear")
         self.assertTrue(any(field.get("key") == "model" for field in curve_fit_entry["config_fields"]))
@@ -1788,25 +1799,23 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(entry["function_label"], "处理扩展")
         self.assertEqual(entry["source_kind"], "builtin")
         self.assertEqual(entry["origin_label"], "内置")
-        self.assertEqual(entry["resolved_options"], {"factor": 2.5, "lines": {"number": 0, "lines_list": ""}})
+        self.assertEqual(entry["resolved_options"], {"factor": 2.5})
         self.assertNotIn("default_options", entry)
-        self.assertFalse(any(field.get("key") == "lines" for field in entry["config_fields"]))
-        self.assertTrue(any(field.get("key") == "lines" for field in entry["normalized_config_fields"]))
+        self.assertFalse(any(field.get("key") == "lines_list" for field in entry["config_fields"]))
+        self.assertFalse(any(field.get("key") == "lines_list" for field in entry["normalized_config_fields"]))
 
     def test_build_extension_entry_normalizes_legacy_all_lines_default(self):
         from core.extension_api import ProcessingExtension, build_extension_entry
 
-        entry = build_extension_entry(
-            ProcessingExtension(
-                type="legacy_lines_all",
-                name="Legacy All",
-                handler=lambda xs, ys, params: (list(xs), list(ys)),
-                default_options={"lines": {"number": -1, "lines_list": "all"}},
+        with self.assertRaises(ValueError):
+            build_extension_entry(
+                ProcessingExtension(
+                    type="legacy_lines_all",
+                    name="Legacy All",
+                    handler=lambda xs, ys, params: (list(xs), list(ys)),
+                    default_options={"lines": {"number": -1, "lines_list": "all"}},
+                )
             )
-        )
-
-        self.assertEqual(entry["resolved_options"], {"lines": {"number": -1, "lines_list": ""}})
-        self.assertNotIn("default_options", entry)
 
     def test_extension_registry_supports_digitize_extensions(self):
         from core.extension_api import DigitizeExtension, ExtensionRegistry, build_extension_entry
@@ -1834,7 +1843,7 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(entry["resolved_options"], {})
         self.assertNotIn("default_options", entry)
 
-    def test_reload_configured_extensions_registers_hidden_base_builtin_wrappers(self):
+    def test_reload_configured_extensions_registers_hidden_builtin_wrappers(self):
         from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 
         reload_configured_extensions()
@@ -1842,9 +1851,9 @@ class TestAnalysisEngine(unittest.TestCase):
         processing_entry = build_extension_entry(extension_registry.get_processing("crop"))
         analysis_entry = build_extension_entry(extension_registry.get_analysis("statistics"))
 
-        self.assertEqual(processing_entry["source_kind"], "base")
+        self.assertEqual(processing_entry["source_kind"], "builtin")
         self.assertFalse(processing_entry["listed"])
-        self.assertEqual(analysis_entry["source_kind"], "base")
+        self.assertEqual(analysis_entry["source_kind"], "builtin")
         self.assertFalse(analysis_entry["listed"])
 
     def test_global_asset_extension_configs_preserve_extension_version(self):
@@ -1885,12 +1894,12 @@ class TestAnalysisEngine(unittest.TestCase):
 
         directory = default_extensions_directory()
         expected = {
-            "processing_kalman_filter_demo.py": ("processing", "kalman_filter", {"lines", "process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
-            "processing_multi_curve_mean_demo.py": ("processing", "multi_curve_mean", {"lines"}),
-            "analysis_spectrum_demo.py": ("analysis", "spectrum_analysis", {"lines", "sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
-            "analysis_multi_curve_correlation_demo.py": ("analysis", "multi_curve_correlation", {"lines", "method", "line_color"}),
+            "processing_kalman_filter_demo.py": ("processing", "kalman_filter", {"lines_list", "process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
+            "processing_multi_curve_mean_demo.py": ("processing", "multi_curve_mean", {"lines_list"}),
+            "analysis_spectrum_demo.py": ("analysis", "spectrum_analysis", {"lines_list", "sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
+            "analysis_multi_curve_correlation_demo.py": ("analysis", "multi_curve_correlation", {"lines_list", "method", "line_color"}),
             "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
-            "plot_dual_curve_band_demo.py": ("plot", "plot_dual_curve_band", {"lines", "align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
+            "plot_dual_curve_band_demo.py": ("plot", "plot_dual_curve_band", {"lines_list", "align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
             "plot_arrow_annotation_demo.py": ("plot", "plot_arrow_annotation", {"coordinate_mode", "start_x", "start_y", "end_x", "end_y", "text"}),
             "plot_rectangle_annotation_demo.py": ("plot", "plot_rectangle_annotation", {"coordinate_mode", "x", "y", "width", "height", "edge_color"}),
             "plot_circle_annotation_demo.py": ("plot", "plot_circle_annotation", {"coordinate_mode", "center_x", "center_y", "radius", "edge_color"}),
@@ -1914,7 +1923,8 @@ class TestAnalysisEngine(unittest.TestCase):
         for _py_name, (kind, type_id, required_keys) in expected.items():
             extension = getters[kind](type_id)
             self.assertIsNotNone(extension)
-            self.assertTrue(required_keys.issubset(set(extension.default_options.keys())))
+            resolved_defaults = extension.resolved_default_options
+            self.assertTrue(required_keys.issubset(set(resolved_defaults.keys())))
 
 
 # ══════════════════════════════════════════════════════════════════

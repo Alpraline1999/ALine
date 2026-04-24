@@ -239,7 +239,12 @@ class ChartPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._update_plot_extension_help_area_height()
         self._onboarding_controller.schedule_auto_start()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_plot_extension_help_area_height()
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -568,9 +573,22 @@ class ChartPage(QWidget):
 
         layout.addWidget(make_hsep(card))
         layout.addWidget(make_section_label("参数说明", card))
-        self._plot_extension_config_help_label = CaptionLabel("保留 {} 使用默认参数。", card)
+        self._plot_extension_config_help_area = SmoothScrollArea(card)
+        self._plot_extension_config_help_area.setWidgetResizable(True)
+        self._plot_extension_config_help_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._plot_extension_config_help_area.setMinimumHeight(124)
+        self._plot_extension_config_help_area.setMaximumHeight(172)
+        self._plot_extension_config_help_area.setStyleSheet("background: transparent; border: none;")
+        self._plot_extension_config_help_container = QWidget(self._plot_extension_config_help_area)
+        plot_help_layout = QVBoxLayout(self._plot_extension_config_help_container)
+        plot_help_layout.setContentsMargins(0, 0, 0, 0)
+        plot_help_layout.setSpacing(0)
+        self._plot_extension_config_help_label = CaptionLabel("保留 {} 使用默认参数。", self._plot_extension_config_help_container)
         self._plot_extension_config_help_label.setWordWrap(True)
-        layout.addWidget(self._plot_extension_config_help_label)
+        plot_help_layout.addWidget(self._plot_extension_config_help_label)
+        plot_help_layout.addStretch()
+        self._plot_extension_config_help_area.setWidget(self._plot_extension_config_help_container)
+        layout.addWidget(self._plot_extension_config_help_area)
 
         layout.addWidget(make_hsep(card))
         applied_header = QHBoxLayout()
@@ -603,6 +621,14 @@ class ChartPage(QWidget):
         root.addWidget(card, 1)
         return panel
 
+    def _update_plot_extension_help_area_height(self) -> None:
+        if not hasattr(self, "_plot_extension_config_help_area") or not hasattr(self, "_extension_panel"):
+            return
+        panel_height = max(int(self._extension_panel.height() or 0), 0)
+        target_height = max(124, panel_height // 3) if panel_height else 124
+        self._plot_extension_config_help_area.setMinimumHeight(target_height)
+        self._plot_extension_config_help_area.setMaximumHeight(target_height)
+
     @staticmethod
     def _plot_extension_help_text(entry: Optional[dict]) -> str:
         if entry is None:
@@ -617,6 +643,10 @@ class ChartPage(QWidget):
             lines = ["字段："]
             for field in fields:
                 key = str(field.get("key") or "option")
+                if str(field.get("field_type") or "").strip().lower() == "lines" or key == "lines_list":
+                    description = str(field.get("description") or "").strip()
+                    lines.append(f"- lines: {description}")
+                    continue
                 field_type = str(field.get("field_type") or "string")
                 required = "必选" if field.get("required") else "可选"
                 parts = [f"{key}: {field_type}", required]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, PlotExtension
-from processing.data_engine import align_lines_to_common_x
+from extensions.processing.builtin_ops import align_lines_to_common_x
 
 
 def _as_float(value, default):
@@ -19,13 +19,9 @@ def _candidate_series(plot_context):
 
 
 def _resolve_line_indices(options, total):
-    lines = dict(options.get("lines") or {})
-    raw = lines.get("lines_list", [1, 2])
-    if isinstance(raw, str):
-        text = raw.strip()
-        if text in {"", ":", "*", "all"}:
-            return list(range(1, total + 1))
-        raw = [piece.strip() for piece in text.split(",") if piece.strip()]
+    raw = options.get("lines_list", [1, 2])
+    if raw in (None, "", []):
+        raw = [1, 2]
     if not isinstance(raw, (list, tuple)):
         raw = [raw]
     result = []
@@ -125,14 +121,8 @@ def register_extensions(registry):
             handler=draw_dual_curve_band,
             description="演示如何在绘图阶段对前两条可见曲线自动对齐，并绘制双曲线差异带。",
             version="0.1.0",
+            lines_number=(2, 2),
             config_fields=[
-                ExtensionConfigField(
-                    key="lines",
-                    label="输入曲线",
-                    description="选择要参与差异带计算的两条曲线。",
-                    field_type="lines",
-                    default={"number": 2, "lines_list": [1, 2]},
-                ),
                 ExtensionConfigField(
                     key="align_mode",
                     description="坐标未对齐时的处理方式：auto 自动重采样，strict 直接报错。",

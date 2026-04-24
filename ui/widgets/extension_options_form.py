@@ -4,31 +4,39 @@ import copy
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QIntValidator
-from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
     CheckBox,
     ColorPickerButton,
     ComboBox,
-    DoubleSpinBox,
-    FlowLayout,
+    FluentIcon as FIF,
+    InfoBar,
+    InfoBarPosition,
     LineEdit,
-    ListWidget,
     MessageBoxBase,
     PushButton,
     Slider,
     SmoothScrollArea,
-    SpinBox,
     SubtitleLabel,
+    ToolButton,
+    ToolTip,
     ToolTipPosition,
 )
 
-from core.extension_api import normalize_extension_lines_config
+from core.global_assets import global_assets
+from core.extension_api import (
+    extension_lines_picker_visible,
+    extension_lines_support_text,
+    normalize_extension_lines_list,
+    normalize_extension_lines_number,
+)
+from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.theme import (
     WORKBENCH_BUTTON_HEIGHT,
     WORKBENCH_INLINE_LABEL_WIDTH,
@@ -85,13 +93,13 @@ def _copy_field(field: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _infer_field_from_option(key: str, value: Any) -> Optional[Dict[str, Any]]:
-    if key == "lines" and isinstance(value, dict):
+    if key == "lines_list":
         return {
             "key": key,
-            "label": "输入曲线",
+            "label": "lines",
             "description": "扩展输入曲线协议。",
             "field_type": "lines",
-            "default": normalize_extension_lines_config(value, preserve_legacy_all=True),
+            "default": normalize_extension_lines_list(value),
         }
     if isinstance(value, bool):
         field_type = "boolean"
@@ -119,6 +127,14 @@ def _field_label(field: Dict[str, Any]) -> str:
 
 def _serialize_json(data: Dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
+
+
+def _field_lines_number(field: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    extra = dict(field.get("extra") or {}) if isinstance(field.get("extra"), dict) else {}
+    try:
+        return normalize_extension_lines_number(extra.get("lines_number"))
+    except ValueError:
+        return (1, 1)
 
 
 @dataclass
@@ -171,6 +187,10 @@ class _AdaptiveFieldRow(QWidget):
         super().resizeEvent(event)
         self._relayout()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._relayout(force=True)
+
     def _required_inline_width(self) -> int:
         margins = self._grid.contentsMargins()
         label_width = self._label.sizeHint().width() if self._label is not None else 0
@@ -212,26 +232,23 @@ class _LineSelectionDialog(MessageBoxBase):
         candidates: List[str],
         *,
         selected_indices: List[int],
-        number: int,
+        lines_number: Tuple[int, int],
         parent=None,
     ):
         super().__init__(parent)
         self._candidates = list(candidates)
-        self._number = int(number)
+        self._lines_number = lines_number
+        self._checkboxes: List[CheckBox] = []
         self._title_label = SubtitleLabel(title, self.widget)
         self.viewLayout.addWidget(self._title_label)
 
-        allow_select_all = self._number == -1 and bool(self._candidates)
-        hint = "从已选择列表中勾选要传给扩展的曲线。"
-        if allow_select_all:
-            hint += " 可使用“全选”。"
-        elif self._number > 1:
-            hint += f" 需要恰好选择 {self._number} 条。"
-        hint_label = BodyLabel(hint, self.widget)
-        hint_label.setWordWrap(True)
-        self.viewLayout.addWidget(hint_label)
+        support_text = extension_lines_support_text(self._lines_number)
+        hint = BodyLabel(f"本扩展支持的曲线数量为 {support_text}。请勾选要传给扩展的曲线。", self.widget)
+        hint.setWordWrap(True)
+        self.viewLayout.addWidget(hint)
 
-        if allow_select_all:
+        lower, upper = self._lines_number
+        if upper == -1 and bool(self._candidates):
             btn_row = QHBoxLayout()
             self._select_all_btn = PushButton("全选", self.widget)
             self._clear_btn = PushButton("清空", self.widget)
@@ -243,63 +260,73 @@ class _LineSelectionDialog(MessageBoxBase):
             btn_row.addStretch(1)
             self.viewLayout.addLayout(btn_row)
 
-        self._list = ListWidget(self.widget)
-        self._list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self._status = CaptionLabel("", self.widget)
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(f"color: {secondary_color()}; font-size: 11px;")
+        self.viewLayout.addWidget(self._status)
+
+        self._scroll = SmoothScrollArea(self.widget)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet("background: transparent; border: none;")
+        self._scroll.setFixedHeight(236)
+        self._list_host = QWidget(self._scroll)
+        self._list_layout = QVBoxLayout(self._list_host)
+        self._list_layout.setContentsMargins(0, 0, 0, 0)
+        self._list_layout.setSpacing(6)
         for index, label in enumerate(self._candidates, start=1):
-            self._list.addItem(f"{index}. {label}")
-        self.viewLayout.addWidget(self._list)
+            checkbox = CheckBox(f"{index}. {label}", self._list_host)
+            checkbox.stateChanged.connect(lambda _state: self._update_status())
+            self._list_layout.addWidget(checkbox)
+            self._checkboxes.append(checkbox)
+        self._list_layout.addStretch(1)
+        self._scroll.setWidget(self._list_host)
+        self.viewLayout.addWidget(self._scroll)
         self.widget.setMinimumWidth(420)
         self.widget.setMinimumHeight(360)
+        self.yesButton.setText("确认")
+        self.cancelButton.setText("取消")
 
         selected_set = {int(item) for item in selected_indices if int(item) > 0}
         self._select_rows([row - 1 for row in sorted(selected_set) if row > 0])
+        self._update_status()
 
     def _select_all(self) -> None:
-        self._select_rows(list(range(self._list.count())))
+        if not self._checkboxes:
+            return
+        for checkbox in self._checkboxes:
+            checkbox.setChecked(True)
+        self._checkboxes[0].setFocus(Qt.FocusReason.OtherFocusReason)
+        self._update_status()
 
     def _select_rows(self, rows: List[int]) -> None:
-        selection_model = self._list.selectionModel()
-        if selection_model is None:
-            return
-        valid_rows = {row for row in rows if 0 <= row < self._list.count()}
-        selection_model.clearSelection()
-        if not valid_rows:
-            selection_model.clearCurrentIndex()
-            for row in range(self._list.count()):
-                item = self._list.item(row)
-                if item is not None:
-                    item.setSelected(False)
-            self._list.setFocus(Qt.FocusReason.OtherFocusReason)
-            self._list.viewport().update()
-            self._list.viewport().repaint()
-            return
-        selection = QItemSelection()
-        for row in range(self._list.count()):
-            item = self._list.item(row)
-            if item is not None:
-                item.setSelected(row in valid_rows)
-        for row in sorted(valid_rows):
-            index = self._list.model().index(row, 0)
-            selection.select(index, index)
-        selection_model.select(
-            selection,
-            QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows,
-        )
-        current_index = self._list.model().index(min(valid_rows), 0)
-        selection_model.setCurrentIndex(current_index, QItemSelectionModel.SelectionFlag.NoUpdate)
-        self._list.setFocus(Qt.FocusReason.OtherFocusReason)
-        self._list.viewport().update()
-        self._list.viewport().repaint()
+        valid_rows = {row for row in rows if 0 <= row < len(self._checkboxes)}
+        for row, checkbox in enumerate(self._checkboxes):
+            checkbox.setChecked(row in valid_rows)
+        if valid_rows:
+            self._checkboxes[min(valid_rows)].setFocus(Qt.FocusReason.OtherFocusReason)
+        self._update_status()
 
     def _clear(self) -> None:
-        self._select_rows([])
+        for checkbox in self._checkboxes:
+            checkbox.setChecked(False)
+        self._update_status()
+
+    def _update_status(self) -> None:
+        lower, upper = self._lines_number
+        count = len(self.value())
+        support_text = extension_lines_support_text(self._lines_number)
+        if upper == -1:
+            detail = f"已选择 {count} 条，支持 {support_text}。"
+        elif lower == upper:
+            detail = f"已选择 {count}/{upper} 条。"
+        else:
+            detail = f"已选择 {count} 条，支持 {support_text}。"
+        self._status.setText(detail)
+        self.yesButton.setEnabled(count >= lower and (upper == -1 or count <= upper))
 
     def value(self) -> List[int]:
-        result: List[int] = []
-        for item in self._list.selectedItems():
-            row = self._list.row(item)
-            result.append(row + 1)
-        return sorted(result)
+        return [index for index, checkbox in enumerate(self._checkboxes, start=1) if checkbox.isChecked()]
 
     @classmethod
     def get_indices(
@@ -309,9 +336,9 @@ class _LineSelectionDialog(MessageBoxBase):
         candidates: List[str],
         *,
         selected_indices: List[int],
-        number: int,
+        lines_number: Tuple[int, int],
     ) -> tuple[List[int], bool]:
-        dialog = cls(title, candidates, selected_indices=selected_indices, number=number, parent=parent)
+        dialog = cls(title, candidates, selected_indices=selected_indices, lines_number=lines_number, parent=parent)
         accepted = bool(dialog.exec())
         return dialog.value(), accepted
 
@@ -327,14 +354,44 @@ class ExtensionOptionsForm(QWidget):
         self._extra_options: Dict[str, Any] = {}
         self._explicit_option_keys: set[str] = set()
         self._line_candidates: List[str] = []
+        self._settings_category: Optional[str] = None
+        self._settings_entry: Optional[Dict[str, Any]] = None
+        self._settings_config_ids: List[Optional[str]] = []
+        self._selected_settings_config_ids: Dict[str, str] = {}
         self._invalid_text: Optional[str] = None
         self._invalid_error: Optional[str] = None
         self._updating = False
         self._show_field_descriptions = False
+        self._retain_unknown_options = False
+        self._live_tooltip = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        root.setSpacing(6)
+
+        self._settings_row = QWidget(self)
+        settings_layout = QHBoxLayout(self._settings_row)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(6)
+        self._settings_selector = ComboBox(self._settings_row)
+        settings_layout.addWidget(self._settings_selector, 1)
+        self._settings_load_btn = ToolButton(FIF.FOLDER, self._settings_row)
+        self._settings_add_btn = ToolButton(FIF.ADD, self._settings_row)
+        self._settings_overwrite_btn = ToolButton(FIF.SAVE, self._settings_row)
+        for button, tooltip in (
+            (self._settings_load_btn, "加载当前选中的扩展配置"),
+            (self._settings_add_btn, "将当前参数另存为扩展配置"),
+            (self._settings_overwrite_btn, "覆盖当前选中的扩展配置"),
+        ):
+            button.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+            button.setToolTip(tooltip)
+            install_fluent_tooltip(button, delay=300, position=ToolTipPosition.BOTTOM)
+            settings_layout.addWidget(button)
+        self._settings_load_btn.clicked.connect(self._load_selected_settings_config)
+        self._settings_add_btn.clicked.connect(self._save_current_as_settings_config)
+        self._settings_overwrite_btn.clicked.connect(self._overwrite_selected_settings_config)
+        self._settings_row.hide()
+        root.addWidget(self._settings_row)
 
         self._scroll_area = SmoothScrollArea(self)
         self._scroll_area.setWidgetResizable(True)
@@ -343,10 +400,10 @@ class ExtensionOptionsForm(QWidget):
         root.addWidget(self._scroll_area, 1)
 
         self._content = QWidget(self._scroll_area)
-        self._flow = FlowLayout(self._content, needAni=False, isTight=False)
-        self._flow.setContentsMargins(0, 0, 0, 0)
-        self._flow.setHorizontalSpacing(8)
-        self._flow.setVerticalSpacing(6)
+        self._flow = QVBoxLayout(self._content)
+        self._flow.setContentsMargins(0, 0, 12, 0)
+        self._flow.setSpacing(6)
+        self._flow.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._scroll_area.setWidget(self._content)
 
         self._click_away_focus_commit = install_click_away_focus_commit(self)
@@ -376,16 +433,167 @@ class ExtensionOptionsForm(QWidget):
             if binding.field.get("field_type") == "lines" and binding.refresh is not None:
                 binding.refresh()
 
-    def set_fields(self, fields: List[Dict[str, Any]], options: Optional[Dict[str, Any]] = None) -> None:
+    def set_settings_context(self, category: Optional[str], entry: Optional[Dict[str, Any]]) -> None:
+        self._settings_category = str(category or "").strip().lower() or None
+        self._settings_entry = dict(entry) if isinstance(entry, dict) else None
+        if not self._settings_category or not isinstance(self._settings_entry, dict) or not self._settings_entry.get("settings"):
+            self._settings_row.hide()
+            self._settings_selector.clear()
+            self._settings_config_ids = []
+            return
+
+        type_id = str(self._settings_entry.get("type") or "").strip()
+        if not type_id:
+            self._settings_row.hide()
+            return
+        global_assets.ensure_extension_default_config(
+            self._settings_category,
+            type_id,
+            str(self._settings_entry.get("name") or type_id),
+            dict(self._settings_entry.get("resolved_options") or {}),
+            extension_version=str(self._settings_entry.get("version") or "1.0.0"),
+        )
+        self._settings_row.show()
+        self._refresh_settings_selector()
+
+    def _notification_parent(self) -> QWidget:
+        window = self.window()
+        return window if isinstance(window, QWidget) else self
+
+    def _settings_type_id(self) -> Optional[str]:
+        if not isinstance(self._settings_entry, dict):
+            return None
+        type_id = str(self._settings_entry.get("type") or "").strip()
+        return type_id or None
+
+    def _refresh_settings_selector(self) -> None:
+        type_id = self._settings_type_id()
+        self._settings_selector.blockSignals(True)
+        self._settings_selector.clear()
+        self._settings_config_ids = []
+        if not self._settings_category or not type_id:
+            self._settings_selector.blockSignals(False)
+            self._settings_load_btn.setEnabled(False)
+            self._settings_add_btn.setEnabled(False)
+            self._settings_overwrite_btn.setEnabled(False)
+            return
+
+        items = sorted(
+            global_assets.list_extension_configs(category=self._settings_category, extension_type=type_id),
+            key=lambda item: (0 if item.is_default else 1, str(item.name or "").casefold(), str(item.name or "")),
+        )
+        if not items:
+            self._settings_selector.addItem("默认配置")
+            self._settings_config_ids.append(None)
+            self._settings_selector.blockSignals(False)
+            self._settings_load_btn.setEnabled(False)
+            self._settings_add_btn.setEnabled(True)
+            self._settings_overwrite_btn.setEnabled(False)
+            return
+
+        selected_id = self._selected_settings_config_ids.get(type_id, "")
+        selected_index = 0
+        for index, item in enumerate(items):
+            self._settings_selector.addItem(item.name)
+            self._settings_config_ids.append(item.id)
+            if item.id == selected_id:
+                selected_index = index
+        self._settings_selector.setCurrentIndex(selected_index)
+        self._settings_selector.blockSignals(False)
+        self._settings_load_btn.setEnabled(True)
+        self._settings_add_btn.setEnabled(True)
+        current_item = items[selected_index] if 0 <= selected_index < len(items) else None
+        self._settings_overwrite_btn.setEnabled(bool(current_item is not None and not current_item.is_default))
+
+    def _current_settings_config_id(self) -> Optional[str]:
+        idx = self._settings_selector.currentIndex()
+        if idx < 0 or idx >= len(self._settings_config_ids):
+            return None
+        return self._settings_config_ids[idx]
+
+    def _current_settings_config_item(self):
+        config_id = self._current_settings_config_id()
+        if not config_id:
+            return None
+        return global_assets.get_extension_config(config_id)
+
+    def _load_selected_settings_config(self) -> None:
+        type_id = self._settings_type_id()
+        config_item = self._current_settings_config_item()
+        if type_id is None or config_item is None:
+            return
+        self._selected_settings_config_ids[type_id] = config_item.id
+        self.set_options(dict(config_item.options or {}))
+        self._emit_change(committed=True)
+
+    def _save_current_as_settings_config(self) -> None:
+        type_id = self._settings_type_id()
+        if type_id is None or not self._settings_category or not isinstance(self._settings_entry, dict):
+            return
+        try:
+            options = self.current_options()
+        except ValueError as exc:
+            InfoBar.error("保存失败", str(exc), parent=self._notification_parent(), position=InfoBarPosition.TOP)
+            return
+        name, accepted = TextInputDialog.get_text(self._notification_parent(), "新增配置", "配置名称:")
+        if not accepted:
+            return
+        try:
+            saved = global_assets.add_extension_config(
+                category=self._settings_category,
+                extension_type=type_id,
+                extension_name=str(self._settings_entry.get("name") or type_id),
+                extension_version=str(self._settings_entry.get("version") or "1.0.0"),
+                name=name,
+                options=options,
+            )
+        except ValueError as exc:
+            InfoBar.warning("新增失败", str(exc), parent=self._notification_parent(), position=InfoBarPosition.TOP)
+            return
+        self._selected_settings_config_ids[type_id] = saved.id
+        self._refresh_settings_selector()
+        InfoBar.success("已保存", f'配置 "{saved.name}" 已加入全局扩展配置', parent=self._notification_parent(), position=InfoBarPosition.TOP)
+
+    def _overwrite_selected_settings_config(self) -> None:
+        type_id = self._settings_type_id()
+        config_item = self._current_settings_config_item()
+        if type_id is None or config_item is None:
+            return
+        if config_item.is_default:
+            InfoBar.warning("无法覆盖", "默认配置不可覆盖，请新增一个自定义配置", parent=self._notification_parent(), position=InfoBarPosition.TOP)
+            return
+        try:
+            options = self.current_options()
+        except ValueError as exc:
+            InfoBar.error("覆盖失败", str(exc), parent=self._notification_parent(), position=InfoBarPosition.TOP)
+            return
+        global_assets.update_extension_config(
+            config_item.id,
+            options=options,
+            extension_version=str(self._settings_entry.get("version") or "1.0.0") if isinstance(self._settings_entry, dict) else "1.0.0",
+        )
+        self._selected_settings_config_ids[type_id] = config_item.id
+        self._refresh_settings_selector()
+        InfoBar.success("已覆盖", f'配置 "{config_item.name}" 已更新', parent=self._notification_parent(), position=InfoBarPosition.TOP)
+
+    def set_fields(
+        self,
+        fields: List[Dict[str, Any]],
+        options: Optional[Dict[str, Any]] = None,
+        *,
+        infer_unknown_fields: bool = False,
+    ) -> None:
         merged_fields = [_copy_field(field) for field in fields or []]
         known_keys = {str(field.get("key") or "").strip() for field in merged_fields}
         option_dict = dict(options or {})
-        for key, value in option_dict.items():
-            if key in known_keys:
-                continue
-            inferred = _infer_field_from_option(str(key), value)
-            if inferred is not None:
-                merged_fields.append(_copy_field(inferred))
+        self._retain_unknown_options = bool(infer_unknown_fields)
+        if infer_unknown_fields:
+            for key, value in option_dict.items():
+                if key in known_keys:
+                    continue
+                inferred = _infer_field_from_option(str(key), value)
+                if inferred is not None:
+                    merged_fields.append(_copy_field(inferred))
         self.clear()
         self._schema_fields = merged_fields
         for field in merged_fields:
@@ -404,11 +612,15 @@ class ExtensionOptionsForm(QWidget):
             self._invalid_text = None
             self._invalid_error = None
             self._explicit_option_keys = set(option_dict)
-            self._extra_options = {
-                key: copy.deepcopy(value)
-                for key, value in option_dict.items()
-                if key not in self._bindings
-            }
+            self._extra_options = (
+                {
+                    key: copy.deepcopy(value)
+                    for key, value in option_dict.items()
+                    if key not in self._bindings
+                }
+                if self._retain_unknown_options
+                else {}
+            )
             for key, binding in self._bindings.items():
                 if key in option_dict:
                     binding.setter(copy.deepcopy(option_dict[key]))
@@ -424,10 +636,14 @@ class ExtensionOptionsForm(QWidget):
         for key, binding in self._bindings.items():
             value = binding.getter()
             if binding.field.get("field_type") == "lines":
-                normalized = normalize_extension_lines_config(value, preserve_legacy_all=True)
-                if key not in self._explicit_option_keys and normalized == {"number": 0, "lines_list": ""}:
+                normalized = normalize_extension_lines_list(value)
+                lines_number = _field_lines_number(binding.field)
+                if extension_lines_picker_visible(lines_number):
+                    values[key] = normalized
                     continue
-                if key not in self._explicit_option_keys and normalized.get("number", 0) == 1 and not normalized.get("lines_list"):
+                if key not in self._explicit_option_keys and not normalized and not binding.field.get("default"):
+                    continue
+                if key not in self._explicit_option_keys and not normalized:
                     continue
                 values[key] = normalized
                 continue
@@ -466,6 +682,25 @@ class ExtensionOptionsForm(QWidget):
         if committed:
             self.optionsCommitted.emit(copy.deepcopy(options))
 
+    def _show_live_tooltip(self, widget: QWidget, text: str) -> None:
+        if not text:
+            self._hide_live_tooltip()
+            return
+        parent = self.window() if isinstance(self.window(), QWidget) else self
+        if self._live_tooltip is None:
+            self._live_tooltip = ToolTip(text, parent)
+        self._live_tooltip.setText(text)
+        self._live_tooltip.adjustSize()
+        origin = widget.mapToGlobal(widget.rect().center())
+        if isinstance(parent, QWidget):
+            origin = parent.mapFromGlobal(origin)
+        self._live_tooltip.move(origin + QPoint(12, -self._live_tooltip.height() - 10))
+        self._live_tooltip.show()
+
+    def _hide_live_tooltip(self) -> None:
+        if self._live_tooltip is not None:
+            self._live_tooltip.hide()
+
     def _create_binding(self, field: Dict[str, Any]) -> Optional[_FieldBinding]:
         field_type = field.get("field_type") or "string"
         key = str(field.get("key") or "").strip()
@@ -498,7 +733,7 @@ class ExtensionOptionsForm(QWidget):
         include_label: bool = True,
     ) -> tuple[QWidget, QVBoxLayout, QHBoxLayout]:
         container = QWidget(self._content)
-        container.setMinimumWidth(min_width)
+        container.setMinimumWidth(0)
         container.setMaximumWidth(16777215)
         container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(container)
@@ -513,13 +748,13 @@ class ExtensionOptionsForm(QWidget):
         adaptive_row.setMinimumWidth(min_width)
         adaptive_row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         adaptive_row._relayout(force=True)
-        layout.addWidget(adaptive_row)
+        layout.addWidget(adaptive_row, 0, Qt.AlignmentFlag.AlignTop)
         description = str(field.get("description") or "").strip()
         if description and self._show_field_descriptions:
             hint = make_hint_label(description, container)
             hint.setStyleSheet(f"color: {secondary_color()}; font-size: 11px;")
             layout.addWidget(hint)
-        self._flow.addWidget(container)
+        self._flow.addWidget(container, 0, Qt.AlignmentFlag.AlignTop)
         return container, layout, adaptive_row.control_layout()
 
     @staticmethod
@@ -545,9 +780,12 @@ class ExtensionOptionsForm(QWidget):
         )
 
     def _create_boolean_binding(self, field: Dict[str, Any]) -> _FieldBinding:
-        container, layout, field_row = self._make_field_card(field, min_width=180, min_control_width=120, include_label=False)
-        checkbox = CheckBox(_field_label(field), container)
-        field_row.addWidget(checkbox, 1)
+        container, layout, field_row = self._make_field_card(field, min_width=132, min_control_width=24)
+        checkbox = CheckBox("", container)
+        checkbox.setText("")
+        checkbox.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        field_row.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        field_row.addStretch(1)
         description = str(field.get("description") or "").strip()
         if description and self._show_field_descriptions:
             hint = make_hint_label(description, container)
@@ -670,11 +908,12 @@ class ExtensionOptionsForm(QWidget):
         )
 
     def _create_color_binding(self, field: Dict[str, Any]) -> _FieldBinding:
-        container, _layout, field_row = self._make_field_card(field, min_width=144, min_control_width=60)
+        container, _layout, field_row = self._make_field_card(field, min_width=104, min_control_width=36)
         button = ColorPickerButton(QColor("#0078D4"), "", container, enableAlpha=False)
-        button.setFixedHeight(WORKBENCH_BUTTON_HEIGHT + 2)
-        self._set_expanding_control(button, 60)
-        field_row.addWidget(button, 1)
+        button.setFixedSize(WORKBENCH_BUTTON_HEIGHT + 2, WORKBENCH_BUTTON_HEIGHT + 2)
+        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        field_row.addWidget(button, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        field_row.addStretch(1)
         button.colorChanged.connect(lambda _color: self._emit_change(committed=True))
 
         def _set(value: Any) -> None:
@@ -694,10 +933,7 @@ class ExtensionOptionsForm(QWidget):
         container, _layout, field_row = self._make_field_card(field, min_width=196, min_control_width=90)
         slider = Slider(Qt.Orientation.Horizontal, container)
         self._set_expanding_control(slider, 90)
-        value_label = CaptionLabel("", container)
-        value_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
         field_row.addWidget(slider, 1)
-        field_row.addWidget(value_label)
 
         min_value = float(field.get("min_value", 0.0) or 0.0)
         max_value = float(field.get("max_value", 100.0) or 100.0)
@@ -718,12 +954,21 @@ class ExtensionOptionsForm(QWidget):
             value = slider.value() / scale
             return int(value) if scale == 1 else value
 
+        def _update_tooltip(raw_value: int) -> None:
+            text = _format(raw_value)
+            slider.setToolTip(text)
+            if slider.isSliderDown() or slider.underMouse() or slider.hasFocus():
+                self._show_live_tooltip(slider, text)
+
         def _set(value: Any) -> None:
             numeric = float(value if value is not None else min_value)
             slider.setValue(int(round(numeric * scale)))
-            value_label.setText(_format(slider.value()))
+            _update_tooltip(slider.value())
 
-        slider.valueChanged.connect(lambda raw_value: value_label.setText(_format(raw_value)))
+        install_fluent_tooltip(slider, delay=300, position=ToolTipPosition.TOP)
+        slider.valueChanged.connect(_update_tooltip)
+        slider.sliderReleased.connect(self._hide_live_tooltip)
+        slider.destroyed.connect(lambda *_args: self._hide_live_tooltip())
         slider.valueChanged.connect(lambda _value: self._emit_change(committed=True))
         return _FieldBinding(
             key=str(field.get("key")),
@@ -771,84 +1016,61 @@ class ExtensionOptionsForm(QWidget):
         )
 
     def _create_lines_binding(self, field: Dict[str, Any]) -> _FieldBinding:
-        default_lines = normalize_extension_lines_config(field.get("default"), preserve_legacy_all=True)
-        state = dict(default_lines)
-        number = int(state.get("number", 0) or 0)
+        lines_number = _field_lines_number(field) or (1, 1)
+        state = {"lines_list": normalize_extension_lines_list(field.get("default"))}
 
-        if number in {0, 1}:
+        if not extension_lines_picker_visible(lines_number):
             return _FieldBinding(
                 key=str(field.get("key")),
                 field=field,
-                getter=lambda: dict(state),
-                setter=lambda value: state.update(normalize_extension_lines_config(value, preserve_legacy_all=True)),
+                getter=lambda: list(state["lines_list"]),
+                setter=lambda value: state.update({"lines_list": normalize_extension_lines_list(value)}),
             )
 
-        container, layout, field_row = self._make_field_card(field, min_width=280, min_control_width=160)
+        container, layout, field_row = self._make_field_card(field, min_width=168, min_control_width=96)
         button = PushButton("选择曲线", container)
-        self._set_expanding_control(button, 160)
-        summary = CaptionLabel("", container)
-        summary.setWordWrap(True)
-        summary.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        self._set_expanding_control(button, 96)
         field_row.addWidget(button, 1)
-        layout.addWidget(summary)
 
         def _selected_labels() -> List[str]:
             labels: List[str] = []
-            lines_list = state.get("lines_list")
-            if not isinstance(lines_list, list):
-                return labels
-            for index in lines_list:
+            for index in state["lines_list"]:
                 offset = int(index) - 1
                 if 0 <= offset < len(self._line_candidates):
                     labels.append(self._line_candidates[offset])
             return labels
 
-        def _summary_text() -> str:
+        def _tooltip_text() -> str:
+            support_text = extension_lines_support_text(lines_number)
             if not self._line_candidates:
-                return "当前没有可选曲线"
+                return f"本扩展支持 {support_text}，当前没有可选曲线"
             labels = _selected_labels()
             if labels:
-                return "当前: " + "；".join(labels)
-            lines_list = state.get("lines_list")
-            if isinstance(lines_list, list) and lines_list:
-                return f"当前已选 {len(lines_list)} 条"
-            if number == -1:
-                return "当前未显式指定，运行时沿用已选择列表"
-            return f"当前未显式指定，需要 {number} 条输入曲线"
+                return f"本扩展支持 {support_text}。已选择: " + "；".join(labels)
+            return f"本扩展支持 {support_text}。尚未显式选择曲线。"
 
         def _refresh() -> None:
             button.setEnabled(bool(self._line_candidates))
-            if number == -1:
-                button.setText("选择曲线")
-            else:
-                button.setText(f"选择 {number} 条曲线")
-            summary.setText(_summary_text())
-            summary.setToolTip("；".join(_selected_labels()) or summary.text())
-            install_fluent_tooltip(summary, delay=300, position=ToolTipPosition.BOTTOM)
+            button.setText("选择曲线")
+            button.setToolTip(_tooltip_text())
+            install_fluent_tooltip(button, delay=300, position=ToolTipPosition.BOTTOM)
 
         def _set(value: Any) -> None:
-            state.update(normalize_extension_lines_config(value, preserve_legacy_all=True))
+            state["lines_list"] = normalize_extension_lines_list(value)
             _refresh()
 
         def _choose() -> None:
             if not self._line_candidates:
                 return
-            selected = state.get("lines_list")
-            if isinstance(selected, list):
-                selected_indices = [int(item) for item in selected]
-            else:
-                selected_indices = []
+            selected_indices = [int(item) for item in state["lines_list"]]
             result, accepted = _LineSelectionDialog.get_indices(
                 self.window() if self.window() is not None else self,
                 _field_label(field),
                 self._line_candidates,
                 selected_indices=selected_indices,
-                number=number,
+                lines_number=lines_number,
             )
             if not accepted:
-                return
-            if number > 0 and len(result) != number:
-                summary.setText(f"需要选择 {number} 条曲线，当前为 {len(result)} 条")
                 return
             state["lines_list"] = result
             _refresh()
@@ -859,7 +1081,7 @@ class ExtensionOptionsForm(QWidget):
         return _FieldBinding(
             key=str(field.get("key")),
             field=field,
-            getter=lambda: dict(state),
+            getter=lambda: list(state["lines_list"]),
             setter=_set,
             refresh=_refresh,
         )

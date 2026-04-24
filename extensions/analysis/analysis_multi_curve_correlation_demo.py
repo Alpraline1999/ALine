@@ -94,14 +94,9 @@ def register_extensions(registry):
             handler=multi_curve_correlation,
             description="以 lines_list 第一项为主曲线，对其余曲线按样本顺序做多曲线相关性比较，不内置重采样。",
             version="0.1.0",
+            lines_number=(2, -1),
+            settings=True,
             config_fields=[
-                ExtensionConfigField(
-                    key="lines",
-                    label="输入曲线",
-                    description="选择要参与相关性比较的多条曲线；第一条视为主曲线。",
-                    field_type="lines",
-                    default={"number": -1, "lines_list": ""},
-                ),
                 ExtensionConfigField(
                     key="method",
                     description="相关系数算法：pearson 或 spearman。",

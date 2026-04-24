@@ -201,6 +201,7 @@ _EXTENSION_CONFIG_GROUPS = [
     ("plot", "绘图扩展", getattr(FIF, "PENCIL_INK", FIF.DEVELOPER_TOOLS)),
     ("processing", "处理扩展", FIF.DEVELOPER_TOOLS),
     ("analysis", "分析扩展", FIF.SEARCH),
+    ("digitize", "数字化扩展", getattr(FIF, "LABEL", FIF.PHOTO)),
 ]
 
 
@@ -707,13 +708,15 @@ class ProjectTreeWidget(QWidget):
             entries = [build_extension_entry(extension) for extension in extension_registry.list_plot()]
         elif category == "processing":
             entries = [build_extension_entry(extension) for extension in extension_registry.list_processing()]
+        elif category == "digitize":
+            entries = [build_extension_entry(extension) for extension in extension_registry.list_digitize()]
         else:
             entries = [build_extension_entry(extension) for extension in extension_registry.list_analysis()]
 
         entry_by_type: Dict[str, dict] = {}
         for entry in entries:
             type_id = str(entry.get("type") or "").strip()
-            if not type_id or not entry.get("listed", True):
+            if not type_id or not entry.get("listed", True) or not entry.get("settings"):
                 continue
             entry_by_type[type_id] = dict(entry)
             global_assets.ensure_extension_default_config(
@@ -793,12 +796,14 @@ class ProjectTreeWidget(QWidget):
             extension = extension_registry.get_processing(clean_type)
         elif normalized_category == "analysis":
             extension = extension_registry.get_analysis(clean_type)
+        elif normalized_category == "digitize":
+            extension = extension_registry.get_digitize(clean_type)
         else:
             extension = None
         if extension is None:
             return None
         entry = build_extension_entry(extension)
-        return dict(entry) if entry.get("listed", True) else None
+        return dict(entry) if entry.get("listed", True) and entry.get("settings") else None
 
     @staticmethod
     def _next_extension_config_name(category: str, extension_type: str, base_name: str) -> str:

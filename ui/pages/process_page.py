@@ -20,7 +20,8 @@ from qfluentwidgets import (
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
 )
 
-from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
+from core.extension_api import build_extension_entry, extension_lines_number, extension_registry, normalize_extension_lines_list, reload_configured_extensions
+from core.builtin_extensions import register_core_builtin_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from ui.theme import (
     WORKBENCH_BUTTON_HEIGHT,
@@ -111,6 +112,7 @@ class ProcessPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        register_core_builtin_extensions(extension_registry)
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._src_xs: List[float] = []
@@ -168,7 +170,7 @@ class ProcessPage(QWidget):
         self._content_splitter.setSizes([360, 620])
         self._page_splitter.addWidget(self._content_splitter)
 
-        self._extension_panel = ExtensionConfigPanel("处理扩展", "应用扩展", self, mode="help_only", framed=False)
+        self._extension_panel = ExtensionConfigPanel("处理扩展", "应用扩展", self, mode="help_only", framed=True)
         self._extension_panel.set_context("数据处理", "当前操作链")
         self._extension_panel.set_status_context("processing", "处理扩展")
         self._extension_panel.apply_requested.connect(self._on_processing_extension_apply)
@@ -300,6 +302,7 @@ class ProcessPage(QWidget):
         self._selected_input_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._selected_input_list.setMinimumHeight(108)
         self._selected_input_list.itemSelectionChanged.connect(self._on_selected_input_list_changed)
+        self._selected_input_list.currentItemChanged.connect(lambda _current, _previous: self._on_selected_input_list_changed())
         mv.addWidget(self._selected_input_list)
         mv.addWidget(self._selected_input_state_label)
 
@@ -624,12 +627,57 @@ class ProcessPage(QWidget):
         self._param_stack.updateGeometry()
 
     def _rebuild_source_series_batch(self) -> None:
-        active_payloads = self._active_input_payloads(prefer_current=True)
+        active_payloads = self._preview_input_payloads()
         rebuilt = self._build_series_batch_from_payloads(active_payloads)
         self._src_series_batch = rebuilt
         preview = rebuilt[0] if rebuilt else None
         self._src_xs = list(preview.x) if preview is not None else []
         self._src_ys = list(preview.y) if preview is not None else []
+
+    def _pairing_preview_payloads(self) -> List[Dict[str, Any]]:
+        if not self._selected_inputs:
+            return []
+        for op in self._ops:
+            op_type = str(op.get("type", "") or "")
+            params = self._normalized_operation_params(op_type, op.get("params", {}) or {})
+            if not self._is_pairing_operation(op_type, params):
+                continue
+            indices = normalize_extension_lines_list(params.get("lines_list")) if "lines_list" in params else []
+            payloads: List[Dict[str, Any]] = []
+            for index in indices:
+                try:
+                    offset = int(index) - 1
+                except Exception:
+                    continue
+                if 0 <= offset < len(self._selected_inputs):
+                    payloads.append(self._selected_inputs[offset])
+            return payloads or list(self._selected_inputs)
+        return []
+
+    def _preview_input_payloads(self) -> List[Dict[str, Any]]:
+        pairing_payloads = self._pairing_preview_payloads()
+        if pairing_payloads:
+            return pairing_payloads
+        return self._active_input_payloads(prefer_current=True)
+
+    @staticmethod
+    def _normalized_operation_params(op_type: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        normalized = dict(params or {})
+        explicit_lines = normalize_extension_lines_list(normalized.get("lines_list")) if "lines_list" in normalized else []
+        if op_type == "pairwise_compute" and not explicit_lines:
+            indices: List[int] = []
+            for key in ("primary_index", "secondary_index"):
+                try:
+                    value = int(normalized.get(key))
+                except Exception:
+                    continue
+                if value >= 1:
+                    indices.append(value)
+            if indices:
+                normalized["lines_list"] = indices
+        elif explicit_lines:
+            normalized["lines_list"] = explicit_lines
+        return normalized
 
     def _update_selected_input_state_label(self) -> None:
         active_payloads = self._active_input_payloads()
@@ -773,6 +821,7 @@ class ProcessPage(QWidget):
 
     def _on_selected_input_list_changed(self) -> None:
         self._sync_selected_input_state()
+        self._save_name_edit.setText(self._suggest_result_name())
         self._run_pipeline()
 
     def _supports_batch_export(self) -> bool:
@@ -811,21 +860,15 @@ class ProcessPage(QWidget):
         self._add_operation_to_chain(op_type, self._default_params_for_processing_type(op_type))
 
     def _is_pairing_operation(self, op_type: str, params: Optional[Dict[str, Any]] = None) -> bool:
-        if op_type == "pairwise_compute":
-            return True
+        del params
         extension = extension_registry.get_processing(op_type)
         if extension is None:
             return False
-        number = None
-        lines = dict((params or {}).get("lines") or {})
-        if "number" in lines:
-            try:
-                number = int(lines["number"])
-            except (TypeError, ValueError):
-                number = None
-        if number is not None:
-            return number != 1
-        return str(getattr(extension, "line_mode", "single") or "single").strip().lower() == "multi"
+        lines_number = extension_lines_number(extension)
+        if lines_number is None:
+            return False
+        _lower, upper = lines_number
+        return upper == -1 or upper > 1
 
     def _can_add_operation(self, op_type: str, params: Optional[Dict[str, Any]] = None) -> bool:
         if not self._is_pairing_operation(op_type, params):
@@ -921,10 +964,13 @@ class ProcessPage(QWidget):
             self._update_save_action_presentation()
             return
         for op, pw in zip(self._ops, self._param_widgets):
-            op["params"] = pw.get_params()
+            merged_params = dict(op.get("params", {}) or {})
+            merged_params.update(pw.get_params())
+            op["params"] = self._normalized_operation_params(str(op.get("type", "") or ""), merged_params)
         try:
+            preview_payloads = self._preview_input_payloads()
             self._out_series_batch, self._pipeline_warnings = self._build_output_series_batch(
-                self._active_input_payloads(prefer_current=True),
+                preview_payloads,
                 self._selected_inputs,
             )
             preview_series = self._out_series_batch[0] if self._out_series_batch else None
@@ -1506,538 +1552,12 @@ class _ParamWidget(QWidget):
         edit.editingFinished.connect(on_change)
 
 
-class _CommitPlainTextEdit(PlainTextEdit):
-    commitRequested = Signal()
-
-    def focusOutEvent(self, event) -> None:
-        super().focusOutEvent(event)
-        self.commitRequested.emit()
-
-
-class _CropParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-        r1 = QHBoxLayout()
-        r1.addWidget(BodyLabel("X min:"))
-        self._min = LineEdit()
-        self._min.setPlaceholderText("-∞")
-        self._connect_line_edit_commit(self._min, on_change)
-        _install_fluent_tip(self._min, "裁剪后的最小 X，留空表示不限制")
-        r1.addWidget(self._min)
-        lv.addLayout(r1)
-        r2 = QHBoxLayout()
-        r2.addWidget(BodyLabel("X max:"))
-        self._max = LineEdit()
-        self._max.setPlaceholderText("+∞")
-        self._connect_line_edit_commit(self._max, on_change)
-        _install_fluent_tip(self._max, "裁剪后的最大 X，留空表示不限制")
-        r2.addWidget(self._max)
-        lv.addLayout(r2)
-
-    def get_params(self):
-        def _f(e, default):
-            try: return float(e.text())
-            except: return default
-        return {"x_min": _f(self._min, -math.inf), "x_max": _f(self._max, math.inf)}
-
-    def set_params(self, params: dict) -> None:
-        x_min = params.get("x_min")
-        x_max = params.get("x_max")
-        self._min.setText("" if x_min in (None, -math.inf) else str(x_min))
-        self._max.setText("" if x_max in (None, math.inf) else str(x_max))
-
-
-class _SmoothParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-        r1 = QHBoxLayout()
-        r1.addWidget(BodyLabel("方法:"))
-        self._method = ComboBox()
-        self._method.addItems(["savgol", "moving_avg"])
-        self._method.currentIndexChanged.connect(on_change)
-        _install_fluent_tip(self._method, "选择平滑算法：Savitzky-Golay 或移动平均")
-        r1.addWidget(self._method, 1)
-        lv.addLayout(r1)
-        r2 = QHBoxLayout()
-        r2.addWidget(BodyLabel("窗口:"))
-        self._window = LineEdit()
-        self._window.setText("11")
-        self._connect_line_edit_commit(self._window, on_change)
-        _install_fluent_tip(self._window, "平滑窗口大小，通常取奇数")
-        r2.addWidget(self._window)
-        r2.addWidget(BodyLabel("多项式:"))
-        self._poly = LineEdit()
-        self._poly.setText("3")
-        self._connect_line_edit_commit(self._poly, on_change)
-        _install_fluent_tip(self._poly, "Savitzky-Golay 多项式阶数")
-        r2.addWidget(self._poly)
-        lv.addLayout(r2)
-
-    def get_params(self):
-        def _i(e, d):
-            try: return max(1, int(e.text()))
-            except: return d
-        return {"method": self._method.currentText(),
-                "window": _i(self._window, 11), "poly": _i(self._poly, 3)}
-
-    def set_params(self, params: dict) -> None:
-        method = params.get("method", "savgol")
-        idx = self._method.findText(method)
-        if idx >= 0:
-            self._method.setCurrentIndex(idx)
-        self._window.setText(str(params.get("window", 11)))
-        self._poly.setText(str(params.get("poly", 3)))
-
-
-class _NormalizeParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QHBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.addWidget(BodyLabel("模式:"))
-        self._mode = ComboBox()
-        self._mode.addItems(["minmax", "zscore"])
-        self._mode.currentIndexChanged.connect(on_change)
-        _install_fluent_tip(self._mode, "minmax 映射到 [0,1]；zscore 转为标准分数")
-        lv.addWidget(self._mode, 1)
-
-    def get_params(self):
-        return {"mode": self._mode.currentText()}
-
-    def set_params(self, params: dict) -> None:
-        mode = params.get("mode", "minmax")
-        idx = self._mode.findText(mode)
-        if idx >= 0:
-            self._mode.setCurrentIndex(idx)
-
-
-class _ResampleParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        self._page = parent if hasattr(parent, "_selected_inputs") else None
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-
-        algorithm_row = QHBoxLayout()
-        self._algorithm_label = BodyLabel("插值算法:")
-        algorithm_row.addWidget(self._algorithm_label)
-        self._algorithm_combo = ComboBox()
-        self._algorithm_combo.addItems(["linear", "nearest", "cubic"])
-        self._algorithm_combo.currentIndexChanged.connect(on_change)
-        algorithm_row.addWidget(self._algorithm_combo, 1)
-        lv.addLayout(algorithm_row)
-
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(BodyLabel("方式:"))
-        self._mode = ComboBox()
-        self._mode.addItems(["点间距", "坐标间距", "对齐"])
-        self._mode.currentIndexChanged.connect(self._sync_mode)
-        self._mode.currentIndexChanged.connect(on_change)
-        _install_fluent_tip(self._mode, "支持点间距、坐标间距和对齐到目标曲线三种模式")
-        mode_row.addWidget(self._mode, 1)
-        lv.addLayout(mode_row)
-
-        value_row = QHBoxLayout()
-        self._value_label = BodyLabel("点数:")
-        value_row.addWidget(self._value_label)
-        self._value_edit = LineEdit()
-        self._value_edit.setText("200")
-        self._connect_line_edit_commit(self._value_edit, on_change)
-        value_row.addWidget(self._value_edit)
-        lv.addLayout(value_row)
-
-        target_row = QHBoxLayout()
-        self._target_label = BodyLabel("对齐目标:")
-        target_row.addWidget(self._target_label)
-        self._target_combo = ComboBox()
-        self._target_combo.currentIndexChanged.connect(on_change)
-        target_row.addWidget(self._target_combo, 1)
-        lv.addLayout(target_row)
-
-        self.refresh_input_choices()
-        self._sync_mode()
-
-    def refresh_input_choices(self) -> None:
-        labels = [payload.get("label", "未命名曲线") for payload in getattr(self._page, "_selected_inputs", [])]
-        current_index = self._target_combo.currentIndex()
-        self._target_combo.blockSignals(True)
-        self._target_combo.clear()
-        if labels:
-            self._target_combo.addItems(labels)
-        else:
-            self._target_combo.addItem("第 1 条曲线")
-        if self._target_combo.count() > 0:
-            self._target_combo.setCurrentIndex(min(max(current_index, 0), self._target_combo.count() - 1))
-        self._target_combo.blockSignals(False)
-
-    def _sync_mode(self) -> None:
-        mode_index = self._mode.currentIndex()
-        is_align = mode_index == 2
-        if mode_index == 1:
-            self._value_label.setText("间距:")
-            self._value_edit.setPlaceholderText("0.1")
-            _install_fluent_tip(self._value_edit, "坐标间距模式下的 X 轴重采样间距")
-        else:
-            self._value_label.setText("点数:")
-            self._value_edit.setPlaceholderText("200")
-            _install_fluent_tip(self._value_edit, "点间距模式下的输出点数")
-        self._value_label.setVisible(not is_align)
-        self._value_edit.setVisible(not is_align)
-        self._target_label.setVisible(is_align)
-        self._target_combo.setVisible(is_align)
-
-    def get_params(self):
-        mode_index = self._mode.currentIndex()
-        if mode_index == 2:
-            return {
-                "mode": "align",
-                "target_index": self._target_combo.currentIndex() + 1,
-                "algorithm": self._algorithm_combo.currentText() or "linear",
-            }
-        if mode_index == 1:
-            try:
-                step = float(self._value_edit.text())
-            except Exception:
-                step = 0.1
-            return {"mode": "spacing", "spacing_mode": "coord", "step": step}
-        try:
-            n = int(float(self._value_edit.text()))
-        except Exception:
-            n = 200
-        return {"mode": "spacing", "spacing_mode": "point", "n": max(2, n)}
-
-    def set_params(self, params: dict) -> None:
-        mode = str(params.get("mode", "spacing") or "spacing").strip().lower()
-        spacing_mode = str(params.get("spacing_mode", "") or "").strip().lower()
-        if mode == "align":
-            self._mode.setCurrentIndex(2)
-            self.refresh_input_choices()
-            target_index = max(1, int(params.get("target_index", 1) or 1)) - 1
-            self._target_combo.setCurrentIndex(min(target_index, max(0, self._target_combo.count() - 1)))
-            algorithm = str(params.get("algorithm", "linear") or "linear")
-            idx = self._algorithm_combo.findText(algorithm)
-            self._algorithm_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        elif spacing_mode == "coord" or (mode == "spacing" and ("step" in params or "spacing" in params) and spacing_mode != "point"):
-            self._mode.setCurrentIndex(1)
-            self._value_edit.setText(str(params.get("step", params.get("spacing", 0.1))))
-        else:
-            self._mode.setCurrentIndex(0)
-            self._value_edit.setText(str(params.get("n", 200)))
-        algorithm = str(params.get("algorithm", "linear") or "linear")
-        index = self._algorithm_combo.findText(algorithm)
-        self._algorithm_combo.setCurrentIndex(index if index >= 0 else 0)
-        self._sync_mode()
-
-
-class _PairwiseParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        self._page = parent if hasattr(parent, "_selected_inputs") else None
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-
-        primary_row = QHBoxLayout()
-        primary_row.addWidget(BodyLabel("曲线 A:"))
-        self._primary_combo = ComboBox()
-        self._primary_combo.currentIndexChanged.connect(on_change)
-        primary_row.addWidget(self._primary_combo, 1)
-        lv.addLayout(primary_row)
-
-        secondary_row = QHBoxLayout()
-        secondary_row.addWidget(BodyLabel("曲线 B:"))
-        self._secondary_combo = ComboBox()
-        self._secondary_combo.currentIndexChanged.connect(on_change)
-        secondary_row.addWidget(self._secondary_combo, 1)
-        lv.addLayout(secondary_row)
-
-        lv.addWidget(BodyLabel("X 表达式:"))
-        self._x_expr = LineEdit()
-        self._x_expr.setPlaceholderText("例：x1")
-        self._connect_line_edit_commit(self._x_expr, on_change)
-        _install_fluent_tip(self._x_expr, "可用 x1、y1、x2、y2、math、sqrt、log、sin、cos、pi、e")
-        lv.addWidget(self._x_expr)
-
-        lv.addWidget(BodyLabel("Y 表达式:"))
-        self._y_expr = LineEdit()
-        self._y_expr.setPlaceholderText("例：y1 - y2")
-        self._connect_line_edit_commit(self._y_expr, on_change)
-        _install_fluent_tip(self._y_expr, "可用 x1、y1、x2、y2、math、sqrt、log、sin、cos、pi、e")
-        lv.addWidget(self._y_expr)
-
-        note = CaptionLabel("两条曲线的 X 坐标需先对齐；若未对齐，请先显式使用重采样工具。", self)
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color: {secondary_color()};")
-        lv.addWidget(note)
-
-        variables_note = CaptionLabel("可用变量：x1, y1, x2, y2, math, sqrt, log, sin, cos, pi, e", self)
-        variables_note.setWordWrap(True)
-        variables_note.setStyleSheet(f"color: {secondary_color()};")
-        lv.addWidget(variables_note)
-        self.refresh_input_choices()
-
-    def refresh_input_choices(self) -> None:
-        labels = [payload.get("label", "未命名曲线") for payload in getattr(self._page, "_selected_inputs", [])]
-        current_primary = self._primary_combo.currentIndex()
-        current_secondary = self._secondary_combo.currentIndex()
-        self._primary_combo.blockSignals(True)
-        self._secondary_combo.blockSignals(True)
-        self._primary_combo.clear()
-        self._secondary_combo.clear()
-        if labels:
-            self._primary_combo.addItems(labels)
-            self._secondary_combo.addItems(labels)
-        else:
-            self._primary_combo.addItem("第 1 条曲线")
-            self._secondary_combo.addItem("第 1 条曲线")
-        self._primary_combo.setCurrentIndex(min(max(current_primary, 0), self._primary_combo.count() - 1))
-        self._secondary_combo.setCurrentIndex(min(max(current_secondary, 0), self._secondary_combo.count() - 1))
-        self._primary_combo.blockSignals(False)
-        self._secondary_combo.blockSignals(False)
-
-    def get_params(self):
-        return {
-            "primary_index": self._primary_combo.currentIndex() + 1,
-            "secondary_index": self._secondary_combo.currentIndex() + 1,
-            "x_expr": self._x_expr.text().strip() or "x1",
-            "y_expr": self._y_expr.text().strip() or "y1 - y2",
-        }
-
-    def set_params(self, params: dict) -> None:
-        self.refresh_input_choices()
-        primary_index = max(1, int(params.get("primary_index", 1) or 1)) - 1
-        secondary_index = max(1, int(params.get("secondary_index", 2) or 2)) - 1
-        self._primary_combo.setCurrentIndex(min(primary_index, max(0, self._primary_combo.count() - 1)))
-        self._secondary_combo.setCurrentIndex(min(secondary_index, max(0, self._secondary_combo.count() - 1)))
-        operator = str(params.get("operator", "subtract") or "subtract").strip().lower()
-        fallback_y = {
-            "add": "y1 + y2",
-            "subtract": "y1 - y2",
-            "multiply": "y1 * y2",
-            "divide": "y1 / y2 if y2 != 0 else 0.0",
-            "abs_diff": "abs(y1 - y2)",
-        }.get(operator, "y1 - y2")
-        self._x_expr.setText(str(params.get("x_expr", "x1") or "x1"))
-        self._y_expr.setText(str(params.get("y_expr", fallback_y) or fallback_y))
-
-
-class _FFTParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-        r1 = QHBoxLayout()
-        r1.addWidget(BodyLabel("输出:"))
-        self._output = ComboBox()
-        self._output.addItems(["幅值谱", "功率谱"])
-        self._output.currentIndexChanged.connect(on_change)
-        _install_fluent_tip(self._output, "选择 FFT 输出为幅值谱还是功率谱")
-        r1.addWidget(self._output, 1)
-        lv.addLayout(r1)
-        self._detrend = CheckBox("先去均值")
-        self._detrend.setChecked(True)
-        self._detrend.stateChanged.connect(on_change)
-        _install_fluent_tip(self._detrend, "在 FFT 前减去均值，减弱直流分量影响")
-        lv.addWidget(self._detrend)
-
-        r2 = QHBoxLayout()
-        r2.addWidget(BodyLabel("采样频率:"))
-        self._sample_rate = LineEdit()
-        self._sample_rate.setPlaceholderText("留空则按 X 间隔自动估计")
-        self._connect_line_edit_commit(self._sample_rate, on_change)
-        _install_fluent_tip(self._sample_rate, "可选；指定后按该采样频率计算 FFT 频轴")
-        r2.addWidget(self._sample_rate, 1)
-        lv.addLayout(r2)
-        lv.addWidget(BodyLabel("留空时，频率步长将根据 X 轴间隔自动估计"))
-
-    def get_params(self):
-        try:
-            sample_rate = float(self._sample_rate.text().strip()) if self._sample_rate.text().strip() else None
-        except Exception:
-            sample_rate = None
-        return {
-            "output": "power" if self._output.currentIndex() == 1 else "amplitude",
-            "detrend": self._detrend.isChecked(),
-            "sampling_rate": sample_rate,
-        }
-
-    def set_params(self, params: dict) -> None:
-        self._output.setCurrentIndex(1 if params.get("output") == "power" else 0)
-        self._detrend.setChecked(bool(params.get("detrend", True)))
-        sample_rate = params.get("sampling_rate")
-        self._sample_rate.setText("" if sample_rate in (None, "") else str(sample_rate))
-
-
-class _EmptyParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.addWidget(BodyLabel("（无需配置参数）"))
-
-    def get_params(self):
-        return {}
-
-
-class _IntegralParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        self._cum = CheckBox("累积积分")
-        self._cum.setChecked(True)
-        self._cum.stateChanged.connect(on_change)
-        _install_fluent_tip(self._cum, "勾选后输出从起点开始的累积积分；取消则输出总积分")
-        lv.addWidget(self._cum)
-
-    def get_params(self):
-        return {"cumulative": self._cum.isChecked()}
-
-    def set_params(self, params: dict) -> None:
-        self._cum.setChecked(bool(params.get("cumulative", True)))
-
-
-class _TransformParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-        lv.addWidget(BodyLabel("X 表达式（留空不变）:"))
-        self._x_expr = LineEdit()
-        self._x_expr.setPlaceholderText("例：x / 1000")
-        self._connect_line_edit_commit(self._x_expr, on_change)
-        _install_fluent_tip(self._x_expr, "可用 x、y、math、sqrt、log、sin、cos、pi、e")
-        lv.addWidget(self._x_expr)
-        lv.addWidget(BodyLabel("Y 表达式（留空不变）:"))
-        self._y_expr = LineEdit()
-        self._y_expr.setPlaceholderText("例：y * 2 + 1")
-        self._connect_line_edit_commit(self._y_expr, on_change)
-        _install_fluent_tip(self._y_expr, "可用 x、y、math、sqrt、log、sin、cos、pi、e")
-        lv.addWidget(self._y_expr)
-        lv.addWidget(BodyLabel("可用：x, y, math, sqrt, log, sin, cos, pi, e"))
-
-    def get_params(self):
-        return {"x_expr": self._x_expr.text().strip(), "y_expr": self._y_expr.text().strip()}
-
-    def set_params(self, params: dict) -> None:
-        self._x_expr.setText(params.get("x_expr", ""))
-        self._y_expr.setText(params.get("y_expr", ""))
-
-
-class _FilterParam(_ParamWidget):
-    def __init__(self, parent, on_change):
-        super().__init__(parent)
-        lv = QVBoxLayout(self)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(4)
-        r0 = QHBoxLayout()
-        r0.addWidget(BodyLabel("滤波类型:"))
-        self._mode = ComboBox()
-        self._mode.addItems(["低通", "高通"])
-        self._mode.currentIndexChanged.connect(on_change)
-        _install_fluent_tip(self._mode, "低通保留低频，高通保留高频")
-        r0.addWidget(self._mode)
-        lv.addLayout(r0)
-        r1 = QHBoxLayout()
-        r1.addWidget(BodyLabel("频率方式:"))
-        self._cutoff_mode = ComboBox()
-        self._cutoff_mode.addItems(["归一化", "实际频率"])
-        self._cutoff_mode.currentIndexChanged.connect(self._sync_cutoff_mode)
-        self._cutoff_mode.currentIndexChanged.connect(on_change)
-        _install_fluent_tip(self._cutoff_mode, "归一化频率范围 (0,1)；实际频率会按采样频率换算")
-        r1.addWidget(self._cutoff_mode)
-        lv.addLayout(r1)
-
-        r2 = QHBoxLayout()
-        self._cutoff_label = BodyLabel("截止频率:")
-        r2.addWidget(self._cutoff_label)
-        self._cutoff = LineEdit()
-        self._cutoff.setText("0.1")
-        self._connect_line_edit_commit(self._cutoff, on_change)
-        r2.addWidget(self._cutoff)
-        lv.addLayout(r2)
-
-        r3 = QHBoxLayout()
-        r3.addWidget(BodyLabel("采样频率:"))
-        self._sample_rate = LineEdit()
-        self._sample_rate.setPlaceholderText("留空则按 X 间隔自动估计")
-        self._connect_line_edit_commit(self._sample_rate, on_change)
-        _install_fluent_tip(self._sample_rate, "实际频率模式下可选；留空则按 X 间隔自动估计")
-        r3.addWidget(self._sample_rate)
-        lv.addLayout(r3)
-
-        r4 = QHBoxLayout()
-        r4.addWidget(BodyLabel("阶数:"))
-        self._order = LineEdit()
-        self._order.setText("4")
-        self._connect_line_edit_commit(self._order, on_change)
-        _install_fluent_tip(self._order, "Butterworth 滤波器阶数")
-        r4.addWidget(self._order)
-        lv.addLayout(r4)
-        self._hint_label = BodyLabel("")
-        lv.addWidget(self._hint_label)
-        self._sync_cutoff_mode()
-
-    def _sync_cutoff_mode(self) -> None:
-        actual_mode = self._cutoff_mode.currentIndex() == 1
-        if actual_mode:
-            self._cutoff_label.setText("截止频率:")
-            self._cutoff.setPlaceholderText("例如 10")
-            self._hint_label.setText("实际频率模式：截止频率将按采样频率换算到 Nyquist")
-            _install_fluent_tip(self._cutoff, "输入与采样频率同单位的截止频率")
-        else:
-            self._cutoff_label.setText("截止频率:")
-            self._cutoff.setPlaceholderText("0.1")
-            self._hint_label.setText("归一化频率范围 (0, 1)，1 = Nyquist")
-            _install_fluent_tip(self._cutoff, "归一化截止频率，范围 (0, 1)，1 表示 Nyquist")
-
-    def get_params(self):
-        def _f(e, d):
-            try: return float(e.text())
-            except: return d
-        def _i(e, d):
-            try: return max(1, int(e.text()))
-            except: return d
-        mode = "high" if self._mode.currentIndex() == 1 else "low"
-        sample_rate_text = self._sample_rate.text().strip()
-        try:
-            sample_rate = float(sample_rate_text) if sample_rate_text else None
-        except Exception:
-            sample_rate = None
-        return {
-            "cutoff": _f(self._cutoff, 0.1),
-            "order": _i(self._order, 4),
-            "mode": mode,
-            "cutoff_mode": "actual" if self._cutoff_mode.currentIndex() == 1 else "normalized",
-            "sampling_rate": sample_rate,
-        }
-
-    def set_params(self, params: dict) -> None:
-        self._cutoff.setText(str(params.get("cutoff", 0.1)))
-        self._order.setText(str(params.get("order", 4)))
-        mode = params.get("mode", "low")
-        self._mode.setCurrentIndex(1 if mode == "high" else 0)
-        cutoff_mode = str(params.get("cutoff_mode", "normalized") or "normalized").strip().lower()
-        self._cutoff_mode.setCurrentIndex(1 if cutoff_mode == "actual" else 0)
-        sample_rate = params.get("sampling_rate")
-        self._sample_rate.setText("" if sample_rate in (None, "") else str(sample_rate))
-        self._sync_cutoff_mode()
-
-
 class _JsonParam(_ParamWidget):
-    def __init__(self, parent, on_change, *, description: str = "", default_params: Optional[dict] = None, fields: Optional[List[dict]] = None):
+    def __init__(self, parent, on_change, *, description: str = "", default_params: Optional[dict] = None, fields: Optional[List[dict]] = None, entry: Optional[dict] = None):
         super().__init__(parent)
         self._page = parent if hasattr(parent, "_selected_inputs") else None
         self._fields = [dict(item) for item in (fields or []) if isinstance(item, dict)]
+        self._entry = dict(entry or {}) if isinstance(entry, dict) else None
         self._last_valid = dict(default_params or {})
         lv = QVBoxLayout(self)
         lv.setContentsMargins(0, 0, 0, 0)
@@ -2045,6 +1565,7 @@ class _JsonParam(_ParamWidget):
         del description
         self._editor = ExtensionOptionsForm(self)
         self._editor.setFixedHeight(180)
+        self._editor.set_settings_context("processing", self._entry)
         self._editor.optionsCommitted.connect(lambda _options: on_change())
         lv.addWidget(self._editor)
         self.set_params(self._last_valid)
@@ -2060,7 +1581,9 @@ class _JsonParam(_ParamWidget):
 
     def set_params(self, params: dict) -> None:
         self._last_valid = dict(params or {})
-        self._editor.set_fields(self._fields, self._last_valid)
+        known_keys = {str(field.get("key") or "").strip() for field in self._fields}
+        infer_unknown_fields = any(key not in known_keys for key in self._last_valid)
+        self._editor.set_fields(self._fields, self._last_valid, infer_unknown_fields=infer_unknown_fields)
         self.refresh_input_choices()
 
     def refresh_input_choices(self) -> None:
@@ -2069,21 +1592,6 @@ class _JsonParam(_ParamWidget):
 
 
 def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:
-    m = {
-        "crop":       _CropParam,
-        "smooth":     _SmoothParam,
-        "normalize":  _NormalizeParam,
-        "resample":   _ResampleParam,
-        "pairwise_compute": _PairwiseParam,
-        "fft":        _FFTParam,
-        "derivative": _EmptyParam,
-        "integral":   _IntegralParam,
-        "transform":  _TransformParam,
-        "filter":     _FilterParam,
-    }
-    widget_cls = m.get(op_type)
-    if widget_cls is not None:
-        return widget_cls(parent, on_change)
     extension = extension_registry.get_processing(op_type)
     if extension is not None:
         entry = build_extension_entry(extension)
@@ -2093,5 +1601,6 @@ def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:
             description=extension.description,
             default_params=dict(entry.get("resolved_options") or {}),
             fields=list(entry.get("normalized_config_fields") or entry.get("config_fields") or []),
+            entry=entry,
         )
-    return _EmptyParam(parent, on_change)
+    return _ParamWidget(parent)

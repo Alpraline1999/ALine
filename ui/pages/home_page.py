@@ -221,7 +221,6 @@ class HomePage(QWidget):
         layout.addWidget(self._recent_scroll)
 
         layout.addStretch(1)
-        self._build_bottom_status_bar(layout)
 
         # 初始应用主题颜色 & 加载最近项目
         self._apply_theme_colors()
@@ -403,12 +402,6 @@ class HomePage(QWidget):
                 TeachingTipTailPosition.BOTTOM,
                 "最近项目会留在这里",
                 "常做的项目可以直接回到上次位置。",
-            ),
-            OnboardingStep(
-                lambda: self._extension_status_btn,
-                TeachingTipTailPosition.LEFT_BOTTOM,
-                "最后看一下扩展状态",
-                "这里能看到最近一次扫描结果，点击状态文字可展开查看。",
             ),
         ]
 

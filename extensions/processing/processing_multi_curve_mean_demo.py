@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.data_engine import align_lines_to_common_x
+from core.extension_api import ProcessingExtension
+from extensions.processing.builtin_ops import align_lines_to_common_x
 
 
 def multi_curve_mean(xs, ys, params, lines=None):
@@ -34,18 +34,9 @@ def register_extensions(registry):
             type="multi_curve_mean",
             name="多曲线均值",
             handler=multi_curve_mean,
-            line_mode="multi",
-            min_lines=2,
             description="对已选择列表中的多条已对齐曲线计算逐点均值；若坐标未对齐，请先显式重采样。",
             version="0.1.0",
-            config_fields=[
-                ExtensionConfigField(
-                    key="lines",
-                    label="输入曲线",
-                    description="选择要参与均值计算的多条曲线；未显式指定时沿用已选择列表。",
-                    field_type="lines",
-                    default={"number": -1, "lines_list": ""},
-                ),
-            ],
+            lines_number=(2, -1),
+                settings=True,
         )
     )

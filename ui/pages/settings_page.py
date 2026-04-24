@@ -15,12 +15,17 @@ from ui.theme import (
     card_background_color,
     card_title_style_sheet,
     error_text_style_sheet,
+    flat_status_button_style,
     install_fluent_tooltip,
     notification_parent,
+    placeholder_color,
     placeholder_text_style_sheet,
     secondary_text_style_sheet,
     text_color,
+    warning_color,
 )
+from ui.widgets.extension_panel import show_extension_load_report_dialog
+from core.extension_api import get_extension_load_status
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.navigation_stack import PivotStackWidget, SegmentedStackWidget
@@ -169,7 +174,7 @@ class SettingsPage(QWidget):
         option_layouts: dict[str, QVBoxLayout],
     ) -> SegmentedStackWidget:
         tabs = SegmentedStackWidget(parent)
-        for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展")):
+        for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展"), ("digitize", "数字化扩展")):
             page = QWidget(parent)
             page_layout = QVBoxLayout(page)
             page_layout.setContentsMargins(0, 0, 0, 0)
@@ -265,7 +270,7 @@ class SettingsPage(QWidget):
         extension_layout.addWidget(self._extension_title)
 
         self._extension_hint = BodyLabel(
-            "内置扩展和外部扩展分块管理；两类扩展分别按绘图/处理/分析分段显示，并在保存后一起重载。",
+            "内置扩展和外部扩展分块管理；两类扩展分别按绘图/处理/分析/数字化分段显示，并在保存后一起重载。",
             self._extension_card,
         )
         self._extension_hint.setWordWrap(True)
@@ -345,6 +350,11 @@ class SettingsPage(QWidget):
         extension_btn_row.addWidget(self._save_extension_settings_btn)
         extension_btn_row.addStretch()
         extension_layout.addLayout(extension_btn_row)
+
+        self._extension_status_summary_btn = PushButton("", self._extension_card)
+        self._extension_status_summary_btn.setFlat(True)
+        self._extension_status_summary_btn.clicked.connect(self._show_extension_status_details)
+        extension_layout.addWidget(self._extension_status_summary_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         layout.addWidget(self._extension_card)
 
@@ -928,6 +938,34 @@ class SettingsPage(QWidget):
         )
         self._on_builtin_extensions_enabled_changed()
         self._on_external_extensions_enabled_changed()
+        self._refresh_extension_status_summary()
+
+    def _refresh_extension_status_summary(self) -> None:
+        status = get_extension_load_status()
+        registered_count = status["registered_count"]
+        error_count = status["error_count"]
+        source_summary = status.get("source_summary") or {}
+        loaded_counts = dict(source_summary.get("loaded_extension_counts") or {})
+        builtin_count = int(loaded_counts.get("builtin", 0) or 0)
+        external_count = int(loaded_counts.get("external", 0) or 0)
+        source_suffix = (
+            f"（内置 {builtin_count} / 外部 {external_count}）"
+            if builtin_count + external_count > 0
+            else ""
+        )
+        if error_count:
+            self._extension_status_summary_btn.setText(f"当前扩展状态：{registered_count} 项可用{source_suffix}，{error_count} 项失败")
+            self._extension_status_summary_btn.setStyleSheet(flat_status_button_style(warning_color()))
+        elif registered_count:
+            self._extension_status_summary_btn.setText(f"当前扩展状态：{registered_count} 项可用{source_suffix}")
+            self._extension_status_summary_btn.setStyleSheet(flat_status_button_style(accent_color()))
+        else:
+            self._extension_status_summary_btn.setText("当前扩展状态：未发现可用项")
+            self._extension_status_summary_btn.setStyleSheet(flat_status_button_style(placeholder_color()))
+        self._extension_status_summary_btn.setEnabled(bool(status["details"].get("loaded") or status["details"].get("errors")))
+
+    def _show_extension_status_details(self) -> None:
+        show_extension_load_report_dialog(self, "扩展加载详情")
 
     def _refresh_external_extension_specs(self) -> None:
         from core.extension_api import list_external_extension_specs

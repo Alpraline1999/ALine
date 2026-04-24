@@ -35,17 +35,11 @@ def register_extensions(registry):
             type="kalman_filter",
             name="卡尔曼滤波",
             handler=kalman_filter_series,
-            line_mode="single",
             description="对一维序列执行标量卡尔曼滤波，适合平滑含噪测量数据。",
             version="0.1.0",
-            config_fields=[
-                ExtensionConfigField(
-                    key="lines",
-                    label="输入曲线",
-                    description="当前处理目标曲线；默认沿用已选择列表中的当前选中项。",
-                    field_type="lines",
-                    default={"number": 1, "lines_list": ""},
-                ),
+            lines_number=(1, 1),
+                settings=True,
+                config_fields=[
                 ExtensionConfigField(key="process_variance", description="过程噪声方差，越大表示对状态变化越敏感。", field_type="number", default=1e-4),
                 ExtensionConfigField(key="measurement_variance", description="测量噪声方差，越大表示更信任历史估计。", field_type="number", default=1e-2),
                 ExtensionConfigField(key="initial_estimate", description="初始状态估计值。", field_type="number", default=0.0),

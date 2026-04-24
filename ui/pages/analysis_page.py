@@ -35,6 +35,7 @@ from ui.dialogs.export_flow import (
 )
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
+from core.builtin_extensions import register_core_builtin_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
@@ -42,7 +43,15 @@ from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, accent_color, apply_button_metrics, make_hint_label, make_section_label, make_hsep, placeholder_color
-from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
+from core.extension_api import (
+    build_extension_entry,
+    extension_lines_picker_visible,
+    extension_lines_number,
+    extension_registry,
+    normalize_extension_lines_list,
+    reload_configured_extensions,
+    validate_extension_lines_list,
+)
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 
@@ -66,11 +75,6 @@ _ANALYSIS_TYPES = [
 ]
 _TYPE_LABELS = [t[0] for t in _ANALYSIS_TYPES]
 _TYPE_IDS    = [t[1] for t in _ANALYSIS_TYPES]
-
-_FIT_MODEL_LABELS = ["线性 (ax+b)", "幂函数 (a·x^b)", "指数 (a·e^(bx))",
-                     "高斯", "2次多项式", "3次多项式"]
-_FIT_MODEL_IDS    = ["linear", "power", "exponential", "gaussian", "poly2", "poly3"]
-
 
 class _SelectableResultTable(TableWidget):
     def __init__(self, parent=None):
@@ -137,6 +141,7 @@ class AnalysisPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        register_core_builtin_extensions(extension_registry)
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._result: Optional[Dict[str, Any]] = None
@@ -188,7 +193,7 @@ class AnalysisPage(QWidget):
         self._content_splitter.setSizes([320, 660])
         self._page_splitter.addWidget(self._content_splitter)
 
-        self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self, mode="help_only", framed=False)
+        self._extension_panel = ExtensionConfigPanel("分析扩展", "应用扩展", self, mode="help_only", framed=True)
         self._extension_panel.set_context("数据分析", "未选择输入")
         self._extension_panel.set_status_context("analysis", "分析扩展")
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
@@ -301,6 +306,7 @@ class AnalysisPage(QWidget):
         self._input_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._input_list.setMinimumHeight(108)
         self._input_list.itemSelectionChanged.connect(self._on_input_list_selection_changed)
+        self._input_list.currentItemChanged.connect(lambda _current, _previous: self._on_input_list_selection_changed())
         lv.addWidget(self._input_list)
         lv.addWidget(self._selected_input_state_label)
 
@@ -333,57 +339,12 @@ class AnalysisPage(QWidget):
         lv.addWidget(make_hsep())
         lv.addWidget(make_section_label("参数"))
 
-        self._fit_model_label = BodyLabel("拟合模型:")
-        self._fit_model_combo = ComboBox(self)
-        self._fit_model_combo.addItems(_FIT_MODEL_LABELS)
-        lv.addWidget(self._fit_model_label)
-        lv.addWidget(self._fit_model_combo)
-
-        self._peak_height_label = BodyLabel("最小高度（留空自动）:")
-        self._peak_height_edit = LineEdit(self)
-        self._peak_height_edit.setPlaceholderText("自动")
-        self._peak_dist_mode_label = BodyLabel("最小间距方式:")
-        self._peak_dist_mode_combo = ComboBox(self)
-        self._peak_dist_mode_combo.addItems(["采样点数", "X 值间距"])
-        self._peak_dist_label = BodyLabel("最小间距:")
-        self._peak_dist_edit = LineEdit(self)
-        self._peak_dist_edit.setText("1")
-        self._peak_prom_label = BodyLabel("最小突出度（留空不限）:")
-        self._peak_prom_edit = LineEdit(self)
-        self._peak_prom_edit.setPlaceholderText("不限")
-        lv.addWidget(self._peak_height_label)
-        lv.addWidget(self._peak_height_edit)
-        lv.addWidget(self._peak_dist_mode_label)
-        lv.addWidget(self._peak_dist_mode_combo)
-        lv.addWidget(self._peak_dist_label)
-        lv.addWidget(self._peak_dist_edit)
-        lv.addWidget(self._peak_prom_label)
-        lv.addWidget(self._peak_prom_edit)
-
-        self._corr_method_label = BodyLabel("相关系数类型:")
-        self._corr_method_combo = ComboBox(self)
-        self._corr_method_combo.addItems(["Pearson", "Spearman"])
-        lv.addWidget(self._corr_method_label)
-        lv.addWidget(self._corr_method_combo)
-
-        self._pair_primary_label = BodyLabel("主曲线:")
-        self._pair_primary_combo = ComboBox(self)
-        self._pair_primary_combo.currentIndexChanged.connect(self._on_pair_input_changed)
-        lv.addWidget(self._pair_primary_label)
-        lv.addWidget(self._pair_primary_combo)
-
-        self._pair_secondary_label = BodyLabel("副曲线:")
-        self._pair_secondary_combo = ComboBox(self)
-        self._pair_secondary_combo.currentIndexChanged.connect(self._on_pair_input_changed)
-        lv.addWidget(self._pair_secondary_label)
-        lv.addWidget(self._pair_secondary_combo)
-
-        self._extension_params_label = BodyLabel("扩展参数:")
+        self._extension_params_label = BodyLabel("", self)
+        self._extension_params_label.hide()
         self._extension_params_edit = ExtensionOptionsForm(self)
-        self._extension_params_edit.setMinimumHeight(160)
+        self._extension_params_edit.setMinimumHeight(120)
         self._extension_params_edit.optionsChanged.connect(self._on_extension_analysis_options_changed)
-        lv.addWidget(self._extension_params_label)
-        lv.addWidget(self._extension_params_edit, 1)
+        lv.addWidget(self._extension_params_edit)
 
         lv.addStretch()
         lv.addWidget(make_hsep())
@@ -771,7 +732,7 @@ class AnalysisPage(QWidget):
 
     def _current_extension_analysis_options(self, analysis_type: Optional[str] = None, *, raise_on_error: bool = False) -> Dict[str, Any]:
         type_id = analysis_type or self._current_analysis_type()
-        if type_id in _TYPE_IDS:
+        if extension_registry.get_analysis(type_id) is None:
             return {}
         fallback_options = dict(self._analysis_extension_options.get(type_id, {}))
         if not fallback_options:
@@ -794,16 +755,22 @@ class AnalysisPage(QWidget):
         type_id = analysis_type or self._current_analysis_type()
         options: Dict[str, Any] = {}
         fields: List[dict] = []
-        if type_id not in _TYPE_IDS:
+        infer_unknown_fields = False
+        entry: Optional[dict] = None
+        if extension_registry.get_analysis(type_id) is not None:
             options = dict(self._analysis_extension_options.get(type_id, {}))
             if not options:
                 options = self._default_extension_analysis_options(type_id)
                 if options:
                     self._analysis_extension_options[type_id] = dict(options)
             fields = self._extension_analysis_fields(type_id)
+            entry = next((item for item in self._analysis_extension_entries() if str(item.get("type") or "") == type_id), None)
+            known_keys = {str(field.get("key") or "").strip() for field in fields}
+            infer_unknown_fields = any(key not in known_keys for key in options)
         self._extension_params_edit.set_line_candidates([payload.get("label", "未命名曲线") for payload in self._selected_inputs])
+        self._extension_params_edit.set_settings_context("analysis", entry)
         self._extension_params_edit.blockSignals(True)
-        self._extension_params_edit.set_fields(fields, dict(options))
+        self._extension_params_edit.set_fields(fields, dict(options), infer_unknown_fields=infer_unknown_fields)
         self._extension_params_edit.blockSignals(False)
 
     def _refresh_analysis_type_choices(self) -> None:
@@ -1119,44 +1086,30 @@ class AnalysisPage(QWidget):
                 node_ids.append(str(payload["node_id"]))
         return node_ids
 
-    def _active_input_payloads(self) -> List[dict]:
+    def _current_selected_input_node_id(self) -> Optional[str]:
+        item = self._input_list.currentItem() if hasattr(self, "_input_list") else None
+        if item is None:
+            return None
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        if payload and payload.get("node_id"):
+            return str(payload["node_id"])
+        return None
+
+    def _active_input_payloads(self, *, prefer_current: bool = False) -> List[dict]:
         selected_ids = set(self._selected_input_node_ids())
         if selected_ids:
-            return [payload for payload in self._selected_inputs if payload["node_id"] in selected_ids]
-        return list(self._selected_inputs)
-
-    def _refresh_pair_input_choices(self) -> None:
-        self._is_refreshing_pair_inputs = True
-        labels = [payload.get("label", "未命名曲线") for payload in self._selected_inputs]
-        current_primary = self._pair_primary_combo.currentIndex() if hasattr(self, "_pair_primary_combo") else 0
-        current_secondary = self._pair_secondary_combo.currentIndex() if hasattr(self, "_pair_secondary_combo") else 1
-        for combo in (self._pair_primary_combo, self._pair_secondary_combo):
-            combo.blockSignals(True)
-            combo.clear()
-            if labels:
-                combo.addItems(labels)
-            else:
-                combo.addItem("第 1 条曲线")
-        if self._pair_primary_combo.count() > 0:
-            self._pair_primary_combo.setCurrentIndex(min(max(current_primary, 0), self._pair_primary_combo.count() - 1))
-        if self._pair_secondary_combo.count() > 0:
-            if self._pair_secondary_combo.count() > 1 and current_secondary <= 0:
-                default_secondary = 1
-            else:
-                default_secondary = current_secondary if current_secondary >= 0 else 0
-            self._pair_secondary_combo.setCurrentIndex(min(max(default_secondary, 0), self._pair_secondary_combo.count() - 1))
-        for combo in (self._pair_primary_combo, self._pair_secondary_combo):
-            combo.blockSignals(False)
-        self._is_refreshing_pair_inputs = False
-
-    def _pair_input_payloads(self) -> List[dict]:
-        if not self._selected_inputs:
-            return []
-        payloads: List[dict] = []
-        for index in (self._pair_primary_combo.currentIndex(), self._pair_secondary_combo.currentIndex()):
-            if 0 <= index < len(self._selected_inputs):
-                payloads.append(self._selected_inputs[index])
-        return payloads
+            active_payloads = [payload for payload in self._selected_inputs if payload["node_id"] in selected_ids]
+        else:
+            active_payloads = list(self._selected_inputs)
+        if not prefer_current:
+            return active_payloads
+        current_node_id = self._current_selected_input_node_id()
+        if not current_node_id:
+            return active_payloads
+        current_payload = next((payload for payload in active_payloads if payload.get("node_id") == current_node_id), None)
+        if current_payload is None:
+            return active_payloads
+        return [current_payload] + [payload for payload in active_payloads if payload.get("node_id") != current_node_id]
 
     def _append_inputs_from_tree_node(self, kind: str, node_id: str) -> bool:
         payloads = self._resolve_input_payloads(kind, node_id)
@@ -1255,7 +1208,7 @@ class AnalysisPage(QWidget):
             self._input_list.setCurrentItem(current_item, QItemSelectionModel.SelectionFlag.NoUpdate)
         self._input_list.blockSignals(False)
         self._sync_input_role_labels()
-        if self._current_analysis_type() not in _TYPE_IDS:
+        if extension_registry.get_analysis(self._current_analysis_type()) is not None:
             self._sync_extension_params_editor(self._current_analysis_type())
 
     def _current_selected_input_payload(self) -> Optional[Dict[str, Any]]:
@@ -1279,7 +1232,6 @@ class AnalysisPage(QWidget):
         secondary = self._selected_inputs[1]["label"] if len(self._selected_inputs) > 1 else "未使用"
         self._primary_input_label.setText(f"主输入: {primary}")
         self._secondary_input_label.setText(f"对比输入: {secondary}")
-        self._refresh_pair_input_choices()
         current_payload = self._current_selected_input_payload()
         if current_payload is None:
             self._selected_input_state_label.setText("当前分析: 未选择")
@@ -1295,20 +1247,18 @@ class AnalysisPage(QWidget):
             self._extension_panel.set_context("数据分析", target)
 
     def _on_input_list_selection_changed(self) -> None:
+        self._result = None
         self._sync_input_role_labels()
         self._sync_related_analysis_tabs()
 
-    def _on_pair_input_changed(self, _index: int) -> None:
-        if getattr(self, "_is_refreshing_pair_inputs", False):
-            return
-        self._sync_input_role_labels()
-
     def _on_extension_analysis_options_changed(self, options: Dict[str, Any]) -> None:
         type_id = self._current_analysis_type()
-        if type_id in _TYPE_IDS:
+        if extension_registry.get_analysis(type_id) is None:
             return
+        self._result = None
         self._analysis_extension_options[type_id] = dict(options or {})
         self._sync_input_role_labels()
+        self._refresh_current_analysis_preview()
 
     def _current_analysis_type(self) -> str:
         idx = self._type_combo.currentIndex()
@@ -1322,31 +1272,36 @@ class AnalysisPage(QWidget):
             return default
 
     def _resolve_extension_input_payloads(self, analysis_type: str, options: Optional[Dict[str, Any]] = None) -> List[dict]:
-        if analysis_type in _TYPE_IDS:
-            return []
+        extension = extension_registry.get_analysis(analysis_type)
+        lines_number = extension_lines_number(extension) if extension is not None else None
         config = dict(options or self._current_extension_analysis_options(analysis_type, raise_on_error=False))
-        lines: Dict[str, Any] = dict(config.get("lines") or {}) if isinstance(config.get("lines"), dict) else {}
-        number = self._line_number_spec(lines.get("number", 1), 1)
-        lines_list = lines.get("lines_list", "selected")
+        if lines_number is None:
+            active = self._active_input_payloads(prefer_current=True)
+            return active[:1] if active else list(self._selected_inputs[:1])
 
-        if number == 2:
-            payloads = self._pair_input_payloads()
-        elif isinstance(lines_list, list):
+        try:
+            explicit_lines = normalize_extension_lines_list(config.get("lines_list")) if "lines_list" in config else []
+        except ValueError:
+            explicit_lines = []
+
+        if "lines_list" in config:
             payloads = []
-            for index in lines_list:
+            for index in explicit_lines:
                 try:
                     offset = int(index) - 1
                 except Exception:
                     continue
                 if 0 <= offset < len(self._selected_inputs):
                     payloads.append(self._selected_inputs[offset])
+        elif extension_lines_picker_visible(lines_number):
+            payloads = []
         else:
-            payloads = self._active_input_payloads()
-            if not payloads:
-                payloads = list(self._selected_inputs)
-
-        if number > 0:
-            payloads = payloads[:number]
+            payloads = self._active_input_payloads(prefer_current=True) or list(self._selected_inputs)
+            upper = lines_number[1]
+            if upper == 0:
+                payloads = []
+            elif upper != -1:
+                payloads = payloads[:upper]
         return payloads
 
     def _payload_indices(self, payloads: List[dict]) -> List[int]:
@@ -1362,30 +1317,22 @@ class AnalysisPage(QWidget):
     def _effective_extension_analysis_options(self, analysis_type: str, options: Dict[str, Any]) -> tuple[List[dict], Dict[str, Any]]:
         payloads = self._resolve_extension_input_payloads(analysis_type, options)
         effective_options = dict(options or {})
-        lines = dict(effective_options.get("lines") or {})
-        lines["number"] = self._line_number_spec(lines.get("number", len(payloads) or 1), len(payloads) or 1)
-        lines["lines_list"] = self._payload_indices(payloads)
-        effective_options["lines"] = lines
+        extension = extension_registry.get_analysis(analysis_type)
+        lines_number = extension_lines_number(extension) if extension is not None else None
+        if lines_number is not None:
+            effective_options["lines_list"] = self._payload_indices(payloads)
+            validate_extension_lines_list(effective_options["lines_list"], lines_number, present=True)
         return payloads, effective_options
 
     def _analysis_input_payloads(self, analysis_type: Optional[str] = None, options: Optional[Dict[str, Any]] = None) -> List[dict]:
         type_id = analysis_type or self._current_analysis_type()
-        if type_id in {"correlation", "error_compare"}:
-            return self._pair_input_payloads()
+        extension = extension_registry.get_analysis(type_id)
+        if extension is not None:
+            return self._resolve_extension_input_payloads(type_id, options)
         if type_id in {"curve_fit", "peak_detect", "statistics"}:
-            active = self._active_input_payloads()
+            active = self._active_input_payloads(prefer_current=True)
             return active[:1] if active else list(self._selected_inputs[:1])
         return self._resolve_extension_input_payloads(type_id, options)
-
-    def _requires_pair_input(self) -> bool:
-        analysis_type = self._current_analysis_type()
-        if analysis_type in {"correlation", "error_compare"}:
-            return True
-        if analysis_type in _TYPE_IDS:
-            return False
-        options = self._current_extension_analysis_options(analysis_type, raise_on_error=False)
-        lines: Dict[str, Any] = dict(options.get("lines") or {}) if isinstance(options.get("lines"), dict) else {}
-        return self._line_number_spec(lines.get("number", 1), 1) == 2
 
     # ─────────────────────────────────────────────────────────
     # 类型切换
@@ -1393,34 +1340,18 @@ class AnalysisPage(QWidget):
 
     def _on_type_changed(self, idx: int):
         t = self._analysis_type_ids[idx] if idx < len(self._analysis_type_ids) else "curve_fit"
-        is_fit  = t == "curve_fit"
-        is_peak = t == "peak_detect"
-        is_corr = t == "correlation"
-        is_extension = t not in _TYPE_IDS
-        is_pair = self._requires_pair_input()
-        for w in [self._fit_model_label, self._fit_model_combo]:
-            w.setVisible(is_fit)
-        for w in [self._peak_height_label, self._peak_height_edit,
-                  self._peak_dist_mode_label, self._peak_dist_mode_combo,
-                  self._peak_dist_label, self._peak_dist_edit,
-                  self._peak_prom_label, self._peak_prom_edit]:
-            w.setVisible(is_peak)
-        for w in [self._corr_method_label, self._corr_method_combo]:
-            w.setVisible(is_corr)
-        for w in [self._pair_primary_label, self._pair_primary_combo,
-                  self._pair_secondary_label, self._pair_secondary_combo]:
-            w.setVisible(is_pair)
-        for w in [self._extension_params_label, self._extension_params_edit]:
-            w.setVisible(is_extension)
-        if is_extension:
+        self._result = None
+        uses_extension_form = extension_registry.get_analysis(t) is not None
+        self._extension_params_label.setVisible(False)
+        self._extension_params_edit.setVisible(uses_extension_form)
+        if uses_extension_form:
             self._sync_extension_params_editor(t)
-        if is_pair:
-            self._input_hint_label.setText("双击数据加入“已选择列表”；在下拉框中指定主曲线和副曲线。")
-        elif is_extension:
-            self._input_hint_label.setText("双击数据加入“已选择列表”；单曲线扩展使用当前选中项，多曲线扩展按 lines 参数取值。")
+        if uses_extension_form:
+            self._input_hint_label.setText("双击数据加入“已选择列表”；多曲线扩展必须在“选择曲线”中显式勾选输入。")
         else:
             self._input_hint_label.setText("双击数据加入“已选择列表”；单曲线分析会处理列表中当前选中的项。")
         self._sync_input_role_labels()
+        self._refresh_current_analysis_preview()
         self._update_peak_export_buttons()
         if hasattr(self, "_extension_panel"):
             self._extension_panel.set_entries(
@@ -1459,8 +1390,11 @@ class AnalysisPage(QWidget):
         if analysis_type not in _TYPE_IDS:
             extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
             input_payloads, effective_extension_options = self._effective_extension_analysis_options(analysis_type, extension_options)
-            selected = self._get_selected_data()
+            selected = self._get_data_for_inputs(input_payloads)
         else:
+            if extension_registry.get_analysis(analysis_type) is not None:
+                extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
+                effective_extension_options = dict(extension_options)
             input_payloads = self._analysis_input_payloads(analysis_type)
             selected = self._get_data_for_inputs(input_payloads)
         if not selected:
@@ -1469,97 +1403,13 @@ class AnalysisPage(QWidget):
             return
         t = analysis_type
         try:
-            if t == "curve_fit":
-                self._result = self._do_fit(selected[0])
-            elif t == "peak_detect":
-                self._result = self._do_peaks(selected[0])
-            elif t == "statistics":
-                self._result = self._do_stats(selected[0])
-            elif t == "correlation":
-                if len(selected) < 2:
-                    InfoBar.warning("提示", "相关性分析需要选择两条数据系列", parent=self,
-                                    position=InfoBarPosition.TOP)
-                    return
-                self._result = self._do_correlation(selected[0], selected[1])
-            elif t == "error_compare":
-                if len(selected) < 2:
-                    InfoBar.warning("提示", "误差比较需要选择主序列和对比序列", parent=self,
-                                    position=InfoBarPosition.TOP)
-                    return
-                self._result = self._do_error_compare(selected[0], selected[1])
-            else:
-                inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
-                self._result = run_analysis(t, inputs, effective_extension_options)
+            inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
+            self._result = run_analysis(t, inputs, effective_extension_options)
             self._show_result(t, selected)
         except Exception as e:
             InfoBar.error("分析失败", str(e), parent=self, position=InfoBarPosition.TOP)
             if self._summary_table is not None:
                 self._set_summary_rows(self._summary_table, [("错误", str(e))])
-
-    def _do_fit(self, src: tuple) -> dict:
-        from core.analysis_engine import fit_curve
-        xs, ys, name = src
-        model = _FIT_MODEL_IDS[self._fit_model_combo.currentIndex()]
-        r = fit_curve(xs, ys, model)
-        r["source_name"] = name
-        r["analysis_type"] = "curve_fit"
-        return r
-
-    def _do_peaks(self, src: tuple) -> dict:
-        from core.analysis_engine import detect_peaks, detect_valleys
-        xs, ys, name = src
-        def _f(e, default):
-            try: return float(e.text())
-            except: return default
-        def _i(e, default):
-            try: return max(1, int(e.text()))
-            except: return default
-        min_h = _f(self._peak_height_edit, None)
-        dist_mode = "x_distance" if self._peak_dist_mode_combo.currentIndex() == 1 else "points"
-        min_d = _i(self._peak_dist_edit, 1) if dist_mode == "points" else None
-        min_d_x = _f(self._peak_dist_edit, 1.0) if dist_mode == "x_distance" else None
-        prom = _f(self._peak_prom_edit, None)
-        r_peaks = detect_peaks(xs, ys, min_height=min_h, min_distance=min_d, min_distance_x=min_d_x, prominence=prom)
-        r_valleys = detect_valleys(xs, ys, min_distance=min_d, min_distance_x=min_d_x, prominence=prom)
-        return {
-            "peaks": r_peaks.get("peaks", []),
-            "count": r_peaks.get("count", 0),
-            "valleys": r_valleys.get("valleys", []),
-            "valley_count": r_valleys.get("count", 0),
-            "source_name": name,
-            "distance_mode": dist_mode,
-            "distance_value": min_d_x if dist_mode == "x_distance" else min_d,
-            "analysis_type": "peak_detect",
-        }
-
-    def _do_stats(self, src: tuple) -> dict:
-        from core.analysis_engine import compute_statistics
-        xs, ys, name = src
-        r = compute_statistics(xs, ys)
-        r["source_name"] = name
-        r["analysis_type"] = "statistics"
-        return r
-
-    def _do_correlation(self, src1: tuple, src2: tuple) -> dict:
-        from core.analysis_engine import compute_correlation
-        _, ys1, name1 = src1
-        _, ys2, name2 = src2
-        method = self._corr_method_combo.currentText().lower()
-        r = compute_correlation(ys1, ys2, method)
-        r["name1"] = name1
-        r["name2"] = name2
-        r["analysis_type"] = "correlation"
-        return r
-
-    def _do_error_compare(self, src1: tuple, src2: tuple) -> dict:
-        from core.analysis_engine import compute_error_metrics
-
-        xs1, ys1, name1 = src1
-        xs2, ys2, name2 = src2
-        result = compute_error_metrics(xs1, ys1, xs2, ys2)
-        result["name1"] = name1
-        result["name2"] = name2
-        return result
 
     # ─────────────────────────────────────────────────────────
     # 结果显示
@@ -1591,6 +1441,36 @@ class AnalysisPage(QWidget):
         self._render_summary_view(view, t, r)
         self._refresh_report_result_selectors()
 
+    def _refresh_current_analysis_preview(self) -> None:
+        view = self._analysis_tab_views.get("current")
+        if view is None:
+            return
+        analysis_type = self._current_analysis_type()
+        payloads = self._analysis_input_payloads(analysis_type)
+        selected = self._get_data_for_inputs(payloads)
+        params: Dict[str, Any] = {
+            "analysis_type": analysis_type,
+            "input_refs": [dict(item) for item in self._selected_inputs],
+            "active_input_refs": [dict(item) for item in payloads],
+        }
+        if extension_registry.get_analysis(analysis_type) is not None:
+            params["extension_options"] = self._current_extension_analysis_options(analysis_type, raise_on_error=False)
+        view["result"] = None
+        view["analysis_type"] = analysis_type
+        view["selected"] = list(selected)
+        view["inputs"] = [dict(item) for item in payloads]
+        view["params"] = params
+        view["analysis_name"] = "当前结果"
+        self._draw_result(analysis_type, selected, {"_preview_only": True}, figure=view.get("figure"), canvas=view.get("canvas"))
+        summary_rows = [("状态", "已更新输入预览，运行分析后显示结果。")]
+        if payloads:
+            summary_rows.append(("已选曲线", "；".join(str(item.get("label") or "") for item in payloads)))
+        else:
+            summary_rows.append(("已选曲线", "当前未显式选中可用于分析的曲线。"))
+        summary_rows.append(("分析类型", analysis_type))
+        self._set_summary_rows(view["summary_table"], summary_rows)
+        view["summary_stack"].setCurrentWidget(view["summary_table"])
+
     def _draw_result(self, t: str, selected: list, r: dict, figure=None, canvas=None):
         figure = self._figure if figure is None else figure
         canvas = self._canvas if canvas is None else canvas
@@ -1609,6 +1489,20 @@ class AnalysisPage(QWidget):
         for sp in ax.spines.values():
             sp.set_edgecolor(fg)
         ax.grid(True, color=gc, linestyle="--", linewidth=0.5, alpha=0.6)
+
+        if r.get("_preview_only"):
+            palette = ["#0078D4", "#D13438", "#107C10", "#8764B8"]
+            if selected:
+                for index, (xs, ys, name) in enumerate(selected):
+                    ax.plot(xs, ys, color=palette[index % len(palette)], linewidth=1.4, label=name)
+                ax.set_title("待分析曲线预览", color=fg)
+                ax.legend(facecolor=bg, edgecolor=fg, labelcolor=fg, fontsize=8)
+            else:
+                ax.text(0.5, 0.5, "选择曲线后将在此预览", ha="center", va="center", color=fg, transform=ax.transAxes)
+                ax.set_xticks([])
+                ax.set_yticks([])
+            canvas.draw()
+            return
 
         if t == "curve_fit" and selected:
             xs, ys, name = selected[0]
@@ -2418,23 +2312,7 @@ class AnalysisPage(QWidget):
             "input_refs": [dict(item) for item in self._selected_inputs],
             "active_input_refs": [dict(item) for item in active_inputs],
         }
-        if analysis_type == "curve_fit":
-            params["fit_model"] = _FIT_MODEL_IDS[self._fit_model_combo.currentIndex()]
-        elif analysis_type == "peak_detect":
-            params.update({
-                "min_height": self._peak_height_edit.text().strip(),
-                "min_distance_mode": "x_distance" if self._peak_dist_mode_combo.currentIndex() == 1 else "points",
-                "min_distance": self._peak_dist_edit.text().strip(),
-                "prominence": self._peak_prom_edit.text().strip(),
-            })
-        elif analysis_type == "correlation":
-            params["corr_method"] = self._corr_method_combo.currentText().strip().lower()
-            params["pair_primary_index"] = self._pair_primary_combo.currentIndex() + 1
-            params["pair_secondary_index"] = self._pair_secondary_combo.currentIndex() + 1
-        elif analysis_type == "error_compare":
-            params["pair_primary_index"] = self._pair_primary_combo.currentIndex() + 1
-            params["pair_secondary_index"] = self._pair_secondary_combo.currentIndex() + 1
-        elif analysis_type not in _TYPE_IDS:
+        if extension_registry.get_analysis(analysis_type) is not None:
             _, effective_options = self._effective_extension_analysis_options(
                 analysis_type,
                 self._current_extension_analysis_options(analysis_type),
@@ -2443,26 +2321,9 @@ class AnalysisPage(QWidget):
         return params
 
     def _restore_analysis_params(self, params: Dict[str, Any]) -> None:
-        fit_model = params.get("fit_model")
-        if fit_model in _FIT_MODEL_IDS:
-            self._fit_model_combo.setCurrentIndex(_FIT_MODEL_IDS.index(fit_model))
-        self._peak_height_edit.setText(str(params.get("min_height", "")))
-        self._peak_dist_mode_combo.setCurrentIndex(1 if params.get("min_distance_mode") == "x_distance" else 0)
-        self._peak_dist_edit.setText(str(params.get("min_distance", "1")))
-        self._peak_prom_edit.setText(str(params.get("prominence", "")))
-        corr_method = str(params.get("corr_method", "pearson")).capitalize()
-        corr_idx = self._corr_method_combo.findText(corr_method)
-        if corr_idx >= 0:
-            self._corr_method_combo.setCurrentIndex(corr_idx)
-        pair_primary_index = int(params.get("pair_primary_index", 1) or 1) - 1
-        pair_secondary_index = int(params.get("pair_secondary_index", 2) or 2) - 1
-        if hasattr(self, "_pair_primary_combo") and self._pair_primary_combo.count() > 0:
-            self._pair_primary_combo.setCurrentIndex(min(max(pair_primary_index, 0), self._pair_primary_combo.count() - 1))
-        if hasattr(self, "_pair_secondary_combo") and self._pair_secondary_combo.count() > 0:
-            self._pair_secondary_combo.setCurrentIndex(min(max(pair_secondary_index, 0), self._pair_secondary_combo.count() - 1))
         analysis_type = str(params.get("analysis_type", "") or "")
         extension_options = params.get("extension_options")
-        if analysis_type and analysis_type not in _TYPE_IDS and isinstance(extension_options, dict):
+        if analysis_type and extension_registry.get_analysis(analysis_type) is not None and isinstance(extension_options, dict):
             self._analysis_extension_options[analysis_type] = dict(extension_options)
             if hasattr(self, "_extension_panel"):
                 self._extension_panel.set_entries(
@@ -2674,6 +2535,7 @@ class AnalysisPage(QWidget):
 
     def _sync_related_analysis_tabs(self) -> None:
         self._clear_loaded_analysis_tabs()
+        self._refresh_current_analysis_preview()
         payloads = self._analysis_input_payloads()
         if len(payloads) != 1:
             return

@@ -27,7 +27,7 @@ from qfluentwidgets import (
     TreeWidget, BodyLabel, CaptionLabel, PlainTextEdit, RoundMenu, TableWidget, HyperlinkButton,
     FluentIcon as FIF, InfoBar, InfoBarPosition,
     MessageBox, MessageBoxBase, LineEdit, TabCloseButtonDisplayMode,
-    TabWidget, TeachingTipTailPosition, ToolTip, ToolTipFilter, ToolTipPosition, isDarkTheme,
+    TabWidget, TeachingTipTailPosition, ToolTip, ToolTipFilter, ToolTipPosition, SmoothScrollArea, isDarkTheme,
 )
 
 from ui.theme import (
@@ -43,7 +43,15 @@ from ui.theme import (
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.matplotlib_fonts import configure_matplotlib_cjk
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from core.extension_api import build_extension_entry, extension_registry
+from core.extension_api import (
+    build_extension_entry,
+    extension_entry_display_info,
+    extension_entry_parameter_help_text,
+    extension_lines_support_text,
+    extension_registry,
+    normalize_extension_lines_number,
+    validate_extension_lines_list,
+)
 from core.global_assets import global_assets, parse_plot_style_asset_key
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
@@ -558,6 +566,11 @@ class DataPage(QWidget):
         extension_config_action_layout = QHBoxLayout(self._extension_config_action_panel)
         extension_config_action_layout.setContentsMargins(0, 0, 0, 0)
         extension_config_action_layout.setSpacing(6)
+        self._btn_reset_extension_config = PushButton("重置配置", self._extension_config_action_panel)
+        self._btn_reset_extension_config.clicked.connect(self._reset_selected_extension_config_edit)
+        apply_button_metrics(self._btn_reset_extension_config, min_width=96)
+        self._btn_reset_extension_config.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        extension_config_action_layout.addWidget(self._btn_reset_extension_config)
         self._btn_save_extension_config = PrimaryPushButton("保存配置", self._extension_config_action_panel)
         self._btn_save_extension_config.clicked.connect(self._save_selected_extension_config)
         apply_button_metrics(self._btn_save_extension_config, min_width=96)
@@ -672,7 +685,7 @@ class DataPage(QWidget):
         self._extension_preview_panel = QWidget(self._preview_card)
         extension_preview_layout = QVBoxLayout(self._extension_preview_panel)
         extension_preview_layout.setContentsMargins(0, 0, 0, 0)
-        extension_preview_layout.setSpacing(4)
+        extension_preview_layout.setSpacing(6)
 
         self._extension_detail_label = BodyLabel("", self._extension_preview_panel)
         self._extension_detail_label.setWordWrap(True)
@@ -680,11 +693,37 @@ class DataPage(QWidget):
         self._apply_summary_label_style(self._extension_detail_label)
         extension_preview_layout.addWidget(self._extension_detail_label)
 
-        self._extension_field_help_label = CaptionLabel("", self._extension_preview_panel)
+        self._extension_detail_meta_label = CaptionLabel("", self._extension_preview_panel)
+        self._extension_detail_meta_label.setWordWrap(True)
+        self._extension_detail_meta_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._apply_muted_summary_label_style(self._extension_detail_meta_label)
+        extension_preview_layout.addWidget(self._extension_detail_meta_label)
+
+        self._extension_field_help_title = BodyLabel("参数说明", self._extension_preview_panel)
+        self._apply_summary_label_style(self._extension_field_help_title)
+        extension_preview_layout.addWidget(self._extension_field_help_title)
+
+        self._extension_field_help_area = SmoothScrollArea(self._extension_preview_panel)
+        self._extension_field_help_area.setWidgetResizable(True)
+        self._extension_field_help_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._extension_field_help_area.setMinimumHeight(202)
+        self._extension_field_help_area.setMaximumHeight(202)
+        self._extension_field_help_area.setStyleSheet("background: transparent; border: none;")
+        self._extension_field_help_container = QWidget(self._extension_field_help_area)
+        extension_help_layout = QVBoxLayout(self._extension_field_help_container)
+        extension_help_layout.setContentsMargins(0, 0, 0, 0)
+        extension_help_layout.setSpacing(0)
+        self._extension_field_help_label = CaptionLabel("", self._extension_field_help_container)
         self._extension_field_help_label.setWordWrap(True)
         self._extension_field_help_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._apply_muted_summary_label_style(self._extension_field_help_label)
-        extension_preview_layout.addWidget(self._extension_field_help_label)
+        extension_help_layout.addWidget(self._extension_field_help_label)
+        extension_help_layout.addStretch(1)
+        self._extension_field_help_area.setWidget(self._extension_field_help_container)
+        extension_preview_layout.addWidget(self._extension_field_help_area)
+
+        self._extension_preview_divider = make_hsep(self._extension_preview_panel)
+        extension_preview_layout.addWidget(self._extension_preview_divider)
 
         self._extension_preview_panel.hide()
         preview_layout.addWidget(self._extension_preview_panel)
@@ -795,6 +834,7 @@ class DataPage(QWidget):
         self._source_manager_card = self._build_source_manager_card(panel)
         self._right_mode_stack.addWidget(self._preview_card)
         self._right_mode_stack.addWidget(self._source_manager_card)
+        self._extension_config_original_text = "{}"
         self._set_actions_enabled(False)
         self._set_source_file_preview_mode_controls_visible(False)
         self._set_source_file_detail_controls_visible(False)
@@ -819,14 +859,24 @@ class DataPage(QWidget):
         self._source_file_skip_rows_label.setEnabled(enabled)
         self._source_file_skip_rows_edit.setEnabled(enabled)
 
-    def _set_extension_preview_help(self, description: str = "", field_help: str = "") -> None:
-        description_text = str(description or "").strip()
+    def _set_extension_preview_help(self, description: Optional[dict[str, str]] = None, field_help: str = "") -> None:
+        info = dict(description or {}) if isinstance(description, dict) else {}
+        title_text = str(info.get("title") or "").strip()
+        meta_text = str(info.get("meta") or "").strip()
         field_help_text = str(field_help or "").strip()
-        self._extension_detail_label.setText(description_text)
+        self._extension_detail_label.setText(title_text)
+        self._extension_detail_meta_label.setText(meta_text)
         self._extension_field_help_label.setText(field_help_text)
-        self._extension_detail_label.setVisible(bool(description_text))
-        self._extension_field_help_label.setVisible(bool(field_help_text))
-        self._extension_preview_panel.setVisible(bool(description_text or field_help_text))
+        self._extension_detail_label.setVisible(bool(title_text))
+        self._extension_detail_meta_label.setVisible(bool(meta_text))
+        self._extension_field_help_title.setVisible(bool(field_help_text))
+        self._extension_field_help_area.setVisible(bool(field_help_text))
+        self._extension_preview_divider.setVisible(bool(field_help_text))
+        self._extension_preview_panel.setVisible(bool(title_text or meta_text or field_help_text))
+
+    def _set_preview_footer_visible(self, visible: bool) -> None:
+        self._preview_summary_divider.setVisible(bool(visible))
+        self._summary_footer.setVisible(bool(visible))
 
     def _set_extension_config_editor_mode(self, enabled: bool) -> None:
         if not enabled:
@@ -834,8 +884,7 @@ class DataPage(QWidget):
         self._preview_section_label.setText("配置编辑" if enabled else "数据预览")
         self._extension_config_action_panel.setVisible(enabled)
         self._config_editor_header_panel.setVisible(enabled)
-        self._preview_summary_divider.setVisible(not enabled)
-        self._summary_footer.setVisible(not enabled)
+        self._set_preview_footer_visible(not enabled)
         self._text_preview.setReadOnly(not enabled)
 
     @staticmethod
@@ -1676,6 +1725,7 @@ class DataPage(QWidget):
         self._image_preview_label.clear()
         self._image_preview_label.setText("选择节点后显示预览")
         self._set_preview_summary(["（选择数据后显示统计信息）"])
+        self._set_preview_footer_visible(True)
         self._set_source_file_preview_mode_controls_visible(False)
         self._set_source_file_detail_controls_visible(False)
         self._set_source_file_skip_rows_enabled(True)
@@ -1693,6 +1743,8 @@ class DataPage(QWidget):
     def _show_preview_mode(self) -> None:
         self._right_mode_stack.setCurrentWidget(self._preview_card)
         self._set_extension_preview_help()
+        if not self._extension_config_action_panel.isVisible():
+            self._set_preview_footer_visible(True)
 
     def _show_source_manager_mode(self) -> None:
         self._right_mode_stack.setCurrentWidget(self._source_manager_card)
@@ -2220,6 +2272,7 @@ class DataPage(QWidget):
             "plot": "绘图扩展",
             "processing": "处理扩展",
             "analysis": "分析扩展",
+            "digitize": "数字化扩展",
         }
         return mapping.get(category, category or "扩展配置")
 
@@ -2378,14 +2431,19 @@ class DataPage(QWidget):
             extensions = extension_registry.list_plot()
         elif category == "processing":
             extensions = extension_registry.list_processing()
+        elif category == "digitize":
+            extensions = extension_registry.list_digitize()
         else:
             extensions = extension_registry.list_analysis()
         name_map: dict[str, str] = {}
         for extension in extensions:
-            type_id = str(getattr(extension, "type", "") or "").strip()
+            entry = build_extension_entry(extension)
+            type_id = str(entry.get("type") or "").strip()
             if not type_id:
                 continue
-            name_map[type_id] = str(getattr(extension, "name", "") or type_id)
+            if not entry.get("listed", True) or not entry.get("settings"):
+                continue
+            name_map[type_id] = str(entry.get("name") or type_id)
         return name_map
 
     @staticmethod
@@ -2400,12 +2458,14 @@ class DataPage(QWidget):
             extension = extension_registry.get_processing(clean_type)
         elif normalized_category == "analysis":
             extension = extension_registry.get_analysis(clean_type)
+        elif normalized_category == "digitize":
+            extension = extension_registry.get_digitize(clean_type)
         else:
             extension = None
         if extension is None:
             return None
         entry = build_extension_entry(extension)
-        return dict(entry) if entry.get("listed", True) else None
+        return dict(entry) if entry.get("listed", True) and entry.get("settings") else None
 
     def _extension_entry_for_config_item(self, config_item) -> Optional[dict[str, Any]]:
         if config_item is None:
@@ -2421,52 +2481,27 @@ class DataPage(QWidget):
             return None
         return self._extension_entry_for_category_type(parts[1], parts[2])
 
-    def _extension_preview_description(self, entry: Optional[dict[str, Any]], *, category: str = "") -> str:
+    def _extension_preview_description(self, entry: Optional[dict[str, Any]], *, category: str = "") -> dict[str, str]:
         if entry is None:
-            return ""
-        lines: list[str] = []
-        category_label = self._global_extension_category_label(category) if category else "扩展"
-        extension_name = str(entry.get("name") or entry.get("label") or entry.get("type") or "扩展")
-        lines.append(f"{category_label} · {extension_name}")
-        type_id = str(entry.get("type") or "").strip()
-        if type_id:
-            lines.append(f"类型 ID: {type_id}")
-        version = str(entry.get("version") or "").strip()
-        if version:
-            lines.append(f"版本: {version}")
-        description = str(entry.get("description") or "").strip()
-        if description:
-            lines.append(description)
-        return "\n".join(lines)
+            return {"title": "", "meta": ""}
+        info = extension_entry_display_info(
+            entry,
+            category_label=self._global_extension_category_label(category) if category else "扩展",
+        )
+        meta_lines: list[str] = []
+        if info.get("type_id"):
+            meta_lines.append(f"ID: {info['type_id']}")
+        if info.get("version_label"):
+            meta_lines.append(f"版本: {info['version_label']}")
+        if info.get("description"):
+            meta_lines.append(f"描述: {info['description']}")
+        return {
+            "title": info.get("data_title", ""),
+            "meta": "\n".join(meta_lines),
+        }
 
     def _extension_field_help_text(self, entry: Optional[dict[str, Any]]) -> str:
-        if entry is None:
-            return ""
-        fields = [
-            dict(item)
-            for item in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
-            if isinstance(item, dict)
-        ]
-        if not fields:
-            return "该扩展未声明额外参数。"
-        lines: list[str] = ["参数说明:"]
-        for field in fields:
-            key = str(field.get("key") or "option").strip() or "option"
-            label = str(field.get("label") or key).strip() or key
-            field_type = str(field.get("field_type") or "string").strip() or "string"
-            required = "必填" if field.get("required") else "可选"
-            parts = [f"{label}（{key}，{field_type}，{required}）"]
-            description = str(field.get("description") or "").strip()
-            if description:
-                parts.append(description)
-            choices = [str(item) for item in (field.get("choices") or []) if str(item)]
-            if choices:
-                parts.append(f"可选值: {', '.join(choices)}")
-            default = field.get("default")
-            if default not in (None, "", []):
-                parts.append(f"默认值: {default}")
-            lines.append("- " + "；".join(parts))
-        return "\n".join(lines)
+        return extension_entry_parameter_help_text(entry)
 
     @staticmethod
     def _extension_field_error_message(field_key: str, message: str) -> str:
@@ -2525,15 +2560,12 @@ class DataPage(QWidget):
                     if choices and value not in choices:
                         errors.append(self._extension_field_error_message(key, f"必须是以下值之一: {', '.join(choices)}"))
             elif field_type == "lines":
-                if not isinstance(value, dict):
-                    errors.append(self._extension_field_error_message(key, "必须是包含 number 和 lines_list 的对象"))
-                else:
-                    number = value.get("number")
-                    lines_list = value.get("lines_list")
-                    if isinstance(number, bool) or not isinstance(number, int):
-                        errors.append(self._extension_field_error_message(key, "number 必须是整数"))
-                    if not isinstance(lines_list, (str, list, tuple, int, type(None))):
-                        errors.append(self._extension_field_error_message(key, "lines_list 必须是字符串、列表或整数"))
+                extra = dict(field.get("extra") or {}) if isinstance(field.get("extra"), dict) else {}
+                lines_number = normalize_extension_lines_number(extra.get("lines_number"))
+                try:
+                    validate_extension_lines_list(value, lines_number, present=True)
+                except ValueError as exc:
+                    errors.append(self._extension_field_error_message("lines", str(exc)))
         if errors:
             raise ValueError("；".join(errors))
 
@@ -2555,7 +2587,13 @@ class DataPage(QWidget):
         self._preview_name = str(getattr(config_item, "name", "") or "扩展配置")
         self._preview_x_label = "X"
         self._preview_y_label = "Y"
-        self._text_preview.setPlainText(json.dumps(dict(getattr(config_item, "options", {}) or {}), ensure_ascii=False, indent=2, sort_keys=True))
+        self._extension_config_original_text = json.dumps(
+            dict(getattr(config_item, "options", {}) or {}),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        self._text_preview.setPlainText(self._extension_config_original_text)
         self._preview_stack.setCurrentWidget(self._text_preview)
         summary_lines = [
             f"配置名称: {getattr(config_item, 'name', '') or '未命名配置'}",
@@ -2582,6 +2620,11 @@ class DataPage(QWidget):
             self._extension_field_help_text(entry),
         )
         return True
+
+    def _reset_selected_extension_config_edit(self) -> None:
+        if not self._current_extension_config_id:
+            return
+        self._text_preview.setPlainText(self._extension_config_original_text or "{}")
 
     def _save_selected_extension_config(self) -> None:
         config_id = self._current_extension_config_id or self._selected_node_id
@@ -2680,7 +2723,7 @@ class DataPage(QWidget):
             elif node_id == "__global_extension_configs__":
                 children = [
                     self._build_global_preview_item("global_group", f"__global_extension_configs__:{category}")
-                    for category in ("plot", "processing", "analysis")
+                    for category in ("plot", "processing", "analysis", "digitize")
                 ]
             elif node_id.startswith("__global_extension_configs__:"):
                 parts = node_id.split(":")
@@ -2821,6 +2864,7 @@ class DataPage(QWidget):
             self._extension_preview_description(extension_entry, category=extension_category),
             self._extension_field_help_text(extension_entry),
         )
+        self._set_preview_footer_visible(extension_entry is None)
         return True
 
     def _can_rename_current_node(self) -> bool:

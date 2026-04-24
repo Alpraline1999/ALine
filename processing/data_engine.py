@@ -22,12 +22,12 @@ apply_pipeline(xs, ys, ops) → (xs_new, ys_new)
 apply_pipeline_to_lines(lines, ops, *, selected_lines=None) → (processed_lines, warnings)
 
 执行语义：
-- pipeline 中至多 1 个"双/多曲线"算子 (pairwise_compute 或 line_mode=multi 扩展)。
+- pipeline 中至多 1 个"双/多曲线"算子（例如声明了 lines_number 且上限大于 1 的扩展）。
 - 无此算子：对每条 lines 广播单曲线算子，输出数量 == 输入。
 - 存在此算子时：上游单曲线算子对算子引用的输入子集做参数共享的广播，
     中间由双/多曲线算子消费并输出，随后下游算子对输出做常规广播。
-- selected_lines 提供完整"已选择列表"池，用于 pairwise 的 primary/secondary_index、
-    多曲线扩展的 lines.lines_list、以及 resample mode=align 的 target_index 查表。
+- selected_lines 提供完整"已选择列表"池，用于多曲线扩展的 lines_list，
+    以及 resample mode=align 的 target_index 查表。
 """
 from __future__ import annotations
 
@@ -37,7 +37,12 @@ import copy
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.extension_api import extension_registry, invoke_processing_extension_handler
+from core.extension_api import (
+    extension_lines_number,
+    extension_registry,
+    invoke_processing_extension_handler,
+    normalize_extension_lines_list,
+)
 
 
 # 当前 pipeline 执行期间的 "已选择列表" 池，供 _op_resample(mode=align) 等使用。
@@ -125,6 +130,8 @@ def apply_operation_to_lines(lines: List[PipelineLine], op: Dict[str, Any]) -> P
     p = dict(op.get("params", {}) or {})
     if t == "pairwise_compute":
         return _op_pairwise_compute(working_lines, p)
+    if t == "resample" and len(working_lines) > 1:
+        return _apply_resample_to_lines(working_lines, p)
 
     custom_op = extension_registry.get_processing(t)
     if custom_op is not None:
@@ -207,46 +214,27 @@ def _merge_line_payload(base: PipelineLine, update: Dict[str, Any]) -> PipelineL
     return merged
 
 
-def _processing_extension_line_mode(extension: Any) -> str:
-    mode = str(getattr(extension, "line_mode", "single") or "single").strip().lower()
-    return mode if mode in {"single", "multi"} else "single"
-
-
-def _op_lines_config(op: Dict[str, Any]) -> Dict[str, Any]:
+def _op_lines_list(op: Dict[str, Any]) -> Tuple[List[int], bool]:
     params = dict(op.get("params", {}) or {})
-    cfg = params.get("lines")
-    if isinstance(cfg, dict):
-        return dict(cfg)
-    return {}
-
-
-def _op_number_spec(op: Dict[str, Any], extension: Any) -> Optional[int]:
-    cfg = _op_lines_config(op)
-    if "number" in cfg:
-        try:
-            return int(cfg["number"])
-        except (TypeError, ValueError):
-            return None
-    if extension is None:
-        return None
-    if _processing_extension_line_mode(extension) != "multi":
-        return 1
-    min_lines = int(getattr(extension, "min_lines", 2) or 2)
-    return max(min_lines, 2)
+    if "lines_list" in params:
+        return normalize_extension_lines_list(params.get("lines_list")), True
+    legacy_cfg = params.get("lines")
+    if isinstance(legacy_cfg, dict) and "lines_list" in legacy_cfg:
+        return normalize_extension_lines_list(legacy_cfg.get("lines_list")), True
+    return [], False
 
 
 def _is_multi_line_processing_op(extension: Any, op: Dict[str, Any]) -> bool:
-    number = _op_number_spec(op, extension)
-    if number is None:
-        return _processing_extension_line_mode(extension) == "multi"
-    return number != 1
+    del op
+    lines_number = extension_lines_number(extension)
+    if lines_number is None:
+        return False
+    _lower, upper = lines_number
+    return upper == -1 or upper > 1
 
 
 def _is_pairing_op(op: Dict[str, Any]) -> bool:
-    t = str(op.get("type", "") or "")
-    if t == "pairwise_compute":
-        return True
-    extension = extension_registry.get_processing(t)
+    extension = extension_registry.get_processing(str(op.get("type", "") or ""))
     if extension is None:
         return False
     return _is_multi_line_processing_op(extension, op)
@@ -273,49 +261,20 @@ def _pick_from_pool(pool: List[PipelineLine], index_1based: Any) -> PipelineLine
 
 
 def _normalize_lines_list(raw: Any, pool_size: int) -> List[int]:
-    if raw is None:
-        return list(range(1, pool_size + 1))
-    if isinstance(raw, str):
-        text = raw.strip()
-        if text in {"", "selected"}:
-            return list(range(1, pool_size + 1))
-        if text.lower() in {":", "*", "all"}:
-            raise ValueError('lines.lines_list 不再支持 "all" / ":" / "*"，请留空或显式提供曲线下标列表')
-        parts = [piece.strip() for piece in text.replace(";", ",").split(",") if piece.strip()]
-        return [int(piece) for piece in parts]
-    if isinstance(raw, (list, tuple)):
-        if not raw:
-            return list(range(1, pool_size + 1))
-        for item in raw:
-            if isinstance(item, str) and item.strip().lower() in {":", "*", "all"}:
-                raise ValueError('lines.lines_list 不再支持 "all" / ":" / "*"，请显式提供曲线下标列表')
-        return [int(item) for item in raw]
-    return [int(raw)]
+    normalized = normalize_extension_lines_list(raw)
+    if normalized:
+        return normalized
+    return list(range(1, pool_size + 1))
 
 
 def _resolve_pairing_inputs(op: Dict[str, Any], pool: List[PipelineLine]) -> List[PipelineLine]:
     t = str(op.get("type", "") or "")
-    p = dict(op.get("params", {}) or {})
-
-    if t == "pairwise_compute":
-        primary_idx = p.get("primary_index", 1)
-        default_secondary = 2 if len(pool) >= 2 else 1
-        secondary_idx = p.get("secondary_index", default_secondary)
-        primary = _pick_from_pool(pool, primary_idx)
-        secondary = _pick_from_pool(pool, secondary_idx)
-        return [copy.deepcopy(primary), copy.deepcopy(secondary)]
-
     extension = extension_registry.get_processing(t)
-    cfg = _op_lines_config(op)
-    indices = _normalize_lines_list(cfg.get("lines_list"), len(pool))
-    if not indices:
-        indices = list(range(1, len(pool) + 1))
+    lines_number = extension_lines_number(extension) if extension is not None else None
+    indices, present = _op_lines_list(op)
+    if extension is not None and lines_number is not None and not present:
+        raise ValueError(f"{extension.name} 需要显式选择输入曲线")
     chosen = [copy.deepcopy(_pick_from_pool(pool, idx)) for idx in indices]
-
-    number = _op_number_spec(op, extension)
-    if number is not None and number > 0 and len(chosen) != number:
-        label = getattr(extension, "name", t) if extension is not None else t
-        raise ValueError(f"{label} 需要 {number} 条输入曲线，当前提供了 {len(chosen)} 条")
     if extension is not None:
         _validate_multiline_processing_extension(extension, chosen)
     return chosen
@@ -339,12 +298,14 @@ def _validate_pipeline_multiline_conflicts(lines: List[PipelineLine], ops: List[
 
 def _validate_multiline_processing_extension(extension: Any, lines: List[PipelineLine]) -> None:
     count = len(lines)
-    min_lines = max(1, int(getattr(extension, "min_lines", 1) or 1))
-    max_lines = getattr(extension, "max_lines", None)
+    lines_number = extension_lines_number(extension)
+    if lines_number is None:
+        return
+    min_lines, max_lines = lines_number
     if count < min_lines:
         raise ValueError(f"{extension.name} 至少需要 {min_lines} 条输入曲线")
-    if max_lines is not None and count > int(max_lines):
-        raise ValueError(f"{extension.name} 最多支持 {int(max_lines)} 条输入曲线")
+    if max_lines != -1 and count > max_lines:
+        raise ValueError(f"{extension.name} 最多支持 {max_lines} 条输入曲线")
 
 
 def _apply_multiline_processing_extension(
