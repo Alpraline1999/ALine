@@ -1206,7 +1206,7 @@ class DataPage(QWidget):
         self._apply_summary_label_style(self._source_manager_target_label)
         layout.addWidget(self._source_manager_target_label)
 
-        self._source_browser_tabs = SegmentedStackWidget(card)
+        self._source_browser_tabs = SegmentedStackWidget(card, fill_width=True)
         self._source_browser_tabs.tabBar.setAddButtonVisible(False)
         self._source_browser_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
         self._source_browser_tabs.currentChanged.connect(self._refresh_source_manager_tab_state)
@@ -1272,11 +1272,12 @@ class DataPage(QWidget):
 
         self._source_browser_splitter = QSplitter(Qt.Orientation.Horizontal, system_page)
         self._source_browser_splitter.setContentsMargins(0, 0, 0, 0)
-        self._source_browser_splitter.setHandleWidth(4)
+        self._source_browser_splitter.setHandleWidth(2)
         self._source_browser_splitter.setChildrenCollapsible(False)
         self._source_browser_splitter.setStyleSheet(
             "QSplitter::handle {"
-            f"background: {border_color()};"
+            "background: transparent;"
+            f"border-left: 1px solid {border_color()};"
             "margin: 6px 0;"
             "}"
         )
@@ -1312,9 +1313,14 @@ class DataPage(QWidget):
         browser_layout.setContentsMargins(0, 0, 0, 0)
         browser_layout.setSpacing(6)
 
+        self._source_breadcrumb_host = QWidget(browser_panel)
+        breadcrumb_layout = QHBoxLayout(self._source_breadcrumb_host)
+        breadcrumb_layout.setContentsMargins(4, 0, 0, 0)
+        breadcrumb_layout.setSpacing(0)
         self._source_breadcrumb_bar = BreadcrumbBar(system_page)
         self._source_breadcrumb_bar.currentItemChanged.connect(self._on_source_breadcrumb_changed)
-        browser_layout.addWidget(self._source_breadcrumb_bar)
+        breadcrumb_layout.addWidget(self._source_breadcrumb_bar)
+        browser_layout.addWidget(self._source_breadcrumb_host)
 
         self._source_browser = TreeWidget(system_page)
         self._source_browser.setHeaderHidden(True)

@@ -1667,10 +1667,21 @@ class _JsonParam(_ParamWidget):
         self._editor.setMaximumHeight(180)
         self._editor.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._editor.set_settings_context("processing", self._entry)
-        self._editor.optionsCommitted.connect(lambda _options: on_change())
+        self._editor.optionsChanged.connect(lambda _options: self._refresh_layout_height())
+        self._editor.optionsCommitted.connect(lambda _options: self._handle_editor_committed(on_change))
         lv.addWidget(self._editor)
         self.set_params(self._last_valid)
         self.refresh_input_choices()
+
+    def _refresh_layout_height(self) -> None:
+        self._editor.updateGeometry()
+        self.updateGeometry()
+        if self._page is not None and hasattr(self._page, "_refresh_param_stack_height"):
+            self._page._refresh_param_stack_height()
+
+    def _handle_editor_committed(self, on_change) -> None:
+        self._refresh_layout_height()
+        on_change()
 
     def get_params(self) -> dict:
         try:
@@ -1690,10 +1701,12 @@ class _JsonParam(_ParamWidget):
         infer_unknown_fields = any(key not in known_keys for key in self._last_valid)
         self._editor.set_fields(self._fields, self._last_valid, infer_unknown_fields=infer_unknown_fields)
         self.refresh_input_choices()
+        self._refresh_layout_height()
 
     def refresh_input_choices(self) -> None:
         labels = [payload.get("label", "未命名曲线") for payload in getattr(self._page, "_selected_inputs", [])]
         self._editor.set_line_candidates(labels)
+        self._refresh_layout_height()
 
     def current_settings_config_id(self) -> Optional[str]:
         current_id = getattr(self._editor, "_current_settings_config_id", None)
@@ -1713,6 +1726,7 @@ class _JsonParam(_ParamWidget):
         if callable(refresh_selector):
             refresh_selector()
         self._editor.set_options(dict(config.options or {}))
+        self._refresh_layout_height()
 
 
 def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:

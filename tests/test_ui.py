@@ -4063,8 +4063,9 @@ class TestDataPage(unittest.TestCase):
         self.assertIsInstance(self.page._source_browser_splitter, QSplitter)
         self.assertIs(self.page._source_browser_splitter.widget(0), self.page._source_favorites_panel)
         self.assertEqual(self.page._source_browser_splitter.count(), 2)
-        self.assertGreater(self.page._source_browser_splitter.handleWidth(), 0)
+        self.assertEqual(self.page._source_browser_splitter.handleWidth(), 2)
         self.assertIn("QSplitter::handle", self.page._source_browser_splitter.styleSheet())
+        self.assertIn("border-left", self.page._source_browser_splitter.styleSheet())
 
     def test_source_folder_can_add_external_files_to_pending_list(self):
         source_root = self.pm._find_folder_by_group_type("source_files")
@@ -4110,6 +4111,7 @@ class TestDataPage(unittest.TestCase):
 
     def test_dataset_folder_switches_to_external_file_manager_mode(self):
         from qfluentwidgets import SegmentedWidget
+        from PySide6.QtWidgets import QSizePolicy
 
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
@@ -4120,10 +4122,15 @@ class TestDataPage(unittest.TestCase):
         self.assertFalse(self.page._import_queue_panel.isHidden())
         self.assertEqual(self.page._btn_import_pending.text(), "导入到数据集")
         self.assertIsInstance(self.page._source_browser_tabs.navigationWidget, SegmentedWidget)
+        self.assertEqual(
+            self.page._source_browser_tabs.navigationWidget.sizePolicy().horizontalPolicy(),
+            QSizePolicy.Policy.Expanding,
+        )
         self.assertFalse(self.page._source_browser_tabs.tabBar.isHidden())
         self.assertTrue(self.page._source_manager_hint.isHidden())
         self.assertTrue(self.page._pending_source_hint.isHidden())
         self.assertGreaterEqual(self.page._pending_source_list.minimumHeight(), 260)
+        self.assertGreater(self.page._source_breadcrumb_host.layout().contentsMargins().left(), 0)
 
     def test_dataset_folder_can_add_project_source_file_to_pending(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
@@ -5720,6 +5727,52 @@ class TestProcessPage(unittest.TestCase):
         self.assertLessEqual(widget.maximumHeight(), 180)
         self.assertLessEqual(self.page._param_stack.maximumHeight(), 180)
 
+    def test_loading_processing_extension_settings_refreshes_param_stack_height(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+        from core.global_assets import global_assets
+
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="ui_process_config_height",
+                name="UI 配置高度刷新",
+                handler=lambda xs, ys, params: (xs, ys),
+                settings=True,
+                config_fields=[
+                    {"key": "mode", "field_type": "choice", "choices": ["short", "long"], "default": "short"},
+                    {"key": "window", "field_type": "int", "default": 3},
+                    {"key": "notes", "field_type": "string", "multiline": True, "default": ""},
+                ],
+            )
+        )
+        try:
+            config = global_assets.add_extension_config(
+                category="processing",
+                extension_type="ui_process_config_height",
+                extension_name="UI 配置高度刷新",
+                extension_version="0.1.0",
+                name="高参数配置",
+                options={"mode": "long", "window": 9, "notes": "line1\nline2\nline3\nline4"},
+            )
+            self.page._load_ops_into_chain([
+                {"type": "ui_process_config_height", "params": {"mode": "short", "window": 3, "notes": ""}},
+            ])
+
+            widget = self.page._param_widgets[0]
+            self.page._on_op_selected(0)
+            expected_min_height = min(widget.sizeHint().height(), widget.maximumHeight())
+
+            with mock.patch.object(self.page, "_refresh_param_stack_height", wraps=self.page._refresh_param_stack_height) as refresh_height:
+                widget.load_settings_config(config.id)
+
+            self.assertEqual(widget.current_settings_config_id(), config.id)
+            self.assertEqual(widget.get_params()["notes"], "line1\nline2\nline3\nline4")
+            self.assertGreaterEqual(refresh_height.call_count, 1)
+            self.assertEqual(self.page._param_stack.minimumHeight(), expected_min_height)
+            self.assertEqual(self.page._param_stack.maximumHeight(), widget.maximumHeight())
+            self.assertLessEqual(self.page._param_stack.maximumHeight(), 180)
+        finally:
+            extension_registry.unregister_processing("ui_process_config_height")
+
     def test_on_tree_node_selected_curve(self):
         self.page.on_tree_node_selected("curve", "fake-curve-id")
 
@@ -6885,6 +6938,65 @@ class TestAnalysisPage(unittest.TestCase):
             extension_registry.unregister_analysis("ui_spectrum_plot")
             self.page._refresh_analysis_type_choices()
 
+    def test_analysis_extension_structured_output_uses_detail_view(self):
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        if self.page._figure is None:
+            self.skipTest("matplotlib unavailable")
+
+        def _structured(inputs, params):
+            return {
+                "analysis_type": "ui_structured_output",
+                "source_name": inputs[0].get("name", ""),
+                "summary_items": [{"label": "主指标", "value": 3.14}],
+                "plot_series": [
+                    {"name": "结构化曲线", "x": [0.0, 1.0, 2.0], "y": [1.0, 1.5, 2.5], "plot_type": "line", "color": "#0078D4"}
+                ],
+                "table_sections": [
+                    {"title": "结果明细", "headers": ["项", "值"], "rows": [["A", 1], ["B", 2]]}
+                ],
+                "text_sections": [
+                    {"title": "分析说明", "content": "第一行\n第二行"}
+                ],
+            }
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_structured_output",
+                name="UI 结构化输出",
+                handler=_structured,
+                description="返回结构化分析输出。",
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_structured_output"))
+            self.page._selected_inputs = [{"kind": "series", "node_id": self.s.id, "label": self.s.name}]
+            self.page._get_data_for_inputs = lambda inputs: [([0.0, 0.5, 1.0], [1.0, 1.2, 1.5], "demo")]
+
+            self.page._run_analysis()
+
+            active_key = self.page._analysis_tab_key_for_index(self.page._analysis_tabs.currentIndex())
+            self.assertIsNotNone(active_key)
+            view = self.page._analysis_tab_views[active_key]
+
+            self.assertIs(view["summary_stack"].currentWidget(), view["details_scroll"])
+            self.assertIsNotNone(view["detail_summary_table"])
+            self.assertEqual(view["detail_summary_table"].item(0, 0).text(), "主指标")
+            self.assertEqual(view["detail_summary_table"].item(0, 1).text(), "3.14")
+            self.assertEqual(len(view["detail_tables"]), 1)
+            self.assertEqual(view["detail_tables"][0].item(0, 0).text(), "A")
+            self.assertEqual(view["detail_tables"][0].item(0, 1).text(), "1")
+            self.assertEqual(len(view["detail_text_widgets"]), 1)
+            self.assertEqual(view["detail_text_widgets"][0].text(), "第一行\n第二行")
+
+            axis = self.page._figure.axes[0]
+            self.assertEqual(len(axis.lines), 1)
+            self.assertEqual(axis.lines[0].get_label(), "结构化曲线")
+        finally:
+            extension_registry.unregister_analysis("ui_structured_output")
+            self.page._refresh_analysis_type_choices()
+
     def test_analysis_extension_declared_placeholders_appear_before_run_and_support_search(self):
         from qfluentwidgets import EditableComboBox
         from core.extension_api import AnalysisExtension, extension_registry
@@ -6983,11 +7095,13 @@ class TestAnalysisPage(unittest.TestCase):
         self.page.load_analysis_result(node.id)
         self.assertEqual(self.page._result["analysis_type"], "curve_fit")
         self.assertEqual(len(self.page._selected_inputs), 1)
-        self.assertEqual(self.page._analysis_tabs.count(), 2)
+        self.assertEqual(self.page._analysis_tabs.count(), 3)
+        titles = [self.page._analysis_tabs.tabText(i) for i in range(self.page._analysis_tabs.count())]
+        self.assertIn("拟合结果A", titles)
         summary_labels = [self.page._summary_table.item(row, 0).text() for row in range(self.page._summary_table.rowCount())]
         self.assertIn("R²", summary_labels)
 
-    def test_selecting_series_opens_all_saved_results_in_tabs(self):
+    def test_selecting_series_does_not_auto_restore_saved_results_in_tabs(self):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
 
@@ -7001,24 +7115,16 @@ class TestAnalysisPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
 
         titles = [self.page._analysis_tabs.tabText(i) for i in range(self.page._analysis_tabs.count())]
-        self.assertEqual(self.page._analysis_tabs.count(), 3)
-        self.assertIn("拟合结果A", titles)
-        self.assertIn("拟合结果B", titles)
+        self.assertEqual(self.page._analysis_tabs.count(), 2)
+        self.assertNotIn("拟合结果A", titles)
+        self.assertNotIn("拟合结果B", titles)
 
     def test_analysis_result_tabs_are_closable(self):
         from qfluentwidgets import TabCloseButtonDisplayMode
 
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
-
-        with mock.patch(
-            "ui.pages.analysis_page.choose_analysis_result_save_plan",
-            side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "拟合结果B"),
-        ):
-            self.page._save_result()
-            self.page._save_result()
-
-        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
 
         self.assertEqual(
             self.page._analysis_tabs.tabBar.closeButtonDisplayMode,
@@ -7052,7 +7158,9 @@ class TestAnalysisPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", target.id)
         self.page._run_analysis()
 
-        view = self.page._analysis_tab_views["current"]
+        active_key = self.page._analysis_tab_key_for_index(self.page._analysis_tabs.currentIndex())
+        self.assertIsNotNone(active_key)
+        view = self.page._analysis_tab_views[active_key]
         self.assertIs(view["summary_stack"].currentWidget(), view["peak_summary_widget"])
 
         meta_labels = [view["peak_meta_table"].item(row, 0).text() for row in range(view["peak_meta_table"].rowCount())]

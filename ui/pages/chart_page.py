@@ -58,6 +58,7 @@ from qfluentwidgets import (
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
 from core.extension_api import (
     PlotExtensionContext,
+    PlotExtension,
     build_extension_entry,
     compare_extension_versions,
     extension_registry,
@@ -127,6 +128,50 @@ _ICON_HIDE = getattr(FIF, "HIDE", FIF.CANCEL)
 _ICON_EXPORT_TO_PICTURES = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
 _ICON_PLOT_EXTENSION_HELP = getattr(FIF, "INFO", getattr(FIF, "HELP", FIF.SEARCH))
 _PLOT_EXTENSION_TEACHING_TIP_TEXT = "左侧负责选择、配置并应用扩展；右侧只展示扩展说明、参数说明，以及当前图表里已加载的扩展实例。"
+_BASE_CURVE_STYLE_EXTENSION_TYPE = "base_curve_style_controls"
+_BASE_PLOT_STYLE_EXTENSION_TYPE = "base_plot_style_controls"
+
+
+def _apply_base_curve_style_patch(plot_context: PlotExtensionContext, options: Dict[str, Any]) -> None:
+    if plot_context.phase != "before_plot":
+        return
+    patch = {
+        key: copy.deepcopy(value)
+        for key, value in dict(options or {}).items()
+        if key in {"color", "linestyle", "marker", "linewidth", "marker_size", "alpha", "markevery", "dash_scale", "visible"}
+    }
+    if patch:
+        plot_context.patch_selected_curve_style(patch)
+
+
+def _apply_base_plot_style_patch(plot_context: PlotExtensionContext, options: Dict[str, Any]) -> None:
+    if plot_context.phase != "before_plot":
+        return
+    figure_fields = set(FigureState.model_fields.keys())
+    figure_patch = {
+        key: copy.deepcopy(value)
+        for key, value in dict(options or {}).items()
+        if key in figure_fields
+    }
+    if figure_patch:
+        plot_context.patch_figure_state(figure_patch)
+
+
+_BASE_CURVE_STYLE_EXTENSION = PlotExtension(
+    type=_BASE_CURVE_STYLE_EXTENSION_TYPE,
+    name="基础曲线样式",
+    handler=_apply_base_curve_style_patch,
+    source_kind="base",
+    hidden=True,
+)
+
+_BASE_PLOT_STYLE_EXTENSION = PlotExtension(
+    type=_BASE_PLOT_STYLE_EXTENSION_TYPE,
+    name="基础绘图样式",
+    handler=_apply_base_plot_style_patch,
+    source_kind="base",
+    hidden=True,
+)
 
 
 def _merge_nested_mapping(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -197,6 +242,7 @@ class ChartPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._ensure_base_style_extensions_registered()
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._chart_series: List[dict] = []
@@ -236,6 +282,12 @@ class ChartPage(QWidget):
         self._setup_shortcuts()
         self._click_away_focus_commit = install_click_away_focus_commit(self)
         self._onboarding_controller = PageOnboardingController(self, "chart", self._chart_onboarding_steps)
+
+    def _ensure_base_style_extensions_registered(self) -> None:
+        if extension_registry.get_plot(_BASE_CURVE_STYLE_EXTENSION_TYPE) is None:
+            extension_registry.register_plot(_BASE_CURVE_STYLE_EXTENSION)
+        if extension_registry.get_plot(_BASE_PLOT_STYLE_EXTENSION_TYPE) is None:
+            extension_registry.register_plot(_BASE_PLOT_STYLE_EXTENSION)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -2239,7 +2291,13 @@ class ChartPage(QWidget):
 
     def _apply_curve_style_payload(self, curve_key: str, payload: Dict[str, Any], *, source: str = "manual") -> None:
         style_dict = self._curve_styles.setdefault(curve_key, {})
-        style_dict.update({key: value for key, value in payload.items() if key != "visible"})
+        for key, value in payload.items():
+            if key == "visible":
+                continue
+            if value is None:
+                style_dict.pop(key, None)
+                continue
+            style_dict[key] = value
         if source == "manual":
             self._record_curve_style_changes(curve_key, {str(key) for key in payload.keys()})
         for curve in self._chart_series:
@@ -2251,6 +2309,71 @@ class ChartPage(QWidget):
         selected_curve = self._selected_curve()
         if selected_curve and self._curve_key(selected_curve) == curve_key:
             self._set_style_enabled(True, selected_curve)
+
+    def _base_style_plot_context(self, *, selected_curve: Optional[dict] = None) -> PlotExtensionContext:
+        current_state = self._figure_state.model_dump()
+        bg, fg, grid = self._theme_palette_for_state(self._figure_state)
+        target_curve = selected_curve or self._selected_curve()
+        visible_series = [curve for curve in self._chart_series if curve.get("visible", True)]
+        visible_payloads = {
+            self._curve_identity(curve): self._current_curve_style_payload(curve)
+            for curve in visible_series
+        }
+        axes = list(self._figure.axes) if self._figure is not None else []
+        axis = axes[0] if axes else None
+        return PlotExtensionContext(
+            figure=self._figure,
+            canvas=self._canvas,
+            axis=axis,
+            axes=axes,
+            visible_series=self._plot_context_series_entries(visible_series, visible_payloads),
+            plotted_series=[],
+            selected_series=(
+                self._plot_context_series_entry(
+                    target_curve,
+                    style_payload=self._current_curve_style_payload(target_curve),
+                )
+                if target_curve is not None
+                else None
+            ),
+            selected_series_identity=self._curve_identity(target_curve) if target_curve is not None else None,
+            figure_state=copy.deepcopy(current_state),
+            plot_style_extras=copy.deepcopy(self._plot_style_extras),
+            theme_colors={"background": bg, "foreground": fg, "grid": grid},
+            phase="before_plot",
+        )
+
+    def _apply_base_curve_style_options(self, options: Dict[str, Any]) -> None:
+        target_curve = self._selected_curve()
+        if target_curve is None:
+            return
+        extension = extension_registry.get_plot(_BASE_CURVE_STYLE_EXTENSION_TYPE)
+        if extension is None:
+            return
+        plot_context = self._base_style_plot_context(selected_curve=target_curve)
+        invoke_plot_extension_handler(extension.handler, plot_context, dict(options or {}))
+        patch = dict(plot_context.curve_style_patches.get(self._curve_identity(target_curve), {}) or {})
+        if not patch:
+            return
+        self._apply_curve_style_payload(self._curve_key(target_curve), patch, source="manual")
+
+    def _apply_base_plot_style_options(self, options: Dict[str, Any], *, changed_keys: Optional[set[str]] = None) -> None:
+        extension = extension_registry.get_plot(_BASE_PLOT_STYLE_EXTENSION_TYPE)
+        if extension is None:
+            return
+        plot_context = self._base_style_plot_context(selected_curve=self._selected_curve())
+        invoke_plot_extension_handler(extension.handler, plot_context, dict(options or {}))
+        payload = dict(plot_context.figure_state_patch or {})
+        if plot_context.plot_style_patch:
+            payload = _merge_nested_mapping(payload, dict(plot_context.plot_style_patch or {}))
+            changed_paths = set(_flatten_nested_mapping(dict(plot_context.plot_style_patch or {})).keys())
+            if changed_paths:
+                self._record_plot_style_extra_changes(changed_paths)
+        if changed_keys:
+            self._record_figure_state_changes(changed_keys)
+        if not payload:
+            return
+        self._apply_plot_style_payload(payload, source="extension")
 
     def _save_curve_style_template_named(self, name: str) -> bool:
         style = self._current_curve_style()
@@ -2486,7 +2609,10 @@ class ChartPage(QWidget):
             key for key, value in state.model_dump().items()
             if previous_state_payload.get(key) != value
         }
-        self._record_figure_state_changes(changed_keys)
+        self._apply_base_plot_style_options(
+            {key: state.model_dump()[key] for key in changed_keys},
+            changed_keys=changed_keys,
+        )
         self._theme_hint_label.setText(_THEME_HINTS.get(self._figure_state.theme, ""))
         self._redraw()
 
@@ -3044,15 +3170,13 @@ class ChartPage(QWidget):
         color_obj = color if isinstance(color, QColor) else QColor(str(color))
         if not color_obj.isValid():
             return
-        self._curve_styles.setdefault(self._style_target, {})["color"] = color_obj.name(QColor.NameFormat.HexRgb)
-        self._record_curve_style_changes(self._style_target, {"color"})
+        self._apply_base_curve_style_options({"color": color_obj.name(QColor.NameFormat.HexRgb)})
         self._redraw_now()
 
     def _on_style_reset_color(self) -> None:
         if not self._style_target:
             return
-        self._curve_styles.get(self._style_target, {}).pop("color", None)
-        self._record_curve_style_changes(self._style_target, {"color"})
+        self._apply_base_curve_style_options({"color": None})
         for curve in self._chart_series:
             if self._curve_key(curve) == self._style_target:
                 self._update_color_btn(curve.get("color") or "#888888")
@@ -3062,25 +3186,26 @@ class ChartPage(QWidget):
     def _on_style_line_changed(self, idx: int) -> None:
         if not self._style_target:
             return
-        style = self._curve_styles.setdefault(self._style_target, {})
-        style["linestyle"] = _STYLE_LINESTYLES[idx]
-        style["marker"] = _STYLE_MARKERS[idx]
-        self._record_curve_style_changes(self._style_target, {"linestyle", "marker"})
+        self._apply_base_curve_style_options(
+            {
+                "linestyle": _STYLE_LINESTYLES[idx],
+                "marker": _STYLE_MARKERS[idx],
+            }
+        )
         self._redraw_now()
 
     def _on_style_metrics_changed(self) -> None:
         if not self._style_target:
             return
-        style = self._curve_styles.setdefault(self._style_target, {})
-        style["linewidth"] = max(0.1, _safe_float_or(self._style_line_width_edit.text(), self._figure_state.line_width))
-        style["alpha"] = _clamp_float(_safe_float_or(self._style_opacity_edit.text(), 1.0), 0.0, 1.0)
-        style["marker_size"] = max(0.1, _safe_float_or(self._style_marker_size_edit.text(), self._figure_state.marker_size))
         density = max(1, _safe_int_or(self._style_density_edit.text(), 1))
-        style["markevery"] = density
-        style["dash_scale"] = float(density)
-        self._record_curve_style_changes(
-            self._style_target,
-            {"linewidth", "alpha", "marker_size", "markevery", "dash_scale"},
+        self._apply_base_curve_style_options(
+            {
+                "linewidth": max(0.1, _safe_float_or(self._style_line_width_edit.text(), self._figure_state.line_width)),
+                "alpha": _clamp_float(_safe_float_or(self._style_opacity_edit.text(), 1.0), 0.0, 1.0),
+                "marker_size": max(0.1, _safe_float_or(self._style_marker_size_edit.text(), self._figure_state.marker_size)),
+                "markevery": density,
+                "dash_scale": float(density),
+            }
         )
         self._redraw()
 
