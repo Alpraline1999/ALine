@@ -57,6 +57,7 @@ def register_extensions(registry):
             type="plot_arrow_annotation",
             name="绘制箭头",
             handler=draw_arrow_annotation,
+            settings=True,
             description="在图中添加一根箭头，可用于强调趋势或关键点。",
             version="0.1.0",
             config_fields=[
