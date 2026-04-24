@@ -2230,7 +2230,8 @@ class TestExtensionConfigPanel(unittest.TestCase):
                 }
             ])
 
-            self.assertEqual(panel._current_entry_label.text(), "绘制箭头·内置·v0.1.0")
+            self.assertEqual(panel._extension_section_label.text(), "绘图扩展")
+            self.assertEqual(panel._current_entry_label.text(), "当前扩展: 绘制箭头·内置·v0.1.0")
             self.assertEqual(panel._description_label.text(), "在图中添加箭头标注。")
         finally:
             panel.deleteLater()
@@ -2396,11 +2397,13 @@ class TestExtensionOptionsForm(unittest.TestCase):
             dialog._select_all()
 
             self.assertEqual(dialog.value(), [1, 2, 3])
-            self.assertTrue(all(checkbox.isChecked() for checkbox in dialog._checkboxes))
+            self.assertEqual(dialog._selected_list.count(), 3)
+            self.assertEqual(dialog._available_list.count(), 0)
 
             dialog._clear()
 
-            self.assertFalse(any(checkbox.isChecked() for checkbox in dialog._checkboxes))
+            self.assertEqual(dialog._selected_list.count(), 0)
+            self.assertEqual(dialog._available_list.count(), 3)
             self.assertEqual(dialog.value(), [])
         finally:
             dialog.deleteLater()
@@ -2422,6 +2425,32 @@ class TestExtensionOptionsForm(unittest.TestCase):
 
             self.assertFalse(dialog.yesButton.isEnabled())
             self.assertIn("已选择 0 条", dialog._status.text())
+        finally:
+            dialog.deleteLater()
+            host.deleteLater()
+
+    def test_line_selection_dialog_restores_available_order_and_supports_reorder(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets.extension_options_form import _LineSelectionDialog
+
+        host = QWidget()
+        dialog = _LineSelectionDialog("输入曲线", ["A", "B", "C", "D"], selected_indices=[2, 4], lines_number=(2, -1), parent=host)
+        try:
+            dialog._available_list.setCurrentRow(0)
+            dialog._move_to_selected()
+            self.assertEqual(dialog.value(), [2, 4, 1])
+
+            dialog._selected_list.setCurrentRow(2)
+            dialog._move_selected_up()
+            self.assertEqual(dialog.value(), [2, 1, 4])
+
+            dialog._selected_list.setCurrentRow(1)
+            dialog._move_to_available()
+            self.assertEqual(dialog.value(), [2, 4])
+            self.assertEqual(
+                [dialog._available_list.item(row).data(Qt.ItemDataRole.UserRole) for row in range(dialog._available_list.count())],
+                [1, 3],
+            )
         finally:
             dialog.deleteLater()
             host.deleteLater()
@@ -2582,6 +2611,40 @@ class TestExtensionOptionsForm(unittest.TestCase):
 
             button = next(button for button in form.findChildren(PushButton) if button.text() == "选择曲线")
             self.assertEqual(button.minimumWidth(), 96)
+        finally:
+            form.deleteLater()
+
+    def test_slider_live_tooltip_reuses_single_fluent_tip(self):
+        from PySide6.QtWidgets import QSlider
+        from qfluentwidgets import ToolTipPosition
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_fields(
+                [{"key": "alpha", "label": "透明度", "field_type": "limited", "min_value": 0, "max_value": 10, "default": 3}],
+                {"alpha": 3},
+            )
+            form.show()
+            QApplication.processEvents()
+
+            slider = form.findChild(QSlider)
+            self.assertIsNotNone(slider)
+            slider.setFocus()
+            QApplication.processEvents()
+
+            slider.setValue(4)
+            form._show_live_tooltip_at(slider, slider.toolTip(), ToolTipPosition.TOP)
+            first_tooltip = form._live_tooltip
+            self.assertIsNotNone(first_tooltip)
+
+            slider.setValue(6)
+            form._show_live_tooltip_at(slider, slider.toolTip(), ToolTipPosition.TOP)
+            second_tooltip = form._live_tooltip
+            self.assertIs(first_tooltip, second_tooltip)
+            self.assertEqual(slider.toolTip(), "6")
+            self.assertEqual(second_tooltip.text(), "6")
+            self.assertFalse(bool(slider.property("_alineFluentTooltip")))
         finally:
             form.deleteLater()
 
@@ -5899,7 +5962,7 @@ class TestProcessPage(unittest.TestCase):
             extension_registry.unregister_processing("ui_scale_help")
             self.page._refresh_processing_extensions()
 
-    def test_processing_multi_curve_extension_param_widget_shows_line_picker(self):
+    def test_processing_multi_curve_extension_uses_page_level_line_picker(self):
         from qfluentwidgets import PushButton
         from models.schemas import DataSeries
         from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
@@ -5926,10 +5989,62 @@ class TestProcessPage(unittest.TestCase):
 
             buttons = [button for button in self.page._param_widgets[-1].findChildren(PushButton) if "选择曲线" in button.text()]
 
-            self.assertTrue(buttons)
-            self.assertTrue(buttons[0].isEnabled())
+            self.assertFalse(buttons)
+            self.assertTrue(self.page._pipeline_lines_button.isEnabled())
         finally:
             extension_registry.unregister_processing("ui_multi_line_picker")
+
+    def test_process_page_pipeline_line_picker_injects_lines_list(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other, third])
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other.id)
+        self.page.on_tree_node_activated("series", third.id)
+        self.page._add_op_combo.setCurrentIndex(self.page._processing_op_types.index("pairwise_compute"))
+        self.page._add_op()
+        self.page._pipeline_selected_node_ids = [self.s.id, third.id]
+
+        params = self.page._normalized_operation_params("pairwise_compute", {"x_expr": "x1", "y_expr": "y1-y2"})
+
+        self.assertEqual(params["lines_list"], [1, 3])
+
+    def test_process_page_load_pipeline_restores_extension_config_id(self):
+        from core.extension_api import ProcessingExtension, extension_registry
+        from core.global_assets import global_assets
+
+        extension_registry.register_processing(
+            ProcessingExtension(
+                type="ui_pipeline_config_restore",
+                name="Pipeline 配置恢复",
+                handler=lambda xs, ys, params: (list(xs), list(ys)),
+                description="验证 pipeline 会恢复扩展 settings 配置。",
+                default_options={"factor": 2},
+                settings=True,
+                config_fields=[
+                    {"key": "factor", "label": "倍率", "field_type": "number", "default": 2},
+                ],
+            )
+        )
+        try:
+            config = global_assets.add_extension_config(
+                category="processing",
+                extension_type="ui_pipeline_config_restore",
+                extension_name="Pipeline 配置恢复",
+                name="倍率 7",
+                options={"factor": 7},
+            )
+            self.page._load_ops_into_chain([
+                {"type": "ui_pipeline_config_restore", "params": {"factor": 2}, "config_id": config.id}
+            ])
+
+            self.assertEqual(self.page._ops[0]["config_id"], config.id)
+            self.assertEqual(self.page._param_widgets[0].get_params()["factor"], 7)
+        finally:
+            extension_registry.unregister_processing("ui_pipeline_config_restore")
             self.page._refresh_processing_extensions()
 
     def test_builtin_processing_ops_use_generic_schema_param_widget(self):

@@ -45,6 +45,7 @@ from core.global_assets import global_assets
 from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, SavedPipeline
 from processing.data_engine import apply_pipeline_to_lines
+from processing.pipeline_extension import build_pipeline_extension_definition
 
 try:
     import matplotlib
@@ -109,6 +110,7 @@ class ProcessPage(QWidget):
         self._pipeline_warnings: List[str] = []
         self._ops: List[Dict[str, Any]] = []
         self._param_widgets: List[_ParamWidget] = []
+        self._pipeline_selected_node_ids: List[str] = []
         self._processing_op_labels: List[str] = []
         self._processing_op_types: List[str] = []
         self._processing_label_map: Dict[str, str] = {}
@@ -194,10 +196,10 @@ class ProcessPage(QWidget):
                 "从共享树双击数据后，这里会同步已选择列表和当前处理范围。",
             ),
             OnboardingStep(
-                lambda: self._selected_input_list,
+                lambda: self._pipeline_lines_button,
                 TeachingTipTailPosition.BOTTOM,
-                "已选择列表支持排序和批处理",
-                "单曲线工具会处理列表中当前选中的项；双/多曲线工具则按参数里指定的曲线顺序执行。",
+                "多曲线工具统一从这里选线",
+                "单曲线工具会处理列表中当前选中的项；双/多曲线工具则按顶部选择曲线的顺序执行。",
             ),
             OnboardingStep(
                 lambda: self._add_op_combo,
@@ -274,7 +276,7 @@ class ProcessPage(QWidget):
         self._current_input_label.setWordWrap(True)
         self._current_input_label.hide()
 
-        self._input_hint_label = BodyLabel("从共享树双击数据加入“已选择列表”；单曲线工具会处理列表中当前选中的项。")
+        self._input_hint_label = BodyLabel("从共享树双击数据加入“已选择列表”；双/多曲线工具统一使用顶部“选择曲线”。")
         self._input_hint_label.setWordWrap(True)
         self._input_hint_label.hide()
 
@@ -290,6 +292,16 @@ class ProcessPage(QWidget):
         self._selected_input_list.currentItemChanged.connect(lambda _current, _previous: self._on_selected_input_list_changed())
         mv.addWidget(self._selected_input_list)
         mv.addWidget(self._selected_input_state_label)
+
+        self._pipeline_lines_button = PushButton(FIF.LINK, "选择曲线", self)
+        apply_button_metrics(self._pipeline_lines_button, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        self._pipeline_lines_button.clicked.connect(self._choose_pipeline_lines)
+        mv.addWidget(self._pipeline_lines_button)
+
+        self._pipeline_lines_summary_label = CaptionLabel("当前扩展输入: 跟随当前选中项", self)
+        self._pipeline_lines_summary_label.setWordWrap(True)
+        self._pipeline_lines_summary_label.setStyleSheet(f"color: {secondary_color()};")
+        mv.addWidget(self._pipeline_lines_summary_label)
 
         selected_row = QHBoxLayout()
         self._btn_clear_inputs = PushButton(FIF.DELETE, "清除", self)
@@ -377,6 +389,7 @@ class ProcessPage(QWidget):
 
         for widget in (self._btn_selected_up, self._btn_selected_down):
             _install_fluent_tip(widget, widget.toolTip(), ToolTipPosition.BOTTOM)
+        _install_fluent_tip(self._pipeline_lines_button, "为当前 pipeline 的双/多曲线扩展选择输入曲线", ToolTipPosition.BOTTOM)
 
         mv.addWidget(make_hsep())
         mv.addWidget(make_section_label("操作参数"))
@@ -599,6 +612,70 @@ class ProcessPage(QWidget):
             if callable(refresh):
                 refresh()
 
+    def _current_pipeline_definition(self):
+        return build_pipeline_extension_definition(self._ops)
+
+    def _pipeline_selected_labels(self) -> List[str]:
+        label_map = {payload["node_id"]: payload["label"] for payload in self._selected_inputs}
+        return [label_map[node_id] for node_id in self._pipeline_selected_node_ids if node_id in label_map]
+
+    def _pipeline_lines_list(self) -> List[int]:
+        index_map = {payload["node_id"]: index + 1 for index, payload in enumerate(self._selected_inputs)}
+        return [index_map[node_id] for node_id in self._pipeline_selected_node_ids if node_id in index_map]
+
+    def _sync_pipeline_lines_state(self) -> None:
+        self._pipeline_selected_node_ids = [
+            node_id for node_id in self._pipeline_selected_node_ids
+            if any(payload["node_id"] == node_id for payload in self._selected_inputs)
+        ]
+        definition = self._current_pipeline_definition()
+        lower, upper = definition.lines_number
+        requires_multiline_selection = upper == -1 or upper > 1
+        self._pipeline_lines_button.setEnabled(requires_multiline_selection and bool(self._selected_inputs))
+        if not requires_multiline_selection:
+            self._pipeline_lines_summary_label.setText("当前扩展输入: 跟随当前选中项")
+            return
+        labels = self._pipeline_selected_labels()
+        if labels:
+            preview = "；".join(labels[:3]) + (" …" if len(labels) > 3 else "")
+            self._pipeline_lines_summary_label.setText(f"当前扩展输入: {preview}")
+            return
+        if not self._selected_inputs:
+            self._pipeline_lines_summary_label.setText("当前扩展输入: 暂无可选曲线")
+            return
+        range_text = f"{lower} 条以上" if upper == -1 else (f"{lower}-{upper} 条" if lower != upper else f"{lower} 条")
+        self._pipeline_lines_summary_label.setText(f"当前扩展输入: 未选择（需要 {range_text}）")
+
+    def _choose_pipeline_lines(self) -> None:
+        definition = self._current_pipeline_definition()
+        lower, upper = definition.lines_number
+        if upper != -1 and upper <= 1:
+            return
+        labels = [payload.get("label", "未命名曲线") for payload in self._selected_inputs]
+        if not labels:
+            return
+        from ui.widgets.extension_options_form import _LineSelectionDialog
+
+        selected = self._pipeline_lines_list()
+        chosen = _LineSelectionDialog.get_indices(
+            self,
+            labels,
+            selected,
+            lines_number=definition.lines_number,
+            title="选择曲线",
+            selected_label="递交给 Pipeline 的曲线",
+            available_label="已选择列表中的曲线",
+        )
+        if chosen is None:
+            return
+        self._pipeline_selected_node_ids = [
+            self._selected_inputs[index - 1]["node_id"]
+            for index in chosen
+            if 1 <= index <= len(self._selected_inputs)
+        ]
+        self._sync_pipeline_lines_state()
+        self._run_pipeline()
+
     def _refresh_param_stack_height(self) -> None:
         current_widget = self._param_stack.currentWidget() if hasattr(self, "_param_stack") else None
         if current_widget is None:
@@ -645,10 +722,11 @@ class ProcessPage(QWidget):
             return pairing_payloads
         return self._active_input_payloads(prefer_current=True)
 
-    @staticmethod
-    def _normalized_operation_params(op_type: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _normalized_operation_params(self, op_type: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         normalized = dict(params or {})
-        explicit_lines = normalize_extension_lines_list(normalized.get("lines_list")) if "lines_list" in normalized else []
+        explicit_lines = self._pipeline_lines_list() or (
+            normalize_extension_lines_list(normalized.get("lines_list")) if "lines_list" in normalized else []
+        )
         if op_type == "pairwise_compute" and not explicit_lines:
             indices: List[int] = []
             for key in ("primary_index", "secondary_index"):
@@ -678,6 +756,7 @@ class ProcessPage(QWidget):
     def _sync_selected_input_state(self) -> None:
         self._rebuild_source_series_batch()
         self._update_selected_input_state_label()
+        self._sync_pipeline_lines_state()
         if not self._selected_inputs:
             self._selected_src_id = None
             self._selected_source_kind = None
@@ -833,6 +912,8 @@ class ProcessPage(QWidget):
         self._param_widgets.clear()
         self._ops.clear()
         self._op_list.clear()
+        self._pipeline_selected_node_ids.clear()
+        self._sync_pipeline_lines_state()
         self._refresh_param_stack_height()
         self._save_name_edit.setText(self._suggest_result_name())
         self._run_pipeline()
@@ -877,9 +958,14 @@ class ProcessPage(QWidget):
             pw.set_params(dict(params))
         self._param_widgets.append(pw)
         self._param_stack.addWidget(pw)
-        self._ops.append({"type": op_type, "params": pw.get_params()})
+        self._ops.append({
+            "type": op_type,
+            "params": pw.get_params(),
+            "config_id": getattr(pw, "current_settings_config_id", lambda: None)(),
+        })
         self._op_list.addItem(op_label)
         self._op_list.setCurrentRow(len(self._ops) - 1)
+        self._sync_pipeline_lines_state()
         self._refresh_param_stack_height()
         self._save_name_edit.setText(self._suggest_result_name())
         self._run_pipeline()
@@ -893,6 +979,7 @@ class ProcessPage(QWidget):
         self._param_stack.removeWidget(pw)
         pw.deleteLater()
         self._op_list.takeItem(row)
+        self._sync_pipeline_lines_state()
         self._refresh_param_stack_height()
         self._save_name_edit.setText(self._suggest_result_name())
         self._run_pipeline()
@@ -952,6 +1039,7 @@ class ProcessPage(QWidget):
             merged_params = dict(op.get("params", {}) or {})
             merged_params.update(pw.get_params())
             op["params"] = self._normalized_operation_params(str(op.get("type", "") or ""), merged_params)
+            op["config_id"] = getattr(pw, "current_settings_config_id", lambda: None)()
         try:
             preview_payloads = self._preview_input_payloads()
             self._out_series_batch, self._pipeline_warnings = self._build_output_series_batch(
@@ -1505,18 +1593,30 @@ class ProcessPage(QWidget):
         self._param_widgets.clear()
         self._ops.clear()
         self._op_list.clear()
+        self._pipeline_selected_node_ids.clear()
         for op in ops:
             op_type = op.get("type", "")
             params = dict(op.get("params", {}))
-            self._ops.append({"type": op_type, "params": params})
+            config_id = op.get("config_id")
+            legacy_lines = normalize_extension_lines_list(params.pop("lines_list", None)) if self._is_pairing_operation(op_type, params) else []
+            if legacy_lines and self._selected_inputs:
+                self._pipeline_selected_node_ids = [
+                    self._selected_inputs[index - 1]["node_id"]
+                    for index in legacy_lines
+                    if 1 <= index <= len(self._selected_inputs)
+                ]
+            self._ops.append({"type": op_type, "params": params, "config_id": config_id})
             if extension_registry.get_processing(op_type) is not None:
                 self._processing_extension_options[op_type] = dict(params)
             self._op_list.addItem(self._op_label_for_type(op_type))
             widget = _make_param_widget(op_type, self, self._run_pipeline)
             if hasattr(widget, "set_params"):
                 widget.set_params(params)
+            if config_id and hasattr(widget, "load_settings_config"):
+                widget.load_settings_config(config_id)
             self._param_widgets.append(widget)
             self._param_stack.addWidget(widget)
+        self._sync_pipeline_lines_state()
         if self._ops:
             self._op_list.setCurrentRow(len(self._ops) - 1)
             self._on_op_selected(len(self._ops) - 1)
@@ -1549,10 +1649,12 @@ class _ParamWidget(QWidget):
 
 
 class _JsonParam(_ParamWidget):
-    def __init__(self, parent, on_change, *, description: str = "", default_params: Optional[dict] = None, fields: Optional[List[dict]] = None, entry: Optional[dict] = None):
+    def __init__(self, parent, on_change, *, description: str = "", default_params: Optional[dict] = None, fields: Optional[List[dict]] = None, entry: Optional[dict] = None, show_lines_field: bool = True):
         super().__init__(parent)
         self._page = parent if hasattr(parent, "_selected_inputs") else None
         self._fields = [dict(item) for item in (fields or []) if isinstance(item, dict)]
+        if not show_lines_field:
+            self._fields = [field for field in self._fields if str(field.get("key") or "") != "lines_list"]
         self._entry = dict(entry or {}) if isinstance(entry, dict) else None
         self._last_valid = dict(default_params or {})
         lv = QVBoxLayout(self)
@@ -1586,6 +1688,25 @@ class _JsonParam(_ParamWidget):
         labels = [payload.get("label", "未命名曲线") for payload in getattr(self._page, "_selected_inputs", [])]
         self._editor.set_line_candidates(labels)
 
+    def current_settings_config_id(self) -> Optional[str]:
+        current_id = getattr(self._editor, "_current_settings_config_id", None)
+        return current_id() if callable(current_id) else None
+
+    def load_settings_config(self, config_id: str) -> None:
+        entry_type = str((self._entry or {}).get("type") or "")
+        if not config_id or not entry_type:
+            return
+        config = global_assets.get_extension_config(config_id)
+        if config is None or config.extension_type != entry_type:
+            return
+        selected_ids = getattr(self._editor, "_selected_settings_config_ids", None)
+        if isinstance(selected_ids, dict):
+            selected_ids[entry_type] = config.id
+        refresh_selector = getattr(self._editor, "_refresh_settings_selector", None)
+        if callable(refresh_selector):
+            refresh_selector()
+        self._editor.set_options(dict(config.options or {}))
+
 
 def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:
     extension = extension_registry.get_processing(op_type)
@@ -1598,5 +1719,6 @@ def _make_param_widget(op_type: str, parent, on_change) -> _ParamWidget:
             default_params=dict(entry.get("resolved_options") or {}),
             fields=list(entry.get("normalized_config_fields") or entry.get("config_fields") or []),
             entry=entry,
+            show_lines_field=False,
         )
     return _ParamWidget(parent)

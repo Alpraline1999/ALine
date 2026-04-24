@@ -45,6 +45,7 @@ def register_extensions(registry):
             handler=draw_text_annotation,
             description="在图中添加一段文字，可用于备注说明或结论标注。",
             version="0.1.0",
+            settings=True,
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),
                 ExtensionConfigField(key="x", description="文本位置 X。", field_type="number", default=0.08),

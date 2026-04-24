@@ -291,13 +291,13 @@ class ExtensionConfigPanel(QWidget):
         self._title_label.setVisible(is_full)
         self._status_row_widget.setVisible(is_full)
         self._extension_section_label.setVisible(is_full or is_help_only)
-        self._extension_section_label.setText(self._status_title if is_help_only else "扩展")
+        self._extension_section_label.setText(self._status_title)
         self._current_entry_label.setVisible(is_help_only)
         self._selector_row_widget.setVisible(not is_help_only)
         self._description_section_label.setVisible(is_help_only)
         self._description_label.setVisible(is_full or is_help_only)
         self._config_section_label.setVisible(is_full and self._config_entry_visible)
-        self._config_row_widget.setVisible((not is_help_only) and self._config_entry_visible)
+        self._config_row_widget.setVisible((not is_help_only) and (self._config_entry_visible or is_compact))
         self._parameter_section_label.setVisible(not is_compact or is_help_only)
         self._parameter_section_label.setText("参数说明" if is_help_only else "参数")
         self._usage_hint_label.setVisible(is_full)
@@ -314,7 +314,7 @@ class ExtensionConfigPanel(QWidget):
         self._action_row_widget.setVisible(is_full)
         self._surface.setSizePolicy(
             QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum if is_help_only else QSizePolicy.Policy.Expanding,
         )
         self._root_layout.setAlignment(self._surface, Qt.AlignmentFlag(0))
         self._surface_layout.setStretchFactor(self._config_help_area, 1 if is_help_only else 0)
@@ -570,7 +570,8 @@ class ExtensionConfigPanel(QWidget):
 
     def _set_empty_state(self) -> None:
         self._config_entry_visible = False
-        self._current_entry_label.setText("当前页没有可用扩展")
+        self._set_entry_summary(None)
+        self._current_entry_label.setText("当前扩展: 当前页没有可用扩展")
         self._description_label.setText("当前页没有可用扩展")
         self._config_help_label.setText("保留 {} 使用默认参数。")
         self._editor.set_fields([], {})
@@ -624,6 +625,13 @@ class ExtensionConfigPanel(QWidget):
     def _show_status_details(self) -> None:
         show_extension_load_report_dialog(self, f"{self._status_title}详情", self._status_category)
 
+    def _set_entry_summary(self, entry: Optional[dict]) -> None:
+        info = extension_entry_display_info(entry, category_label=self._status_title)
+        panel_title = info.get("panel_title") or "未选择扩展"
+        self._extension_section_label.setText(info.get("category_label") or self._status_title or "扩展")
+        self._current_entry_label.setText(f"当前扩展: {panel_title}")
+        self._description_label.setText(info.get("description") or "暂无说明")
+
     def _on_selection_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._entries):
             self._set_empty_state()
@@ -631,9 +639,7 @@ class ExtensionConfigPanel(QWidget):
         entry = self._entries[idx]
         type_id = entry.get("type")
         type_key = str(type_id or "")
-        info = extension_entry_display_info(entry, category_label=self._status_title)
-        self._current_entry_label.setText(info.get("panel_title") or str(entry.get("label") or entry.get("name") or type_key or "未选择扩展"))
-        self._description_label.setText(info.get("description") or "暂无说明")
+        self._set_entry_summary(entry)
         self._config_help_label.setText(self._config_help_text(entry))
         self._config_entry_visible = self._entry_supports_settings(entry)
         self._apply_panel_mode()

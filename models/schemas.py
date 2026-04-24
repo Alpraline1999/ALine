@@ -564,6 +564,9 @@ TreeNodeUnion = Annotated[
 ]
 
 
+_TREE_QUERY_ANY_PARENT = object()
+
+
 class ProjectTree(BaseModel):
     """扁平节点列表，通过 parent_id 反向引用构建树形结构。"""
     model_config = ConfigDict(extra="ignore")
@@ -571,16 +574,56 @@ class ProjectTree(BaseModel):
     nodes: List[TreeNodeUnion] = []
 
     def get_children(self, parent_id: Optional[str]) -> List[TreeNodeUnion]:
-        return sorted(
-            [n for n in self.nodes if n.parent_id == parent_id],
-            key=lambda n: n.order,
-        )
+        return self.find_nodes(parent_id=parent_id)
 
     def get_node(self, node_id: str) -> Optional[TreeNodeUnion]:
         for n in self.nodes:
             if n.id == node_id:
                 return n
         return None
+
+    def find_nodes(
+        self,
+        *,
+        kind: Optional[str] = None,
+        parent_id: Any = _TREE_QUERY_ANY_PARENT,
+        name: Optional[str] = None,
+        group_type: Optional[str] = None,
+    ) -> List[TreeNodeUnion]:
+        matched = [
+            node
+            for node in self.nodes
+            if (kind is None or node.kind == kind)
+            and (parent_id is _TREE_QUERY_ANY_PARENT or node.parent_id == parent_id)
+            and (name is None or node.name == name)
+            and (group_type is None or getattr(node, "group_type", None) == group_type)
+        ]
+        return sorted(matched, key=lambda node: node.order)
+
+    def find_first(
+        self,
+        *,
+        kind: Optional[str] = None,
+        parent_id: Any = _TREE_QUERY_ANY_PARENT,
+        name: Optional[str] = None,
+        group_type: Optional[str] = None,
+    ) -> Optional[TreeNodeUnion]:
+        matches = self.find_nodes(kind=kind, parent_id=parent_id, name=name, group_type=group_type)
+        return matches[0] if matches else None
+
+    def find_linked_node(self, node_kind: str, attr_name: str, attr_value: str) -> Optional[TreeNodeUnion]:
+        for node in self.find_nodes(kind=node_kind):
+            if getattr(node, attr_name, None) == attr_value:
+                return node
+        return None
+
+    def path_to_root(self, node_id: str) -> List[TreeNodeUnion]:
+        path: List[TreeNodeUnion] = []
+        current = self.get_node(node_id)
+        while current is not None:
+            path.append(current)
+            current = self.get_node(current.parent_id) if current.parent_id else None
+        return path
 
     def get_siblings_max_order(self, parent_id: Optional[str]) -> int:
         orders = [n.order for n in self.nodes if n.parent_id == parent_id]

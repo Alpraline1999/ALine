@@ -154,6 +154,7 @@ def register_extensions(registry):
             handler=draw_polar_projection,
             description="将当前选中曲线或首条可见曲线重绘为极坐标图，并提供常用极坐标参数。",
             version="0.1.0",
+            settings=True,
             config_fields=[
                 ExtensionConfigField(key="theta_unit", description="角度数据单位。", field_type="selective", default="degree", choices=("degree", "radian")),
                 ExtensionConfigField(key="theta_label", description="极坐标角度轴标签；留空则保持当前设置。", field_type="string", default="角度"),

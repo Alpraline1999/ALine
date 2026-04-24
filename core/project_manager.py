@@ -146,10 +146,7 @@ class ProjectManager:
         p = project or self.current_project
         if p is None or p.tree is None:
             return None
-        for node in p.tree.nodes:
-            if node.kind == node_kind and getattr(node, attr_name, None) == attr_value:
-                return node
-        return None
+        return p.tree.find_linked_node(node_kind, attr_name, attr_value)
 
     def _ensure_unique_tree_child_name(
         self,
@@ -1557,14 +1554,15 @@ class ProjectManager:
             project.ai_agents = []
 
         if project.tree is not None:
+            tree = project.tree
             removed_ids: set[str] = set()
 
             def _collect_descendants(parent_id: str) -> None:
-                for child in project.tree.get_children(parent_id):
+                for child in tree.get_children(parent_id):
                     removed_ids.add(child.id)
                     _collect_descendants(child.id)
 
-            for node in list(project.tree.nodes):
+            for node in list(tree.nodes):
                 canonical_group = self._canonical_group_type(getattr(node, "group_type", None))
                 if node.kind in _LEGACY_TOOL_NODE_KINDS or canonical_group in _LEGACY_TOOL_GROUP_TYPES:
                     removed_ids.add(node.id)
@@ -1886,10 +1884,7 @@ class ProjectManager:
         p = self.current_project
         if p is None or p.tree is None:
             return None
-        for node in p.tree.nodes:
-            if node.kind == "folder" and node.name == name and node.parent_id == parent_id:
-                return node
-        return None
+        return p.tree.find_first(kind="folder", name=name, parent_id=parent_id)
 
     def _find_folder_by_group_type(self, group_type: str, parent_id: Optional[str] = None):
         """按 group_type 查找文件夹节点（更稳健，不依赖名称）。"""
@@ -1898,10 +1893,9 @@ class ProjectManager:
             return None
         group_type = self._canonical_group_type(group_type) or group_type
         candidates = _GROUP_TYPE_ALIASES.get(group_type, {group_type})
-        for node in p.tree.nodes:
+        for node in p.tree.find_nodes(kind="folder", parent_id=parent_id):
             if (node.kind == "folder"
-                    and getattr(node, "group_type", None) in candidates
-                    and (parent_id is None or node.parent_id == parent_id)):
+                    and getattr(node, "group_type", None) in candidates):
                 return node
         return None
 

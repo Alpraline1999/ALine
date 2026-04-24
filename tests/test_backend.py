@@ -122,6 +122,19 @@ class TestSchemas(unittest.TestCase):
         children = tree.get_children(root.id)
         self.assertEqual([n.name for n in children], ["a", "b"])
 
+    def test_project_tree_query_helpers_cover_name_link_and_path(self):
+        from models.schemas import FolderNode, DataFileNode, ProjectTree
+
+        root = FolderNode(name="数据集", group_type="datasets", order=0)
+        folder = FolderNode(name="批次A", parent_id=root.id, order=0)
+        child = DataFileNode(name="demo.csv", parent_id=folder.id, order=0, data_file_id="df-demo")
+        tree = ProjectTree(nodes=[root, folder, child])
+
+        self.assertIs(tree.find_first(kind="folder", name="批次A", parent_id=root.id), folder)
+        self.assertEqual([node.name for node in tree.find_nodes(kind="folder", parent_id=root.id)], ["批次A"])
+        self.assertIs(tree.find_linked_node("data_file", "data_file_id", "df-demo"), child)
+        self.assertEqual([node.name for node in tree.path_to_root(child.id)], ["demo.csv", "批次A", "数据集"])
+
     def test_data_file_find_series(self):
         from models.schemas import DataFile, DataSeries
         df = DataFile(name="data.csv")
@@ -1925,6 +1938,16 @@ class TestAnalysisEngine(unittest.TestCase):
             self.assertIsNotNone(extension)
             resolved_defaults = extension.resolved_default_options
             self.assertTrue(required_keys.issubset(set(resolved_defaults.keys())))
+
+    def test_repository_demo_plot_extensions_all_support_settings(self):
+        from core.extension_api import ExtensionRegistry, default_extensions_directory
+
+        registry = ExtensionRegistry()
+        report = registry.load_from_directory(default_extensions_directory())
+
+        self.assertEqual(report["errors"], [])
+        self.assertTrue(registry.list_plot())
+        self.assertTrue(all(bool(getattr(extension, "settings", False)) for extension in registry.list_plot()))
 
 
 # ══════════════════════════════════════════════════════════════════

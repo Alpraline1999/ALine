@@ -109,6 +109,7 @@ def register_extensions(registry):
             handler=draw_reference_overlay,
             description="演示 PlotExtensionContext 的 before_plot/after_plot 两阶段绘制能力。",
             version="0.1.0",
+            settings=True,
             config_fields=[
                 ExtensionConfigField(
                     key="show_reference_line",

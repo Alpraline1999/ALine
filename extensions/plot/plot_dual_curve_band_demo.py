@@ -122,6 +122,7 @@ def register_extensions(registry):
             description="演示如何在绘图阶段对前两条可见曲线自动对齐，并绘制双曲线差异带。",
             version="0.1.0",
             lines_number=(2, 2),
+            settings=True,
             config_fields=[
                 ExtensionConfigField(
                     key="align_mode",

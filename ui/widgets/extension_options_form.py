@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QIntValidator
-from PySide6.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -18,6 +18,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
     InfoBar,
     InfoBarPosition,
+    ListWidget,
     LineEdit,
     MessageBoxBase,
     PushButton,
@@ -238,12 +239,11 @@ class _LineSelectionDialog(MessageBoxBase):
         super().__init__(parent)
         self._candidates = list(candidates)
         self._lines_number = lines_number
-        self._checkboxes: List[CheckBox] = []
         self._title_label = SubtitleLabel(title, self.widget)
         self.viewLayout.addWidget(self._title_label)
 
         support_text = extension_lines_support_text(self._lines_number)
-        hint = BodyLabel(f"本扩展支持的曲线数量为 {support_text}。请勾选要传给扩展的曲线。", self.widget)
+        hint = BodyLabel(f"本扩展支持的曲线数量为 {support_text}。请从左侧挑选要传给扩展的曲线，并在右侧调整输入顺序。", self.widget)
         hint.setWordWrap(True)
         self.viewLayout.addWidget(hint)
 
@@ -265,52 +265,186 @@ class _LineSelectionDialog(MessageBoxBase):
         self._status.setStyleSheet(f"color: {secondary_color()}; font-size: 11px;")
         self.viewLayout.addWidget(self._status)
 
-        self._scroll = SmoothScrollArea(self.widget)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll.setStyleSheet("background: transparent; border: none;")
-        self._scroll.setFixedHeight(236)
-        self._list_host = QWidget(self._scroll)
-        self._list_layout = QVBoxLayout(self._list_host)
-        self._list_layout.setContentsMargins(0, 0, 0, 0)
-        self._list_layout.setSpacing(6)
-        for index, label in enumerate(self._candidates, start=1):
-            checkbox = CheckBox(f"{index}. {label}", self._list_host)
-            checkbox.stateChanged.connect(lambda _state: self._update_status())
-            self._list_layout.addWidget(checkbox)
-            self._checkboxes.append(checkbox)
-        self._list_layout.addStretch(1)
-        self._scroll.setWidget(self._list_host)
-        self.viewLayout.addWidget(self._scroll)
-        self.widget.setMinimumWidth(420)
-        self.widget.setMinimumHeight(360)
+        lists_row = QHBoxLayout()
+        lists_row.setContentsMargins(0, 0, 0, 0)
+        lists_row.setSpacing(8)
+
+        left_column = QVBoxLayout()
+        left_column.setContentsMargins(0, 0, 0, 0)
+        left_column.setSpacing(6)
+        left_column.addWidget(BodyLabel("已选择列表中的曲线", self.widget))
+        self._available_list = ListWidget(self.widget)
+        self._available_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._available_list.setMinimumHeight(236)
+        self._available_list.itemDoubleClicked.connect(lambda _item: self._move_to_selected())
+        self._available_list.itemSelectionChanged.connect(self._refresh_button_states)
+        left_column.addWidget(self._available_list, 1)
+        lists_row.addLayout(left_column, 1)
+
+        center_column = QVBoxLayout()
+        center_column.setContentsMargins(0, 24, 0, 0)
+        center_column.setSpacing(6)
+        self._move_right_btn = PushButton("添加 →", self.widget)
+        self._move_left_btn = PushButton("← 移除", self.widget)
+        apply_button_metrics(self._move_right_btn, self._move_left_btn, min_width=0, height=WORKBENCH_BUTTON_HEIGHT)
+        self._move_right_btn.clicked.connect(self._move_to_selected)
+        self._move_left_btn.clicked.connect(self._move_to_available)
+        center_column.addStretch(1)
+        center_column.addWidget(self._move_right_btn)
+        center_column.addWidget(self._move_left_btn)
+        center_column.addStretch(1)
+        lists_row.addLayout(center_column)
+
+        right_column = QVBoxLayout()
+        right_column.setContentsMargins(0, 0, 0, 0)
+        right_column.setSpacing(6)
+        right_column.addWidget(BodyLabel("递交给扩展的曲线", self.widget))
+        right_list_row = QHBoxLayout()
+        right_list_row.setContentsMargins(0, 0, 0, 0)
+        right_list_row.setSpacing(6)
+        self._selected_list = ListWidget(self.widget)
+        self._selected_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._selected_list.setMinimumHeight(236)
+        self._selected_list.itemDoubleClicked.connect(lambda _item: self._move_to_available())
+        self._selected_list.itemSelectionChanged.connect(self._refresh_button_states)
+        right_list_row.addWidget(self._selected_list, 1)
+        order_column = QVBoxLayout()
+        order_column.setContentsMargins(0, 0, 0, 0)
+        order_column.setSpacing(6)
+        self._move_up_btn = ToolButton(FIF.UP, self.widget)
+        self._move_down_btn = ToolButton(FIF.DOWN, self.widget)
+        for button, tooltip in ((self._move_up_btn, "上移"), (self._move_down_btn, "下移")):
+            button.setToolTip(tooltip)
+            button.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+            install_fluent_tooltip(button, delay=300, position=ToolTipPosition.BOTTOM)
+        self._move_up_btn.clicked.connect(self._move_selected_up)
+        self._move_down_btn.clicked.connect(self._move_selected_down)
+        order_column.addWidget(self._move_up_btn)
+        order_column.addWidget(self._move_down_btn)
+        order_column.addStretch(1)
+        right_list_row.addLayout(order_column)
+        right_column.addLayout(right_list_row, 1)
+        lists_row.addLayout(right_column, 1)
+
+        self.viewLayout.addLayout(lists_row)
+        self.widget.setMinimumWidth(620)
+        self.widget.setMinimumHeight(380)
         self.yesButton.setText("确认")
         self.cancelButton.setText("取消")
 
-        selected_set = {int(item) for item in selected_indices if int(item) > 0}
-        self._select_rows([row - 1 for row in sorted(selected_set) if row > 0])
+        self._available_indices = list(range(1, len(self._candidates) + 1))
+        self._selected_indices = [
+            index for index in normalize_extension_lines_list(selected_indices)
+            if 1 <= index <= len(self._candidates)
+        ]
+        selected_set = set(self._selected_indices)
+        self._available_indices = [index for index in self._available_indices if index not in selected_set]
+        self._rebuild_lists()
         self._update_status()
+        self._refresh_button_states()
+
+    def _label_for_index(self, index: int) -> str:
+        return f"{index}. {self._candidates[index - 1]}"
+
+    def _populate_list(self, widget: ListWidget, indices: List[int]) -> None:
+        widget.clear()
+        for index in indices:
+            item_text = self._label_for_index(index)
+            widget.addItem(item_text)
+            widget.item(widget.count() - 1).setData(Qt.ItemDataRole.UserRole, index)
+            widget.item(widget.count() - 1).setToolTip(item_text)
+
+    def _rebuild_lists(self) -> None:
+        self._populate_list(self._available_list, self._available_indices)
+        self._populate_list(self._selected_list, self._selected_indices)
+
+    @staticmethod
+    def _selected_index_values(widget: ListWidget) -> List[int]:
+        values: List[int] = []
+        for item in widget.selectedItems():
+            raw = item.data(Qt.ItemDataRole.UserRole)
+            try:
+                values.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+        return values
 
     def _select_all(self) -> None:
-        if not self._checkboxes:
+        if not self._available_indices:
             return
-        for checkbox in self._checkboxes:
-            checkbox.setChecked(True)
-        self._checkboxes[0].setFocus(Qt.FocusReason.OtherFocusReason)
+        self._selected_indices.extend(self._available_indices)
+        self._available_indices.clear()
+        self._rebuild_lists()
         self._update_status()
-
-    def _select_rows(self, rows: List[int]) -> None:
-        valid_rows = {row for row in rows if 0 <= row < len(self._checkboxes)}
-        for row, checkbox in enumerate(self._checkboxes):
-            checkbox.setChecked(row in valid_rows)
-        if valid_rows:
-            self._checkboxes[min(valid_rows)].setFocus(Qt.FocusReason.OtherFocusReason)
-        self._update_status()
+        self._refresh_button_states()
 
     def _clear(self) -> None:
-        for checkbox in self._checkboxes:
-            checkbox.setChecked(False)
+        if not self._selected_indices:
+            return
+        self._available_indices.extend(self._selected_indices)
+        self._available_indices.sort()
+        self._selected_indices.clear()
+        self._rebuild_lists()
         self._update_status()
+        self._refresh_button_states()
+
+    def _move_to_selected(self) -> None:
+        chosen = self._selected_index_values(self._available_list)
+        if not chosen:
+            return
+        chosen_set = set(chosen)
+        self._selected_indices.extend(index for index in self._available_indices if index in chosen_set)
+        self._available_indices = [index for index in self._available_indices if index not in chosen_set]
+        self._rebuild_lists()
+        self._update_status()
+        self._refresh_button_states()
+
+    def _move_to_available(self) -> None:
+        chosen = self._selected_index_values(self._selected_list)
+        if not chosen:
+            return
+        chosen_set = set(chosen)
+        self._available_indices.extend(index for index in self._selected_indices if index in chosen_set)
+        self._available_indices.sort()
+        self._selected_indices = [index for index in self._selected_indices if index not in chosen_set]
+        self._rebuild_lists()
+        self._update_status()
+        self._refresh_button_states()
+
+    def _move_selected_up(self) -> None:
+        chosen = set(self._selected_index_values(self._selected_list))
+        if not chosen:
+            return
+        for index in range(1, len(self._selected_indices)):
+            if self._selected_indices[index] in chosen and self._selected_indices[index - 1] not in chosen:
+                self._selected_indices[index - 1], self._selected_indices[index] = self._selected_indices[index], self._selected_indices[index - 1]
+        self._rebuild_lists()
+        for row, index_value in enumerate(self._selected_indices):
+            if index_value in chosen:
+                self._selected_list.item(row).setSelected(True)
+        self._refresh_button_states()
+
+    def _move_selected_down(self) -> None:
+        chosen = set(self._selected_index_values(self._selected_list))
+        if not chosen:
+            return
+        for index in range(len(self._selected_indices) - 2, -1, -1):
+            if self._selected_indices[index] in chosen and self._selected_indices[index + 1] not in chosen:
+                self._selected_indices[index + 1], self._selected_indices[index] = self._selected_indices[index], self._selected_indices[index + 1]
+        self._rebuild_lists()
+        for row, index_value in enumerate(self._selected_indices):
+            if index_value in chosen:
+                self._selected_list.item(row).setSelected(True)
+        self._refresh_button_states()
+
+    def _refresh_button_states(self) -> None:
+        available_selected = bool(self._available_list.selectedItems())
+        selected_selected = bool(self._selected_list.selectedItems())
+        self._move_right_btn.setEnabled(available_selected)
+        self._move_left_btn.setEnabled(selected_selected)
+        selected_rows = sorted({self._selected_list.row(item) for item in self._selected_list.selectedItems()})
+        self._move_up_btn.setEnabled(bool(selected_rows) and selected_rows[0] > 0)
+        self._move_down_btn.setEnabled(bool(selected_rows) and selected_rows[-1] < self._selected_list.count() - 1)
 
     def _update_status(self) -> None:
         lower, upper = self._lines_number
@@ -326,7 +460,7 @@ class _LineSelectionDialog(MessageBoxBase):
         self.yesButton.setEnabled(count >= lower and (upper == -1 or count <= upper))
 
     def value(self) -> List[int]:
-        return [index for index, checkbox in enumerate(self._checkboxes, start=1) if checkbox.isChecked()]
+        return list(self._selected_indices)
 
     @classmethod
     def get_indices(
@@ -364,6 +498,7 @@ class ExtensionOptionsForm(QWidget):
         self._show_field_descriptions = False
         self._retain_unknown_options = False
         self._live_tooltip = None
+        self._live_tooltip_owner: Optional[QWidget] = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -683,23 +818,44 @@ class ExtensionOptionsForm(QWidget):
             self.optionsCommitted.emit(copy.deepcopy(options))
 
     def _show_live_tooltip(self, widget: QWidget, text: str) -> None:
+        self._show_live_tooltip_at(widget, text, ToolTipPosition.TOP)
+
+    def _show_live_tooltip_at(self, widget: QWidget, text: str, position: ToolTipPosition) -> None:
         if not text:
             self._hide_live_tooltip()
             return
         parent = self.window() if isinstance(self.window(), QWidget) else self
         if self._live_tooltip is None:
             self._live_tooltip = ToolTip(text, parent)
+        self._live_tooltip.setDuration(0)
         self._live_tooltip.setText(text)
         self._live_tooltip.adjustSize()
-        origin = widget.mapToGlobal(widget.rect().center())
-        if isinstance(parent, QWidget):
-            origin = parent.mapFromGlobal(origin)
-        self._live_tooltip.move(origin + QPoint(12, -self._live_tooltip.height() - 10))
         self._live_tooltip.show()
+        self._live_tooltip.adjustPos(widget, position)
+        self._live_tooltip_owner = widget
 
     def _hide_live_tooltip(self) -> None:
         if self._live_tooltip is not None:
             self._live_tooltip.hide()
+        self._live_tooltip_owner = None
+
+    def _register_live_tooltip_widget(self, widget: QWidget, position: ToolTipPosition = ToolTipPosition.TOP) -> None:
+        widget.setProperty("_alineLiveTooltip", True)
+        widget.setProperty("_alineLiveTooltipPosition", position)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if isinstance(watched, QWidget) and bool(watched.property("_alineLiveTooltip")):
+            position = watched.property("_alineLiveTooltipPosition") or ToolTipPosition.TOP
+            if event.type() in {QEvent.Type.Enter, QEvent.Type.FocusIn}:
+                text = watched.toolTip().strip()
+                if text:
+                    self._show_live_tooltip_at(watched, text, position)
+            elif event.type() in {QEvent.Type.Leave, QEvent.Type.FocusOut, QEvent.Type.Hide}:
+                is_slider_down = bool(getattr(watched, "isSliderDown", lambda: False)())
+                if not is_slider_down:
+                    self._hide_live_tooltip()
+        return super().eventFilter(watched, event)
 
     def _create_binding(self, field: Dict[str, Any]) -> Optional[_FieldBinding]:
         field_type = field.get("field_type") or "string"
@@ -957,16 +1113,18 @@ class ExtensionOptionsForm(QWidget):
         def _update_tooltip(raw_value: int) -> None:
             text = _format(raw_value)
             slider.setToolTip(text)
-            if slider.isSliderDown() or slider.underMouse() or slider.hasFocus():
-                self._show_live_tooltip(slider, text)
+            if (self._live_tooltip is not None and self._live_tooltip.isVisible()) or slider.isSliderDown() or slider.underMouse() or slider.hasFocus():
+                self._show_live_tooltip_at(slider, text, ToolTipPosition.TOP)
 
         def _set(value: Any) -> None:
             numeric = float(value if value is not None else min_value)
             slider.setValue(int(round(numeric * scale)))
             _update_tooltip(slider.value())
 
-        install_fluent_tooltip(slider, delay=300, position=ToolTipPosition.TOP)
+        slider.setToolTip(_format(slider.value()))
+        self._register_live_tooltip_widget(slider, ToolTipPosition.TOP)
         slider.valueChanged.connect(_update_tooltip)
+        slider.sliderPressed.connect(lambda: self._show_live_tooltip_at(slider, slider.toolTip(), ToolTipPosition.TOP))
         slider.sliderReleased.connect(self._hide_live_tooltip)
         slider.destroyed.connect(lambda *_args: self._hide_live_tooltip())
         slider.valueChanged.connect(lambda _value: self._emit_change(committed=True))
