@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Optional, cast
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QFormLayout, QTableWidgetItem, QHeaderView
-from PySide6.QtCore import Qt, Signal, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QSignalBlocker, QTimer
 from PySide6.QtGui import QFont, QColor
 from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePushButton,
     LineEdit, SpinBox, ColorPickerButton, BodyLabel, CaptionLabel, SubtitleLabel,
@@ -66,6 +66,7 @@ class DigitizePage(QWidget):
         self._right_panel = None
         self._right_tabs = None
         self._right_splitter_initialized = False
+        self._right_splitter_user_resized = False
         self._image_viewer: ImageViewer = cast(ImageViewer, None)
         self._tool_buttons = []
         self._project_tree: TreeWidget = cast(TreeWidget, None)
@@ -112,16 +113,27 @@ class DigitizePage(QWidget):
         QTimer.singleShot(0, self._sync_right_panel_splitter_sizes)
         self._onboarding_controller.schedule_auto_start()
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not self._right_splitter_user_resized:
+            QTimer.singleShot(0, self._sync_right_panel_splitter_sizes)
+
     def _sync_right_panel_splitter_sizes(self) -> None:
-        if self._right_splitter_initialized or self._right_content_splitter is None:
+        if self._right_content_splitter is None or self._right_splitter_user_resized:
             return
         total_height = self._right_content_splitter.height()
         if total_height <= 0:
             return
-        upper = max(1, total_height // 2)
+        upper = max(1, int(total_height * 0.35))
         lower = max(1, total_height - upper)
-        self._right_content_splitter.setSizes([upper, lower])
+        with QSignalBlocker(self._right_content_splitter):
+            self._right_content_splitter.setSizes([upper, lower])
         self._right_splitter_initialized = True
+
+    def _set_tool_status(self, text: str = "") -> None:
+        if not hasattr(self, "_status_label") or self._status_label is None:
+            return
+        self._status_label.setText(text or "工具状态栏")
 
     def _install_tooltip_filters(self):
         """为所有带 tooltip 的子 widget 安装 Fluent ToolTipFilter"""
@@ -375,6 +387,7 @@ class DigitizePage(QWidget):
 
         self._right_content_splitter = QSplitter(Qt.Orientation.Vertical, panel)
         self._right_content_splitter.setHandleWidth(6)
+        self._right_content_splitter.splitterMoved.connect(self._on_right_content_splitter_moved)
 
         curve_section = QWidget(self._right_content_splitter)
         curve_section.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -402,7 +415,7 @@ class DigitizePage(QWidget):
         curve_layout.addWidget(self._curve_table, 1)
 
         lower_section = QWidget(self._right_content_splitter)
-        lower_section.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+        lower_section.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         lower_layout = QVBoxLayout(lower_section)
         lower_layout.setContentsMargins(0, 0, 0, 0)
         lower_layout.setSpacing(8)
@@ -415,7 +428,7 @@ class DigitizePage(QWidget):
 
         # 功能区页面
         self._right_tabs = SegmentedStackWidget(lower_section, fill_width=True)
-        self._right_tabs.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+        self._right_tabs.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._right_tabs.tabBar.setAddButtonVisible(False)
         self._right_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
         combined_tab = self._create_combined_tab()
@@ -425,7 +438,7 @@ class DigitizePage(QWidget):
         lower_layout.addWidget(self._right_tabs, 1)
 
         # 提示标签
-        self._status_label = BodyLabel("", lower_section)
+        self._status_label = BodyLabel("工具状态栏", lower_section)
         self._status_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px; padding: 2px 0;")
         self._status_label.setWordWrap(True)
         lower_layout.addWidget(self._status_label)
@@ -436,8 +449,13 @@ class DigitizePage(QWidget):
         self._right_content_splitter.setStretchFactor(1, 1)
         self._right_content_splitter.setSizes([520, 520])
         layout.addWidget(self._right_content_splitter, 1)
+        self._set_tool_status()
 
         return panel
+
+    def _on_right_content_splitter_moved(self, _pos: int, _index: int) -> None:
+        if self._right_splitter_initialized:
+            self._right_splitter_user_resized = True
 
     def _create_top_viewer_toolbar(self, parent) -> QWidget:
         """创建图片查看器上方工具栏。"""
@@ -712,11 +730,6 @@ class DigitizePage(QWidget):
         abl.addStretch()
         layout.addWidget(auto_btn_row)
 
-        self._auto_status_label = BodyLabel("", tab)
-        self._auto_status_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        self._auto_status_label.setWordWrap(True)
-        layout.addWidget(self._auto_status_label)
-
         self._digitize_extension_controls = ExtensionConfigPanel(
             "自动选点扩展",
             "执行检测",
@@ -734,6 +747,11 @@ class DigitizePage(QWidget):
         self._auto_mode_combo = self._digitize_extension_controls._selector
         self._digitize_auto_config_scroll = self._digitize_extension_controls._editor._scroll_area
         self._digitize_extension_controls.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self._digitize_extension_controls.setMinimumHeight(0)
+        self._digitize_extension_controls._editor.setMinimumHeight(0)
+        self._digitize_extension_controls._editor.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self._digitize_auto_config_scroll.setMinimumHeight(0)
+        self._digitize_auto_config_scroll.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._digitize_extension_controls, 1)
 
         self._refresh_digitize_extension_choices()
@@ -916,12 +934,12 @@ class DigitizePage(QWidget):
         self._pending_digitize_field_key = str(key or "").strip() or None
         self._pending_digitize_field_type = field_type or None
         if field_type == "pickcolor":
-            self._auto_status_label.setText("请在图片上点击取色，完成后会自动写回当前扩展参数")
             self._on_tool_clicked("color_pick")
+            self._set_tool_status("请在图片上点击取色，完成后会自动写回当前扩展参数")
             return
         if field_type == "shot":
-            self._auto_status_label.setText("请在图片上拖拽截图，完成后会自动写回当前扩展参数")
             self._on_tool_clicked("crop_template")
+            self._set_tool_status("请在图片上拖拽截图，完成后会自动写回当前扩展参数")
             return
         self._clear_pending_digitize_interaction()
 
@@ -1123,7 +1141,7 @@ class DigitizePage(QWidget):
             self._deactivate_all_tools()
             self._image_viewer.set_select_mode()
             self._active_tool = None
-            self._status_label.setText("")
+            self._set_tool_status()
             return
 
         self._deactivate_all_tools()
@@ -1248,7 +1266,7 @@ class DigitizePage(QWidget):
         else:
             self._image_viewer.set_select_mode()
             self._active_tool = None
-            self._status_label.setText("")
+            self._set_tool_status()
 
     def _activate_tool_button(self, btn):
         """激活工具按钮"""
@@ -1278,7 +1296,7 @@ class DigitizePage(QWidget):
             self._image_viewer.set_select_mode()
             self._active_tool = None
             self._clear_pending_digitize_interaction()
-            self._status_label.setText("")
+            self._set_tool_status()
 
     def _on_clear_masks(self):
         """清除所有蒙版区域"""
@@ -1534,7 +1552,7 @@ class DigitizePage(QWidget):
         if not image_path:
             return
 
-        self._auto_status_label.setText("正在预处理图例模板…")
+        self._set_tool_status("正在预处理图例模板…")
         from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
 
@@ -1549,22 +1567,22 @@ class DigitizePage(QWidget):
                 field_key = "template_info"
             self._set_digitize_interactive_field_value(field_key, self._shape_template)
             self._clear_pending_digitize_interaction()
-            self._auto_status_label.setText(
+            self._set_tool_status(
                 f"图例模板已截取 ({w}×{h}px)，点击「识别」搜索匹配形状"
             )
         except Exception as e:
             self._shape_template = None
             self._clear_pending_digitize_interaction()
-            self._auto_status_label.setText(f"截图处理失败: {e}")
+            self._set_tool_status(f"截图处理失败: {e}")
 
     def _on_cancel_auto_preview(self):
         """放弃自动检测结果，清除预览点，不写入曲线"""
         if not self._auto_preview_points:
-            self._auto_status_label.setText("没有待取消的预览结果")
+            self._set_tool_status("没有待取消的预览结果")
             return
         self._auto_preview_points = []
         self._image_viewer.clear_preview_points()
-        self._auto_status_label.setText("已放弃检测结果")
+        self._set_tool_status("已放弃检测结果")
 
     def _on_color_pick(self):
         """进入图片取色模式"""
@@ -1597,8 +1615,7 @@ class DigitizePage(QWidget):
         self._deactivate_all_tools()
         self._image_viewer.set_select_mode()
         self._active_tool = None
-        self._auto_status_label.setText(f"已采样: {hex_str}")
-        self._status_label.setText("")
+        self._set_tool_status(f"已采样: {hex_str}")
 
     def _on_sample_color_changed_direct(self, color):
         """通过颜色对话框直接修改采样颜色"""
@@ -1610,7 +1627,7 @@ class DigitizePage(QWidget):
             "sampled_color",
             {"r": color.red(), "g": color.green(), "b": color.blue()},
         )
-        self._auto_status_label.setText(f"已采样: {hex_str}")
+        self._set_tool_status(f"已采样: {hex_str}")
 
     def _on_auto_detect(self):
         """执行自动识别检测。"""
@@ -1627,7 +1644,7 @@ class DigitizePage(QWidget):
         extension = extension_registry.get_digitize(type_id)
         if extension is None:
             InfoBar.warning(title="警告", content="当前数字化扩展不可用，请重试", parent=self, duration=3000)
-            self._auto_status_label.setText("")
+            self._set_tool_status()
             return
 
         # 获取蒙版多边形和模式
@@ -1635,7 +1652,7 @@ class DigitizePage(QWidget):
         mask_polygons = mask.polygons if mask and mask.enabled else None
         mask_include_mode = mask.include_mode if mask else True
 
-        self._auto_status_label.setText("检测中…")
+        self._set_tool_status("检测中…")
         from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
 
@@ -1647,7 +1664,7 @@ class DigitizePage(QWidget):
         try:
             result = extension.handler(image_path, params)
         except Exception as e:
-            self._auto_status_label.setText(f"{extension.name}失败: {e}")
+            self._set_tool_status(f"{extension.name}失败: {e}")
             return
 
         if isinstance(result, dict):
@@ -1659,7 +1676,7 @@ class DigitizePage(QWidget):
 
         self._auto_preview_points = points
         self._image_viewer.set_preview_points(points)
-        self._auto_status_label.setText(f"{desc}，点击「应用」写入曲线")
+        self._set_tool_status(f"{desc}，点击「应用」写入曲线")
 
 
     def _on_apply_auto_points(self):
@@ -1696,7 +1713,7 @@ class DigitizePage(QWidget):
         # 清除预览
         self._auto_preview_points = []
         self._image_viewer.clear_preview_points()
-        self._auto_status_label.setText(f"已写入 {len(curve.x_data)} 个点")
+        self._set_tool_status(f"已写入 {len(curve.x_data)} 个点")
 
         self._display_current_curve_on_image()
         self._update_curve_table()
@@ -2712,7 +2729,6 @@ class DigitizePage(QWidget):
             getattr(self, "_point_size_value_label", None),
             getattr(self, "_select_area_value_label", None),
             getattr(self, "_eraser_size_value_label", None),
-            getattr(self, "_auto_status_label", None),
             getattr(self, "_assist_status_label", None),
         ]
         for lbl in known_placeholder:

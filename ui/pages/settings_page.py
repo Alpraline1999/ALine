@@ -44,6 +44,9 @@ from core.ai.providers import (
 )
 
 
+_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 300
+
+
 class SettingsPage(QWidget):
     """设置页面 - 主题切换、快捷键自定义等配置"""
 
@@ -184,6 +187,7 @@ class SettingsPage(QWidget):
         option_layouts: dict[str, QVBoxLayout],
     ) -> SegmentedStackWidget:
         tabs = SegmentedStackWidget(parent)
+        tabs.setMaximumHeight(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展"), ("digitize", "数字化扩展")):
             page = QWidget(parent)
             page_layout = QVBoxLayout(page)
@@ -194,14 +198,20 @@ class SettingsPage(QWidget):
             page_layout.addWidget(empty_hint)
             empty_hints[category] = empty_hint
 
-            options_widget = QWidget(page)
+            options_scroll = SmoothScrollArea(page)
+            options_scroll.setWidgetResizable(True)
+            options_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            options_scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+
+            options_widget = QWidget(options_scroll)
             options_layout = QVBoxLayout(options_widget)
             options_layout.setContentsMargins(0, 0, 0, 0)
             options_layout.setSpacing(6)
-            page_layout.addWidget(options_widget)
+            options_scroll.setWidget(options_widget)
+            page_layout.addWidget(options_scroll, 1)
             option_layouts[category] = options_layout
 
-            page_layout.addStretch(1)
             tabs.addTab(page, label, route_key=category)
         return tabs
 

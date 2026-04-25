@@ -40,6 +40,15 @@ from ui.dialogs.export_flow import choose_data_export_batch_plan, choose_data_ex
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
+from ui.widgets.matplotlib_preview import (
+    build_preview_toolbar,
+    create_navigation_toolbar,
+    preview_navigation_mode,
+    sync_preview_nav_toggle_states,
+    toggle_preview_box_zoom_mode,
+    toggle_preview_pan_mode,
+    zoom_figure_axes,
+)
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.global_assets import global_assets
 from core.project_manager import project_manager
@@ -51,7 +60,6 @@ try:
     import matplotlib
     matplotlib.use("QtAgg")
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
     from matplotlib.figure import Figure
     from qfluentwidgets import isDarkTheme
     _HAS_MPL = True
@@ -286,14 +294,24 @@ class ProcessPage(QWidget):
         self._selected_input_state_label.setWordWrap(True)
         self._selected_input_state_label.setStyleSheet(f"color: {secondary_color()};")
 
-        mv.addWidget(make_section_label("已选择列表"))
+        self._selected_input_splitter = QSplitter(Qt.Orientation.Vertical, panel)
+        self._selected_input_splitter.setHandleWidth(6)
+        self._selected_input_splitter.setChildrenCollapsible(False)
+        mv.addWidget(self._selected_input_splitter, 1)
+
+        selected_section = QWidget(self._selected_input_splitter)
+        selected_layout = QVBoxLayout(selected_section)
+        selected_layout.setContentsMargins(0, 0, 0, 0)
+        selected_layout.setSpacing(8)
+
+        selected_layout.addWidget(make_section_label("已选择列表"))
         self._selected_input_list = ListWidget(self)
         self._selected_input_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._selected_input_list.setMinimumHeight(108)
         self._selected_input_list.itemSelectionChanged.connect(self._on_selected_input_list_changed)
         self._selected_input_list.currentItemChanged.connect(lambda _current, _previous: self._on_selected_input_list_changed())
-        mv.addWidget(self._selected_input_list)
-        mv.addWidget(self._selected_input_state_label)
+        selected_layout.addWidget(self._selected_input_list, 1)
+        selected_layout.addWidget(self._selected_input_state_label)
 
         selected_row = QHBoxLayout()
         self._btn_clear_inputs = PushButton(FIF.DELETE, "清除", self)
@@ -315,15 +333,20 @@ class ProcessPage(QWidget):
         self._btn_selected_down.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         selected_row.addWidget(self._btn_selected_down)
         selected_row.addStretch()
-        mv.addLayout(selected_row)
+        selected_layout.addLayout(selected_row)
 
-        mv.addWidget(make_hsep())
-        mv.addWidget(make_section_label("操作链"))
+        controls_section = QWidget(self._selected_input_splitter)
+        controls_layout = QVBoxLayout(controls_section)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
+
+        controls_layout.addWidget(make_hsep())
+        controls_layout.addWidget(make_section_label("操作链"))
 
         self._pipeline_lines_button = PushButton(FIF.LINK, "选择曲线", self)
         apply_button_metrics(self._pipeline_lines_button, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         self._pipeline_lines_button.clicked.connect(self._choose_pipeline_lines)
-        mv.addWidget(self._pipeline_lines_button)
+        controls_layout.addWidget(self._pipeline_lines_button)
 
         template_row = QHBoxLayout()
         self._pipeline_combo = ComboBox(self)
@@ -348,11 +371,11 @@ class ProcessPage(QWidget):
         clear_ops_btn.clicked.connect(self._clear_ops)
         clear_ops_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         template_row.addWidget(clear_ops_btn)
-        mv.addLayout(template_row)
+        controls_layout.addLayout(template_row)
 
         self._op_list = ListWidget(self)
         self._op_list.currentRowChanged.connect(self._on_op_selected)
-        mv.addWidget(self._op_list, stretch=1)
+        controls_layout.addWidget(self._op_list, stretch=1)
 
         btn_row = QHBoxLayout()
         self._add_op_combo = ComboBox(self)
@@ -378,7 +401,7 @@ class ProcessPage(QWidget):
         dn_btn.clicked.connect(self._move_op_down)
         dn_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         btn_row.addWidget(dn_btn)
-        mv.addLayout(btn_row)
+        controls_layout.addLayout(btn_row)
 
         for widget in (self._add_op_combo, add_btn, del_btn, up_btn, dn_btn, load_tpl_btn,
                        save_as_btn, overwrite_btn, clear_ops_btn):
@@ -388,16 +411,16 @@ class ProcessPage(QWidget):
             _install_fluent_tip(widget, widget.toolTip(), ToolTipPosition.BOTTOM)
         _install_fluent_tip(self._pipeline_lines_button, "为当前 pipeline 的双/多曲线扩展选择输入曲线", ToolTipPosition.BOTTOM)
 
-        mv.addWidget(make_hsep())
-        mv.addWidget(make_section_label("操作参数"))
+        controls_layout.addWidget(make_hsep())
+        controls_layout.addWidget(make_section_label("操作参数"))
         self._param_stack = QStackedWidget(self)
-        mv.addWidget(self._param_stack)
-        mv.addStretch()
+        controls_layout.addWidget(self._param_stack)
+        controls_layout.addStretch()
 
         export_hint = BodyLabel("导出时会先命名，并选择或新建目标数据文件。", self)
         export_hint.setWordWrap(True)
         export_hint.hide()
-        mv.addWidget(export_hint)
+        controls_layout.addWidget(export_hint)
 
         self._save_name_edit = LineEdit(self)
         self._save_name_edit.setPlaceholderText("processed_result")
@@ -405,7 +428,7 @@ class ProcessPage(QWidget):
         self._save_name_edit.hide()
         self._save_target_combo.hide()
 
-        mv.addWidget(make_hsep())
+        controls_layout.addWidget(make_hsep())
         export_row = QHBoxLayout()
         self._save_result_button = PrimaryPushButton(FIF.SAVE, "导出数据列")
         self._save_result_button.clicked.connect(self._save_result)
@@ -415,7 +438,10 @@ class ProcessPage(QWidget):
         self._save_batch_result_button.clicked.connect(self._save_batch_result)
         apply_button_metrics(self._save_batch_result_button, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         export_row.addWidget(self._save_batch_result_button)
-        mv.addLayout(export_row)
+        controls_layout.addLayout(export_row)
+        self._selected_input_splitter.setStretchFactor(0, 0)
+        self._selected_input_splitter.setStretchFactor(1, 1)
+        self._selected_input_splitter.setSizes([220, 440])
         self._refresh_pipeline_templates()
         self._refresh_save_targets()
         return panel
@@ -429,55 +455,22 @@ class ProcessPage(QWidget):
         if _HAS_MPL:
             self._figure = Figure(figsize=(5, 4))
             self._canvas = FigureCanvas(self._figure)
-            self._preview_nav_toolbar = NavigationToolbar(self._canvas, panel)
-            self._preview_nav_toolbar.hide()
-
-            preview_toolbar = QHBoxLayout()
-            preview_toolbar.setContentsMargins(0, 0, 0, 0)
-            preview_toolbar.setSpacing(4)
-
-            self._preview_fit_btn = ToolButton(getattr(FIF, "FIT_PAGE", FIF.HOME), panel)
-            self._preview_fit_btn.setToolTip("重置预览范围")
-            self._preview_fit_btn.clicked.connect(self._reset_preview_view)
-            self._preview_fit_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
-            preview_toolbar.addWidget(self._preview_fit_btn)
-
-            self._preview_zoom_in_btn = ToolButton(getattr(FIF, "ZOOM_IN", FIF.ZOOM), panel)
-            self._preview_zoom_in_btn.setToolTip("放大预览")
-            self._preview_zoom_in_btn.clicked.connect(lambda checked=False: self._zoom_preview_axes(0.8))
-            self._preview_zoom_in_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
-            preview_toolbar.addWidget(self._preview_zoom_in_btn)
-
-            self._preview_zoom_out_btn = ToolButton(getattr(FIF, "ZOOM_OUT", FIF.ZOOM), panel)
-            self._preview_zoom_out_btn.setToolTip("缩小预览")
-            self._preview_zoom_out_btn.clicked.connect(lambda checked=False: self._zoom_preview_axes(1.25))
-            self._preview_zoom_out_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
-            preview_toolbar.addWidget(self._preview_zoom_out_btn)
-
-            self._preview_pan_btn = ToolButton(getattr(FIF, "MOVE", getattr(FIF, "MOVE_TO", FIF.ZOOM)), panel)
-            self._preview_pan_btn.setToolTip("拖拽平移预览")
-            self._preview_pan_btn.setCheckable(True)
-            self._preview_pan_btn.toggled.connect(self._toggle_preview_pan_mode)
-            self._preview_pan_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
-            preview_toolbar.addWidget(self._preview_pan_btn)
-
-            self._preview_box_zoom_btn = ToolButton(FIF.ZOOM, panel)
-            self._preview_box_zoom_btn.setToolTip("框选局部放大")
-            self._preview_box_zoom_btn.setCheckable(True)
-            self._preview_box_zoom_btn.toggled.connect(self._toggle_preview_box_zoom_mode)
-            self._preview_box_zoom_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
-            preview_toolbar.addWidget(self._preview_box_zoom_btn)
-            preview_toolbar.addStretch(1)
-
-            for widget in (
-                self._preview_fit_btn,
-                self._preview_zoom_in_btn,
-                self._preview_zoom_out_btn,
-                self._preview_pan_btn,
-                self._preview_box_zoom_btn,
-            ):
-                _install_fluent_tip(widget, widget.toolTip(), ToolTipPosition.BOTTOM)
-
+            self._preview_nav_toolbar = create_navigation_toolbar(self._canvas, panel)
+            preview_toolbar, preview_buttons = build_preview_toolbar(
+                panel,
+                button_size=WORKBENCH_BUTTON_HEIGHT,
+                reset_callback=self._reset_preview_view,
+                zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
+                zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
+                pan_toggle_callback=self._toggle_preview_pan_mode,
+                box_zoom_toggle_callback=self._toggle_preview_box_zoom_mode,
+                install_tooltip=lambda widget, text: _install_fluent_tip(widget, text, ToolTipPosition.BOTTOM),
+            )
+            self._preview_fit_btn = preview_buttons.fit
+            self._preview_zoom_in_btn = preview_buttons.zoom_in
+            self._preview_zoom_out_btn = preview_buttons.zoom_out
+            self._preview_pan_btn = preview_buttons.pan
+            self._preview_box_zoom_btn = preview_buttons.box_zoom
             rv.addLayout(preview_toolbar)
             self._canvas.setMinimumHeight(260)
             rv.addWidget(self._canvas, stretch=1)
@@ -492,78 +485,33 @@ class ProcessPage(QWidget):
         return panel
 
     def _preview_navigation_mode(self) -> str:
-        toolbar = getattr(self, "_preview_nav_toolbar", None)
-        if toolbar is None:
-            return ""
-        mode = getattr(toolbar, "mode", None)
-        mode_name = str(getattr(mode, "name", mode or "")).strip().lower()
-        if "zoom" in mode_name:
-            return "zoom"
-        if "pan" in mode_name:
-            return "pan"
-        return ""
+        return preview_navigation_mode(getattr(self, "_preview_nav_toolbar", None))
 
     def _sync_preview_nav_toggle_states(self) -> None:
-        mode = self._preview_navigation_mode()
-        for button, active in (
-            (getattr(self, "_preview_pan_btn", None), mode == "pan"),
-            (getattr(self, "_preview_box_zoom_btn", None), mode == "zoom"),
-        ):
-            if button is None:
-                continue
-            blocker = QSignalBlocker(button)
-            button.setChecked(active)
-            del blocker
+        sync_preview_nav_toggle_states(
+            getattr(self, "_preview_nav_toolbar", None),
+            getattr(self, "_preview_pan_btn", None),
+            getattr(self, "_preview_box_zoom_btn", None),
+        )
 
     def _toggle_preview_pan_mode(self, checked: bool) -> None:
-        toolbar = getattr(self, "_preview_nav_toolbar", None)
-        if toolbar is None:
-            return
-        current_mode = self._preview_navigation_mode()
-        if checked:
-            if current_mode == "zoom":
-                toolbar.zoom()
-            if self._preview_navigation_mode() != "pan":
-                toolbar.pan()
-        elif current_mode == "pan":
-            toolbar.pan()
-        self._sync_preview_nav_toggle_states()
+        toggle_preview_pan_mode(
+            getattr(self, "_preview_nav_toolbar", None),
+            getattr(self, "_preview_pan_btn", None),
+            getattr(self, "_preview_box_zoom_btn", None),
+            checked,
+        )
 
     def _toggle_preview_box_zoom_mode(self, checked: bool) -> None:
-        toolbar = getattr(self, "_preview_nav_toolbar", None)
-        if toolbar is None:
-            return
-        current_mode = self._preview_navigation_mode()
-        if checked:
-            if current_mode == "pan":
-                toolbar.pan()
-            if self._preview_navigation_mode() != "zoom":
-                toolbar.zoom()
-        elif current_mode == "zoom":
-            toolbar.zoom()
-        self._sync_preview_nav_toggle_states()
+        toggle_preview_box_zoom_mode(
+            getattr(self, "_preview_nav_toolbar", None),
+            getattr(self, "_preview_pan_btn", None),
+            getattr(self, "_preview_box_zoom_btn", None),
+            checked,
+        )
 
     def _zoom_preview_axes(self, factor: float) -> None:
-        if not _HAS_MPL or self._figure is None or self._canvas is None:
-            return
-        axes = list(self._figure.axes)
-        if not axes:
-            self._draw_preview()
-            axes = list(self._figure.axes)
-        if not axes:
-            return
-        for ax in axes:
-            x0, x1 = ax.get_xlim()
-            y0, y1 = ax.get_ylim()
-            cx = (x0 + x1) / 2.0
-            cy = (y0 + y1) / 2.0
-            half_x = abs(x1 - x0) * factor / 2.0
-            half_y = abs(y1 - y0) * factor / 2.0
-            if half_x <= 0 or half_y <= 0:
-                continue
-            ax.set_xlim(cx - half_x, cx + half_x)
-            ax.set_ylim(cy - half_y, cy + half_y)
-        self._canvas.draw_idle()
+        zoom_figure_axes(self._figure, self._canvas, factor, redraw_callback=self._draw_preview)
 
     def _reset_preview_view(self) -> None:
         self._draw_preview()

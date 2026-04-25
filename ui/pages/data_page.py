@@ -42,6 +42,15 @@ from ui.theme import (
     make_inline_label, make_section_label, make_hsep,
 )
 from ui.widgets.focus_commit import install_click_away_focus_commit
+from ui.widgets.matplotlib_preview import (
+    build_preview_toolbar,
+    create_navigation_toolbar,
+    preview_navigation_mode,
+    sync_preview_nav_toggle_states,
+    toggle_preview_box_zoom_mode,
+    toggle_preview_pan_mode,
+    zoom_figure_axes,
+)
 from ui.matplotlib_fonts import configure_matplotlib_cjk
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
@@ -804,10 +813,28 @@ class DataPage(QWidget):
         if HAS_MATPLOTLIB:
             self._preview_figure = Figure(figsize=(5.6, 3.4), dpi=100)
             self._preview_canvas = FigureCanvas(self._preview_figure)
+            self._preview_nav_toolbar = create_navigation_toolbar(self._preview_canvas, self._plot_preview_panel)
+            preview_toolbar, preview_buttons = build_preview_toolbar(
+                self._plot_preview_panel,
+                button_size=WORKBENCH_BUTTON_HEIGHT,
+                reset_callback=self._reset_preview_view,
+                zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
+                zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
+                pan_toggle_callback=self._toggle_preview_pan_mode,
+                box_zoom_toggle_callback=self._toggle_preview_box_zoom_mode,
+            )
+            self._preview_fit_btn = preview_buttons.fit
+            self._preview_zoom_in_btn = preview_buttons.zoom_in
+            self._preview_zoom_out_btn = preview_buttons.zoom_out
+            self._preview_pan_btn = preview_buttons.pan
+            self._preview_box_zoom_btn = preview_buttons.box_zoom
+            plot_preview_layout.addLayout(preview_toolbar)
             plot_preview_layout.addWidget(self._preview_canvas, stretch=1)
+            self._sync_preview_nav_toggle_states()
         else:
             self._preview_figure = None
             self._preview_canvas = None
+            self._preview_nav_toolbar = None
             self._preview_canvas_label = BodyLabel(
                 f"matplotlib 加载失败：{_MATPLOTLIB_ERROR}" if _MATPLOTLIB_ERROR else "请安装 matplotlib 以启用绘图预览",
                 self._preview_card,
@@ -3334,6 +3361,39 @@ class DataPage(QWidget):
         diffs = [abs(xs[idx + 1] - xs[idx]) for idx in range(len(xs) - 1) if xs[idx + 1] != xs[idx]]
         return min(diffs) * 0.8 if diffs else 0.8
 
+    def _preview_navigation_mode(self) -> str:
+        return preview_navigation_mode(getattr(self, "_preview_nav_toolbar", None))
+
+    def _sync_preview_nav_toggle_states(self) -> None:
+        sync_preview_nav_toggle_states(
+            getattr(self, "_preview_nav_toolbar", None),
+            getattr(self, "_preview_pan_btn", None),
+            getattr(self, "_preview_box_zoom_btn", None),
+        )
+
+    def _toggle_preview_pan_mode(self, checked: bool) -> None:
+        toggle_preview_pan_mode(
+            getattr(self, "_preview_nav_toolbar", None),
+            getattr(self, "_preview_pan_btn", None),
+            getattr(self, "_preview_box_zoom_btn", None),
+            checked,
+        )
+
+    def _toggle_preview_box_zoom_mode(self, checked: bool) -> None:
+        toggle_preview_box_zoom_mode(
+            getattr(self, "_preview_nav_toolbar", None),
+            getattr(self, "_preview_pan_btn", None),
+            getattr(self, "_preview_box_zoom_btn", None),
+            checked,
+        )
+
+    def _zoom_preview_axes(self, factor: float) -> None:
+        zoom_figure_axes(self._preview_figure, self._preview_canvas, factor, redraw_callback=self._draw_preview)
+
+    def _reset_preview_view(self) -> None:
+        self._draw_preview()
+        self._sync_preview_nav_toggle_states()
+
     def _draw_preview(self, *_args) -> None:
         if self._preview_figure is None or self._preview_canvas is None:
             return
@@ -3382,6 +3442,7 @@ class DataPage(QWidget):
         axis.grid(True, color=gc, alpha=0.35)
         self._preview_figure.tight_layout()
         self._preview_canvas.draw()
+        self._sync_preview_nav_toggle_states()
 
     def _show_xy_preview(self, xs, ys, name: str, x_label: str = "X", y_label: str = "Y"):
         """填充绘图预览和统计摘要。"""

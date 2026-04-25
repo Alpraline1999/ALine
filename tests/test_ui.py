@@ -1764,6 +1764,19 @@ class TestSettingsPage(unittest.TestCase):
             if temp_page is not None:
                 temp_page.deleteLater()
 
+    def test_extension_management_tabs_cap_height_and_use_scrollable_option_area(self):
+        from qfluentwidgets import SmoothScrollArea
+        from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_MAX_HEIGHT
+
+        self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
+        self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
+
+        builtin_scroll_areas = self.page._extension_tabs.findChildren(SmoothScrollArea)
+        external_scroll_areas = self.page._external_extension_tabs.findChildren(SmoothScrollArea)
+
+        self.assertGreaterEqual(len(builtin_scroll_areas), 4)
+        self.assertGreaterEqual(len(external_scroll_areas), 4)
+
     def test_extension_status_summary_is_rendered_in_settings_page(self):
         from ui.theme import warning_color
 
@@ -3049,6 +3062,38 @@ class TestDataPage(unittest.TestCase):
 
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
+
+    def test_plot_preview_uses_shared_navigation_controls(self):
+        if self.page._preview_figure is None or self.page._preview_canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page._preview_xs = [0.0, 1.0, 2.0, 3.0]
+        self.page._preview_ys = [1.0, 2.0, 1.5, 2.5]
+        self.page._draw_preview()
+
+        axis = self.page._preview_figure.axes[0]
+        original_x_span = abs(axis.get_xlim()[1] - axis.get_xlim()[0])
+        original_y_span = abs(axis.get_ylim()[1] - axis.get_ylim()[0])
+
+        self.page._preview_box_zoom_btn.click()
+        QApplication.processEvents()
+        self.assertEqual(self.page._preview_navigation_mode(), "zoom")
+        self.assertTrue(self.page._preview_box_zoom_btn.isChecked())
+        self.assertFalse(self.page._preview_pan_btn.isChecked())
+
+        self.page._preview_zoom_in_btn.click()
+        QApplication.processEvents()
+
+        zoomed_axis = self.page._preview_figure.axes[0]
+        self.assertLess(abs(zoomed_axis.get_xlim()[1] - zoomed_axis.get_xlim()[0]), original_x_span)
+        self.assertLess(abs(zoomed_axis.get_ylim()[1] - zoomed_axis.get_ylim()[0]), original_y_span)
+
+        self.page._preview_fit_btn.click()
+        QApplication.processEvents()
+
+        reset_axis = self.page._preview_figure.axes[0]
+        self.assertAlmostEqual(abs(reset_axis.get_xlim()[1] - reset_axis.get_xlim()[0]), original_x_span, places=6)
+        self.assertAlmostEqual(abs(reset_axis.get_ylim()[1] - reset_axis.get_ylim()[0]), original_y_span, places=6)
 
     def test_global_extension_config_selection_opens_json_editor_and_saves(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
@@ -4642,6 +4687,35 @@ class TestChartPage(unittest.TestCase):
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
 
+    def test_chart_preview_uses_shared_navigation_controls(self):
+        if self.page._figure is None or self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        axis = self.page._figure.axes[0]
+        original_x_span = abs(axis.get_xlim()[1] - axis.get_xlim()[0])
+        original_y_span = abs(axis.get_ylim()[1] - axis.get_ylim()[0])
+
+        self.page._chart_preview_box_zoom_btn.click()
+        QApplication.processEvents()
+        self.assertEqual(self.page._chart_preview_navigation_mode(), "zoom")
+        self.assertTrue(self.page._chart_preview_box_zoom_btn.isChecked())
+        self.assertFalse(self.page._chart_preview_pan_btn.isChecked())
+
+        self.page._chart_preview_zoom_in_btn.click()
+        QApplication.processEvents()
+
+        zoomed_axis = self.page._figure.axes[0]
+        self.assertLess(abs(zoomed_axis.get_xlim()[1] - zoomed_axis.get_xlim()[0]), original_x_span)
+        self.assertLess(abs(zoomed_axis.get_ylim()[1] - zoomed_axis.get_ylim()[0]), original_y_span)
+
+        self.page._chart_preview_fit_btn.click()
+        QApplication.processEvents()
+
+        reset_axis = self.page._figure.axes[0]
+        self.assertAlmostEqual(abs(reset_axis.get_xlim()[1] - reset_axis.get_xlim()[0]), original_x_span, places=6)
+        self.assertAlmostEqual(abs(reset_axis.get_ylim()[1] - reset_axis.get_ylim()[0]), original_y_span, places=6)
+
     def test_chart_quick_config_line_edits_wait_for_edit_commit(self):
         original_font_size = self.page._figure_state.font_size
 
@@ -5209,6 +5283,10 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._btn_remove.height(), 32)
         self.assertEqual(self.page._btn_clear.text(), "清除")
         self.assertEqual(self.page._btn_remove.text(), "移除选中")
+
+    def test_chart_left_panel_uses_vertical_splitter(self):
+        self.assertEqual(self.page._chart_left_splitter.count(), 2)
+        self.assertGreater(self.page._chart_left_splitter.sizes()[1], 0)
 
     def test_plot_style_numeric_inputs_use_compact_widths(self):
         self.assertLessEqual(self.page._font_size_edit.maximumWidth(), 96)
@@ -5914,6 +5992,10 @@ class TestProcessPage(unittest.TestCase):
 
         self.assertEqual(len(self.page._selected_inputs), 1)
         self.assertEqual(self.page._selected_input_list.count(), 1)
+
+    def test_process_selected_input_panel_uses_vertical_splitter(self):
+        self.assertEqual(self.page._selected_input_splitter.count(), 2)
+        self.assertGreater(self.page._selected_input_splitter.sizes()[1], 0)
 
     def test_on_tree_node_selected_data_file(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
@@ -6698,6 +6780,46 @@ class TestAnalysisPage(unittest.TestCase):
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
 
+    def test_analysis_preview_view_uses_shared_navigation_controls(self):
+        view = self.page._analysis_tab_views.get("current")
+        if view is None or view.get("figure") is None or view.get("canvas") is None:
+            self.skipTest("matplotlib unavailable")
+
+        selected = [(list(self.s.x), list(self.s.y), self.s.name)]
+        view["analysis_type"] = "statistics"
+        view["selected"] = list(selected)
+        self.page._set_analysis_plot_surface(view, show_plot=True)
+        self.page._draw_result(
+            "statistics",
+            selected,
+            {"_preview_only": True},
+            figure=view.get("figure"),
+            canvas=view.get("canvas"),
+        )
+
+        axis = view["figure"].axes[0]
+        original_x_span = abs(axis.get_xlim()[1] - axis.get_xlim()[0])
+        original_y_span = abs(axis.get_ylim()[1] - axis.get_ylim()[0])
+
+        view["preview_box_zoom_btn"].click()
+        QApplication.processEvents()
+        self.assertTrue(view["preview_box_zoom_btn"].isChecked())
+        self.assertFalse(view["preview_pan_btn"].isChecked())
+
+        view["preview_zoom_in_btn"].click()
+        QApplication.processEvents()
+
+        zoomed_axis = view["figure"].axes[0]
+        self.assertLess(abs(zoomed_axis.get_xlim()[1] - zoomed_axis.get_xlim()[0]), original_x_span)
+        self.assertLess(abs(zoomed_axis.get_ylim()[1] - zoomed_axis.get_ylim()[0]), original_y_span)
+
+        view["preview_fit_btn"].click()
+        QApplication.processEvents()
+
+        reset_axis = view["figure"].axes[0]
+        self.assertAlmostEqual(abs(reset_axis.get_xlim()[1] - reset_axis.get_xlim()[0]), original_x_span, places=6)
+        self.assertAlmostEqual(abs(reset_axis.get_ylim()[1] - reset_axis.get_ylim()[0]), original_y_span, places=6)
+
     def test_selected_input_state_label_uses_shared_placeholder_color(self):
         from ui.theme import placeholder_color
 
@@ -6716,6 +6838,10 @@ class TestAnalysisPage(unittest.TestCase):
 
         self.assertFalse(self.page._extension_panel.isHidden())
         self.assertGreater(self.page._page_splitter.sizes()[1], 0)
+
+    def test_analysis_input_panel_uses_vertical_splitter(self):
+        self.assertEqual(self.page._input_panel_splitter.count(), 2)
+        self.assertGreater(self.page._input_panel_splitter.sizes()[1], 0)
 
     def test_input_action_buttons_match_height_and_template_label_is_hidden(self):
         self.assertEqual(self.page._btn_clear_inputs.height(), 32)
@@ -6853,6 +6979,26 @@ class TestAnalysisPage(unittest.TestCase):
             self.assertEqual(self.page._current_analysis_type(), type_id)
             self.assertIs(current_view["plot_stack"].currentWidget(), current_view["plot_widget"])
 
+    def test_run_analysis_reports_prevalidation_error_via_shared_ui_notification(self):
+        from core.extension_api import extension_registry
+
+        extension_type = next(
+            type_id for type_id in self.page._analysis_type_ids if extension_registry.get_analysis(type_id) is not None
+        )
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index(extension_type))
+        self.page.on_tree_node_activated("series", self.s.id)
+
+        with mock.patch.object(self.page, "_current_extension_analysis_options", side_effect=ValueError("参数校验失败")), \
+             mock.patch("ui.pages.analysis_page.show_error", return_value="参数校验失败") as error_mock:
+            self.page._run_analysis()
+
+        error_mock.assert_called_once()
+        self.assertIn("参数校验失败", self.page._analysis_status_label.text())
+        current_view = self.page._analysis_tab_views["current"]
+        self.assertEqual(current_view["summary_table"].item(0, 0).text(), "错误")
+        self.assertEqual(current_view["summary_table"].item(0, 1).text(), "参数校验失败")
+        self.assertTrue(self.page._run_analysis_btn.isEnabled())
+
     def test_unknown_analysis_json_renders_as_flattened_summary_rows(self):
         payload = {
             "summary": {"score": 0.875, "status": "ok"},
@@ -6955,29 +7101,35 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIsNotNone(data_file)
         self.assertEqual(data_file.series[0].name, "拟合曲线A")
 
-    def test_curve_fit_result_can_export_curves_via_shared_dialog(self):
-        from ui.dialogs.export_flow import CurveFileExportPlan
+    def test_export_result_series_uses_current_tab_result(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[10.0, 11.0, 12.0, 13.0], y=[4.0, 5.0, 6.0, 7.0])
+        self.df.series.append(other)
 
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
+        first_tab_index = self.page._analysis_tabs.currentIndex()
 
-        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
-            path = handle.name
-        try:
-            with mock.patch(
-                "ui.pages.analysis_page.choose_curve_file_export_plan",
-                return_value=CurveFileExportPlan(action="file", file_format="csv", include_timestamp=False, merged=False),
-            ), mock.patch(
-                "ui.pages.analysis_page.QFileDialog.getSaveFileName",
-                return_value=(path, "CSV 文件 (*.csv)"),
-            ):
-                self.page._export_current_plot_series()
+        self.page.on_tree_node_activated("series", other.id)
+        current_item = self.page._input_list.item(self.page._input_list.count() - 1)
+        self.assertIsNotNone(current_item)
+        self.page._on_input_list_item_clicked(current_item)
+        self.page._run_analysis()
 
-            content = Path(path).read_text(encoding="utf-8-sig")
-            self.assertIn("# s1_曲线拟合", content)
-            self.assertIn("x,y", content)
-        finally:
-            Path(path).unlink(missing_ok=True)
+        self.page._analysis_tabs.setCurrentIndex(first_tab_index)
+        QApplication.processEvents()
+
+        with mock.patch(
+            "ui.pages.analysis_page.choose_data_export_plan",
+            return_value=self._analysis_export_plan("tab1_export"),
+        ):
+            self.page._export_result_series()
+
+        data_file = next((item for item in self.p.data_files if item.name == "tab1_export.analysis"), None)
+        self.assertIsNotNone(data_file)
+        exported_series = data_file.series[0]
+        self.assertLess(min(exported_series.x), 5.0)
 
     def test_save_report_template_as_named(self):
         from core.global_assets import global_assets
@@ -7771,53 +7923,6 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(self.page._result["distance_mode"], "x_distance")
         self.assertEqual(self.page._result["count"], 2)
 
-    def test_peak_detect_can_export_peaks_and_valleys_as_series(self):
-        from models.schemas import DataSeries
-        from ui.dialogs.export_flow import DataExportPlan
-
-        target = DataSeries(
-            name="oscillation",
-            x=[0.0, 1.0, 2.0, 3.0, 4.0],
-            y=[0.0, 2.0, 0.0, -1.5, 0.0],
-        )
-        self.df.series.append(target)
-
-        before = len(self.p.data_files)
-        datasets_root = self.pm._find_folder_by_group_type("datasets")
-        self.assertIsNotNone(datasets_root)
-        self.page._type_combo.setCurrentIndex(1)
-        self.page.on_tree_node_activated("series", target.id)
-        self.page._run_analysis()
-
-        with mock.patch(
-            "ui.pages.analysis_page.SelectionDialog.get_item",
-            return_value=("峰谷", True),
-        ), mock.patch(
-            "ui.pages.analysis_page.choose_data_export_plan",
-            return_value=DataExportPlan(
-                export_name="峰谷A",
-                new_parent_id=datasets_root.id,
-                new_data_file_name="峰谷A.analysis",
-            ),
-        ):
-            self.page._export_extrema_by_choice()
-
-        self.assertEqual(len(self.p.data_files), before + 1)
-        self.assertEqual(self.p.data_files[-1].name, "峰谷A.analysis")
-        self.assertEqual([series.name for series in self.p.data_files[-1].series], ["峰谷A"])
-        self.assertEqual(self.p.data_files[-1].series[0].x, [1.0, 3.0])
-        self.assertEqual(self.p.data_files[-1].series[0].y, [2.0, -1.5])
-
-        with mock.patch(
-            "ui.pages.analysis_page.choose_data_export_plan",
-            return_value=DataExportPlan(export_name="波峰B", new_parent_id=datasets_root.id, new_data_file_name="波峰B.analysis"),
-        ):
-            self.page._export_extrema_series("peaks", "peaks")
-
-        self.assertEqual(len(self.p.data_files), before + 2)
-        names = [data_file.name for data_file in self.p.data_files[-2:]]
-        self.assertEqual(names, ["峰谷A.analysis", "波峰B.analysis"])
-
     def test_single_curve_analysis_uses_current_list_selection(self):
         from models.schemas import DataSeries
 
@@ -7926,7 +8031,7 @@ class TestDigitizePage(unittest.TestCase):
         self.assertFalse(_is_descendant(self.page._manual_tools_row, self.page._digitize_auto_config_scroll))
         self.assertFalse(_is_descendant(self.page._auto_tools_row, self.page._digitize_auto_config_scroll))
 
-    def test_digitize_curve_table_keeps_half_height_split(self):
+    def test_digitize_curve_table_uses_compact_upper_split(self):
         self.page.resize(1320, 880)
         self.page.show()
         QApplication.processEvents()
@@ -7935,8 +8040,8 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(len(sizes), 2)
         self.assertGreater(sum(sizes), 0)
         ratio = sizes[0] / sum(sizes)
-        self.assertGreater(ratio, 0.4)
-        self.assertLess(ratio, 0.6)
+        self.assertGreater(ratio, 0.28)
+        self.assertLess(ratio, 0.42)
 
     def test_digitize_pickcolor_and_shot_values_flow_through_extension_panel(self):
         from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
@@ -7999,14 +8104,14 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(self.page._pending_digitize_field_key, "sampled_color")
         self.assertEqual(self.page._pending_digitize_field_type, "pickcolor")
         self.assertEqual(self.page._active_tool, "color_pick")
-        self.assertIn("请在图片上点击取色", self.page._auto_status_label.text())
+        self.assertIn("请在图片上点击取色", self.page._status_label.text())
 
         self.page._on_color_picked(QColor("#0A141E"))
 
         self.assertEqual(editor.current_options()["sampled_color"], {"r": 10, "g": 20, "b": 30})
         self.assertEqual(summary_label.text(), "#0A141E")
         self.assertIsNone(self.page._pending_digitize_field_key)
-        self.assertEqual(self.page._auto_status_label.text(), "已采样: #0a141e")
+        self.assertEqual(self.page._status_label.text(), "已采样: #0a141e")
 
     def test_digitize_shot_button_click_triggers_request_and_backfills_value(self):
         from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
@@ -8030,7 +8135,7 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(self.page._pending_digitize_field_key, "template_info")
         self.assertEqual(self.page._pending_digitize_field_type, "shot")
         self.assertEqual(self.page._active_tool, "crop_template")
-        self.assertIn("请在图片上拖拽截图", self.page._auto_status_label.text())
+        self.assertIn("请在图片上拖拽截图", self.page._status_label.text())
 
         with mock.patch(
             "digitize.shape_extractor.ShapeExtractor.preprocess_region",
@@ -8044,7 +8149,7 @@ class TestDigitizePage(unittest.TestCase):
         )
         self.assertEqual(summary_label.text(), "已截取 24×11px")
         self.assertIsNone(self.page._pending_digitize_field_key)
-        self.assertIn("图例模板已截取", self.page._auto_status_label.text())
+        self.assertIn("图例模板已截取", self.page._status_label.text())
 
     def test_digitize_auto_detect_uses_selected_digitize_extension(self):
         from core.extension_api import DigitizeExtension, extension_registry
@@ -8069,7 +8174,7 @@ class TestDigitizePage(unittest.TestCase):
             self.page._on_auto_detect()
 
             self.assertEqual(self.page._auto_preview_points, [(12.0, 34.0)])
-            self.assertIn("探针识别", self.page._auto_status_label.text())
+            self.assertIn("探针识别", self.page._status_label.text())
         finally:
             extension_registry.unregister_digitize("ui_digitize_probe")
             self.page._refresh_digitize_extension_choices()
@@ -8504,13 +8609,40 @@ class TestMainWindow(unittest.TestCase):
         self.assertTrue(self.win._tree_toggle_nav_btn.isEnabled())
 
     def test_page_tree_focus_mode_applies_page_specific_filter(self):
+        from ui.main_window import _BUSINESS_TREE_KINDS
+
         previous = self.win._page_tree_focus_mode_enabled
         try:
             self.win._page_tree_focus_mode_enabled = True
+
+            self.win.switchTo(self.win.data_page)
+            self.assertEqual(
+                self.win._tree_panel.tree._filter_kinds,
+                list(_BUSINESS_TREE_KINDS),
+            )
+
+            self.win.switchTo(self.win.chart_page)
+            self.assertEqual(
+                self.win._tree_panel.tree._filter_kinds,
+                ["data_file", "picture", "series", "curve"],
+            )
+
+            self.win.switchTo(self.win.process_page)
+            self.assertEqual(
+                self.win._tree_panel.tree._filter_kinds,
+                ["data_file", "series", "curve"],
+            )
+
             self.win.switchTo(self.win.analysis_page)
             self.assertEqual(
                 self.win._tree_panel.tree._filter_kinds,
-                ["folder", "data_file", "analysis_result", "report_template", "global_report_template", "series", "curve"],
+                ["data_file", "analysis_result", "series", "curve"],
+            )
+
+            self.win.switchTo(self.win.digitize_page)
+            self.assertEqual(
+                self.win._tree_panel.tree._filter_kinds,
+                ["data_file", "image_work", "curve"],
             )
         finally:
             self.win._page_tree_focus_mode_enabled = previous
@@ -9483,14 +9615,28 @@ class TestAnalysisPageV3(unittest.TestCase):
         finally:
             extension_registry.unregister_analysis("analysis_extension_state_probe")
 
-    def test_export_curve_button_visibility_tracks_current_result(self):
-        self.assertTrue(self.page._export_result_series_btn.isHidden())
+    def test_clicking_selected_input_item_updates_current_analysis_target(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.df.series.extend([other, third])
 
         self.page.on_tree_node_activated("series", self.s.id)
-        self.page._run_analysis()
+        self.page.on_tree_node_activated("series", other.id)
+        self.page.on_tree_node_activated("series", third.id)
 
-        self.assertFalse(self.page._export_result_series_btn.isHidden())
-        self.assertEqual(self.page._export_result_series_btn.text(), "导出曲线")
+        target_item = self.page._input_list.item(1)
+        self.assertIsNotNone(target_item)
+
+        self.page._on_input_list_item_clicked(target_item)
+
+        current_payload = self.page._input_list.currentItem().data(Qt.ItemDataRole.UserRole)
+        self.assertEqual(current_payload["node_id"], other.id)
+        self.assertIn(other.name, self.page._selected_input_state_label.text())
+
+    def test_analysis_result_actions_omit_legacy_curve_export_button(self):
+        self.assertFalse(hasattr(self.page, "_export_result_series_btn"))
 
     def test_analysis_selected_input_reorder_preserves_current_indicator(self):
         from models.schemas import DataSeries

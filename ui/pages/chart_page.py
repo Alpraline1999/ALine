@@ -83,6 +83,15 @@ from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.focus_commit import install_click_away_focus_commit
+from ui.widgets.matplotlib_preview import (
+    build_preview_toolbar,
+    create_navigation_toolbar,
+    preview_navigation_mode,
+    sync_preview_nav_toggle_states,
+    toggle_preview_box_zoom_mode,
+    toggle_preview_pan_mode,
+    zoom_figure_axes,
+)
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color
@@ -317,18 +326,28 @@ class ChartPage(QWidget):
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
 
-        left_layout.addWidget(make_section_label("已绘图曲线", left_card))
+        self._chart_left_splitter = QSplitter(Qt.Orientation.Vertical, left_card)
+        self._chart_left_splitter.setHandleWidth(6)
+        self._chart_left_splitter.setChildrenCollapsible(False)
+        left_layout.addWidget(self._chart_left_splitter, 1)
+
+        list_section = QWidget(self._chart_left_splitter)
+        list_layout = QVBoxLayout(list_section)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(10)
+
+        list_layout.addWidget(make_section_label("已绘图曲线", left_card))
         self._chart_list = ListWidget(left_card)
         self._chart_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._chart_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._chart_list.currentItemChanged.connect(self._on_current_changed)
         self._chart_list.customContextMenuRequested.connect(self._on_chart_list_context_menu)
         self._chart_list.viewport().installEventFilter(self)
-        left_layout.addWidget(self._chart_list)
+        list_layout.addWidget(self._chart_list, 1)
 
         self._chart_path_label = make_hint_label("路径：—", left_card)
         install_fluent_tooltip(self._chart_path_label, delay=300, position=ToolTipPosition.BOTTOM)
-        left_layout.addWidget(self._chart_path_label)
+        list_layout.addWidget(self._chart_path_label)
 
         toolbar_row = QHBoxLayout()
         self._btn_clear = PushButton(FIF.DELETE, "清除", left_card)
@@ -357,9 +376,14 @@ class ChartPage(QWidget):
         self._btn_toggle_visible.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         toolbar_row.addWidget(self._btn_toggle_visible)
         toolbar_row.addStretch()
-        left_layout.addLayout(toolbar_row)
+        list_layout.addLayout(toolbar_row)
 
-        left_layout.addWidget(make_hsep(left_card))
+        style_section = QWidget(self._chart_left_splitter)
+        style_layout = QVBoxLayout(style_section)
+        style_layout.setContentsMargins(0, 0, 0, 0)
+        style_layout.setSpacing(10)
+
+        style_layout.addWidget(make_hsep(left_card))
 
         self._style_tabs = SegmentedStackWidget(left_card, fill_width=True)
         self._style_tabs.tabBar.setAddButtonVisible(False)
@@ -367,9 +391,9 @@ class ChartPage(QWidget):
         self._style_tabs.addTab(self._build_curve_style_tab(left_card), "曲线样式")
         self._style_tabs.addTab(self._build_plot_style_tab(left_card), "绘图样式")
         self._style_tabs.addTab(self._build_plot_extension_tab(left_card), "绘图扩展")
-        left_layout.addWidget(self._style_tabs, 1)
+        style_layout.addWidget(self._style_tabs, 1)
 
-        left_layout.addWidget(make_hsep(left_card))
+        style_layout.addWidget(make_hsep(left_card))
         self._plot_actions_bar = QWidget(left_card)
         plot_actions_layout = QGridLayout(self._plot_actions_bar)
         plot_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -385,7 +409,10 @@ class ChartPage(QWidget):
         plot_actions_layout.addWidget(self._btn_export_to_pictures, 0, 1)
         plot_actions_layout.setColumnStretch(0, 1)
         plot_actions_layout.setColumnStretch(1, 1)
-        left_layout.addWidget(self._plot_actions_bar)
+        style_layout.addWidget(self._plot_actions_bar)
+        self._chart_left_splitter.setStretchFactor(0, 0)
+        self._chart_left_splitter.setStretchFactor(1, 1)
+        self._chart_left_splitter.setSizes([220, 460])
 
         self._content_splitter.addWidget(left_card)
 
@@ -394,6 +421,7 @@ class ChartPage(QWidget):
         right_layout.setContentsMargins(14, 14, 14, 14)
         right_layout.setSpacing(10)
         right_layout.addWidget(make_section_label("绘图预览", right_card))
+        self._chart_preview_nav_toolbar = None
         self._canvas_host = QScrollArea(right_card)
         self._canvas_host.setFrameShape(QScrollArea.Shape.NoFrame)
         self._canvas_host.setWidgetResizable(True)
@@ -411,10 +439,28 @@ class ChartPage(QWidget):
                 dpi=self._display_dpi,
             )
             self._canvas = FigureCanvas(self._figure)
+            self._chart_preview_nav_toolbar = create_navigation_toolbar(self._canvas, right_card)
+            preview_toolbar, preview_buttons = build_preview_toolbar(
+                right_card,
+                button_size=WORKBENCH_BUTTON_HEIGHT,
+                reset_callback=self._reset_chart_preview_view,
+                zoom_in_callback=lambda: self._zoom_chart_preview_axes(0.8),
+                zoom_out_callback=lambda: self._zoom_chart_preview_axes(1.25),
+                pan_toggle_callback=self._toggle_chart_preview_pan_mode,
+                box_zoom_toggle_callback=self._toggle_chart_preview_box_zoom_mode,
+                install_tooltip=lambda widget, text: install_fluent_tooltip(widget, delay=300, position=ToolTipPosition.BOTTOM),
+            )
+            self._chart_preview_fit_btn = preview_buttons.fit
+            self._chart_preview_zoom_in_btn = preview_buttons.zoom_in
+            self._chart_preview_zoom_out_btn = preview_buttons.zoom_out
+            self._chart_preview_pan_btn = preview_buttons.pan
+            self._chart_preview_box_zoom_btn = preview_buttons.box_zoom
+            right_layout.addLayout(preview_toolbar)
             self._canvas.setMinimumSize(1, 1)
             canvas_host_layout.addWidget(self._canvas, 0, Qt.AlignmentFlag.AlignCenter)
             self._canvas_host.viewport().installEventFilter(self)
             right_layout.addWidget(self._canvas_host, 1)
+            self._sync_chart_preview_nav_toggle_states()
         else:
             message = f"matplotlib 加载失败：{_MATPLOTLIB_ERROR}" if _MATPLOTLIB_ERROR else "请安装 matplotlib"
             label = BodyLabel(message, self)
@@ -532,6 +578,39 @@ class ChartPage(QWidget):
             return
         self._extension_panel.hide()
         self._page_splitter.setSizes([1, 0])
+
+    def _chart_preview_navigation_mode(self) -> str:
+        return preview_navigation_mode(getattr(self, "_chart_preview_nav_toolbar", None))
+
+    def _sync_chart_preview_nav_toggle_states(self) -> None:
+        sync_preview_nav_toggle_states(
+            getattr(self, "_chart_preview_nav_toolbar", None),
+            getattr(self, "_chart_preview_pan_btn", None),
+            getattr(self, "_chart_preview_box_zoom_btn", None),
+        )
+
+    def _toggle_chart_preview_pan_mode(self, checked: bool) -> None:
+        toggle_preview_pan_mode(
+            getattr(self, "_chart_preview_nav_toolbar", None),
+            getattr(self, "_chart_preview_pan_btn", None),
+            getattr(self, "_chart_preview_box_zoom_btn", None),
+            checked,
+        )
+
+    def _toggle_chart_preview_box_zoom_mode(self, checked: bool) -> None:
+        toggle_preview_box_zoom_mode(
+            getattr(self, "_chart_preview_nav_toolbar", None),
+            getattr(self, "_chart_preview_pan_btn", None),
+            getattr(self, "_chart_preview_box_zoom_btn", None),
+            checked,
+        )
+
+    def _zoom_chart_preview_axes(self, factor: float) -> None:
+        zoom_figure_axes(self._figure, self._canvas, factor, redraw_callback=self._redraw_now)
+
+    def _reset_chart_preview_view(self) -> None:
+        self._redraw_now()
+        self._sync_chart_preview_nav_toggle_states()
 
     def _apply_preview_host_background(self) -> None:
         if self._canvas_host is None:
@@ -3140,6 +3219,7 @@ class ChartPage(QWidget):
                 self._figure.subplots_adjust(**subplot_adjust)
         self._canvas.draw()
         self._canvas.updateGeometry()
+        self._sync_chart_preview_nav_toggle_states()
 
     def _on_current_changed(self, current, _prev) -> None:
         curve = self._curve_from_item(current)

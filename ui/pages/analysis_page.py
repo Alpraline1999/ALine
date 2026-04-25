@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal, QStringListModel
@@ -27,25 +26,30 @@ from qfluentwidgets import (
 )
 
 from ui.matplotlib_fonts import configure_matplotlib_cjk
-from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
+from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.dialogs.export_flow import (
     DataCreateTargetOption,
     choose_analysis_result_save_plan,
-    choose_curve_file_export_plan,
-    choose_data_export_batch_plan,
     choose_data_export_plan,
-    curve_export_file_filter,
 )
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from core.builtin_extensions import register_core_builtin_extensions
-from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
+from ui.widgets.matplotlib_preview import (
+    build_preview_toolbar,
+    create_navigation_toolbar,
+    sync_preview_nav_toggle_states,
+    toggle_preview_box_zoom_mode,
+    toggle_preview_pan_mode,
+    zoom_figure_axes,
+)
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
+from ui.notifications import show_error, show_warning
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, accent_color, apply_button_metrics, make_hint_label, make_section_label, make_hsep, placeholder_color
 from core.extension_api import (
     build_extension_entry,
@@ -286,10 +290,21 @@ class AnalysisPage(QWidget):
         self._type_combo.addItems(self._analysis_type_labels)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
 
-        lv.addWidget(make_section_label("已选择列表"))
+        self._input_panel_splitter = QSplitter(Qt.Orientation.Vertical, panel)
+        self._input_panel_splitter.setHandleWidth(6)
+        self._input_panel_splitter.setChildrenCollapsible(False)
+        lv.addWidget(self._input_panel_splitter, 1)
+
+        input_section = QWidget(self._input_panel_splitter)
+        input_layout = QVBoxLayout(input_section)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(8)
+
+        input_layout.addWidget(make_section_label("已选择列表"))
 
         self._input_hint_label = make_hint_label("双击数据加入“已选择列表”；单曲线分析会处理列表中当前选中的项。")
         self._input_hint_label.hide()
+        input_layout.addWidget(self._input_hint_label)
 
         self._selected_input_state_label = CaptionLabel("当前分析: 未选择", self)
         self._selected_input_state_label.setWordWrap(True)
@@ -310,8 +325,9 @@ class AnalysisPage(QWidget):
         self._input_list.setMinimumHeight(108)
         self._input_list.itemSelectionChanged.connect(self._on_input_list_selection_changed)
         self._input_list.currentItemChanged.connect(lambda _current, _previous: self._on_input_list_selection_changed())
-        lv.addWidget(self._input_list)
-        lv.addWidget(self._selected_input_state_label)
+        self._input_list.itemClicked.connect(self._on_input_list_item_clicked)
+        input_layout.addWidget(self._input_list, 1)
+        input_layout.addWidget(self._selected_input_state_label)
 
         clear_row = QHBoxLayout()
         self._btn_clear_inputs = PushButton(FIF.DELETE, "清除", self)
@@ -333,14 +349,19 @@ class AnalysisPage(QWidget):
         self._btn_selected_down.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
         clear_row.addWidget(self._btn_selected_down)
         clear_row.addStretch()
-        lv.addLayout(clear_row)
+        input_layout.addLayout(clear_row)
 
-        lv.addWidget(make_hsep())
-        lv.addWidget(analysis_type_label)
-        lv.addWidget(self._type_combo)
+        controls_section = QWidget(self._input_panel_splitter)
+        controls_layout = QVBoxLayout(controls_section)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
 
-        lv.addWidget(make_hsep())
-        lv.addWidget(make_section_label("参数"))
+        controls_layout.addWidget(make_hsep())
+        controls_layout.addWidget(analysis_type_label)
+        controls_layout.addWidget(self._type_combo)
+
+        controls_layout.addWidget(make_hsep())
+        controls_layout.addWidget(make_section_label("参数"))
 
         self._extension_params_label = BodyLabel("", self)
         self._extension_params_label.hide()
@@ -348,18 +369,22 @@ class AnalysisPage(QWidget):
         self._extension_params_edit.setMinimumHeight(120)
         self._extension_params_edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._extension_params_edit.optionsChanged.connect(self._on_extension_analysis_options_changed)
-        lv.addWidget(self._extension_params_edit, 1)
-        lv.addWidget(make_hsep())
+        controls_layout.addWidget(self._extension_params_edit, 1)
+        controls_layout.addWidget(make_hsep())
 
         self._run_analysis_btn = PrimaryPushButton(FIF.PLAY, "运行分析")
         self._run_analysis_btn.clicked.connect(self._run_analysis)
         apply_button_metrics(self._run_analysis_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        lv.addWidget(self._run_analysis_btn)
+        controls_layout.addWidget(self._run_analysis_btn)
 
         self._report_template_label = BodyLabel("当前报告模板: 默认模板")
         self._report_template_label.setWordWrap(True)
         self._report_template_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._report_template_label.hide()
+
+        self._input_panel_splitter.setStretchFactor(0, 0)
+        self._input_panel_splitter.setStretchFactor(1, 1)
+        self._input_panel_splitter.setSizes([210, 430])
 
         self._on_type_changed(0)
         return panel
@@ -411,12 +436,6 @@ class AnalysisPage(QWidget):
         apply_button_metrics(self._generate_report_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         result_actions.addWidget(self._generate_report_btn)
 
-        self._export_result_series_btn = PushButton(FIF.SHARE, "导出曲线")
-        self._export_result_series_btn.clicked.connect(self._export_current_plot_series)
-        self._export_result_series_btn.setVisible(False)
-        self._export_result_series_btn.setEnabled(False)
-        apply_button_metrics(self._export_result_series_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        result_actions.addWidget(self._export_result_series_btn)
         result_layout.addLayout(result_actions)
 
         report_tab = QWidget(panel)
@@ -511,6 +530,9 @@ class AnalysisPage(QWidget):
 
         figure = None
         canvas = None
+        preview_nav_toolbar = None
+        preview_buttons = None
+        view_ref: Dict[str, Any] = {}
         plot_widget = QWidget(widget)
         plot_layout = QVBoxLayout(plot_widget)
         plot_layout.setContentsMargins(0, 0, 0, 0)
@@ -520,6 +542,17 @@ class AnalysisPage(QWidget):
             canvas = FigureCanvas(figure)
             canvas.setMinimumHeight(300)
             self._apply_result_canvas_background(canvas)
+            preview_nav_toolbar = create_navigation_toolbar(canvas, plot_widget)
+            preview_toolbar, preview_buttons = build_preview_toolbar(
+                plot_widget,
+                button_size=WORKBENCH_BUTTON_HEIGHT,
+                reset_callback=lambda _checked=False, ref=view_ref: self._reset_analysis_preview_view(ref.get("view")),
+                zoom_in_callback=lambda _checked=False, ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 0.8),
+                zoom_out_callback=lambda _checked=False, ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 1.25),
+                pan_toggle_callback=lambda checked, ref=view_ref: self._toggle_analysis_preview_pan_mode(ref.get("view"), checked),
+                box_zoom_toggle_callback=lambda checked, ref=view_ref: self._toggle_analysis_preview_box_zoom_mode(ref.get("view"), checked),
+            )
+            plot_layout.addLayout(preview_toolbar)
             plot_layout.addWidget(canvas, stretch=1)
         else:
             plot_layout.addWidget(BodyLabel("需要 matplotlib"), stretch=1)
@@ -601,6 +634,12 @@ class AnalysisPage(QWidget):
             "widget": widget,
             "figure": figure,
             "canvas": canvas,
+            "preview_nav_toolbar": preview_nav_toolbar,
+            "preview_fit_btn": preview_buttons.fit if preview_buttons is not None else None,
+            "preview_zoom_in_btn": preview_buttons.zoom_in if preview_buttons is not None else None,
+            "preview_zoom_out_btn": preview_buttons.zoom_out if preview_buttons is not None else None,
+            "preview_pan_btn": preview_buttons.pan if preview_buttons is not None else None,
+            "preview_box_zoom_btn": preview_buttons.box_zoom if preview_buttons is not None else None,
             "plot_stack": plot_stack,
             "plot_widget": plot_widget,
             "empty_preview_widget": empty_preview_widget,
@@ -626,9 +665,11 @@ class AnalysisPage(QWidget):
             "params": {},
             "analysis_name": "当前结果",
         }
+        view_ref["view"] = view
         self._set_summary_rows(summary_table, [("状态", "（运行分析后显示结果）")])
         self._set_summary_rows(peak_meta_table, [("状态", "（运行峰谷检测后显示结果）")])
         self._set_peak_points_rows(peak_points_table, [], [])
+        self._sync_analysis_preview_nav_toggle_states(view)
         return view
 
     def _sync_report_combo_widths(self) -> None:
@@ -1372,7 +1413,6 @@ class AnalysisPage(QWidget):
         )
         self._rebuild_input_list(selected_ids, current_node_id)
         self._result = dict(result) if isinstance(result, dict) else None
-        self._update_peak_export_buttons()
         if isinstance(result, dict) and result:
             self._set_analysis_status(f"当前结果: {view.get('analysis_name') or self._analysis_type_label(analysis_type)}")
         else:
@@ -1639,6 +1679,7 @@ class AnalysisPage(QWidget):
             if payload["node_id"] == current_node_id:
                 current_item = item
         if current_item is not None:
+            current_item.setSelected(True)
             self._input_list.setCurrentItem(current_item, QItemSelectionModel.SelectionFlag.NoUpdate)
         self._input_list.blockSignals(False)
         self._sync_input_role_labels()
@@ -1684,6 +1725,16 @@ class AnalysisPage(QWidget):
         self._result = None
         self._sync_input_role_labels()
         self._sync_related_analysis_tabs()
+
+    def _on_input_list_item_clicked(self, item: Optional[QListWidgetItem]) -> None:
+        if item is None:
+            return
+        if self._input_list.currentItem() is not item:
+            self._input_list.setCurrentItem(item)
+            return
+        if not item.isSelected():
+            item.setSelected(True)
+        self._on_input_list_selection_changed()
 
     def _on_extension_analysis_options_changed(self, options: Dict[str, Any]) -> None:
         type_id = self._current_analysis_type()
@@ -1798,7 +1849,6 @@ class AnalysisPage(QWidget):
             self._input_hint_label.setText("双击数据加入“已选择列表”；单曲线分析会处理列表中当前选中的项。")
         self._sync_input_role_labels()
         self._refresh_current_analysis_preview()
-        self._update_peak_export_buttons()
         if hasattr(self, "_extension_panel"):
             self._extension_panel.set_entries(
                 self._analysis_extension_entries(),
@@ -1833,38 +1883,41 @@ class AnalysisPage(QWidget):
         active_view = self._current_analysis_view()
         extension_options: Optional[Dict[str, Any]] = None
         effective_extension_options: Optional[Dict[str, Any]] = None
-        input_payloads: List[dict]
-        if extension_registry.get_analysis(analysis_type) is not None:
-            extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
-            input_payloads, effective_extension_options = self._effective_extension_analysis_options(analysis_type, extension_options)
-            selected = self._get_data_for_inputs(input_payloads)
-        else:
-            input_payloads = self._analysis_input_payloads(analysis_type)
-            selected = self._get_data_for_inputs(input_payloads)
-        if not selected:
-            InfoBar.warning("提示", "请先从项目树双击选择数据", parent=self,
-                            position=InfoBarPosition.TOP)
-            return
-        t = analysis_type
         override_cursor = False
-        self._set_analysis_status("正在运行分析，结果生成后会创建新的临时标签。")
-        self._run_analysis_btn.setEnabled(False)
+        run_started = False
         try:
+            input_payloads: List[dict]
+            if extension_registry.get_analysis(analysis_type) is not None:
+                extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
+                input_payloads, effective_extension_options = self._effective_extension_analysis_options(analysis_type, extension_options)
+                selected = self._get_data_for_inputs(input_payloads)
+            else:
+                input_payloads = self._analysis_input_payloads(analysis_type)
+                selected = self._get_data_for_inputs(input_payloads)
+            if not selected:
+                show_warning(self, "提示", "请先从项目树双击选择数据")
+                return
+
+            t = analysis_type
+            self._set_analysis_status("正在运行分析，结果生成后会创建新的临时标签。")
+            self._run_analysis_btn.setEnabled(False)
+            run_started = True
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             override_cursor = True
             inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
             self._result = run_analysis(t, inputs, effective_extension_options)
             self._show_result(t, selected)
         except Exception as e:
-            InfoBar.error("分析失败", str(e), parent=self, position=InfoBarPosition.TOP)
+            message = show_error(self, "分析失败", e)
             preview_view = self._analysis_tab_views.get("current")
             if preview_view is not None and preview_view.get("summary_table") is not None:
-                self._set_summary_rows(preview_view["summary_table"], [("错误", str(e))])
-            self._set_analysis_status(f"分析失败: {e}")
+                self._set_summary_rows(preview_view["summary_table"], [("错误", message)])
+            self._set_analysis_status(f"分析失败: {message}")
         finally:
             if override_cursor:
                 QApplication.restoreOverrideCursor()
-            self._run_analysis_btn.setEnabled(True)
+            if run_started:
+                self._run_analysis_btn.setEnabled(True)
 
     # ─────────────────────────────────────────────────────────
     # 结果显示
@@ -1873,7 +1926,6 @@ class AnalysisPage(QWidget):
     def _show_result(self, t: str, selected: list):
         r = self._result
         if r is None:
-            self._update_peak_export_buttons()
             return
         tab_number = self._next_temporary_result_number
         self._next_temporary_result_number += 1
@@ -1892,7 +1944,6 @@ class AnalysisPage(QWidget):
         self._sync_state_from_analysis_view(view)
         self._set_analysis_status(f"分析完成，已生成临时结果标签“{title}”。")
         self._refresh_report_placeholder_choices()
-        self._update_peak_export_buttons()
 
     def _render_result_view(self, view: Dict[str, Any], t: str, selected: list, r: dict) -> None:
         normalized = self._normalize_analysis_output(t, selected, r)
@@ -2026,6 +2077,7 @@ class AnalysisPage(QWidget):
             ax.set_yticks([])
 
         canvas.draw()
+        self._sync_analysis_preview_nav_toggle_states(self._analysis_view_for_canvas(canvas))
 
     def _apply_result_canvas_background(self, canvas=None) -> None:
         canvas = self._canvas if canvas is None else canvas
@@ -2042,6 +2094,84 @@ class AnalysisPage(QWidget):
             canvas.draw_idle()
         except Exception:
             pass
+
+    def _analysis_view_for_canvas(self, canvas) -> Optional[Dict[str, Any]]:
+        if canvas is None:
+            return None
+        for view in getattr(self, "_analysis_tab_views", {}).values():
+            if view.get("canvas") is canvas:
+                return view
+        return None
+
+    def _sync_analysis_preview_nav_toggle_states(self, view: Optional[Dict[str, Any]] = None) -> None:
+        if view is None:
+            return
+        sync_preview_nav_toggle_states(
+            view.get("preview_nav_toolbar"),
+            view.get("preview_pan_btn"),
+            view.get("preview_box_zoom_btn"),
+        )
+
+    def _toggle_analysis_preview_pan_mode(self, view: Optional[Dict[str, Any]], checked: bool) -> None:
+        if view is None:
+            return
+        toggle_preview_pan_mode(
+            view.get("preview_nav_toolbar"),
+            view.get("preview_pan_btn"),
+            view.get("preview_box_zoom_btn"),
+            checked,
+        )
+
+    def _toggle_analysis_preview_box_zoom_mode(self, view: Optional[Dict[str, Any]], checked: bool) -> None:
+        if view is None:
+            return
+        toggle_preview_box_zoom_mode(
+            view.get("preview_nav_toolbar"),
+            view.get("preview_pan_btn"),
+            view.get("preview_box_zoom_btn"),
+            checked,
+        )
+
+    def _zoom_analysis_preview_axes(self, view: Optional[Dict[str, Any]], factor: float) -> None:
+        if view is None:
+            return
+        zoom_figure_axes(
+            view.get("figure"),
+            view.get("canvas"),
+            factor,
+            redraw_callback=lambda current_view=view: self._redraw_analysis_preview_view(current_view),
+        )
+
+    def _reset_analysis_preview_view(self, view: Optional[Dict[str, Any]]) -> None:
+        self._redraw_analysis_preview_view(view)
+
+    def _redraw_analysis_preview_view(self, view: Optional[Dict[str, Any]]) -> None:
+        if view is None:
+            return
+        analysis_type = str(view.get("analysis_type") or self._current_analysis_type())
+        selected = list(view.get("selected") or [])
+        result = view.get("result")
+        normalized = view.get("normalized_result")
+        if result is not None:
+            self._draw_result(
+                analysis_type,
+                selected,
+                result,
+                figure=view.get("figure"),
+                canvas=view.get("canvas"),
+                normalized=normalized,
+            )
+            return
+        if selected:
+            self._draw_result(
+                analysis_type,
+                selected,
+                {"_preview_only": True},
+                figure=view.get("figure"),
+                canvas=view.get("canvas"),
+            )
+            return
+        self._sync_analysis_preview_nav_toggle_states(view)
 
     def _summary_rows(self, t: str, r: dict) -> List[tuple[str, str]]:
         if t == "curve_fit":
@@ -2092,14 +2222,6 @@ class AnalysisPage(QWidget):
             return rows
         else:
             return self._json_summary_rows(r)
-
-    def _write_summary(self, t: str, r: dict):
-        current_view = self._analysis_tab_views.get("current")
-        if current_view is not None:
-            self._render_summary_view(current_view, t, r)
-            return
-        if self._summary_table is not None:
-            self._set_summary_rows(self._summary_table, self._summary_rows(t, r))
 
     # ─────────────────────────────────────────────────────────
     # 保存分析结果
@@ -2197,7 +2319,7 @@ class AnalysisPage(QWidget):
                     y=ys,
                     source="computed",
                 )
-        if analysis_type == "curve_fit" and "fit_x" in self._result:
+        if analysis_type == "curve_fit" and "fit_x" in result and "fit_y" in result:
             return DataSeries(
                 name=export_name,
                 x=list(result["fit_x"]),
@@ -2227,131 +2349,6 @@ class AnalysisPage(QWidget):
             getattr(project_manager._find_folder_by_group_type("datasets"), "id", None),
         )
 
-    def _analysis_output_export_button_text(self) -> str:
-        return "导出曲线"
-
-    def _current_analysis_export_series(self) -> List[DataSeries]:
-        active_view = self._active_analysis_view()
-        result = dict(active_view.get("result") or {}) if isinstance(active_view, dict) else {}
-        if not result and self._result:
-            result = dict(self._result)
-        if not result:
-            return []
-
-        analysis_type = str(result.get("analysis_type") or (active_view.get("analysis_type") if isinstance(active_view, dict) else "analysis") or "analysis")
-        x_label = str(result.get("x_label") or "x")
-        y_label = str(result.get("y_label") or "y")
-        series_list: List[DataSeries] = []
-
-        for index, series in enumerate(list(result.get("_plot_series", []) or result.get("plot_series", []) or []), start=1):
-            if not isinstance(series, dict):
-                continue
-            xs = list(series.get("x", []) or [])
-            ys = list(series.get("y", []) or [])
-            if not xs or not ys or len(xs) != len(ys):
-                continue
-            series_list.append(
-                DataSeries(
-                    name=str(series.get("name") or series.get("label") or f"结果曲线_{index}"),
-                    x=xs,
-                    y=ys,
-                    x_label=x_label,
-                    y_label=y_label,
-                    color=str(series.get("color") or "#0078D4"),
-                    source="computed",
-                )
-            )
-        if series_list:
-            return series_list
-
-        if analysis_type == "curve_fit" and "fit_x" in result and "fit_y" in result:
-            return [
-                DataSeries(
-                    name=self._default_analysis_result_name(),
-                    x=list(result.get("fit_x", []) or []),
-                    y=list(result.get("fit_y", []) or []),
-                    x_label=x_label,
-                    y_label=y_label,
-                    source="computed",
-                )
-            ]
-
-        if analysis_type == "error_compare" and "error_x" in result and "error_y" in result:
-            return [
-                DataSeries(
-                    name=self._default_analysis_result_name(),
-                    x=list(result.get("error_x", []) or []),
-                    y=list(result.get("error_y", []) or []),
-                    x_label=x_label,
-                    y_label="误差",
-                    source="computed",
-                )
-            ]
-
-        if analysis_type == "peak_detect":
-            extrema_series = [
-                self._build_extrema_series("peaks", "peaks"),
-                self._build_extrema_series("valleys", "valleys"),
-            ]
-            return [series for series in extrema_series if series is not None]
-
-        return []
-
-    @staticmethod
-    def _ensure_curve_export_suffix(path_text: str, file_format: str) -> str:
-        path = Path(path_text)
-        suffix = f".{str(file_format or 'csv').strip().lower()}"
-        if path.suffix.lower() == suffix:
-            return str(path)
-        if path.suffix:
-            return str(path.with_suffix(suffix))
-        return str(path.with_name(f"{path.name}{suffix}"))
-
-    def _export_current_plot_series(self) -> None:
-        import datetime
-
-        series_list = self._current_analysis_export_series()
-        if not series_list:
-            InfoBar.warning("提示", "当前分析结果没有可导出的曲线", parent=self, position=InfoBarPosition.TOP)
-            return
-
-        merge_supported = False
-        if len(series_list) > 1:
-            try:
-                merge_supported = Exporter.can_merge_data_series(series_list)
-            except ValueError:
-                merge_supported = False
-
-        export_plan = choose_curve_file_export_plan(
-            self,
-            title="导出曲线",
-            source_labels=[series.name or f"series_{index + 1}" for index, series in enumerate(series_list)],
-            merge_supported=merge_supported,
-        )
-        if export_plan is None:
-            return
-
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") if export_plan.include_timestamp else None
-        try:
-            if export_plan.action == "clipboard":
-                Exporter.export_series_to_clipboard(series_list, timestamp=timestamp, merged=export_plan.merged)
-                InfoBar.success("已复制", "分析曲线已复制到剪贴板", parent=self, position=InfoBarPosition.TOP)
-                return
-            default_name = self._ensure_curve_export_suffix(self._default_analysis_result_name(), export_plan.file_format)
-            file_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "导出曲线",
-                default_name,
-                curve_export_file_filter(export_plan.file_format),
-            )
-            if not file_path:
-                return
-            file_path = self._ensure_curve_export_suffix(file_path, export_plan.file_format)
-            Exporter.export_series_file(series_list, file_path, fmt=export_plan.file_format, timestamp=timestamp, merged=export_plan.merged)
-            InfoBar.success("导出成功", file_path, parent=self, position=InfoBarPosition.TOP)
-        except Exception as exc:
-            InfoBar.error("导出失败", str(exc), parent=self, position=InfoBarPosition.TOP)
-
     def _export_current_series(self, series, *, title: str) -> bool:
         from models.schemas import DataFile
 
@@ -2380,78 +2377,6 @@ class AnalysisPage(QWidget):
         InfoBar.success("已导出", f"{series.name} 已导出到数据集", parent=self, position=InfoBarPosition.TOP)
         return True
 
-    def _export_series_batch(self, series_list: List[DataSeries], *, title: str, default_file_name: str) -> bool:
-        from models.schemas import DataFile
-
-        if not series_list:
-            return False
-        project = project_manager.current_project
-        if project is None:
-            InfoBar.warning("提示", "没有打开的项目", parent=self, position=InfoBarPosition.TOP)
-            return False
-        export_plan = choose_data_export_batch_plan(
-            self,
-            title=title,
-            source_labels=[series.name for series in series_list],
-            default_export_names=[series.name for series in series_list],
-            default_file_name=default_file_name,
-            preferred_target_node_id=self._preferred_analysis_export_target_node_id(),
-            file_suffix=".analysis",
-            create_target_options=self._analysis_export_create_targets(),
-        )
-        if export_plan is None:
-            return False
-        normalized_names = [project_manager._normalize_name_key(name) for name in export_plan.export_names]
-        if any(not name for name in normalized_names) or len(set(normalized_names)) != len(normalized_names):
-            InfoBar.error("导出失败", "批量导出名称不能为空且不能重复", parent=self, position=InfoBarPosition.TOP)
-            return False
-        named_series = [
-            DataSeries(
-                name=export_name,
-                x=list(series.x),
-                y=list(series.y),
-                x_label=series.x_label,
-                y_label=series.y_label,
-                color=series.color,
-                visible=series.visible,
-                source="computed",
-                source_curve_id=series.source_curve_id,
-            )
-            for series, export_name in zip(series_list, export_plan.export_names)
-        ]
-        if export_plan.target_data_file_id:
-            target_file = project.find_data_file(export_plan.target_data_file_id)
-            if target_file is None:
-                InfoBar.error("导出失败", "未找到目标数据文件", parent=self, position=InfoBarPosition.TOP)
-                return False
-            existing_names = {project_manager._normalize_name_key(series.name) for series in target_file.series}
-            conflict_names = [series.name for series in named_series if project_manager._normalize_name_key(series.name) in existing_names]
-            if conflict_names:
-                InfoBar.error(
-                    "导出失败",
-                    "目标数据文件中已存在同名数据列: " + "、".join(conflict_names),
-                    parent=self,
-                    position=InfoBarPosition.TOP,
-                )
-                return False
-            for series in named_series:
-                if not project_manager.add_series_to_data_file(export_plan.target_data_file_id, series):
-                    InfoBar.error("导出失败", "未能追加数据到目标数据文件", parent=self, position=InfoBarPosition.TOP)
-                    return False
-            message = f"{len(named_series)} 条数据列已导出到 {target_file.name}"
-        else:
-            data_file = DataFile(
-                name=export_plan.new_data_file_name or default_file_name,
-                series=named_series,
-            )
-            if project_manager.add_data_file(data_file, parent_id=export_plan.new_parent_id) is None:
-                InfoBar.error("导出失败", "未能创建目标数据文件", parent=self, position=InfoBarPosition.TOP)
-                return False
-            message = f"{len(named_series)} 条数据列已导出到 {data_file.name}"
-        self.project_modified.emit()
-        InfoBar.success("已导出", message, parent=self, position=InfoBarPosition.TOP)
-        return True
-
     def _export_result_series(self) -> None:
         if self._result is None:
             InfoBar.warning("提示", "请先运行分析", parent=self, position=InfoBarPosition.TOP)
@@ -2461,7 +2386,7 @@ class AnalysisPage(QWidget):
         if series is None:
             InfoBar.warning("提示", "当前分析结果没有可导出的数据曲线", parent=self, position=InfoBarPosition.TOP)
             return
-        self._export_current_series(series, title=self._analysis_output_export_button_text())
+        self._export_current_series(series, title="导出分析结果")
 
     # ─────────────────────────────────────────────────────────
     # 报告模板
@@ -2904,92 +2829,6 @@ class AnalysisPage(QWidget):
                     current_type=analysis_type,
                 )
             self._sync_extension_params_editor(analysis_type)
-
-    def _update_peak_export_buttons(self) -> None:
-        if not hasattr(self, "_export_result_series_btn"):
-            return
-        has_exportable_series = bool(self._current_analysis_export_series())
-        self._export_result_series_btn.setVisible(has_exportable_series)
-        self._export_result_series_btn.setEnabled(has_exportable_series)
-        if has_exportable_series:
-            self._export_result_series_btn.setText(self._analysis_output_export_button_text())
-
-    def _export_extrema_by_choice(self) -> None:
-        if not self._result or self._result.get("analysis_type") != "peak_detect":
-            InfoBar.warning("提示", "请先运行峰值检测", parent=self, position=InfoBarPosition.TOP)
-            return
-        options: List[str] = []
-        if self._result.get("peaks"):
-            options.append("波峰")
-        if self._result.get("valleys"):
-            options.append("波谷")
-        if self._result.get("peaks") and self._result.get("valleys"):
-            options.append("峰谷")
-        if not options:
-            InfoBar.warning("提示", "当前结果中没有可导出的点", parent=self, position=InfoBarPosition.TOP)
-            return
-        choice, accepted = SelectionDialog.get_item(
-            self,
-            "导出峰谷曲线",
-            "选择需要导出的峰值结果",
-            options,
-            current_text=options[0],
-        )
-        if not accepted:
-            return
-        if choice == "波峰":
-            self._export_extrema_series("peaks", "peaks")
-            return
-        if choice == "波谷":
-            self._export_extrema_series("valleys", "valleys")
-            return
-        combined_series = self._build_combined_extrema_series()
-        if combined_series is None:
-            InfoBar.warning("提示", "当前结果中没有可导出的点", parent=self, position=InfoBarPosition.TOP)
-            return
-        self._export_current_series(combined_series, title="导出峰谷曲线")
-
-    def _build_extrema_series(self, result_key: str, suffix: str) -> Optional[DataSeries]:
-        if not self._result or self._result.get("analysis_type") != "peak_detect":
-            return None
-        points = list(self._result.get(result_key, []) or [])
-        if not points:
-            return None
-        source_name = self._result.get("source_name", "series")
-        return DataSeries(
-            name=f"{suffix}_{source_name}",
-            x=[float(point["x"]) for point in points],
-            y=[float(point["y"]) for point in points],
-            source="computed",
-        )
-
-    def _build_combined_extrema_series(self) -> Optional[DataSeries]:
-        if not self._result or self._result.get("analysis_type") != "peak_detect":
-            return None
-        points: List[dict] = []
-        for result_key in ("peaks", "valleys"):
-            for point in list(self._result.get(result_key, []) or []):
-                points.append({"x": float(point["x"]), "y": float(point["y"])})
-        if not points:
-            return None
-        points.sort(key=lambda item: (item["x"], item["y"]))
-        source_name = self._result.get("source_name", "series")
-        return DataSeries(
-            name=f"extrema_{source_name}",
-            x=[point["x"] for point in points],
-            y=[point["y"] for point in points],
-            source="computed",
-        )
-
-    def _export_extrema_series(self, result_key: str, suffix: str) -> None:
-        if not self._result or self._result.get("analysis_type") != "peak_detect":
-            InfoBar.warning("提示", "请先运行峰值检测", parent=self, position=InfoBarPosition.TOP)
-            return
-        series = self._build_extrema_series(result_key, suffix)
-        if series is None:
-            InfoBar.warning("提示", "当前结果中没有可导出的点", parent=self, position=InfoBarPosition.TOP)
-            return
-        self._export_current_series(series, title=f"导出{suffix}曲线")
 
     def _analysis_inputs_payloads(self, analysis) -> List[dict]:
         payloads: List[dict] = []

@@ -8,7 +8,7 @@ from qfluentwidgets import (
     FluentIcon as FIF, FluentWindow, NavigationItemPosition,
     NavigationToolButton,
     setTheme, Theme, MessageBox, ToggleToolButton, ToolButton,
-    InfoBar, InfoBarPosition, ToolTipFilter, ToolTipPosition,
+    ToolTipFilter, ToolTipPosition,
 )
 
 from .pages.home_page import HomePage
@@ -20,6 +20,7 @@ from .pages.analysis_page import AnalysisPage
 from .pages.settings_page import SettingsPage
 from .dialogs.fluent_dialogs import TextInputDialog
 from .dialogs.project_tree_manage_dialog import ProjectTreeManageDialog
+from .notifications import show_error, show_success, show_warning
 from .widgets.project_tree import ProjectTreeWidget
 from .widgets.ai_assistant_panel import AIAssistantPanel
 from ai.agent import ALineAgent
@@ -55,11 +56,11 @@ _PAGE_TREE_KINDS = {
 
 _PAGE_TREE_FOCUS_KINDS = {
     "homePage":      [],
-    "dataPage":      ["folder", "source_file", "data_file", "analysis_result", "image_work", "picture", "series", "curve"],
-    "chartPage":     ["folder", "data_file", "image_work", "picture", "figure_template", "global_curve_style_template", "global_plot_style", "global_plot_theme", "series", "curve"],
-    "processPage":   ["folder", "data_file", "pipeline", "global_pipeline", "analysis_result", "series", "curve"],
-    "analysisPage":  ["folder", "data_file", "analysis_result", "report_template", "global_report_template", "series", "curve"],
-    "digitizePage":  ["folder", "source_file", "image_work", "curve"],
+    "dataPage":      _BUSINESS_TREE_KINDS,
+    "chartPage":     ["data_file", "picture", "series", "curve"],
+    "processPage":   ["data_file", "series", "curve"],
+    "analysisPage":  ["data_file", "analysis_result", "series", "curve"],
+    "digitizePage":  ["data_file", "image_work", "curve"],
     "settingsPage":  [],
 }
 
@@ -549,7 +550,7 @@ class MainWindow(FluentWindow):
         try:
             project_manager.create_new(clean_name, parent_dir=base_dir, create_structure=True)
         except Exception as exc:
-            InfoBar.error("错误", f"创建项目失败:\n{exc}", parent=self, position=InfoBarPosition.TOP)
+            show_error(self, "错误", f"创建项目失败:\n{exc}")
             return
         self._on_project_created(clean_name)
 
@@ -565,14 +566,14 @@ class MainWindow(FluentWindow):
         try:
             project_manager.open(file_path)
         except Exception as exc:
-            InfoBar.error("错误", f"无法打开项目:\n{exc}", parent=self, position=InfoBarPosition.TOP)
+            show_error(self, "错误", f"无法打开项目:\n{exc}")
             return
         self._on_project_opened(file_path)
 
     def _save_current_project_from_panel(self) -> bool:
         project = project_manager.current_project
         if project is None:
-            InfoBar.warning("提示", "请先打开项目", parent=self, position=InfoBarPosition.TOP)
+            show_warning(self, "提示", "请先打开项目")
             return False
 
         file_path = project.file_path
@@ -589,7 +590,7 @@ class MainWindow(FluentWindow):
         try:
             project_manager.save(file_path)
         except Exception as exc:
-            InfoBar.error("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            show_error(self, "保存失败", exc)
             return False
 
         self.data_page.refresh()
@@ -597,13 +598,13 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
         self._update_window_title()
-        InfoBar.success("已保存", file_path, parent=self, position=InfoBarPosition.TOP, duration=2500)
+        show_success(self, "已保存", file_path)
         return True
 
     def _close_current_project_from_panel(self) -> None:
         project = project_manager.current_project
         if project is None:
-            InfoBar.warning("提示", "请先打开项目", parent=self, position=InfoBarPosition.TOP)
+            show_warning(self, "提示", "请先打开项目")
             return
 
         if project.is_modified:

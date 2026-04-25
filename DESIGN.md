@@ -695,3 +695,183 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 4. 导出为数据列的语义定义为：写入选中数据集或追加到选中数据文件。
 
 文档确认完成，后续实现按 Phase 1 到 Phase 7 依次推进，并在全部实现完成后执行全量测试。
+
+---
+
+## 十、内置扩展工具化重构方案
+
+### 10.1 目标
+
+目标不是简单“把 demo 改名”，而是把当前仓库内的 builtin 扩展分成三层明确能力：
+
+1. 正式工具：默认可见、默认可用、参数和结果协议稳定。
+2. 示例工具：保留样例价值，但不再和正式工具混在同一层级对外承诺能力。
+3. 实验工具：允许继续演进，但默认不作为稳定工作流入口。
+
+重构后的内置扩展应满足以下产品要求：
+
+1. 用户能区分“可直接用于业务”的工具和“演示 / 试验”的扩展。
+2. 同类扩展在输入、参数、结果、错误提示上遵循统一协议。
+3. 设置页、扩展面板、结果页、报告模板对 builtin 的行为一致，不再保留大量兼容分支。
+
+### 10.2 当前现状
+
+当前 builtin 扩展已经统一从 `extensions` 目录递归扫描并注册，但成熟度并不一致：
+
+| 类别 | 当前状态 | 主要问题 |
+| ---- | -------- | -------- |
+| processing | 大部分已经是正式工具 | 个别 demo 仍混在同一列表；多曲线输出协议仍有兼容分支 |
+| analysis | 核心工具已成熟 | demo 分析扩展和正式分析扩展混列；报告占位符 schema 还未完全统一 |
+| plot | 可用能力多，但多数仍以 demo 形态存在 | before_plot / after_plot 双阶段下，部分注释类扩展缺少 phase 边界，存在重复绘制风险 |
+| digitize | 颜色识别可视作正式工具 | 图形识别仍偏实验态，参数和输出契约还不够稳定 |
+
+按当前仓库现状，可直接视作正式 builtin 工具的优先集合：
+
+1. Processing：crop、derivative、fft、filter、integral、normalize、pairwise_compute、resample、smooth、transform。
+2. Analysis：curve_fit、peak_detect、statistics、correlation、error_compare。
+3. Digitize：color_detect。
+
+当前仍应保留为示例或实验的集合：
+
+1. Processing：processing_kalman_filter_demo、processing_multi_curve_mean_demo。
+2. Analysis：analysis_spectrum_demo、analysis_multi_curve_correlation_demo。
+3. Plot：现有全部 plot_*_demo 文件。
+4. Digitize：shape_detect。
+
+### 10.3 已确认约束
+
+这轮设计必须接受当前实现层面的几个硬约束：
+
+1. builtin 扫描是递归且按文件启停，不是按扩展条目启停；因此正式工具阶段不应把多个长期维护工具塞进同一个文件。
+2. 页面启动链路中仍保留 `core.builtin_extensions.py` 的兼容补位逻辑，因此“builtin 的唯一真相”还需要继续收口到目录扫描模型。
+3. plot 扩展在图表页中会经历 before_plot / after_plot 两个阶段；任何绘制型 builtin 若不显式判断 phase，都可能重复绘制。
+4. processing 扩展运行层仍兼容多种历史输出形态，因此扩展工具化必须先约束正式协议，再逐步回收兼容分支。
+5. analysis 的 `report_placeholders` 文档规则与运行时接受格式仍未完全一致，不能再继续放宽。
+
+### 10.4 设计原则
+
+#### 原则 1：先分层，再工具化
+
+先把 builtin 扩展分成 `tool / demo / experimental` 三层，再决定哪些进入正式工具面板。没有分层的前提下，任何“统一体验”都会把实验能力直接暴露给最终用户。
+
+#### 原则 2：元数据是唯一 UI 契约
+
+正式工具必须通过统一元数据完整描述：
+
+1. 类型标识、名称、描述、版本。
+2. config_fields 和 default_options。
+3. lines_number / lines_list 规则。
+4. analysis 的 report_placeholders。
+
+页面侧不得再针对某几个 builtin 文件写私有特判来补参数或补说明。
+
+#### 原则 3：一类扩展只保留一套正式输出协议
+
+1. Processing：正式支持 `(xs, ys)` 与 `{"lines": [...], "warnings": [...]}` 两种结果。
+2. Analysis：正式支持 `summary_items / tables / texts / _plot_series / report_placeholders` 这一组结构化结果。
+3. Plot：正式支持通过 `plot_context` 修改图表，不依赖页面私有状态，不混用隐式返回值。
+4. Digitize：正式支持 `points + summary + warnings` 结构，不再让页面猜测字段。
+
+#### 原则 4：多曲线输入顺序必须显式化
+
+凡是双曲线或多曲线工具，必须完全依赖 `lines_number` 和 `lines_list`，而不是依赖页面“当前选中”或输入顺序的隐式副作用。处理、分析、绘图三类扩展必须共享这一条规则。
+
+#### 原则 5：算法核心与扩展包装分离
+
+正式工具文件只负责：
+
+1. 参数声明。
+2. 输入规范化。
+3. 调用共享算法函数。
+4. 输出结果封装。
+
+算法逻辑应尽量下沉到共用模块，避免以后在 builtin、external、页面私有逻辑之间复制实现。
+
+#### 原则 6：缺依赖时的行为必须可预期
+
+正式工具必须明确属于以下三种之一：
+
+1. 纯 Python 可运行。
+2. 缺依赖时给出明确报错。
+3. 缺依赖时提供可验证的降级实现。
+
+不允许继续保留“有些工具静默失效、有些直接返回原值、有些抛异常”的混杂行为。
+
+#### 原则 7：报告占位符必须写死 schema
+
+对于分析扩展：
+
+1. `report_placeholders` 必须显式声明。
+2. 每一项必须包含 `token / label / description`。
+3. 仓库内 builtin 不再依赖运行时对 `key` 的兼容猜测。
+
+### 10.5 正式工具分层方案
+
+建议在不破坏当前目录扫描机制的前提下，先采用“元数据分层 + 文件命名保留”的温和方案：
+
+1. `source_kind` 继续保留 `builtin`，不引入新的来源分类。
+2. 新增或约定一个工具成熟度字段，例如 `tool_tier`，取值仅允许 `tool / demo / experimental`。
+3. 设置页和扩展面板默认只展示 `tool`；`demo` 和 `experimental` 进入“样例与实验”分组或通过显式开关显示。
+4. 文件名中的 `_demo` 暂时保留，直到对应扩展通过正式工具验收后再改名。
+
+这样可以避免一次性打碎现有扫描和禁用逻辑，同时让 UI 层立刻获得稳定分层能力。
+
+### 10.6 按类别的收口方向
+
+#### Processing
+
+1. 先把 `resample / pairwise_compute / multi_curve_mean` 这类多曲线输入的对齐策略统一。
+2. 明确所有正式工具的输出要么是单曲线，要么是标准 `lines` 列表。
+3. demo 算法继续保留，但不再默认出现在正式工具分组。
+
+#### Analysis
+
+1. curve_fit、statistics、correlation、error_compare、peak_detect 作为第一批正式 builtin analysis 工具。
+2. spectrum 和 multi_curve_correlation 先保留为 demo，待其 report_placeholders、表格结构、plot 输出完全统一后再转正。
+3. AnalysisPage 只保留统一结果视图和统一结果保存主线，不再维护隐藏的旧导出按钮或峰谷专用兼容路径。
+
+#### Plot
+
+1. 所有 plot builtin 都必须显式声明适用 phase。
+2. 注释类工具应归为“轻量绘图工具”；风格类和投影类工具应归为“图幅工具”。
+3. 只有通过 phase 校验、重复绘制校验和最小 UI 回归的 plot builtin，才能从 demo 转为正式工具。
+
+#### Digitize
+
+1. color_detect 继续作为正式工具模板。
+2. shape_detect 在参数、输出和错误提示稳定前保持 experimental。
+3. 蒙版参数继续作为运行层自动注入能力，不进入扩展公开参数面。
+
+### 10.7 实施路线
+
+#### Phase A：分层与契约收口
+
+1. 为 builtin 补齐工具成熟度标识。
+2. 让设置页 / 扩展面板支持按成熟度分组展示。
+3. 固化 analysis `report_placeholders` schema。
+
+#### Phase B：正式工具首批收口
+
+1. 处理正式 processing 和 analysis 工具的参数、结果、错误提示统一。
+2. 为 plot 扩展补 phase 边界。
+3. 回收页面侧针对旧 builtin 的兼容分支。
+
+#### Phase C：demo 转正机制
+
+一个 builtin 从 demo 转为 tool 前，必须同时满足：
+
+1. 命名去 demo 化。
+2. config_fields、description、默认值齐全。
+3. 有稳定输出协议。
+4. 有至少一条后端或 UI 回归测试。
+5. 在扩展说明文档中有明确用途说明，而不是示例性质描述。
+
+### 10.8 验证标准
+
+内置扩展工具化完成后，应以以下标准验收：
+
+1. 用户能在 UI 中明确区分正式工具和 demo / experimental 扩展。
+2. pages 不再依赖隐藏按钮或页面私有兼容分支来补 builtin 行为。
+3. plot builtin 不再出现 phase 导致的重复绘制。
+4. analysis builtin 的报告占位符声明与运行时解析保持一致。
+5. builtin 启停、配置保存、参数编辑、结果展示、报告渲染都只依赖统一扩展协议。
