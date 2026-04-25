@@ -1995,7 +1995,7 @@ class TestHomePage(unittest.TestCase):
     """HomePage 引导入口与扩展状态"""
 
     def test_home_page_builds_banner_with_two_reserved_link_cards(self):
-        from ui.pages.home_page import HomePage
+        from ui.pages.home_page import HomePage, _HOME_CONTENT_MARGIN, _HOME_LINK_CARD_HEIGHT, _HOME_LINK_CARD_WIDTH
 
         page = HomePage()
         try:
@@ -2003,14 +2003,24 @@ class TestHomePage(unittest.TestCase):
             page.show()
             QApplication.processEvents()
             self.assertIsNotNone(page._banner)
+            self.assertEqual(page._banner.x(), 0)
+            self.assertEqual(page._banner.y(), 0)
+            self.assertEqual(page._banner.width(), page.width())
             self.assertFalse(page._banner._background.isNull())
             self.assertEqual(page._banner._hero_title.text(), "ALine")
             self.assertEqual(page._banner._hero_subtitle.text(), "科研数据管理与可视化工作台")
             self.assertEqual(page._banner._hero_hint.maximumWidth(), 760)
             self.assertGreaterEqual(page._banner._hero_hint.height(), page._banner._hero_hint.sizeHint().height())
             self.assertIsNotNone(page._banner._link_card_view)
+            self.assertEqual(page._banner._link_card_view._layout.count(), 2)
             self.assertEqual([card.titleLabel.text() for card in page._banner._link_cards], ["软件主页", "GitHub 仓库"])
-            self.assertEqual(page._banner._link_card_view.layout().count(), 3)
+            self.assertEqual(page._banner._link_cards[0]._icon_source, page._banner._card_icon_path)
+            self.assertEqual(page._banner._link_cards[0].width(), _HOME_LINK_CARD_WIDTH)
+            self.assertEqual(page._banner._link_cards[0].height(), _HOME_LINK_CARD_HEIGHT)
+            card_left = page._banner._link_cards[0].mapTo(page, page._banner._link_cards[0].rect().topLeft()).x()
+            new_button_left = page._new_btn.mapTo(page, page._new_btn.rect().topLeft()).x()
+            self.assertEqual(card_left, new_button_left)
+            self.assertEqual(new_button_left, _HOME_CONTENT_MARGIN)
         finally:
             page.deleteLater()
 
