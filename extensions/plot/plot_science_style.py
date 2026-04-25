@@ -53,9 +53,6 @@ def _science_style_rcparams():
 
 
 def apply_science_style(plot_context, options):
-    if plot_context.phase != "before_plot":
-        return
-
     rc_params = _science_style_rcparams()
 
     x_label = str(options.get("x_label", "")).strip()
@@ -85,9 +82,7 @@ def apply_science_style(plot_context, options):
         figure_patch["y_label"] = y_label
     plot_context.patch_figure_state(figure_patch)
 
-    legend_kwargs = {
-        "frameon": bool(options.get("legend_frame", rc_params.get("legend.frameon", False))),
-    }
+    legend_kwargs = {"frameon": bool(options.get("legend_frame", rc_params.get("legend.frameon", False)))}
     if legend_kwargs["frameon"]:
         legend_kwargs["framealpha"] = _clamp(options.get("legend_frame_alpha", rc_params.get("legend.framealpha", 1.0)), 0.0, 1.0, rc_params.get("legend.framealpha", 1.0))
         legend_kwargs["edgecolor"] = str(options.get("legend_edge_color", "#222222"))
@@ -113,13 +108,15 @@ def apply_science_style(plot_context, options):
 def register_extensions(registry):
     registry.register_plot(
         PlotExtension(
-            type="demo_plot_science_style",
+            type="plot_science_style",
             name="Science 图幅样式",
             handler=apply_science_style,
-            description="通过 plt.style.use('science') 套用 scienceplots 论文风格，并叠加当前图幅的少量覆盖设置。",
+            description="套用 scienceplots 论文风格，并叠加当前图幅的少量覆盖设置。",
             version="0.1.0",
             settings=True,
             source_kind="builtin",
+            tool_tier="experimental",
+            phases=("before_plot",),
             config_fields=[
                 ExtensionConfigField(key="x_label", description="X 轴标签；留空则保持当前设置。", field_type="string", default=""),
                 ExtensionConfigField(key="y_label", description="Y 轴标签；留空则保持当前设置。", field_type="string", default=""),

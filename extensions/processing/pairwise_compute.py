@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import List, Tuple
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from extensions.processing.base_tools import VERSION, align_lines_to_common_x
+from processing.data_engine import align_lines_to_common_x
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call
 
 
-def pairwise_compute_handler(xs, ys, params, lines=None):
-    del xs, ys
-    input_lines = list(lines or [])
+def pairwise_compute_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
+    input_lines, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
     if len(input_lines) != 2:
         raise ValueError("双曲线计算需要恰好选择两条输入曲线")
 
@@ -19,11 +19,11 @@ def pairwise_compute_handler(xs, ys, params, lines=None):
     x2 = list(secondary.get("x", []) or [])
     y2 = list(secondary.get("y", []) or [])
 
-    x_expr, y_expr = _resolve_pairwise_expressions(dict(params or {}))
+    x_expr, y_expr = _resolve_pairwise_expressions(options)
     new_x, new_y = _evaluate_pairwise_expression(x_expr, y_expr, x1, y1, x2, y2)
 
     default_name = f"{primary.get('name', '主曲线')} ⊕ {secondary.get('name', '副曲线')}"
-    result_name = str(dict(params or {}).get("result_name", "") or "").strip() or default_name
+    result_name = str(options.get("result_name", "") or "").strip() or default_name
     result_line = dict(primary or {})
     result_line.update({"name": result_name, "x": list(new_x), "y": list(new_y)})
     return {"lines": [result_line], "warnings": []}
@@ -114,10 +114,11 @@ def register_extensions(registry) -> None:
             name="双曲线运算",
             handler=pairwise_compute_handler,
             description="使用两条输入曲线执行 x1/y1/x2/y2 表达式运算。",
-            version=VERSION,
+            version=BUILTIN_EXTENSION_VERSION,
             lines_number=(2, 2),
             settings=True,
-                source_kind="builtin",
+            source_kind="builtin",
+            tool_tier="tool",
             config_fields=[
                 ExtensionConfigField(key="x_expr", label="X 表达式", field_type="string", default="x1"),
                 ExtensionConfigField(key="y_expr", label="Y 表达式", field_type="string", default="y1"),

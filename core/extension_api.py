@@ -41,6 +41,11 @@ _EXTENSION_SOURCE_HINTS = {
     "digitize": ("register_digitize", "DigitizeExtension"),
 }
 
+_EXTENSION_TOOL_TIER_LABELS = {
+    "tool": "工具",
+    "experimental": "实验",
+}
+
 _EXTENSION_SOURCE_KINDS = frozenset(_EXTENSION_ORIGIN_LABELS)
 
 
@@ -101,6 +106,13 @@ def normalize_extension_source_kind(kind: str | None, *, default: str = "builtin
     return "external"
 
 
+def normalize_extension_tool_tier(tier: str | None, *, default: str = "tool") -> str:
+    clean = str(tier or "").strip().lower() or default
+    if clean in _EXTENSION_TOOL_TIER_LABELS:
+        return clean
+    raise ValueError("tool_tier 仅允许 tool 或 experimental")
+
+
 def parse_extension_version(version: str | None) -> Tuple[int, int, int]:
     normalized = normalize_extension_version(version)
     major, minor, patch = normalized.split(".")
@@ -150,6 +162,29 @@ def normalize_extension_lines_number(raw: Any) -> Optional[Tuple[int, int]]:
     if upper != -1 and lower > upper:
         raise ValueError("lines_number 下限不能大于上限")
     return (lower, upper)
+
+
+def normalize_plot_extension_phases(raw: Any) -> Tuple[str, ...]:
+    if raw in (None, "", [], ()): 
+        return ("before_plot", "after_plot")
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        values = list(raw)
+    else:
+        raise ValueError("phases 必须是字符串或字符串列表")
+
+    allowed = {"before_plot", "after_plot"}
+    normalized: List[str] = []
+    for item in values:
+        phase = str(item or "").strip().lower()
+        if phase not in allowed:
+            raise ValueError("phases 仅允许 before_plot 或 after_plot")
+        if phase not in normalized:
+            normalized.append(phase)
+    if not normalized:
+        raise ValueError("phases 不能为空")
+    return tuple(normalized)
 
 
 def extension_lines_number(extension: Any) -> Optional[Tuple[int, int]]:
@@ -379,10 +414,12 @@ class ProcessingExtension:
     lines_number: Optional[Tuple[int, int] | List[int]] = None
     settings: bool = False
     source_kind: str = "builtin"
+    tool_tier: str = "tool"
     hidden: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
+        object.__setattr__(self, "tool_tier", normalize_extension_tool_tier(self.tool_tier))
 
     @property
     def id(self) -> str:
@@ -422,10 +459,12 @@ class AnalysisExtension:
     report_placeholders: List[Dict[str, Any]] = field(default_factory=list)
     settings: bool = False
     source_kind: str = "builtin"
+    tool_tier: str = "tool"
     hidden: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
+        object.__setattr__(self, "tool_tier", normalize_extension_tool_tier(self.tool_tier))
 
     @property
     def id(self) -> str:
@@ -462,12 +501,16 @@ class PlotExtension:
     default_options: Dict[str, Any] = field(default_factory=dict)
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
     lines_number: Optional[Tuple[int, int] | List[int]] = None
+    phases: Tuple[str, ...] = field(default_factory=lambda: ("before_plot", "after_plot"))
     settings: bool = False
     source_kind: str = "builtin"
+    tool_tier: str = "tool"
     hidden: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
+        object.__setattr__(self, "phases", normalize_plot_extension_phases(self.phases))
+        object.__setattr__(self, "tool_tier", normalize_extension_tool_tier(self.tool_tier))
 
     @property
     def id(self) -> str:
@@ -505,7 +548,11 @@ class DigitizeExtension:
     config_fields: List[ExtensionConfigField] = field(default_factory=list)
     settings: bool = False
     source_kind: str = "builtin"
+    tool_tier: str = "tool"
     hidden: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tool_tier", normalize_extension_tool_tier(self.tool_tier))
 
     @property
     def id(self) -> str:
@@ -731,8 +778,11 @@ def extension_resolved_default_options(extension: Any) -> Dict[str, Any]:
 
 def _validate_extension_contract(category: str, extension: Any) -> None:
     normalize_extension_version(getattr(extension, "version", DEFAULT_EXTENSION_VERSION))
+    normalize_extension_tool_tier(getattr(extension, "tool_tier", "tool"))
     if not isinstance(getattr(extension, "settings", False), bool):
         raise ValueError("settings 必须是布尔值")
+    if category == "plot":
+        normalize_plot_extension_phases(getattr(extension, "phases", None))
     lines_number = extension_lines_number(extension) if category in {"processing", "analysis", "plot"} else None
     extension_config_fields(extension, include_implicit_lines=False)
     legacy_defaults = dict(getattr(extension, "default_options", {}) or {})
@@ -745,6 +795,17 @@ def _validate_extension_contract(category: str, extension: Any) -> None:
             validate_extension_lines_list(legacy_defaults.get("lines_list"), lines_number, present=True)
         elif lines_number is not None:
             validate_extension_lines_list([], lines_number, present=False)
+    if category == "analysis":
+        for item in list(getattr(extension, "report_placeholders", []) or []):
+            if not isinstance(item, dict):
+                raise ValueError("report_placeholders 必须使用包含 token / label / description 的字典列表")
+            token = str(item.get("token") or "").strip()
+            label = str(item.get("label") or "").strip()
+            description = str(item.get("description") or "").strip()
+            if not token.startswith("{{") or not token.endswith("}}"):
+                raise ValueError("report_placeholders.token 必须使用 {{token}} 形式")
+            if not label or not description:
+                raise ValueError("report_placeholders 必须显式提供 label 与 description")
 
 
 class ExtensionRegistry:
@@ -1053,10 +1114,10 @@ def _builtin_extension_disabled_markers(disabled_extension_ids: Iterable[str] | 
 
 def _extension_entries_by_category(registry: ExtensionRegistry) -> Dict[str, List[Dict[str, str]]]:
     return {
-        "processing": [{"type": item.type, "name": item.name} for item in registry.list_processing()],
-        "analysis": [{"type": item.type, "name": item.name} for item in registry.list_analysis()],
-        "plot": [{"type": item.type, "name": item.name} for item in registry.list_plot()],
-        "digitize": [{"type": item.type, "name": item.name} for item in registry.list_digitize()],
+        "processing": [{"type": item.type, "name": item.name, "tool_tier": item.tool_tier} for item in registry.list_processing()],
+        "analysis": [{"type": item.type, "name": item.name, "tool_tier": item.tool_tier} for item in registry.list_analysis()],
+        "plot": [{"type": item.type, "name": item.name, "tool_tier": item.tool_tier} for item in registry.list_plot()],
+        "digitize": [{"type": item.type, "name": item.name, "tool_tier": item.tool_tier} for item in registry.list_digitize()],
     }
 
 
@@ -1084,6 +1145,7 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
     hidden = bool(getattr(extension, "hidden", False))
     listed = bool(getattr(extension, "listed", not hidden and source_kind != "base"))
     closable = bool(getattr(extension, "closable", source_kind != "base"))
+    tool_tier = normalize_extension_tool_tier(getattr(extension, "tool_tier", "tool"))
     return {
         "id": extension.id,
         "type": extension.type,
@@ -1094,10 +1156,13 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "settings": bool(getattr(extension, "settings", False)),
         "source_kind": source_kind,
         "source_label": _EXTENSION_SOURCE_LABELS.get(source_kind, source_kind),
+        "tool_tier": tool_tier,
+        "tool_tier_label": _EXTENSION_TOOL_TIER_LABELS.get(tool_tier, tool_tier),
         "origin_kind": source_kind,
         "origin_label": _EXTENSION_ORIGIN_LABELS.get(source_kind, source_kind),
         "function_category": function_category,
         "function_label": _EXTENSION_CATEGORY_LABELS.get(function_category, function_category),
+        "phases": list(normalize_plot_extension_phases(getattr(extension, "phases", None))) if function_category == "plot" else [],
         "hidden": hidden,
         "listed": listed,
         "closable": closable,
@@ -1233,16 +1298,37 @@ def _invoke_handler_with_optional_payload(
 
 def invoke_processing_extension_handler(
     handler: Callable[..., Any],
-    xs: List[float],
-    ys: List[float],
+    inputs: List[Dict[str, Any]],
     params: Dict[str, Any],
-    lines: List[Dict[str, Any]],
 ) -> Any:
+    normalized_inputs = [dict(item or {}) for item in inputs]
+    try:
+        positional_params = [
+            item
+            for item in inspect.signature(handler).parameters.values()
+            if item.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+    except (TypeError, ValueError):
+        positional_params = []
+
+    if positional_params and str(positional_params[0].name or "").strip().casefold() == "inputs":
+        return _invoke_handler_with_optional_payload(
+            handler,
+            (normalized_inputs, dict(params)),
+            "lines_list",
+            normalized_inputs,
+        )
+
+    primary = dict(normalized_inputs[0] or {}) if normalized_inputs else {}
     return _invoke_handler_with_optional_payload(
         handler,
-        (list(xs), list(ys), dict(params)),
+        (
+            list(primary.get("x", []) or []),
+            list(primary.get("y", []) or []),
+            dict(params),
+        ),
         "lines",
-        list(lines or []),
+        normalized_inputs,
     )
 
 
@@ -1273,10 +1359,15 @@ def plot_extension_uses_context_api(handler: Callable[..., Any]) -> bool:
 
 
 def invoke_plot_extension_handler(
-    handler: Callable[..., Any],
+    extension_or_handler: Any,
     context: PlotExtensionContext,
     options: Dict[str, Any],
 ) -> None:
+    extension = extension_or_handler if isinstance(extension_or_handler, PlotExtension) else None
+    handler = extension.handler if extension is not None else extension_or_handler
+    supported_phases = normalize_plot_extension_phases(getattr(extension, "phases", None)) if extension is not None else ("before_plot", "after_plot")
+    if context.phase not in supported_phases:
+        return
     if plot_extension_uses_context_api(handler):
         handler(context, dict(options))
         return
@@ -1300,7 +1391,7 @@ def _extension_python_files(directory: str | Path) -> List[Path]:
 
 def builtin_extension_files(base_dir: str | Path | None = None) -> List[Path]:
     directory = default_extensions_directory(base_dir)
-    return _extension_python_files(directory)
+    return [path for path in _extension_python_files(directory) if not path.name.endswith("_demo.py")]
 
 
 def external_extension_files(directory: str | Path | None = None) -> List[Path]:
@@ -1382,6 +1473,7 @@ def _build_extension_specs(
         discovered_entries = [entry for entries in entries_by_category.values() for entry in entries]
         names = [entry["name"] for entry in discovered_entries if entry.get("name")]
         type_ids = [entry["type"] for entry in discovered_entries if entry.get("type")]
+        tool_tiers = sorted({str(entry.get("tool_tier") or "tool") for entry in discovered_entries if entry.get("tool_tier")})
         spec_id = _extension_file_id(path)
         specs.append({
             "id": spec_id,
@@ -1392,6 +1484,8 @@ def _build_extension_specs(
             "categories": categories,
             "category_labels": [_EXTENSION_CATEGORY_LABELS.get(category, category) for category in categories],
             "type_ids": type_ids,
+            "tool_tiers": tool_tiers,
+            "tool_tier_labels": [_EXTENSION_TOOL_TIER_LABELS.get(tier, tier) for tier in tool_tiers],
             "entries_by_category": entries_by_category,
             "names_by_category": names_by_category,
             "type_ids_by_category": type_ids_by_category,

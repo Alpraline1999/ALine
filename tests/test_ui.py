@@ -1715,14 +1715,14 @@ class TestSettingsPage(unittest.TestCase):
 
         builtin_specs = [
             {
-                "id": "demo_plot_reference_line",
-                "file_name": "plot_reference_line_demo.py",
-                "name": "圆形框",
+                "id": "plot_reference_line",
+                "file_name": "plot_reference_line.py",
+                "name": "参考线标注",
                 "categories": ["plot"],
                 "category_labels": ["绘图扩展"],
-                "type_ids": ["demo_plot_reference_line"],
-                "names_by_category": {"plot": ["圆形框"]},
-                "type_ids_by_category": {"plot": ["demo_plot_reference_line"]},
+                "type_ids": ["plot_reference_line"],
+                "names_by_category": {"plot": ["参考线标注"]},
+                "type_ids_by_category": {"plot": ["plot_reference_line"]},
                 "source": "builtin",
                 "source_label": "内置",
                 "load_error": "",
@@ -1758,7 +1758,7 @@ class TestSettingsPage(unittest.TestCase):
             self.assertEqual(temp_page._extension_tabs.tabText(3), "数字化扩展")
             self.assertEqual(temp_page._external_extension_tabs.tabText(0), "绘图扩展")
             self.assertEqual(temp_page._external_extension_tabs.tabText(3), "数字化扩展")
-            self.assertEqual(temp_page._builtin_extension_checkboxes["demo_plot_reference_line"].text(), "圆形框")
+            self.assertEqual(temp_page._builtin_extension_checkboxes["plot_reference_line"].text(), "参考线标注")
             self.assertEqual(temp_page._external_extension_checkboxes["external_plot_reference_line"].text(), "外部圆角")
         finally:
             if temp_page is not None:
@@ -1768,6 +1768,7 @@ class TestSettingsPage(unittest.TestCase):
         from qfluentwidgets import SmoothScrollArea
         from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_MAX_HEIGHT
 
+        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 900)
         self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
 
@@ -1832,14 +1833,14 @@ class TestSettingsPage(unittest.TestCase):
             external_dir = Path(temp_dir) / "external_extensions"
             builtin_specs = [
                 {
-                    "id": "demo_plot_reference_line",
-                    "file_name": "plot_reference_line_demo.py",
-                    "name": "圆形框",
+                    "id": "plot_reference_line",
+                    "file_name": "plot_reference_line.py",
+                    "name": "参考线标注",
                     "categories": ["plot"],
                     "category_labels": ["绘图扩展"],
-                    "type_ids": ["demo_plot_reference_line"],
-                    "names_by_category": {"plot": ["圆形框"]},
-                    "type_ids_by_category": {"plot": ["demo_plot_reference_line"]},
+                    "type_ids": ["plot_reference_line"],
+                    "names_by_category": {"plot": ["参考线标注"]},
+                    "type_ids_by_category": {"plot": ["plot_reference_line"]},
                     "source": "builtin",
                     "source_label": "内置",
                     "load_error": "",
@@ -1865,19 +1866,19 @@ class TestSettingsPage(unittest.TestCase):
                  mock.patch("core.extension_api.list_external_extension_specs", return_value=external_specs), \
                  mock.patch(
                      "core.extension_api.reload_configured_extensions",
-                     return_value={"loaded": ["builtin:demo_plot_reference_line"], "errors": []},
+                     return_value={"loaded": ["builtin:plot_reference_line"], "errors": []},
                  ) as reload_mock:
                 self.page._load_extension_settings()
                 self.assertEqual(
-                    self.page._builtin_extension_checkboxes["demo_plot_reference_line"].text(),
-                    "圆形框",
+                    self.page._builtin_extension_checkboxes["plot_reference_line"].text(),
+                    "参考线标注",
                 )
                 self.assertEqual(
                     self.page._external_extension_checkboxes["external_plot_reference_line"].text(),
                     "外部圆角",
                 )
                 self.page._external_extensions_dir_edit.setText(str(external_dir))
-                self.page._builtin_extension_checkboxes["demo_plot_reference_line"].setChecked(False)
+                self.page._builtin_extension_checkboxes["plot_reference_line"].setChecked(False)
                 self.page._external_extension_checkboxes["external_plot_reference_line"].setChecked(False)
                 self.page._external_extensions_enabled_checkbox.setChecked(False)
                 self.page._save_extension_settings()
@@ -1885,7 +1886,7 @@ class TestSettingsPage(unittest.TestCase):
             self.assertEqual(received, [True])
             self.assertTrue(config_path.exists())
             config_text = config_path.read_text(encoding="utf-8")
-            self.assertIn("demo_plot_reference_line", config_text)
+            self.assertIn("plot_reference_line", config_text)
             self.assertIn("external_plot_reference_line", config_text)
             self.assertIn(str(external_dir), config_text)
             self.assertIn('"load_external_extensions": false', config_text)
@@ -1898,14 +1899,14 @@ class TestSettingsPage(unittest.TestCase):
 
         builtin_specs = [
             {
-                "id": "demo_plot_reference_line",
-                "file_name": "plot_reference_line_demo.py",
-                "name": "圆形框",
+                "id": "plot_reference_line",
+                "file_name": "plot_reference_line.py",
+                "name": "参考线标注",
                 "categories": ["plot"],
                 "category_labels": ["绘图扩展"],
-                "type_ids": ["demo_plot_reference_line"],
-                "names_by_category": {"plot": ["圆形框"]},
-                "type_ids_by_category": {"plot": ["demo_plot_reference_line"]},
+                "type_ids": ["plot_reference_line"],
+                "names_by_category": {"plot": ["参考线标注"]},
+                "type_ids_by_category": {"plot": ["plot_reference_line"]},
                 "source": "builtin",
                 "source_label": "内置",
                 "load_error": "",
@@ -5285,8 +5286,16 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._btn_remove.text(), "移除选中")
 
     def test_chart_left_panel_uses_vertical_splitter(self):
+        self.page.resize(1280, 820)
+        self.page.show()
+        QApplication.processEvents()
+
         self.assertEqual(self.page._chart_left_splitter.count(), 2)
-        self.assertGreater(self.page._chart_left_splitter.sizes()[1], 0)
+        sizes = self.page._chart_left_splitter.sizes()
+        self.assertGreater(sizes[1], 0)
+        ratio = sizes[0] / sum(sizes)
+        self.assertGreater(ratio, 0.34)
+        self.assertLess(ratio, 0.46)
 
     def test_plot_style_numeric_inputs_use_compact_widths(self):
         self.assertLessEqual(self.page._font_size_edit.maximumWidth(), 96)
@@ -5987,6 +5996,34 @@ class TestProcessPage(unittest.TestCase):
         self.assertFalse(self.page._preview_pan_btn.isChecked())
         self.assertFalse(self.page._preview_box_zoom_btn.isChecked())
 
+    def test_process_preview_navigation_buttons_use_toggle_toolbuttons_and_right_click_clears_mode(self):
+        from qfluentwidgets import ToggleToolButton
+
+        if self.page._preview_nav_toolbar is None or self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page.show()
+        QApplication.processEvents()
+
+        self.assertIsInstance(self.page._preview_pan_btn, ToggleToolButton)
+        self.assertIsInstance(self.page._preview_box_zoom_btn, ToggleToolButton)
+
+        self.page._preview_box_zoom_btn.click()
+        QApplication.processEvents()
+        self.assertEqual(self.page._preview_navigation_mode(), "zoom")
+
+        QTest.mouseClick(
+            self.page._canvas,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+            self.page._canvas.rect().center(),
+        )
+        QApplication.processEvents()
+
+        self.assertEqual(self.page._preview_navigation_mode(), "")
+        self.assertFalse(self.page._preview_pan_btn.isChecked())
+        self.assertFalse(self.page._preview_box_zoom_btn.isChecked())
+
     def test_on_tree_node_selected_series(self):
         self.page.on_tree_node_activated("series", self.s.id)
 
@@ -5994,8 +6031,16 @@ class TestProcessPage(unittest.TestCase):
         self.assertEqual(self.page._selected_input_list.count(), 1)
 
     def test_process_selected_input_panel_uses_vertical_splitter(self):
+        self.page.resize(1280, 820)
+        self.page.show()
+        QApplication.processEvents()
+
         self.assertEqual(self.page._selected_input_splitter.count(), 2)
-        self.assertGreater(self.page._selected_input_splitter.sizes()[1], 0)
+        sizes = self.page._selected_input_splitter.sizes()
+        self.assertGreater(sizes[1], 0)
+        ratio = sizes[0] / sum(sizes)
+        self.assertGreater(ratio, 0.34)
+        self.assertLess(ratio, 0.46)
 
     def test_on_tree_node_selected_data_file(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
@@ -6840,8 +6885,16 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertGreater(self.page._page_splitter.sizes()[1], 0)
 
     def test_analysis_input_panel_uses_vertical_splitter(self):
+        self.page.resize(1280, 820)
+        self.page.show()
+        QApplication.processEvents()
+
         self.assertEqual(self.page._input_panel_splitter.count(), 2)
-        self.assertGreater(self.page._input_panel_splitter.sizes()[1], 0)
+        sizes = self.page._input_panel_splitter.sizes()
+        self.assertGreater(sizes[1], 0)
+        ratio = sizes[0] / sum(sizes)
+        self.assertGreater(ratio, 0.34)
+        self.assertLess(ratio, 0.46)
 
     def test_input_action_buttons_match_height_and_template_label_is_hidden(self):
         self.assertEqual(self.page._btn_clear_inputs.height(), 32)
@@ -7995,7 +8048,7 @@ class TestDigitizePage(unittest.TestCase):
         items = [self.page._auto_mode_combo.itemText(i) for i in range(self.page._auto_mode_combo.count())]
 
         self.assertIn("颜色识别", items)
-        self.assertIn("图形识别 (测试功能)", items)
+        self.assertIn("图形识别", items)
 
     def test_digitize_auto_controls_use_compact_extension_panel(self):
         self.assertIs(self.page._auto_mode_combo, self.page._digitize_extension_controls._selector)
@@ -8030,6 +8083,13 @@ class TestDigitizePage(unittest.TestCase):
         self.assertFalse(_is_descendant(self.page._digitize_extension_controls._config_row_widget, self.page._digitize_auto_config_scroll))
         self.assertFalse(_is_descendant(self.page._manual_tools_row, self.page._digitize_auto_config_scroll))
         self.assertFalse(_is_descendant(self.page._auto_tools_row, self.page._digitize_auto_config_scroll))
+
+    def test_digitize_auto_extension_panel_has_no_trailing_stretch_after_controls(self):
+        combined_tab = self.page._right_tabs.widget(0)
+        layout = combined_tab.layout()
+
+        self.assertIsNotNone(layout)
+        self.assertIsNotNone(layout.itemAt(layout.count() - 1).widget())
 
     def test_digitize_curve_table_uses_compact_upper_split(self):
         self.page.resize(1320, 880)
@@ -8609,41 +8669,42 @@ class TestMainWindow(unittest.TestCase):
         self.assertTrue(self.win._tree_toggle_nav_btn.isEnabled())
 
     def test_page_tree_focus_mode_applies_page_specific_filter(self):
-        from ui.main_window import _BUSINESS_TREE_KINDS
-
         previous = self.win._page_tree_focus_mode_enabled
         try:
             self.win._page_tree_focus_mode_enabled = True
 
+            def _top_level_labels() -> list[str]:
+                tree = self.win._tree_panel.tree._tree
+                return [tree.topLevelItem(index).text(0) for index in range(tree.topLevelItemCount())]
+
+            def _top_level_kinds() -> list[str]:
+                tree = self.win._tree_panel.tree._tree
+                return [tree.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole)[0] for index in range(tree.topLevelItemCount())]
+
             self.win.switchTo(self.win.data_page)
+            self.assertEqual(self.win._tree_panel.tree._filter_kinds, [])
             self.assertEqual(
-                self.win._tree_panel.tree._filter_kinds,
-                list(_BUSINESS_TREE_KINDS),
+                self.win._tree_panel.tree._focus_root_group_types,
+                ["source_files", "datasets", "pictures", "analysis_result_group", "images", "tools"],
             )
+            self.assertEqual(_top_level_labels()[:5], ["源文件", "数据集", "图片集", "分析结果", "数字化"])
+            self.assertTrue(all(kind == "folder" for kind in _top_level_kinds()))
 
             self.win.switchTo(self.win.chart_page)
-            self.assertEqual(
-                self.win._tree_panel.tree._filter_kinds,
-                ["data_file", "picture", "series", "curve"],
-            )
+            self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "pictures"])
+            self.assertEqual(_top_level_labels(), ["数据集", "图片集"])
 
             self.win.switchTo(self.win.process_page)
-            self.assertEqual(
-                self.win._tree_panel.tree._filter_kinds,
-                ["data_file", "series", "curve"],
-            )
+            self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets"])
+            self.assertEqual(_top_level_labels(), ["数据集"])
 
             self.win.switchTo(self.win.analysis_page)
-            self.assertEqual(
-                self.win._tree_panel.tree._filter_kinds,
-                ["data_file", "analysis_result", "series", "curve"],
-            )
+            self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "analysis_result_group"])
+            self.assertEqual(_top_level_labels(), ["数据集", "分析结果"])
 
             self.win.switchTo(self.win.digitize_page)
-            self.assertEqual(
-                self.win._tree_panel.tree._filter_kinds,
-                ["data_file", "image_work", "curve"],
-            )
+            self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "images"])
+            self.assertEqual(_top_level_labels(), ["数据集", "数字化"])
         finally:
             self.win._page_tree_focus_mode_enabled = previous
             self.win._update_tree_panel_visibility(self.win.stackedWidget.currentWidget())

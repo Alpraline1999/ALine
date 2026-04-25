@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Set
 
-from PySide6.QtCore import QItemSelectionModel, Qt, Signal, QStringListModel
+from PySide6.QtCore import QItemSelectionModel, QSignalBlocker, Qt, QTimer, Signal, QStringListModel
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QCompleter, QFileDialog, QHBoxLayout, QHeaderView, QListWidgetItem, QSplitter,
@@ -179,7 +179,29 @@ class AnalysisPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        QTimer.singleShot(0, self._sync_input_panel_splitter_sizes)
         self._onboarding_controller.schedule_auto_start()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not getattr(self, "_input_panel_splitter_user_resized", False):
+            QTimer.singleShot(0, self._sync_input_panel_splitter_sizes)
+
+    def _sync_input_panel_splitter_sizes(self) -> None:
+        if not hasattr(self, "_input_panel_splitter") or self._input_panel_splitter is None:
+            return
+        if getattr(self, "_input_panel_splitter_user_resized", False):
+            return
+        total_height = self._input_panel_splitter.height()
+        if total_height <= 0:
+            return
+        upper = max(1, int(total_height * 0.4))
+        lower = max(1, total_height - upper)
+        with QSignalBlocker(self._input_panel_splitter):
+            self._input_panel_splitter.setSizes([upper, lower])
+
+    def _on_input_panel_splitter_moved(self, _pos: int, _index: int) -> None:
+        self._input_panel_splitter_user_resized = True
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -293,6 +315,8 @@ class AnalysisPage(QWidget):
         self._input_panel_splitter = QSplitter(Qt.Orientation.Vertical, panel)
         self._input_panel_splitter.setHandleWidth(6)
         self._input_panel_splitter.setChildrenCollapsible(False)
+        self._input_panel_splitter.splitterMoved.connect(self._on_input_panel_splitter_moved)
+        self._input_panel_splitter_user_resized = False
         lv.addWidget(self._input_panel_splitter, 1)
 
         input_section = QWidget(self._input_panel_splitter)
@@ -384,7 +408,7 @@ class AnalysisPage(QWidget):
 
         self._input_panel_splitter.setStretchFactor(0, 0)
         self._input_panel_splitter.setStretchFactor(1, 1)
-        self._input_panel_splitter.setSizes([210, 430])
+        self._input_panel_splitter.setSizes([400, 600])
 
         self._on_type_changed(0)
         return panel
@@ -542,7 +566,11 @@ class AnalysisPage(QWidget):
             canvas = FigureCanvas(figure)
             canvas.setMinimumHeight(300)
             self._apply_result_canvas_background(canvas)
-            preview_nav_toolbar = create_navigation_toolbar(canvas, plot_widget)
+            preview_nav_toolbar = create_navigation_toolbar(
+                canvas,
+                plot_widget,
+                sync_callback=lambda ref=view_ref: self._sync_analysis_preview_nav_toggle_states(ref.get("view")),
+            )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 plot_widget,
                 button_size=WORKBENCH_BUTTON_HEIGHT,

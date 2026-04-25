@@ -98,8 +98,9 @@ def register_extensions(registry):
             description="基于 FFT 计算主曲线的频谱分布，并返回主频与频率分辨率。",
             version="0.1.0",
             lines_number=(1, 1),
-                settings=True,
-                source_kind="builtin",
+            settings=True,
+            source_kind="builtin",
+            tool_tier="experimental",
             config_fields=[
                 ExtensionConfigField(
                     key="sampling_rate",
@@ -134,11 +135,11 @@ def register_extensions(registry):
                 ),
             ],
             report_placeholders=[
-                {"key": "dominant_frequency", "label": "主频", "description": "频谱主峰对应的频率。"},
-                {"key": "dominant_amplitude", "label": "主峰幅值", "description": "频谱主峰对应的幅值。"},
-                {"key": "sampling_rate", "label": "采样率", "description": "本次频谱分析使用的采样率。"},
-                {"key": "frequency_resolution", "label": "频率分辨率", "description": "频谱频率轴分辨率。"},
-                {"key": "spectrum_points", "label": "频谱点数", "description": "当前频谱输出点数。"},
+                {"token": "{{dominant_frequency}}", "label": "主频", "description": "频谱主峰对应的频率。"},
+                {"token": "{{dominant_amplitude}}", "label": "主峰幅值", "description": "频谱主峰对应的幅值。"},
+                {"token": "{{sampling_rate}}", "label": "采样率", "description": "本次频谱分析使用的采样率。"},
+                {"token": "{{frequency_resolution}}", "label": "频率分辨率", "description": "频谱频率轴分辨率。"},
+                {"token": "{{spectrum_points}}", "label": "频谱点数", "description": "当前频谱输出点数。"},
             ],
         )
     )

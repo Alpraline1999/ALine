@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.processing.base_tools import align_lines_to_common_x
+from processing.data_engine import align_lines_to_common_x
 
 
 def _as_float(value, default):
@@ -85,7 +85,7 @@ def draw_dual_curve_band(plot_context, options):
         axis.fill_between(x_values, first_y, second_y, color=fill_color, alpha=fill_alpha, label=label, zorder=0)
         return
 
-    if plot_context.phase != "after_plot" or not bool(options.get("annotate_max_gap", True)):
+    if not bool(options.get("annotate_max_gap", True)):
         return
 
     differences = [abs(left - right) for left, right in zip(first_y, second_y)]
@@ -119,83 +119,25 @@ def register_extensions(registry):
             type="plot_dual_curve_band",
             name="双曲线差异带",
             handler=draw_dual_curve_band,
-            description="演示如何在绘图阶段对前两条可见曲线自动对齐，并绘制双曲线差异带。",
+            description="对两条输入曲线自动对齐，并绘制双曲线差异带。",
             version="0.1.0",
             lines_number=(2, 2),
             settings=True,
             source_kind="builtin",
+            tool_tier="experimental",
+            phases=("before_plot", "after_plot"),
             config_fields=[
-                ExtensionConfigField(
-                    key="align_mode",
-                    description="坐标未对齐时的处理方式：auto 自动重采样，strict 直接报错。",
-                    field_type="selective",
-                    default="auto",
-                    choices=("auto", "strict"),
-                ),
-                ExtensionConfigField(
-                    key="resample_mode",
-                    description="自动对齐时的重采样方式：count 固定点数，spacing 固定间距。",
-                    field_type="selective",
-                    default="count",
-                    choices=("count", "spacing"),
-                ),
-                ExtensionConfigField(
-                    key="n",
-                    description="固定点数模式下的输出点数。",
-                    field_type="integer",
-                    default=200,
-                ),
-                ExtensionConfigField(
-                    key="step",
-                    description="固定间距模式下的 X 轴间距。",
-                    field_type="number",
-                    default=0.1,
-                ),
-                ExtensionConfigField(
-                    key="fill_color",
-                    description="差异带颜色。",
-                    field_type="color",
-                    default="#F4B183",
-                ),
-                ExtensionConfigField(
-                    key="fill_alpha",
-                    description="差异带透明度。",
-                    field_type="limited",
-                    default=0.18,
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                ),
-                ExtensionConfigField(
-                    key="label",
-                    description="图例中的差异带名称。",
-                    field_type="string",
-                    default="双曲线差异带",
-                ),
-                ExtensionConfigField(
-                    key="annotate_max_gap",
-                    description="是否标记最大差值位置。",
-                    field_type="boolean",
-                    default=True,
-                ),
-                ExtensionConfigField(
-                    key="annotation_precision",
-                    description="最大差值注释的小数位数。",
-                    field_type="integer",
-                    default=3,
-                ),
-                ExtensionConfigField(
-                    key="annotation_font_size",
-                    description="最大差值注释字号。",
-                    field_type="integer",
-                    default=9,
-                ),
-                ExtensionConfigField(
-                    key="append_alignment_note",
-                    description="是否在标题中追加对齐说明。",
-                    field_type="boolean",
-                    default=True,
-                ),
+                ExtensionConfigField(key="align_mode", description="坐标未对齐时的处理方式：auto 自动重采样，strict 直接报错。", field_type="selective", default="auto", choices=("auto", "strict")),
+                ExtensionConfigField(key="resample_mode", description="自动对齐时的重采样方式：count 固定点数，spacing 固定间距。", field_type="selective", default="count", choices=("count", "spacing")),
+                ExtensionConfigField(key="n", description="固定点数模式下的输出点数。", field_type="integer", default=200),
+                ExtensionConfigField(key="step", description="固定间距模式下的 X 轴间距。", field_type="number", default=0.1),
+                ExtensionConfigField(key="fill_color", description="差异带颜色。", field_type="color", default="#F4B183"),
+                ExtensionConfigField(key="fill_alpha", description="差异带透明度。", field_type="limited", default=0.18, min_value=0.0, max_value=1.0, step=0.01),
+                ExtensionConfigField(key="label", description="图例中的差异带名称。", field_type="string", default="双曲线差异带"),
+                ExtensionConfigField(key="annotate_max_gap", description="是否标记最大差值位置。", field_type="boolean", default=True),
+                ExtensionConfigField(key="annotation_precision", description="最大差值注释的小数位数。", field_type="integer", default=3),
+                ExtensionConfigField(key="annotation_font_size", description="最大差值注释字号。", field_type="integer", default=9),
+                ExtensionConfigField(key="append_alignment_note", description="是否在标题中追加对齐说明。", field_type="boolean", default=True),
             ],
         )
     )

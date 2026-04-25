@@ -146,7 +146,29 @@ class ProcessPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        QTimer.singleShot(0, self._sync_selected_input_splitter_sizes)
         self._onboarding_controller.schedule_auto_start()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not getattr(self, "_selected_input_splitter_user_resized", False):
+            QTimer.singleShot(0, self._sync_selected_input_splitter_sizes)
+
+    def _sync_selected_input_splitter_sizes(self) -> None:
+        if not hasattr(self, "_selected_input_splitter") or self._selected_input_splitter is None:
+            return
+        if getattr(self, "_selected_input_splitter_user_resized", False):
+            return
+        total_height = self._selected_input_splitter.height()
+        if total_height <= 0:
+            return
+        upper = max(1, int(total_height * 0.4))
+        lower = max(1, total_height - upper)
+        with QSignalBlocker(self._selected_input_splitter):
+            self._selected_input_splitter.setSizes([upper, lower])
+
+    def _on_selected_input_splitter_moved(self, _pos: int, _index: int) -> None:
+        self._selected_input_splitter_user_resized = True
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -297,6 +319,8 @@ class ProcessPage(QWidget):
         self._selected_input_splitter = QSplitter(Qt.Orientation.Vertical, panel)
         self._selected_input_splitter.setHandleWidth(6)
         self._selected_input_splitter.setChildrenCollapsible(False)
+        self._selected_input_splitter.splitterMoved.connect(self._on_selected_input_splitter_moved)
+        self._selected_input_splitter_user_resized = False
         mv.addWidget(self._selected_input_splitter, 1)
 
         selected_section = QWidget(self._selected_input_splitter)
@@ -441,7 +465,7 @@ class ProcessPage(QWidget):
         controls_layout.addLayout(export_row)
         self._selected_input_splitter.setStretchFactor(0, 0)
         self._selected_input_splitter.setStretchFactor(1, 1)
-        self._selected_input_splitter.setSizes([220, 440])
+        self._selected_input_splitter.setSizes([400, 600])
         self._refresh_pipeline_templates()
         self._refresh_save_targets()
         return panel
@@ -455,7 +479,11 @@ class ProcessPage(QWidget):
         if _HAS_MPL:
             self._figure = Figure(figsize=(5, 4))
             self._canvas = FigureCanvas(self._figure)
-            self._preview_nav_toolbar = create_navigation_toolbar(self._canvas, panel)
+            self._preview_nav_toolbar = create_navigation_toolbar(
+                self._canvas,
+                panel,
+                sync_callback=self._sync_preview_nav_toggle_states,
+            )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 panel,
                 button_size=WORKBENCH_BUTTON_HEIGHT,

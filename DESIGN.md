@@ -702,15 +702,14 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 ### 10.1 目标
 
-目标不是简单“把 demo 改名”，而是把当前仓库内的 builtin 扩展分成三层明确能力：
+目标不是简单“把文件改名”，而是把当前仓库内的 builtin 扩展收口成两层明确能力：
 
 1. 正式工具：默认可见、默认可用、参数和结果协议稳定。
-2. 示例工具：保留样例价值，但不再和正式工具混在同一层级对外承诺能力。
-3. 实验工具：允许继续演进，但默认不作为稳定工作流入口。
+2. 实验工具：允许继续演进，但默认不作为稳定工作流入口。
 
 重构后的内置扩展应满足以下产品要求：
 
-1. 用户能区分“可直接用于业务”的工具和“演示 / 试验”的扩展。
+1. 用户能区分“可直接用于业务”的工具和“实验中的”扩展。
 2. 同类扩展在输入、参数、结果、错误提示上遵循统一协议。
 3. 设置页、扩展面板、结果页、报告模板对 builtin 的行为一致，不再保留大量兼容分支。
 
@@ -720,9 +719,9 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 | 类别       | 当前状态                             | 主要问题                                                                           |
 | ---------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
-| processing | 大部分已经是正式工具                 | 个别 demo 仍混在同一列表；多曲线输出协议仍有兼容分支                               |
-| analysis   | 核心工具已成熟                       | demo 分析扩展和正式分析扩展混列；报告占位符 schema 还未完全统一                    |
-| plot       | 可用能力多，但多数仍以 demo 形态存在 | before_plot / after_plot 双阶段下，部分注释类扩展缺少 phase 边界，存在重复绘制风险 |
+| processing | 大部分已经是正式工具                 | experimental 能力已拆出，但多曲线输出协议仍有兼容分支                             |
+| analysis   | 核心工具已成熟                       | experimental 分析扩展与正式分析扩展的报告占位符 schema 仍需统一                    |
+| plot       | 可用能力多，已拆成 tool / experimental | before_plot / after_plot 双阶段下，必须依赖显式 phase 元数据避免重复绘制         |
 | digitize   | 颜色识别可视作正式工具               | 图形识别仍偏实验态，参数和输出契约还不够稳定                                       |
 
 按当前仓库现状，可直接视作正式 builtin 工具的优先集合：
@@ -731,11 +730,11 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 2. Analysis：curve_fit、peak_detect、statistics、correlation、error_compare。
 3. Digitize：color_detect。
 
-当前仍应保留为示例或实验的集合：
+当前仍应保留为 experimental 的集合：
 
-1. Processing：processing_kalman_filter_demo、processing_multi_curve_mean_demo。
-2. Analysis：analysis_spectrum_demo、analysis_multi_curve_correlation_demo。
-3. Plot：现有全部 plot_*_demo 文件。
+1. Processing：kalman_filter、multi_curve_mean。
+2. Analysis：spectrum_analysis、multi_curve_correlation。
+3. Plot：plot_reference_line、plot_dual_curve_band、plot_science_style、plot_polar_projection。
 4. Digitize：shape_detect。
 
 ### 10.3 已确认约束
@@ -752,7 +751,7 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 #### 原则 1：先分层，再工具化
 
-先把 builtin 扩展分成 `tool / demo / experimental` 三层，再决定哪些进入正式工具面板。没有分层的前提下，任何“统一体验”都会把实验能力直接暴露给最终用户。
+先把 builtin 扩展分成 `tool / experimental` 两层，并把 demo 样例完全移出运行时。没有这层收口，任何“统一体验”都会把实验能力直接暴露给最终用户。
 
 #### 原则 2：元数据是唯一 UI 契约
 
@@ -767,7 +766,7 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 #### 原则 3：一类扩展只保留一套正式输出协议
 
-1. Processing：正式支持 `(xs, ys)` 与 `{"lines": [...], "warnings": [...]}` 两种结果。
+1. Processing：正式支持 `(inputs, params)` 输入，以及 `(xs, ys)` 与 `{"lines": [...], "warnings": [...]}` 两种结果。
 2. Analysis：正式支持 `summary_items / tables / texts / _plot_series / report_placeholders` 这一组结构化结果。
 3. Plot：正式支持通过 `plot_context` 修改图表，不依赖页面私有状态，不混用隐式返回值。
 4. Digitize：正式支持 `points + summary + warnings` 结构，不再让页面猜测字段。
@@ -810,9 +809,9 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 建议在不破坏当前目录扫描机制的前提下，先采用“元数据分层 + 文件命名保留”的温和方案：
 
 1. `source_kind` 继续保留 `builtin`，不引入新的来源分类。
-2. 新增或约定一个工具成熟度字段，例如 `tool_tier`，取值仅允许 `tool / demo / experimental`。
-3. 设置页和扩展面板默认只展示 `tool`；`demo` 和 `experimental` 进入“样例与实验”分组或通过显式开关显示。
-4. 文件名中的 `_demo` 暂时保留，直到对应扩展通过正式工具验收后再改名。
+2. 新增或约定一个工具成熟度字段，例如 `tool_tier`，取值仅允许 `tool / experimental`。
+3. 设置页和扩展面板默认只展示 `tool`；`experimental` 进入实验分组或通过显式开关显示。
+4. `_demo.py` 不再进入 builtin 运行时扫描，样例只保留在 README.md。
 
 这样可以避免一次性打碎现有扫描和禁用逻辑，同时让 UI 层立刻获得稳定分层能力。
 
@@ -822,19 +821,19 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 1. 先把 `resample / pairwise_compute / multi_curve_mean` 这类多曲线输入的对齐策略统一。
 2. 明确所有正式工具的输出要么是单曲线，要么是标准 `lines` 列表。
-3. demo 算法继续保留，但不再默认出现在正式工具分组。
+3. experimental 算法继续保留，但不再默认出现在正式工具分组。
 
 #### Analysis
 
 1. curve_fit、statistics、correlation、error_compare、peak_detect 作为第一批正式 builtin analysis 工具。
-2. spectrum 和 multi_curve_correlation 先保留为 demo，待其 report_placeholders、表格结构、plot 输出完全统一后再转正。
+2. spectrum_analysis 和 multi_curve_correlation 先保留为 experimental，待其 report_placeholders、表格结构、plot 输出完全统一后再转正。
 3. AnalysisPage 只保留统一结果视图和统一结果保存主线，不再维护隐藏的旧导出按钮或峰谷专用兼容路径。
 
 #### Plot
 
 1. 所有 plot builtin 都必须显式声明适用 phase。
 2. 注释类工具应归为“轻量绘图工具”；风格类和投影类工具应归为“图幅工具”。
-3. 只有通过 phase 校验、重复绘制校验和最小 UI 回归的 plot builtin，才能从 demo 转为正式工具。
+3. 只有通过 phase 校验、重复绘制校验和最小 UI 回归的 plot builtin，才能从 experimental 转为正式工具。
 
 #### Digitize
 
@@ -856,21 +855,21 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 2. 为 plot 扩展补 phase 边界。
 3. 回收页面侧针对旧 builtin 的兼容分支。
 
-#### Phase C：demo 转正机制
+#### Phase C：experimental 转正机制
 
-一个 builtin 从 demo 转为 tool 前，必须同时满足：
+一个 builtin 从 experimental 转为 tool 前，必须同时满足：
 
-1. 命名去 demo 化。
+1. 命名稳定，且不再依赖 `_demo.py` 文件。
 2. config_fields、description、默认值齐全。
 3. 有稳定输出协议。
 4. 有至少一条后端或 UI 回归测试。
-5. 在扩展说明文档中有明确用途说明，而不是示例性质描述。
+5. 在扩展说明文档中有明确用途说明，并附带完整参数 / 输入 / 输出样例。
 
 ### 10.8 验证标准
 
 内置扩展工具化完成后，应以以下标准验收：
 
-1. 用户能在 UI 中明确区分正式工具和 demo / experimental 扩展。
+1. 用户能在 UI 中明确区分正式工具和 experimental 扩展。
 2. pages 不再依赖隐藏按钮或页面私有兼容分支来补 builtin 行为。
 3. plot builtin 不再出现 phase 导致的重复绘制。
 4. analysis builtin 的报告占位符声明与运行时解析保持一致。

@@ -128,10 +128,6 @@ def apply_operation_to_lines(lines: List[PipelineLine], op: Dict[str, Any]) -> P
 
     t = op.get("type", "")
     p = dict(op.get("params", {}) or {})
-    if t == "pairwise_compute":
-        return _op_pairwise_compute(working_lines, p)
-    if t == "resample" and len(working_lines) > 1:
-        return _apply_resample_to_lines(working_lines, p)
 
     custom_op = extension_registry.get_processing(t)
     if custom_op is not None:
@@ -140,16 +136,21 @@ def apply_operation_to_lines(lines: List[PipelineLine], op: Dict[str, Any]) -> P
             return _apply_multiline_processing_extension(custom_op, working_lines, p)
 
         processed_lines: List[PipelineLine] = []
-        for line in working_lines:
+        for index, line in enumerate(working_lines):
+            ordered_inputs = [copy.deepcopy(line)]
+            ordered_inputs.extend(copy.deepcopy(item) for pos, item in enumerate(working_lines) if pos != index)
             nx, ny = invoke_processing_extension_handler(
                 custom_op.handler,
-                list(line.get("x", []) or []),
-                list(line.get("y", []) or []),
+                ordered_inputs,
                 p,
-                working_lines,
             )
             processed_lines.append(_merge_line_payload(line, {"x": nx, "y": ny}))
         return processed_lines, []
+
+    if t == "pairwise_compute":
+        return _op_pairwise_compute(working_lines, p)
+    if t == "resample" and len(working_lines) > 1:
+        return _apply_resample_to_lines(working_lines, p)
 
     processed_lines = []
     for line in working_lines:
@@ -314,13 +315,7 @@ def _apply_multiline_processing_extension(
     params: Dict[str, Any],
 ) -> PipelineResult:
     primary = lines[0]
-    result = invoke_processing_extension_handler(
-        extension.handler,
-        list(primary.get("x", []) or []),
-        list(primary.get("y", []) or []),
-        params,
-        lines,
-    )
+    result = invoke_processing_extension_handler(extension.handler, lines, params)
     return _normalize_multiline_extension_result(result, primary)
 
 

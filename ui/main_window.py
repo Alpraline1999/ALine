@@ -56,11 +56,11 @@ _PAGE_TREE_KINDS = {
 
 _PAGE_TREE_FOCUS_KINDS = {
     "homePage":      [],
-    "dataPage":      _BUSINESS_TREE_KINDS,
-    "chartPage":     ["data_file", "picture", "series", "curve"],
-    "processPage":   ["data_file", "series", "curve"],
-    "analysisPage":  ["data_file", "analysis_result", "series", "curve"],
-    "digitizePage":  ["data_file", "image_work", "curve"],
+    "dataPage":      ["source_files", "datasets", "pictures", "analysis_result_group", "images", "tools"],
+    "chartPage":     ["datasets", "pictures"],
+    "processPage":   ["datasets"],
+    "analysisPage":  ["datasets", "analysis_result_group"],
+    "digitizePage":  ["datasets", "images"],
     "settingsPage":  [],
 }
 
@@ -323,8 +323,15 @@ class MainWindow(FluentWindow):
 
     def _tree_kinds_for_interface(self, interface) -> list[str]:
         obj_name = getattr(interface, "objectName", lambda: "")()
-        mapping = _PAGE_TREE_FOCUS_KINDS if self._page_tree_focus_mode_enabled else _PAGE_TREE_KINDS
-        return list(mapping.get(obj_name, []))
+        if self._page_tree_focus_mode_enabled:
+            return []
+        return list(_PAGE_TREE_KINDS.get(obj_name, []))
+
+    def _tree_focus_groups_for_interface(self, interface) -> list[str]:
+        if not self._page_tree_focus_mode_enabled:
+            return []
+        obj_name = getattr(interface, "objectName", lambda: "")()
+        return list(_PAGE_TREE_FOCUS_KINDS.get(obj_name, []))
 
     def _on_page_tree_focus_mode_changed(self, enabled: bool) -> None:
         self._page_tree_focus_mode_enabled = bool(enabled)
@@ -441,7 +448,8 @@ class MainWindow(FluentWindow):
 
     def _update_tree_panel_visibility(self, interface) -> None:
         kinds = self._tree_kinds_for_interface(interface)
-        show = bool(kinds)
+        focus_groups = self._tree_focus_groups_for_interface(interface)
+        show = bool(kinds or focus_groups)
         tree_visible = show and not self._tree_panel_user_hidden
         self._tree_panel.setVisible(tree_visible)
         self._apply_tree_panel_width(tree_visible)
@@ -449,7 +457,7 @@ class MainWindow(FluentWindow):
         self._tree_toggle_nav_btn.setToolTip("显示项目树" if self._tree_panel_user_hidden else "隐藏项目树")
         self._update_extension_panel_toggle_button(interface)
         if show:
-            self._tree_panel.tree.set_filter_kinds(kinds)
+            self._tree_panel.tree.set_filter_kinds(kinds, focus_root_group_types=focus_groups)
 
     def _toggle_tree_panel(self) -> None:
         current_page = self.stackedWidget.currentWidget()

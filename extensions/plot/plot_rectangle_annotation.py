@@ -50,6 +50,8 @@ def register_extensions(registry):
             version="0.1.0",
             settings=True,
             source_kind="builtin",
+            tool_tier="tool",
+            phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),
                 ExtensionConfigField(key="x", description="矩形左下角 X。", field_type="number", default=0.14),

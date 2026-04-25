@@ -16,15 +16,15 @@ def draw_circle_annotation(plot_context, options):
         return
 
     transform = axis.transData if str(options.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
-    center_x = _as_float(options.get("center_x", 0.5), 0.5)
-    center_y = _as_float(options.get("center_y", 0.5), 0.5)
+    x = _as_float(options.get("x", options.get("center_x", 0.5)), 0.5)
+    y = _as_float(options.get("y", options.get("center_y", 0.5)), 0.5)
     radius = max(0.0, _as_float(options.get("radius", 0.12), 0.12))
     alpha = min(1.0, max(0.0, _as_float(options.get("alpha", 0.22), 0.22)))
     fill = bool(options.get("fill", False))
     facecolor = str(options.get("face_color", "#ffd966")) if fill else "none"
 
     patch = Circle(
-        (center_x, center_y),
+        (x, y),
         radius,
         transform=transform,
         facecolor=facecolor,
@@ -48,10 +48,12 @@ def register_extensions(registry):
             version="0.1.0",
             settings=True,
             source_kind="builtin",
+            tool_tier="tool",
+            phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),
-                ExtensionConfigField(key="center_x", description="圆心 X。", field_type="number", default=0.5),
-                ExtensionConfigField(key="center_y", description="圆心 Y。", field_type="number", default=0.5),
+                ExtensionConfigField(key="x", description="圆心 X。", field_type="number", default=0.5),
+                ExtensionConfigField(key="y", description="圆心 Y。", field_type="number", default=0.5),
                 ExtensionConfigField(key="radius", description="圆半径。", field_type="number", default=0.12),
                 ExtensionConfigField(key="edge_color", description="边框颜色。", field_type="color", default="#ff8c00"),
                 ExtensionConfigField(key="face_color", description="填充颜色。", field_type="color", default="#ffd966"),

@@ -1826,10 +1826,12 @@ class TestAnalysisEngine(unittest.TestCase):
 
         color_fields = {field.get("key"): field for field in color_digitize_entry["config_fields"]}
         self.assertEqual(color_digitize_entry["source_kind"], "builtin")
+        self.assertEqual(color_digitize_entry["tool_tier"], "tool")
         self.assertEqual(color_digitize_entry["resolved_options"]["tolerance"], 20)
         self.assertEqual(color_fields["sampled_color"].get("field_type"), "pickcolor")
 
         shape_fields = {field.get("key"): field for field in shape_digitize_entry["config_fields"]}
+        self.assertEqual(shape_digitize_entry["tool_tier"], "experimental")
         self.assertEqual(shape_digitize_entry["resolved_options"]["threshold"], 0.65)
         self.assertEqual(shape_fields["template_info"].get("field_type"), "shot")
 
@@ -1910,6 +1912,39 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertNotIn("default_options", entry)
         self.assertFalse(any(field.get("key") == "lines_list" for field in entry["config_fields"]))
         self.assertFalse(any(field.get("key") == "lines_list" for field in entry["normalized_config_fields"]))
+
+    def test_invoke_plot_extension_handler_respects_plot_phases(self):
+        from core.extension_api import PlotExtension, PlotExtensionContext, invoke_plot_extension_handler, build_extension_entry
+
+        calls = []
+
+        def _handler(context, options):
+            calls.append((context.phase, dict(options)))
+
+        extension = PlotExtension(
+            type="phase_probe",
+            name="Phase Probe",
+            handler=_handler,
+            phases=("after_plot",),
+        )
+        entry = build_extension_entry(extension)
+        self.assertEqual(entry["phases"], ["after_plot"])
+
+        base_kwargs = {
+            "figure": mock.Mock(axes=[]),
+            "canvas": object(),
+            "axis": None,
+            "axes": [],
+            "visible_series": [],
+            "plotted_series": [],
+            "figure_state": {},
+            "plot_style_extras": {},
+            "theme_colors": {},
+        }
+        invoke_plot_extension_handler(extension, PlotExtensionContext(**base_kwargs, phase="before_plot"), {"value": 1})
+        invoke_plot_extension_handler(extension, PlotExtensionContext(**base_kwargs, phase="after_plot"), {"value": 2})
+
+        self.assertEqual(calls, [("after_plot", {"value": 2})])
 
     def test_build_extension_entry_normalizes_legacy_all_lines_default(self):
         from core.extension_api import ProcessingExtension, build_extension_entry
@@ -2023,21 +2058,23 @@ class TestAnalysisEngine(unittest.TestCase):
             self.assertIsNotNone(updated)
             self.assertEqual(updated.extension_version, "1.3.0")
 
-    def test_repository_demo_extensions_and_json_samples_are_valid(self):
+    def test_repository_builtin_extension_files_are_valid(self):
         from core.extension_api import ExtensionRegistry, default_extensions_directory
 
         directory = default_extensions_directory()
         expected = {
-            "processing_kalman_filter_demo.py": ("processing", "kalman_filter", {"lines_list", "process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
-            "processing_multi_curve_mean_demo.py": ("processing", "multi_curve_mean", {"lines_list"}),
-            "analysis_spectrum_demo.py": ("analysis", "spectrum_analysis", {"lines_list", "sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
-            "analysis_multi_curve_correlation_demo.py": ("analysis", "multi_curve_correlation", {"lines_list", "method", "line_color"}),
-            "plot_reference_line_demo.py": ("plot", "demo_plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
-            "plot_dual_curve_band_demo.py": ("plot", "plot_dual_curve_band", {"lines_list", "align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
-            "plot_arrow_annotation_demo.py": ("plot", "plot_arrow_annotation", {"coordinate_mode", "start_x", "start_y", "end_x", "end_y", "text"}),
-            "plot_rectangle_annotation_demo.py": ("plot", "plot_rectangle_annotation", {"coordinate_mode", "x", "y", "width", "height", "edge_color"}),
-            "plot_circle_annotation_demo.py": ("plot", "plot_circle_annotation", {"coordinate_mode", "center_x", "center_y", "radius", "edge_color"}),
-            "plot_text_annotation_demo.py": ("plot", "plot_text_annotation", {"coordinate_mode", "x", "y", "text", "color"}),
+            "kalman_filter.py": ("processing", "kalman_filter", {"lines_list", "process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
+            "multi_curve_mean.py": ("processing", "multi_curve_mean", {"lines_list", "result_name", "line_color"}),
+            "spectrum_analysis.py": ("analysis", "spectrum_analysis", {"lines_list", "sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
+            "multi_curve_correlation.py": ("analysis", "multi_curve_correlation", {"lines_list", "method", "line_color"}),
+            "plot_reference_line.py": ("plot", "plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
+            "plot_dual_curve_band.py": ("plot", "plot_dual_curve_band", {"lines_list", "align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
+            "plot_arrow_annotation.py": ("plot", "plot_arrow_annotation", {"coordinate_mode", "start_x", "start_y", "end_x", "end_y", "text"}),
+            "plot_rectangle_annotation.py": ("plot", "plot_rectangle_annotation", {"coordinate_mode", "x", "y", "width", "height", "edge_color"}),
+            "plot_circle_annotation.py": ("plot", "plot_circle_annotation", {"coordinate_mode", "x", "y", "radius", "edge_color"}),
+            "plot_text_annotation.py": ("plot", "plot_text_annotation", {"coordinate_mode", "x", "y", "text", "color"}),
+            "plot_science_style.py": ("plot", "plot_science_style", {"x_label", "y_label", "show_grid", "line_width"}),
+            "plot_polar_projection.py": ("plot", "plot_polar_projection", {"theta_unit", "theta_label", "radius_label", "show_grid"}),
         }
 
         registry = ExtensionRegistry()
@@ -2060,7 +2097,7 @@ class TestAnalysisEngine(unittest.TestCase):
             resolved_defaults = extension.resolved_default_options
             self.assertTrue(required_keys.issubset(set(resolved_defaults.keys())))
 
-    def test_repository_demo_plot_extensions_all_support_settings(self):
+    def test_repository_plot_extensions_all_support_settings(self):
         from core.extension_api import ExtensionRegistry, default_extensions_directory
 
         registry = ExtensionRegistry()

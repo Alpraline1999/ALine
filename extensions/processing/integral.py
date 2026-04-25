@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from extensions.processing.base_tools import VERSION
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
 
 
-def _integral_handler(xs, ys, params, lines=None):
-    del lines
-    options = dict(params or {})
+def _integral_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
+    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
+    x_values, y_values = primary_series_xy(inputs)
     cumulative = bool(options.get("cumulative", True))
-    x_values = list(xs)
-    y_values = list(ys)
     count = len(x_values)
     if count < 2:
         return x_values, y_values
@@ -35,10 +33,11 @@ def register_extensions(registry) -> None:
             name="积分",
             handler=_integral_handler,
             description="计算积分或累积积分。",
-            version=VERSION,
+            version=BUILTIN_EXTENSION_VERSION,
             lines_number=(1, 1),
             settings=True,
-                source_kind="builtin",
+            source_kind="builtin",
+            tool_tier="tool",
             config_fields=[
                 ExtensionConfigField(key="cumulative", label="累计积分", field_type="boolean", default=False)
             ],

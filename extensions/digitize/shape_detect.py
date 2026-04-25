@@ -35,11 +35,12 @@ def register_extensions(registry) -> None:
     registry.register_digitize(
         DigitizeExtension(
             type=SHAPE_DIGITIZE_EXTENSION_TYPE,
-            name="图形识别 (测试功能)",
+            name="图形识别",
             handler=_shape_digitize,
             description="按截图模板和匹配阈值搜索图中相同形状。",
             version=_BUILTIN_EXTENSION_VERSION,
             source_kind="builtin",
+            tool_tier="experimental",
             settings=True,
             config_fields=[
                 ExtensionConfigField(

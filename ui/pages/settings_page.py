@@ -44,7 +44,7 @@ from core.ai.providers import (
 )
 
 
-_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 300
+_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 900
 
 
 class SettingsPage(QWidget):
@@ -842,6 +842,8 @@ class SettingsPage(QWidget):
         for layout in [*self._extension_option_layouts.values(), *self._external_extension_option_layouts.values()]:
             while layout.count() > 0:
                 item = layout.takeAt(0)
+                if item is None:
+                    continue
                 widget = item.widget()
                 if widget is not None:
                     widget.deleteLater()

@@ -44,6 +44,7 @@ def register_extensions(registry) -> None:
             description="按采样颜色和容差自动提取图像中的散点位置。",
             version=_BUILTIN_EXTENSION_VERSION,
             source_kind="builtin",
+            tool_tier="tool",
             settings=True,
             config_fields=[
                 ExtensionConfigField(

@@ -804,8 +804,6 @@ class DigitizePage(QWidget):
         ac_layout.addWidget(self._assist_status_label)
 
         layout.addWidget(_assist_container)
-
-        layout.addStretch(1)
         return tab
 
     def _digitize_extension_entries(self) -> list[dict]:
@@ -827,7 +825,7 @@ class DigitizePage(QWidget):
         if not entries:
             entries = [
                 {"type": COLOR_DIGITIZE_EXTENSION_TYPE, "label": "颜色识别", "name": "颜色识别"},
-                {"type": SHAPE_DIGITIZE_EXTENSION_TYPE, "label": "图形识别 (测试功能)", "name": "图形识别 (测试功能)"},
+                {"type": SHAPE_DIGITIZE_EXTENSION_TYPE, "label": "图形识别", "name": "图形识别"},
             ]
             self._auto_mode_type_ids = [COLOR_DIGITIZE_EXTENSION_TYPE, SHAPE_DIGITIZE_EXTENSION_TYPE]
         target_type = current_type if current_type in self._auto_mode_type_ids else self._auto_mode_type_ids[0]

@@ -9,7 +9,7 @@ import uuid
 import warnings
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -301,11 +301,30 @@ class ChartPage(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._update_plot_extension_help_area_height()
+        QTimer.singleShot(0, self._sync_chart_left_splitter_sizes)
         self._onboarding_controller.schedule_auto_start()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_plot_extension_help_area_height()
+        if not getattr(self, "_chart_left_splitter_user_resized", False):
+            QTimer.singleShot(0, self._sync_chart_left_splitter_sizes)
+
+    def _sync_chart_left_splitter_sizes(self) -> None:
+        if not hasattr(self, "_chart_left_splitter") or self._chart_left_splitter is None:
+            return
+        if getattr(self, "_chart_left_splitter_user_resized", False):
+            return
+        total_height = self._chart_left_splitter.height()
+        if total_height <= 0:
+            return
+        upper = max(1, int(total_height * 0.4))
+        lower = max(1, total_height - upper)
+        with QSignalBlocker(self._chart_left_splitter):
+            self._chart_left_splitter.setSizes([upper, lower])
+
+    def _on_chart_left_splitter_moved(self, _pos: int, _index: int) -> None:
+        self._chart_left_splitter_user_resized = True
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -329,6 +348,8 @@ class ChartPage(QWidget):
         self._chart_left_splitter = QSplitter(Qt.Orientation.Vertical, left_card)
         self._chart_left_splitter.setHandleWidth(6)
         self._chart_left_splitter.setChildrenCollapsible(False)
+        self._chart_left_splitter.splitterMoved.connect(self._on_chart_left_splitter_moved)
+        self._chart_left_splitter_user_resized = False
         left_layout.addWidget(self._chart_left_splitter, 1)
 
         list_section = QWidget(self._chart_left_splitter)
@@ -412,7 +433,7 @@ class ChartPage(QWidget):
         style_layout.addWidget(self._plot_actions_bar)
         self._chart_left_splitter.setStretchFactor(0, 0)
         self._chart_left_splitter.setStretchFactor(1, 1)
-        self._chart_left_splitter.setSizes([220, 460])
+        self._chart_left_splitter.setSizes([400, 600])
 
         self._content_splitter.addWidget(left_card)
 
@@ -439,7 +460,11 @@ class ChartPage(QWidget):
                 dpi=self._display_dpi,
             )
             self._canvas = FigureCanvas(self._figure)
-            self._chart_preview_nav_toolbar = create_navigation_toolbar(self._canvas, right_card)
+            self._chart_preview_nav_toolbar = create_navigation_toolbar(
+                self._canvas,
+                right_card,
+                sync_callback=self._sync_chart_preview_nav_toggle_states,
+            )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 right_card,
                 button_size=WORKBENCH_BUTTON_HEIGHT,
@@ -2431,7 +2456,7 @@ class ChartPage(QWidget):
         if extension is None:
             return
         plot_context = self._base_style_plot_context(selected_curve=target_curve)
-        invoke_plot_extension_handler(extension.handler, plot_context, dict(options or {}))
+        invoke_plot_extension_handler(extension, plot_context, dict(options or {}))
         patch = dict(plot_context.curve_style_patches.get(self._curve_identity(target_curve), {}) or {})
         if not patch:
             return
@@ -2442,7 +2467,7 @@ class ChartPage(QWidget):
         if extension is None:
             return
         plot_context = self._base_style_plot_context(selected_curve=self._selected_curve())
-        invoke_plot_extension_handler(extension.handler, plot_context, dict(options or {}))
+        invoke_plot_extension_handler(extension, plot_context, dict(options or {}))
         payload = dict(plot_context.figure_state_patch or {})
         if plot_context.plot_style_patch:
             payload = _merge_nested_mapping(payload, dict(plot_context.plot_style_patch or {}))
@@ -3011,7 +3036,7 @@ class ChartPage(QWidget):
             plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
             try:
                 plot_context.phase = "before_plot"
-                invoke_plot_extension_handler(extension.handler, plot_context, dict(applied.get("options") or {}))
+                invoke_plot_extension_handler(extension, plot_context, dict(applied.get("options") or {}))
             except Exception:
                 continue
             extension_style_layers.append({
@@ -3147,7 +3172,7 @@ class ChartPage(QWidget):
                     else None
                 )
                 plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
-                invoke_plot_extension_handler(extension.handler, plot_context, dict(applied.get("options") or {}))
+                invoke_plot_extension_handler(extension, plot_context, dict(applied.get("options") or {}))
             except Exception:
                 continue
             plot_context.refresh_axes()

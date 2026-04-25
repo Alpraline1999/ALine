@@ -61,6 +61,8 @@ def register_extensions(registry):
             description="在图中添加一根箭头，可用于强调趋势或关键点。",
             version="0.1.0",
             source_kind="builtin",
+            tool_tier="tool",
+            phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),
                 ExtensionConfigField(key="start_x", description="箭头起点 X。", field_type="number", default=0.18),

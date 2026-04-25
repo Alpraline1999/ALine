@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from extensions.processing.base_tools import VERSION
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
 from processing.smoother import smooth_moving_average, smooth_savgol
 
 
-def _smooth_handler(xs, ys, params, lines=None):
-    del lines
-    options = dict(params or {})
+def _smooth_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
+    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
+    xs, ys = primary_series_xy(inputs)
     method = options.get("method", "savgol")
     if method == "savgol":
         return smooth_savgol(list(xs), list(ys), int(options.get("window", 11)), int(options.get("poly", 3)))
@@ -23,10 +23,11 @@ def register_extensions(registry) -> None:
             name="平滑",
             handler=_smooth_handler,
             description="对 Y 序列做平滑处理，适合去除高频噪声。",
-            version=VERSION,
+            version=BUILTIN_EXTENSION_VERSION,
             lines_number=(1, 1),
             settings=True,
-                source_kind="builtin",
+            source_kind="builtin",
+            tool_tier="tool",
             config_fields=[
                 ExtensionConfigField(
                     key="method",

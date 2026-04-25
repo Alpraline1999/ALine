@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from PySide6.QtCore import QSignalBlocker
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt
 from PySide6.QtWidgets import QHBoxLayout, QWidget
-from qfluentwidgets import FluentIcon as FIF, ToolButton
+from qfluentwidgets import FluentIcon as FIF, ToggleToolButton, ToolButton
 
 try:
     from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -18,15 +18,42 @@ class PreviewToolbarButtons:
     fit: ToolButton
     zoom_in: ToolButton
     zoom_out: ToolButton
-    pan: ToolButton
-    box_zoom: ToolButton
+    pan: ToggleToolButton
+    box_zoom: ToggleToolButton
 
 
-def create_navigation_toolbar(canvas, parent: QWidget):
+class _PreviewModeExitFilter(QObject):
+    def __init__(self, toolbar, sync_callback: Optional[Callable[[], None]], parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self._toolbar = toolbar
+        self._sync_callback = sync_callback
+
+    def eventFilter(self, watched, event) -> bool:
+        del watched
+        if event.type() != QEvent.Type.MouseButtonPress:
+            return False
+        if event.button() != Qt.MouseButton.RightButton:
+            return False
+        mode = preview_navigation_mode(self._toolbar)
+        if mode == "pan":
+            self._toolbar.pan()
+        elif mode == "zoom":
+            self._toolbar.zoom()
+        else:
+            return False
+        if callable(self._sync_callback):
+            self._sync_callback()
+        return True
+
+
+def create_navigation_toolbar(canvas, parent: QWidget, *, sync_callback: Optional[Callable[[], None]] = None):
     if canvas is None or NavigationToolbar is None:
         return None
     toolbar = NavigationToolbar(canvas, parent)
     toolbar.hide()
+    exit_filter = _PreviewModeExitFilter(toolbar, sync_callback, canvas)
+    canvas.installEventFilter(exit_filter)
+    setattr(canvas, "_preview_mode_exit_filter", exit_filter)
     return toolbar
 
 
@@ -63,16 +90,14 @@ def build_preview_toolbar(
     zoom_out_btn.setFixedSize(button_size, button_size)
     layout.addWidget(zoom_out_btn)
 
-    pan_btn = ToolButton(getattr(FIF, "MOVE", getattr(FIF, "MOVE_TO", FIF.ZOOM)), parent)
+    pan_btn = ToggleToolButton(getattr(FIF, "MOVE", getattr(FIF, "MOVE_TO", FIF.ZOOM)), parent)
     pan_btn.setToolTip("拖拽平移预览")
-    pan_btn.setCheckable(True)
     pan_btn.toggled.connect(pan_toggle_callback)
     pan_btn.setFixedSize(button_size, button_size)
     layout.addWidget(pan_btn)
 
-    box_zoom_btn = ToolButton(FIF.ZOOM, parent)
+    box_zoom_btn = ToggleToolButton(FIF.ZOOM, parent)
     box_zoom_btn.setToolTip("框选局部放大")
-    box_zoom_btn.setCheckable(True)
     box_zoom_btn.toggled.connect(box_zoom_toggle_callback)
     box_zoom_btn.setFixedSize(button_size, button_size)
     layout.addWidget(box_zoom_btn)

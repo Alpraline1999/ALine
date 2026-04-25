@@ -48,9 +48,6 @@ def draw_polar_projection(plot_context, options):
         plot_context.refresh_axes()
         return
 
-    if plot_context.phase != "after_plot":
-        return
-
     axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
     if axis is None:
         return
@@ -107,12 +104,7 @@ def draw_polar_projection(plot_context, options):
     fill_alpha = max(0.0, min(1.0, _as_float(options.get("fill_alpha"), 0.0) or 0.0))
     label = str(options.get("label", "")).strip() or str(series.get("display_name") or series.get("name") or "极坐标曲线")
 
-    plot_kwargs = {
-        "color": color,
-        "linewidth": max(0.1, line_width),
-        "alpha": alpha,
-        "label": label,
-    }
+    plot_kwargs = {"color": color, "linewidth": max(0.1, line_width), "alpha": alpha, "label": label}
     if marker:
         plot_kwargs["marker"] = marker
         plot_kwargs["markersize"] = max(0.1, marker_size)
@@ -133,10 +125,7 @@ def draw_polar_projection(plot_context, options):
         axis.set_rlabel_position(radial_label_angle)
 
     if bool(options.get("show_legend", True)):
-        legend_kwargs = {
-            "loc": str(figure_state.get("legend_pos") or "best"),
-            "frameon": bool(options.get("legend_frame", False)),
-        }
+        legend_kwargs = {"loc": str(figure_state.get("legend_pos") or "best"), "frameon": bool(options.get("legend_frame", False))}
         font_family = str(figure_state.get("font_family") or "").strip()
         legend_font_size = max(1, int(_as_float(figure_state.get("legend_font_size"), 9) or 9))
         if font_family:
@@ -149,13 +138,15 @@ def draw_polar_projection(plot_context, options):
 def register_extensions(registry):
     registry.register_plot(
         PlotExtension(
-            type="demo_plot_polar_projection",
+            type="plot_polar_projection",
             name="极坐标绘图",
             handler=draw_polar_projection,
-            description="将当前选中曲线或首条可见曲线重绘为极坐标图，并提供常用极坐标参数。",
+            description="将当前选中曲线或首条可见曲线重绘为极坐标图。",
             version="0.1.0",
             settings=True,
             source_kind="builtin",
+            tool_tier="experimental",
+            phases=("before_plot", "after_plot"),
             config_fields=[
                 ExtensionConfigField(key="theta_unit", description="角度数据单位。", field_type="selective", default="degree", choices=("degree", "radian")),
                 ExtensionConfigField(key="theta_label", description="极坐标角度轴标签；留空则保持当前设置。", field_type="string", default="角度"),

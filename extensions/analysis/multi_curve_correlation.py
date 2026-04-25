@@ -92,11 +92,12 @@ def register_extensions(registry):
             type="multi_curve_correlation",
             name="多曲线相关性",
             handler=multi_curve_correlation,
-            description="以 lines_list 第一项为主曲线，对其余曲线按样本顺序做多曲线相关性比较，不内置重采样。",
+            description="以第一条输入曲线为主曲线，对其余曲线执行多曲线相关性比较。",
             version="0.1.0",
             lines_number=(2, -1),
             settings=True,
-                source_kind="builtin",
+            source_kind="builtin",
+            tool_tier="experimental",
             config_fields=[
                 ExtensionConfigField(
                     key="method",
@@ -113,11 +114,11 @@ def register_extensions(registry):
                 ),
             ],
             report_placeholders=[
-                {"key": "primary_name", "label": "主曲线", "description": "当前多曲线相关性分析的主曲线名称。"},
-                {"key": "compared_count", "label": "对比数量", "description": "参与比较的副曲线数量。"},
-                {"key": "best_match_name", "label": "最佳匹配", "description": "与主曲线最接近的副曲线名称。"},
-                {"key": "best_correlation", "label": "最佳相关系数", "description": "最佳匹配对应的相关系数。"},
-                {"key": "average_correlation", "label": "平均相关系数", "description": "全部副曲线相关系数平均值。"},
+                {"token": "{{primary_name}}", "label": "主曲线", "description": "当前多曲线相关性分析的主曲线名称。"},
+                {"token": "{{compared_count}}", "label": "对比数量", "description": "参与比较的副曲线数量。"},
+                {"token": "{{best_match_name}}", "label": "最佳匹配", "description": "与主曲线最接近的副曲线名称。"},
+                {"token": "{{best_correlation}}", "label": "最佳相关系数", "description": "最佳匹配对应的相关系数。"},
+                {"token": "{{average_correlation}}", "label": "平均相关系数", "description": "全部副曲线相关系数平均值。"},
             ],
         )
     )

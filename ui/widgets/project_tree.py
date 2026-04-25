@@ -352,6 +352,7 @@ class ProjectTreeWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._filter_kinds: List[str] = []  # 空 = 显示全部
+        self._focus_root_group_types: List[str] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -404,15 +405,38 @@ class ProjectTreeWidget(QWidget):
         self._tree.blockSignals(True)
         self._tree.clear()
         if not project_manager.projects:
-            self._build_global_assets_root()
+            if not self._focus_root_group_types:
+                self._build_global_assets_root()
             self._restore_expansion_state(expansion_state)
             self._restore_selection(selected_key)
             self._tree.blockSignals(False)
             self.refreshed.emit()
             return
 
+        focus_group_types = set(self._focus_root_group_types)
+        multiple_projects = len(project_manager.projects) > 1
         for project in project_manager.projects:
             if project.tree is None:
+                continue
+            if focus_group_types:
+                root_children = sorted(
+                    project.tree.get_children(None),
+                    key=lambda node: self._tree_node_sort_key(node, None),
+                )
+                for node in root_children:
+                    if node.kind != "folder":
+                        continue
+                    group_type = self._canonical_group_type(getattr(node, "group_type", None))
+                    if group_type not in focus_group_types:
+                        continue
+                    item = self._make_item(node, project.id)
+                    if multiple_projects:
+                        label = f"{project.name} / {item.text(0)}"
+                        item.setText(0, label)
+                        item.setToolTip(0, label)
+                    self._tree.addTopLevelItem(item)
+                    self._build_children(project, node.id, item)
+                    item.setExpanded(True)
                 continue
             project_item = QTreeWidgetItem([project.name])
             project_item.setData(0, _ROLE, ("project", project.id))
@@ -426,7 +450,8 @@ class ProjectTreeWidget(QWidget):
             self._tree.addTopLevelItem(project_item)
             self._build_children(project, None, project_item)
             project_item.setExpanded(True)
-        self._build_global_assets_root()
+        if not focus_group_types:
+            self._build_global_assets_root()
         self._restore_expansion_state(expansion_state)
         selected_key = self._apply_focus_view(selected_key)
         self._restore_selection(selected_key)
@@ -471,9 +496,17 @@ class ProjectTreeWidget(QWidget):
             self._tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
             self._tree.blockSignals(False)
 
-    def set_filter_kinds(self, kinds: List[str]) -> None:
+    def set_filter_kinds(self, kinds: List[str], *, focus_root_group_types: Optional[List[str]] = None) -> None:
         """只显示指定 kind 的节点（空列表 = 显示全部）。"""
         self._filter_kinds = list(kinds)
+        self._focus_root_group_types = [
+            canonical
+            for canonical in (
+                self._canonical_group_type(group_type)
+                for group_type in list(focus_root_group_types or [])
+            )
+            if canonical
+        ]
         self.refresh()
 
     def set_name_display_mode(self, mode: str) -> None:

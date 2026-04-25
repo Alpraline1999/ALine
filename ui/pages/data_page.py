@@ -813,7 +813,11 @@ class DataPage(QWidget):
         if HAS_MATPLOTLIB:
             self._preview_figure = Figure(figsize=(5.6, 3.4), dpi=100)
             self._preview_canvas = FigureCanvas(self._preview_figure)
-            self._preview_nav_toolbar = create_navigation_toolbar(self._preview_canvas, self._plot_preview_panel)
+            self._preview_nav_toolbar = create_navigation_toolbar(
+                self._preview_canvas,
+                self._plot_preview_panel,
+                sync_callback=self._sync_preview_nav_toggle_states,
+            )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 self._plot_preview_panel,
                 button_size=WORKBENCH_BUTTON_HEIGHT,

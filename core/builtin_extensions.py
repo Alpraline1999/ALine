@@ -5,6 +5,7 @@ from pathlib import Path
 _BUILTIN_EXTENSION_DIRS = (
     "processing",
     "analysis",
+    "plot",
     "digitize",
 )
 
@@ -18,11 +19,13 @@ def register_core_builtin_extensions(registry) -> None:
     builtin_directories = [builtin_dir / name for name in _BUILTIN_EXTENSION_DIRS if (builtin_dir / name).exists()]
     known_processing = {"crop", "smooth", "normalize", "resample", "fft", "derivative", "integral", "transform", "filter", "pairwise_compute"}
     known_analysis = {"curve_fit", "peak_detect", "statistics", "correlation", "error_compare"}
+    known_plot = {"plot_arrow_annotation", "plot_rectangle_annotation", "plot_circle_annotation", "plot_text_annotation"}
     known_digitize = {"builtin_digitize_color_detect", "builtin_digitize_shape_detect"}
 
     if builtin_directories and not (
         known_processing <= {item.type for item in registry.list_processing()}
         and known_analysis <= {item.type for item in registry.list_analysis()}
+        and known_plot <= {item.type for item in registry.list_plot()}
         and known_digitize <= {item.type for item in registry.list_digitize()}
     ):
         for directory in builtin_directories:

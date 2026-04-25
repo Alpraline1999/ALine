@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from core.extension_api import ProcessingExtension
-from extensions.processing.base_tools import VERSION
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
 
 
-def _derivative_handler(xs, ys, params, lines=None):
-    del params, lines
-    x_values = list(xs)
-    y_values = list(ys)
+def _derivative_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
+    inputs, _options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
+    x_values, y_values = primary_series_xy(inputs)
     count = len(x_values)
     if count < 2:
         return x_values, y_values
@@ -32,9 +31,10 @@ def register_extensions(registry) -> None:
             name="导数",
             handler=_derivative_handler,
             description="计算一阶导数，观察变化速率。",
-            version=VERSION,
+            version=BUILTIN_EXTENSION_VERSION,
             lines_number=(1, 1),
             settings=True,
-                source_kind="builtin",
+            source_kind="builtin",
+            tool_tier="tool",
         )
     )
