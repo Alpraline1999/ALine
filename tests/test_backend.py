@@ -1786,6 +1786,7 @@ class TestAnalysisEngine(unittest.TestCase):
             *extension_registry.list_plot(),
             *extension_registry.list_processing(),
             *extension_registry.list_analysis(),
+            *extension_registry.list_digitize(),
         ]
         self.assertTrue(builtin_extensions)
         for extension in builtin_extensions:
@@ -1801,6 +1802,8 @@ class TestAnalysisEngine(unittest.TestCase):
         curve_fit_entry = build_extension_entry(registry.get_analysis("curve_fit"))
         peak_detect_entry = build_extension_entry(registry.get_analysis("peak_detect"))
         correlation_entry = build_extension_entry(registry.get_analysis("correlation"))
+        color_digitize_entry = build_extension_entry(registry.get_digitize("builtin_digitize_color_detect"))
+        shape_digitize_entry = build_extension_entry(registry.get_digitize("builtin_digitize_shape_detect"))
 
         self.assertEqual(curve_fit_entry["source_kind"], "builtin")
         self.assertTrue(curve_fit_entry["listed"])
@@ -1820,6 +1823,62 @@ class TestAnalysisEngine(unittest.TestCase):
         corr_fields = {field.get("key"): field for field in correlation_entry["config_fields"]}
         self.assertEqual(correlation_entry["resolved_options"]["method"], "pearson")
         self.assertEqual(list(corr_fields["method"].get("choices") or []), ["pearson", "spearman"])
+
+        color_fields = {field.get("key"): field for field in color_digitize_entry["config_fields"]}
+        self.assertEqual(color_digitize_entry["source_kind"], "builtin")
+        self.assertEqual(color_digitize_entry["resolved_options"]["tolerance"], 20)
+        self.assertEqual(color_fields["sampled_color"].get("field_type"), "pickcolor")
+
+        shape_fields = {field.get("key"): field for field in shape_digitize_entry["config_fields"]}
+        self.assertEqual(shape_digitize_entry["resolved_options"]["threshold"], 0.65)
+        self.assertEqual(shape_fields["template_info"].get("field_type"), "shot")
+
+    def test_core_builtin_analysis_handlers_execute_from_individual_modules(self):
+        from core.builtin_extensions import register_core_builtin_extensions
+        from core.extension_api import ExtensionRegistry
+
+        registry = ExtensionRegistry()
+        register_core_builtin_extensions(registry)
+
+        statistics = registry.get_analysis("statistics")
+        correlation = registry.get_analysis("correlation")
+        error_compare = registry.get_analysis("error_compare")
+
+        self.assertIsNotNone(statistics)
+        self.assertIsNotNone(correlation)
+        self.assertIsNotNone(error_compare)
+
+        stats_result = statistics.handler(
+            [{"x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0], "name": "s1"}],
+            {},
+        )
+        self.assertEqual(stats_result["analysis_type"], "statistics")
+        self.assertEqual(stats_result["source_name"], "s1")
+        self.assertEqual(stats_result["n"], 3)
+
+        corr_result = correlation.handler(
+            [
+                {"x": [0.0, 1.0, 2.0], "y": [1.0, 2.0, 3.0], "name": "a"},
+                {"x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0], "name": "b"},
+            ],
+            {"method": "pearson"},
+        )
+        self.assertEqual(corr_result["analysis_type"], "correlation")
+        self.assertEqual(corr_result["name1"], "a")
+        self.assertEqual(corr_result["name2"], "b")
+        self.assertGreater(corr_result["r"], 0.99)
+
+        error_result = error_compare.handler(
+            [
+                {"x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0], "name": "ref"},
+                {"x": [0.0, 1.0, 2.0], "y": [1.0, 4.5, 5.0], "name": "cmp"},
+            ],
+            {},
+        )
+        self.assertEqual(error_result["analysis_type"], "error_compare")
+        self.assertEqual(error_result["name1"], "ref")
+        self.assertEqual(error_result["name2"], "cmp")
+        self.assertEqual(len(error_result["error_y"]), 3)
 
     def test_build_extension_entry_exposes_normalized_metadata_and_resolved_options(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, build_extension_entry
@@ -2137,6 +2196,81 @@ class TestDataOperations(unittest.TestCase):
         self.assertEqual(s.x, [1.0, 2.0])
         self.assertEqual(s.y, [3.0, 4.0])
         self.assertEqual(s.source, "pyline_curve_copy")
+
+
+class TestExporter(unittest.TestCase):
+
+    def test_can_merge_data_series_requires_aligned_x(self):
+        from core.exporter import Exporter
+        from models.schemas import DataSeries
+
+        aligned = [
+            DataSeries(name="a", x=[0, 1, 2], y=[1, 2, 3]),
+            DataSeries(name="b", x=[0, 1, 2], y=[4, 5, 6]),
+        ]
+        misaligned = [
+            DataSeries(name="a", x=[0, 1, 2], y=[1, 2, 3]),
+            DataSeries(name="b", x=[0, 1.5, 2], y=[4, 5, 6]),
+        ]
+
+        self.assertTrue(Exporter.can_merge_data_series(aligned))
+        self.assertFalse(Exporter.can_merge_data_series(misaligned))
+
+    def test_export_series_csv_merge_uses_single_x_column(self):
+        from core.exporter import Exporter
+        from models.schemas import DataSeries
+
+        series_list = [
+            DataSeries(name="left", x=[0, 1, 2], y=[1, 2, 3], x_label="time", y_label="force"),
+            DataSeries(name="right", x=[0, 1, 2], y=[4, 5, 6], x_label="time", y_label="force"),
+        ]
+
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
+            path = handle.name
+        try:
+            Exporter.export_series_file(series_list, path, fmt="csv", timestamp="2024-01-02 03:04:05", merged=True)
+            content = Path(path).read_text(encoding="utf-8-sig")
+            self.assertIn("# exported: 2024-01-02 03:04:05", content)
+            self.assertIn("time,left,right", content)
+            self.assertIn("1.0,2.0,5.0", content)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_export_series_clipboard_text_grouped_sections(self):
+        from core.exporter import Exporter
+        from models.schemas import DataSeries
+
+        series_list = [
+            DataSeries(name="alpha", x=[0, 1], y=[10, 20]),
+            DataSeries(name="beta", x=[2, 3], y=[30, 40]),
+        ]
+
+        content = Exporter.get_series_clipboard_text(series_list, timestamp="2024-01-01 00:00:00", merged=False)
+
+        self.assertIn("# exported: 2024-01-01 00:00:00", content)
+        self.assertIn("# alpha", content)
+        self.assertIn("# beta", content)
+        self.assertIn("x\ty", content)
+
+    def test_export_series_xls_writes_excel_xml_workbook(self):
+        from core.exporter import Exporter
+        from models.schemas import DataSeries
+
+        series_list = [DataSeries(name="force_curve", x=[0, 1], y=[2, 3], x_label="time", y_label="force")]
+
+        with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as handle:
+            path = handle.name
+        try:
+            Exporter.export_series_file(series_list, path, fmt="xls")
+            content = Path(path).read_text(encoding="utf-8")
+            self.assertIn('<?mso-application progid="Excel.Sheet"?>', content)
+            self.assertIn('Worksheet ss:Name="force_curve"', content)
+            self.assertIn('>time<', content)
+            self.assertIn('>force<', content)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
 
 
 # ══════════════════════════════════════════════════════════════════

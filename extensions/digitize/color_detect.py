@@ -1,7 +1,38 @@
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from core.extension_api import DigitizeExtension, ExtensionConfigField
-from digitize.builtin_extensions import COLOR_DIGITIZE_EXTENSION_TYPE, _BUILTIN_EXTENSION_VERSION, _color_digitize
+
+
+COLOR_DIGITIZE_EXTENSION_TYPE = "builtin_digitize_color_detect"
+_BUILTIN_EXTENSION_VERSION = "0.1.0"
+
+
+def _color_digitize(image_path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    from digitize.auto_extractor import AutoExtractor
+
+    sampled_color = dict(params.get("sampled_color") or {})
+    if not sampled_color:
+        raise ValueError("请先使用取色按钮采样颜色")
+
+    tolerance = int(params.get("tolerance", 20) or 20)
+    points = AutoExtractor.extract(
+        image_path,
+        target_r=int(sampled_color.get("r", 0) or 0),
+        target_g=int(sampled_color.get("g", 0) or 0),
+        target_b=int(sampled_color.get("b", 0) or 0),
+        h_tol=max(5, tolerance // 2),
+        s_tol=min(255, tolerance * 4),
+        v_tol=min(255, tolerance * 4),
+        mask_polygons=params.get("mask_polygons"),
+        mask_include_mode=bool(params.get("mask_include_mode", True)),
+        step=int(params.get("step", 5) or 5),
+    )
+    return {
+        "points": list(points or []),
+        "summary": f"颜色识别到 {len(points or [])} 个点",
+    }
 
 
 def register_extensions(registry) -> None:

@@ -1,7 +1,40 @@
 from __future__ import annotations
 
+import math
+from typing import Any, Dict, List
+
 from core.extension_api import AnalysisExtension
-from extensions.analysis.builtin_ops import VERSION, compute_error_metrics
+
+
+VERSION = "0.1.0"
+
+
+def compute_error_metrics(xs1: List[float], ys1: List[float], xs2: List[float], ys2: List[float]) -> Dict[str, Any]:
+    n = min(len(xs1), len(ys1), len(xs2), len(ys2))
+    if n < 2:
+        raise ValueError("误差比较至少需要 2 个对齐数据点")
+    xs = list(xs1[:n])
+    ref = list(ys1[:n])
+    cmp = list(ys2[:n])
+    error_y = [left - right for left, right in zip(ref, cmp)]
+    abs_error = [abs(value) for value in error_y]
+    mae = sum(abs_error) / n
+    rmse = math.sqrt(sum(value * value for value in error_y) / n)
+    mean_error = sum(error_y) / n
+    max_abs_error = max(abs_error)
+    relative_errors = [abs(error / base) for error, base in zip(error_y, ref) if base not in (0, 0.0)]
+    relative_mae = (sum(relative_errors) / len(relative_errors)) if relative_errors else None
+    return {
+        "analysis_type": "error_compare",
+        "n": n,
+        "error_x": xs,
+        "error_y": error_y,
+        "mae": mae,
+        "rmse": rmse,
+        "mean_error": mean_error,
+        "max_abs_error": max_abs_error,
+        "relative_mae": relative_mae,
+    }
 
 
 def _handler(inputs, params):
@@ -32,6 +65,6 @@ def register_extensions(registry) -> None:
             version=VERSION,
             lines_number=(2, 2),
             settings=True,
-                source_kind="builtin",
+            source_kind="builtin",
         )
     )

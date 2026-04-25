@@ -30,7 +30,13 @@ from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.navigation_stack import PivotStackWidget, SegmentedStackWidget
 from core.shortcut_manager import shortcut_manager
-from core.ui_preferences import TreeNameDisplayMode, get_tree_name_display_mode, set_tree_name_display_mode
+from core.ui_preferences import (
+    TreeNameDisplayMode,
+    get_tree_name_display_mode,
+    is_page_tree_focus_mode_enabled,
+    set_page_tree_focus_mode_enabled,
+    set_tree_name_display_mode,
+)
 from core.ai.providers import (
     get_provider_preset,
     list_builtin_models,
@@ -43,6 +49,7 @@ class SettingsPage(QWidget):
 
     shortcuts_changed = Signal()  # 快捷键保存后发出
     tree_display_mode_changed = Signal(str)
+    page_tree_focus_mode_changed = Signal(bool)
     ai_panel_visibility_changed = Signal(bool)
     extensions_reloaded = Signal()
     project_modified = Signal()
@@ -56,6 +63,9 @@ class SettingsPage(QWidget):
         self._tree_display_mode_label = None
         self._tree_display_mode_combo = None
         self._tree_display_mode_keys = ["wrap", "elide"]
+        self._page_tree_focus_mode_label = None
+        self._page_tree_focus_mode_checkbox = None
+        self._page_tree_focus_mode_hint = None
         self._appearance_title = None
         self._extension_card = None
         self._extension_title = None
@@ -243,6 +253,22 @@ class SettingsPage(QWidget):
         self._tree_display_mode_combo.currentIndexChanged.connect(self._on_tree_display_mode_changed)
         tree_mode_layout.addWidget(self._tree_display_mode_combo)
         appearance_layout.addLayout(tree_mode_layout)
+
+        tree_focus_layout = QVBoxLayout()
+        self._page_tree_focus_mode_label = BodyLabel("项目树页面专注模式", content)
+        self._page_tree_focus_mode_label.setStyleSheet(body_text_style_sheet())
+        tree_focus_layout.addWidget(self._page_tree_focus_mode_label)
+
+        self._page_tree_focus_mode_hint = BodyLabel("开启后，功能页中的共享项目树只显示当前页面直接相关的节点。", content)
+        self._page_tree_focus_mode_hint.setWordWrap(True)
+        self._page_tree_focus_mode_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        tree_focus_layout.addWidget(self._page_tree_focus_mode_hint)
+
+        self._page_tree_focus_mode_checkbox = CheckBox("仅显示当前功能页相关节点", content)
+        self._page_tree_focus_mode_checkbox.setChecked(is_page_tree_focus_mode_enabled())
+        self._page_tree_focus_mode_checkbox.stateChanged.connect(self._on_page_tree_focus_mode_changed)
+        tree_focus_layout.addWidget(self._page_tree_focus_mode_checkbox)
+        appearance_layout.addLayout(tree_focus_layout)
 
         onboarding_layout = QVBoxLayout()
         self._onboarding_label = BodyLabel("新手引导", content)
@@ -792,6 +818,11 @@ class SettingsPage(QWidget):
     def _on_tree_display_mode_changed(self, _index: int) -> None:
         mode = set_tree_name_display_mode(self._current_tree_display_mode())
         self.tree_display_mode_changed.emit(mode)
+
+    def _on_page_tree_focus_mode_changed(self, _state: int) -> None:
+        enabled = bool(self._page_tree_focus_mode_checkbox.isChecked()) if self._page_tree_focus_mode_checkbox is not None else False
+        enabled = set_page_tree_focus_mode_enabled(enabled)
+        self.page_tree_focus_mode_changed.emit(enabled)
 
     def _clear_builtin_extension_options(self) -> None:
         self._builtin_extension_checkboxes.clear()

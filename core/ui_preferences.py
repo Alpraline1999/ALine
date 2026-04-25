@@ -15,6 +15,7 @@ class UIPreferences(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     tree_name_display_mode: TreeNameDisplayMode = "elide"
+    page_tree_focus_mode: bool = False
     home_welcome_dismissed: bool = False
     home_onboarding_completed: bool = False
     page_onboarding_completed: dict[str, bool] = Field(default_factory=dict)
@@ -44,6 +45,17 @@ def set_tree_name_display_mode(mode: TreeNameDisplayMode) -> TreeNameDisplayMode
     prefs.tree_name_display_mode = "elide" if mode == "elide" else "wrap"
     prefs.save()
     return prefs.tree_name_display_mode
+
+
+def is_page_tree_focus_mode_enabled() -> bool:
+    return bool(UIPreferences.load().page_tree_focus_mode)
+
+
+def set_page_tree_focus_mode_enabled(enabled: bool) -> bool:
+    prefs = UIPreferences.load()
+    prefs.page_tree_focus_mode = bool(enabled)
+    prefs.save()
+    return bool(prefs.page_tree_focus_mode)
 
 
 def is_home_welcome_dismissed() -> bool:

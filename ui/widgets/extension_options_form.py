@@ -310,7 +310,7 @@ class _LineSelectionDialog(MessageBoxBase):
         self._move_left_btn.clicked.connect(self._move_to_available)
         self._clear_btn.clicked.connect(self._clear)
         self._select_all_btn.setVisible(upper == -1 and bool(self._candidates))
-        self._clear_btn.setVisible(upper == -1 and bool(self._candidates))
+        self._clear_btn.setVisible(bool(self._candidates))
         center_column.addStretch(1)
         center_column.addWidget(self._select_all_btn)
         center_column.addWidget(self._move_right_btn)

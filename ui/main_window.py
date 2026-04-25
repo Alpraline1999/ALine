@@ -26,7 +26,7 @@ from ai.agent import ALineAgent
 from ai.command_layer import CommandDispatcher
 from core.global_assets import global_assets
 from core.project_manager import project_manager
-from core.ui_preferences import reset_all_onboarding_progress
+from core.ui_preferences import is_page_tree_focus_mode_enabled, reset_all_onboarding_progress
 from core.ai_client import AIConfig
 from core.ai.tool_executor import execute_tool
 from core.ai.tool_registry import TOOLS
@@ -50,6 +50,16 @@ _PAGE_TREE_KINDS = {
     "processPage":   _BUSINESS_TREE_KINDS,
     "analysisPage":  _BUSINESS_TREE_KINDS,
     "digitizePage":  _BUSINESS_TREE_KINDS,
+    "settingsPage":  [],
+}
+
+_PAGE_TREE_FOCUS_KINDS = {
+    "homePage":      [],
+    "dataPage":      ["folder", "source_file", "data_file", "analysis_result", "image_work", "picture", "series", "curve"],
+    "chartPage":     ["folder", "data_file", "image_work", "picture", "figure_template", "global_curve_style_template", "global_plot_style", "global_plot_theme", "series", "curve"],
+    "processPage":   ["folder", "data_file", "pipeline", "global_pipeline", "analysis_result", "series", "curve"],
+    "analysisPage":  ["folder", "data_file", "analysis_result", "report_template", "global_report_template", "series", "curve"],
+    "digitizePage":  ["folder", "source_file", "image_work", "curve"],
     "settingsPage":  [],
 }
 
@@ -216,6 +226,7 @@ class MainWindow(FluentWindow):
 
     def __init__(self):
         super().__init__()
+        self._page_tree_focus_mode_enabled = is_page_tree_focus_mode_enabled()
         self._tree_panel_user_hidden = False
         self._tree_panel_width = _TREE_PANEL_DEFAULT_WIDTH
         self._shortcut_bindings = ShortcutBindingSet()
@@ -307,6 +318,16 @@ class MainWindow(FluentWindow):
             theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         shortcut_manager.shortcuts_changed.connect(self.apply_shortcuts)
         self.settings_page.tree_display_mode_changed.connect(self._tree_panel.tree.set_name_display_mode)
+        self.settings_page.page_tree_focus_mode_changed.connect(self._on_page_tree_focus_mode_changed)
+
+    def _tree_kinds_for_interface(self, interface) -> list[str]:
+        obj_name = getattr(interface, "objectName", lambda: "")()
+        mapping = _PAGE_TREE_FOCUS_KINDS if self._page_tree_focus_mode_enabled else _PAGE_TREE_KINDS
+        return list(mapping.get(obj_name, []))
+
+    def _on_page_tree_focus_mode_changed(self, enabled: bool) -> None:
+        self._page_tree_focus_mode_enabled = bool(enabled)
+        self._update_tree_panel_visibility(self.stackedWidget.currentWidget())
 
     def _setup_shortcuts(self) -> None:
         context = Qt.ShortcutContext.WindowShortcut
@@ -393,8 +414,7 @@ class MainWindow(FluentWindow):
         self._update_tree_panel_visibility(interface)
 
     def _tree_available_for_interface(self, interface) -> bool:
-        obj_name = getattr(interface, "objectName", lambda: "")()
-        return bool(_PAGE_TREE_KINDS.get(obj_name, []))
+        return bool(self._tree_kinds_for_interface(interface))
 
     def _page_supports_extension_panel(self, interface) -> bool:
         if interface is None or not hasattr(interface, "supports_extension_panel_toggle"):
@@ -419,8 +439,7 @@ class MainWindow(FluentWindow):
         button.setToolTip("隐藏扩展面板" if visible else "显示扩展面板")
 
     def _update_tree_panel_visibility(self, interface) -> None:
-        obj_name = getattr(interface, "objectName", lambda: "")()
-        kinds = _PAGE_TREE_KINDS.get(obj_name, [])
+        kinds = self._tree_kinds_for_interface(interface)
         show = bool(kinds)
         tree_visible = show and not self._tree_panel_user_hidden
         self._tree_panel.setVisible(tree_visible)

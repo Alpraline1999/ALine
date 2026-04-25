@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal, QStringListModel
@@ -30,12 +31,15 @@ from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.dialogs.export_flow import (
     DataCreateTargetOption,
     choose_analysis_result_save_plan,
+    choose_curve_file_export_plan,
     choose_data_export_batch_plan,
     choose_data_export_plan,
+    curve_export_file_filter,
 )
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from core.builtin_extensions import register_core_builtin_extensions
+from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
@@ -402,22 +406,17 @@ class AnalysisPage(QWidget):
         apply_button_metrics(self._save_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         result_actions.addWidget(self._save_result_btn)
 
-        self._export_result_series_btn = PushButton(FIF.SHARE, "导出结果数据")
-        self._export_result_series_btn.clicked.connect(self._export_result_series)
-        self._export_result_series_btn.setVisible(False)
-        self._export_result_series_btn.setEnabled(False)
-        apply_button_metrics(self._export_result_series_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        result_actions.addWidget(self._export_result_series_btn)
-
-        self._export_extrema_btn = PushButton("导出峰谷曲线")
-        self._export_extrema_btn.clicked.connect(self._export_extrema_by_choice)
-        apply_button_metrics(self._export_extrema_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        result_actions.addWidget(self._export_extrema_btn)
-
         self._generate_report_btn = PushButton(FIF.DOCUMENT, "生成报告")
         self._generate_report_btn.clicked.connect(self._on_generate_report)
         apply_button_metrics(self._generate_report_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         result_actions.addWidget(self._generate_report_btn)
+
+        self._export_result_series_btn = PushButton(FIF.SHARE, "导出曲线")
+        self._export_result_series_btn.clicked.connect(self._export_current_plot_series)
+        self._export_result_series_btn.setVisible(False)
+        self._export_result_series_btn.setEnabled(False)
+        apply_button_metrics(self._export_result_series_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        result_actions.addWidget(self._export_result_series_btn)
         result_layout.addLayout(result_actions)
 
         report_tab = QWidget(panel)
@@ -886,7 +885,7 @@ class AnalysisPage(QWidget):
                     ],
                 }
             ]
-            normalized["preferred_summary_widget"] = "peak"
+            normalized["preferred_summary_widget"] = "details"
             return normalized
 
         if t == "correlation" and len(selected) >= 2:
@@ -1000,8 +999,17 @@ class AnalysisPage(QWidget):
         for section in list(normalized.get("tables") or []):
             details_layout.addWidget(make_section_label(str(section.get("title") or "结果表"), view["details_container"]))
             table = _SelectableResultTable(view["details_container"])
-            self._configure_result_table(table, [str(header) for header in list(section.get("headers") or [])])
+            headers = [str(header) for header in list(section.get("headers") or [])]
+            self._configure_result_table(table, headers)
             self._set_result_table_rows(table, [list(row) for row in list(section.get("rows") or [])])
+            if headers == ["波峰序号", "波峰 X", "波峰 Y", "波谷序号", "波谷 X", "波谷 Y"]:
+                header = table.horizontalHeader()
+                header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+                header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+                header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+                header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+                header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+                header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
             details_layout.addWidget(table)
             view["detail_tables"].append(table)
 
@@ -1312,13 +1320,6 @@ class AnalysisPage(QWidget):
         summary_stack = view.get("summary_stack")
         if summary_stack is None:
             self._set_summary_rows(view["summary_table"], list(normalized.get("summary_items") or []))
-            return
-        if normalized.get("preferred_summary_widget") == "peak":
-            summary_stack.setCurrentWidget(view["peak_summary_widget"])
-            self._set_summary_rows(view["peak_meta_table"], list(normalized.get("summary_items") or []))
-            peaks = list(r.get("peaks", []) or [])
-            valleys = list(r.get("valleys", []) or [])
-            self._set_peak_points_rows(view["peak_points_table"], peaks, valleys)
             return
         if normalized.get("tables") or normalized.get("texts"):
             self._populate_detail_summary_view(view, normalized)
@@ -2227,13 +2228,129 @@ class AnalysisPage(QWidget):
         )
 
     def _analysis_output_export_button_text(self) -> str:
-        analysis_type = self._result.get("analysis_type", "") if self._result else ""
-        if self._result and self._result.get("_plot_series"):
-            return "导出分析曲线"
-        return {
-            "curve_fit": "导出拟合曲线",
-            "error_compare": "导出误差曲线",
-        }.get(analysis_type, "导出结果数据")
+        return "导出曲线"
+
+    def _current_analysis_export_series(self) -> List[DataSeries]:
+        active_view = self._active_analysis_view()
+        result = dict(active_view.get("result") or {}) if isinstance(active_view, dict) else {}
+        if not result and self._result:
+            result = dict(self._result)
+        if not result:
+            return []
+
+        analysis_type = str(result.get("analysis_type") or (active_view.get("analysis_type") if isinstance(active_view, dict) else "analysis") or "analysis")
+        x_label = str(result.get("x_label") or "x")
+        y_label = str(result.get("y_label") or "y")
+        series_list: List[DataSeries] = []
+
+        for index, series in enumerate(list(result.get("_plot_series", []) or result.get("plot_series", []) or []), start=1):
+            if not isinstance(series, dict):
+                continue
+            xs = list(series.get("x", []) or [])
+            ys = list(series.get("y", []) or [])
+            if not xs or not ys or len(xs) != len(ys):
+                continue
+            series_list.append(
+                DataSeries(
+                    name=str(series.get("name") or series.get("label") or f"结果曲线_{index}"),
+                    x=xs,
+                    y=ys,
+                    x_label=x_label,
+                    y_label=y_label,
+                    color=str(series.get("color") or "#0078D4"),
+                    source="computed",
+                )
+            )
+        if series_list:
+            return series_list
+
+        if analysis_type == "curve_fit" and "fit_x" in result and "fit_y" in result:
+            return [
+                DataSeries(
+                    name=self._default_analysis_result_name(),
+                    x=list(result.get("fit_x", []) or []),
+                    y=list(result.get("fit_y", []) or []),
+                    x_label=x_label,
+                    y_label=y_label,
+                    source="computed",
+                )
+            ]
+
+        if analysis_type == "error_compare" and "error_x" in result and "error_y" in result:
+            return [
+                DataSeries(
+                    name=self._default_analysis_result_name(),
+                    x=list(result.get("error_x", []) or []),
+                    y=list(result.get("error_y", []) or []),
+                    x_label=x_label,
+                    y_label="误差",
+                    source="computed",
+                )
+            ]
+
+        if analysis_type == "peak_detect":
+            extrema_series = [
+                self._build_extrema_series("peaks", "peaks"),
+                self._build_extrema_series("valleys", "valleys"),
+            ]
+            return [series for series in extrema_series if series is not None]
+
+        return []
+
+    @staticmethod
+    def _ensure_curve_export_suffix(path_text: str, file_format: str) -> str:
+        path = Path(path_text)
+        suffix = f".{str(file_format or 'csv').strip().lower()}"
+        if path.suffix.lower() == suffix:
+            return str(path)
+        if path.suffix:
+            return str(path.with_suffix(suffix))
+        return str(path.with_name(f"{path.name}{suffix}"))
+
+    def _export_current_plot_series(self) -> None:
+        import datetime
+
+        series_list = self._current_analysis_export_series()
+        if not series_list:
+            InfoBar.warning("提示", "当前分析结果没有可导出的曲线", parent=self, position=InfoBarPosition.TOP)
+            return
+
+        merge_supported = False
+        if len(series_list) > 1:
+            try:
+                merge_supported = Exporter.can_merge_data_series(series_list)
+            except ValueError:
+                merge_supported = False
+
+        export_plan = choose_curve_file_export_plan(
+            self,
+            title="导出曲线",
+            source_labels=[series.name or f"series_{index + 1}" for index, series in enumerate(series_list)],
+            merge_supported=merge_supported,
+        )
+        if export_plan is None:
+            return
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") if export_plan.include_timestamp else None
+        try:
+            if export_plan.action == "clipboard":
+                Exporter.export_series_to_clipboard(series_list, timestamp=timestamp, merged=export_plan.merged)
+                InfoBar.success("已复制", "分析曲线已复制到剪贴板", parent=self, position=InfoBarPosition.TOP)
+                return
+            default_name = self._ensure_curve_export_suffix(self._default_analysis_result_name(), export_plan.file_format)
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "导出曲线",
+                default_name,
+                curve_export_file_filter(export_plan.file_format),
+            )
+            if not file_path:
+                return
+            file_path = self._ensure_curve_export_suffix(file_path, export_plan.file_format)
+            Exporter.export_series_file(series_list, file_path, fmt=export_plan.file_format, timestamp=timestamp, merged=export_plan.merged)
+            InfoBar.success("导出成功", file_path, parent=self, position=InfoBarPosition.TOP)
+        except Exception as exc:
+            InfoBar.error("导出失败", str(exc), parent=self, position=InfoBarPosition.TOP)
 
     def _export_current_series(self, series, *, title: str) -> bool:
         from models.schemas import DataFile
@@ -2789,16 +2906,9 @@ class AnalysisPage(QWidget):
             self._sync_extension_params_editor(analysis_type)
 
     def _update_peak_export_buttons(self) -> None:
-        if not hasattr(self, "_export_extrema_btn") or not hasattr(self, "_export_result_series_btn"):
+        if not hasattr(self, "_export_result_series_btn"):
             return
-        is_peak_mode = self._current_analysis_type() == "peak_detect"
-        result = self._result or {}
-        has_peak_result = bool(result and result.get("analysis_type") == "peak_detect")
-        peak_count = len(result.get("peaks", [])) if has_peak_result else 0
-        valley_count = len(result.get("valleys", [])) if has_peak_result else 0
-        self._export_extrema_btn.setVisible(is_peak_mode)
-        self._export_extrema_btn.setEnabled(has_peak_result and (peak_count > 0 or valley_count > 0))
-        has_exportable_series = self._result is not None and self._build_analysis_output_series(self._default_analysis_result_name()) is not None
+        has_exportable_series = bool(self._current_analysis_export_series())
         self._export_result_series_btn.setVisible(has_exportable_series)
         self._export_result_series_btn.setEnabled(has_exportable_series)
         if has_exportable_series:

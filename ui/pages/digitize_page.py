@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Optional, cast
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QFormLayout, QTableWidgetItem, QHeaderView
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QFont, QColor
 from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePushButton,
     LineEdit, SpinBox, ColorPickerButton, BodyLabel, CaptionLabel, SubtitleLabel,
@@ -11,21 +11,20 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
     MessageBox, InfoBar, RoundMenu, MessageBoxBase,
     ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action, FluentIcon as FIF)
 
+from core.exporter import Exporter
+from core.builtin_extensions import register_core_builtin_extensions
 from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
-from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_plan
+from ui.dialogs.export_flow import DataCreateTargetOption, choose_curve_file_export_plan, choose_data_export_plan, curve_export_file_filter
 from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
-from digitize.builtin_extensions import (
-    COLOR_DIGITIZE_EXTENSION_TYPE,
-    SHAPE_DIGITIZE_EXTENSION_TYPE,
-    ensure_builtin_digitize_extensions,
-)
+from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
+from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
 from models.schemas import CalibrationData, DataFile, DataSeries
 
 
@@ -66,6 +65,7 @@ class DigitizePage(QWidget):
         self._left_panel = None
         self._right_panel = None
         self._right_tabs = None
+        self._right_splitter_initialized = False
         self._image_viewer: ImageViewer = cast(ImageViewer, None)
         self._tool_buttons = []
         self._project_tree: TreeWidget = cast(TreeWidget, None)
@@ -97,7 +97,7 @@ class DigitizePage(QWidget):
         self._sort_col = -1  # -1表示未排序
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._shortcut_bindings = ShortcutBindingSet()
-        ensure_builtin_digitize_extensions(extension_registry)
+        register_core_builtin_extensions(extension_registry)
         self.setup_ui()
         self._setup_viewer_signals()
         self._setup_shortcuts()
@@ -109,7 +109,19 @@ class DigitizePage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        QTimer.singleShot(0, self._sync_right_panel_splitter_sizes)
         self._onboarding_controller.schedule_auto_start()
+
+    def _sync_right_panel_splitter_sizes(self) -> None:
+        if self._right_splitter_initialized or self._right_content_splitter is None:
+            return
+        total_height = self._right_content_splitter.height()
+        if total_height <= 0:
+            return
+        upper = max(1, total_height // 2)
+        lower = max(1, total_height - upper)
+        self._right_content_splitter.setSizes([upper, lower])
+        self._right_splitter_initialized = True
 
     def _install_tooltip_filters(self):
         """为所有带 tooltip 的子 widget 安装 Fluent ToolTipFilter"""
@@ -361,12 +373,19 @@ class DigitizePage(QWidget):
         actions_row.addStretch()
         layout.addLayout(actions_row)
 
-        # 标题
-        self._curve_panel_title = make_section_label("曲线数据", panel)
-        layout.addWidget(self._curve_panel_title)
+        self._right_content_splitter = QSplitter(Qt.Orientation.Vertical, panel)
+        self._right_content_splitter.setHandleWidth(6)
 
-        # 曲线数据表格（带可点击排序表头）
-        self._curve_table = TableWidget(panel)
+        curve_section = QWidget(self._right_content_splitter)
+        curve_section.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        curve_layout = QVBoxLayout(curve_section)
+        curve_layout.setContentsMargins(0, 0, 0, 0)
+        curve_layout.setSpacing(8)
+
+        self._curve_panel_title = make_section_label("曲线数据", curve_section)
+        curve_layout.addWidget(self._curve_panel_title)
+
+        self._curve_table = TableWidget(curve_section)
         self._curve_table.setColumnCount(2)
         self._curve_table.setHorizontalHeaderLabels(["X", "Y"])
         self._curve_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -380,29 +399,43 @@ class DigitizePage(QWidget):
         self._curve_table.verticalHeader().setDefaultSectionSize(22)
         self._curve_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._curve_table.customContextMenuRequested.connect(self._on_curve_table_context_menu)
-        layout.addWidget(self._curve_table)
+        curve_layout.addWidget(self._curve_table, 1)
 
-        line = QFrame(panel)
+        lower_section = QWidget(self._right_content_splitter)
+        lower_section.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+        lower_layout = QVBoxLayout(lower_section)
+        lower_layout.setContentsMargins(0, 0, 0, 0)
+        lower_layout.setSpacing(8)
+
+        line = QFrame(lower_section)
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFixedHeight(1)
         line.setStyleSheet(f"color: {self._border_color()};")
-        layout.addWidget(line)
+        lower_layout.addWidget(line)
 
         # 功能区页面
-        self._right_tabs = SegmentedStackWidget(panel, fill_width=True)
+        self._right_tabs = SegmentedStackWidget(lower_section, fill_width=True)
+        self._right_tabs.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
         self._right_tabs.tabBar.setAddButtonVisible(False)
         self._right_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
         combined_tab = self._create_combined_tab()
         self._right_tabs.addTab(combined_tab, "图片选点")
         export_tab = self._create_export_tab()
         self._right_tabs.addTab(export_tab, "数据导出")
-        layout.addWidget(self._right_tabs)
+        lower_layout.addWidget(self._right_tabs, 1)
 
         # 提示标签
-        self._status_label = BodyLabel("", panel)
+        self._status_label = BodyLabel("", lower_section)
         self._status_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px; padding: 2px 0;")
         self._status_label.setWordWrap(True)
-        layout.addWidget(self._status_label)
+        lower_layout.addWidget(self._status_label)
+
+        self._right_content_splitter.addWidget(curve_section)
+        self._right_content_splitter.addWidget(lower_section)
+        self._right_content_splitter.setStretchFactor(0, 1)
+        self._right_content_splitter.setStretchFactor(1, 1)
+        self._right_content_splitter.setSizes([520, 520])
+        layout.addWidget(self._right_content_splitter, 1)
 
         return panel
 
@@ -684,21 +717,10 @@ class DigitizePage(QWidget):
         self._auto_status_label.setWordWrap(True)
         layout.addWidget(self._auto_status_label)
 
-        self._digitize_auto_config_scroll = SmoothScrollArea(tab)
-        self._digitize_auto_config_scroll.setWidgetResizable(True)
-        self._digitize_auto_config_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._digitize_auto_config_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._digitize_auto_config_scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
-        auto_config_host = QWidget(self._digitize_auto_config_scroll)
-        auto_config_host.setStyleSheet("background: transparent;")
-        auto_config_layout = QVBoxLayout(auto_config_host)
-        auto_config_layout.setContentsMargins(0, 0, 0, 0)
-        auto_config_layout.setSpacing(0)
-
         self._digitize_extension_controls = ExtensionConfigPanel(
             "自动选点扩展",
             "执行检测",
-            auto_config_host,
+            tab,
             mode="compact",
             framed=False,
         )
@@ -710,10 +732,9 @@ class DigitizePage(QWidget):
             self._on_digitize_interactive_field_requested
         )
         self._auto_mode_combo = self._digitize_extension_controls._selector
-        auto_config_layout.addWidget(self._digitize_extension_controls)
-        auto_config_layout.addStretch(1)
-        self._digitize_auto_config_scroll.setWidget(auto_config_host)
-        layout.addWidget(self._digitize_auto_config_scroll, 1)
+        self._digitize_auto_config_scroll = self._digitize_extension_controls._editor._scroll_area
+        self._digitize_extension_controls.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self._digitize_extension_controls, 1)
 
         self._refresh_digitize_extension_choices()
 
@@ -906,7 +927,7 @@ class DigitizePage(QWidget):
 
     def _create_export_tab(self) -> QWidget:
         """创建数据导出功能区"""
-        from qfluentwidgets import PushButton, CheckBox
+        from qfluentwidgets import PushButton
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -930,29 +951,10 @@ class DigitizePage(QWidget):
         name_row.addWidget(self._export_name_edit)
         layout.addLayout(name_row)
 
-        # 格式
-        fmt_row = QHBoxLayout()
-        self._export_format_label = self._make_export_row_label("文件格式:", tab)
-        fmt_row.addWidget(self._export_format_label)
-        self._export_fmt_combo = ComboBox(tab)
-        self._export_fmt_combo.addItems(["CSV (.csv)", "Excel (.xlsx)", "JSON (.json)", "文本 (.txt)"])
-        fmt_row.addWidget(self._export_fmt_combo)
-        layout.addLayout(fmt_row)
-
-        # 时间戳选项
-        self._export_timestamp_chk = CheckBox("导出时添加时间戳", tab)
-        self._export_timestamp_chk.setChecked(False)
-        layout.addWidget(self._export_timestamp_chk)
-
-        # 导出按钮
-        export_btn = PushButton("导出到文件", tab)
-        export_btn.clicked.connect(self._on_export_to_file)
+        export_btn = PushButton("导出曲线...", tab)
+        export_btn.clicked.connect(self._on_export_curves)
+        self._export_curve_btn = export_btn
         layout.addWidget(export_btn)
-
-        # 复制到剪贴板
-        clipboard_btn = PushButton("复制到剪贴板", tab)
-        clipboard_btn.clicked.connect(self._on_export_to_clipboard)
-        layout.addWidget(clipboard_btn)
 
         self._export_target_label = BodyLabel("导出目标: 共享树中选择数据文件或数据目录", tab)
         self._export_target_label.hide()
@@ -1703,86 +1705,69 @@ class DigitizePage(QWidget):
 
     # ==================== 数据导出槽函数 ====================
 
-    def _on_export_to_file(self):
-        """导出曲线到文件"""
-        from core.exporter import Exporter
+    @staticmethod
+    def _ensure_curve_export_suffix(path_text: str, file_format: str) -> str:
+        path = Path(path_text)
+        suffix = f".{str(file_format or 'csv').strip().lower()}"
+        if path.suffix.lower() == suffix:
+            return str(path)
+        if path.suffix:
+            return str(path.with_suffix(suffix))
+        return str(path.with_name(f"{path.name}{suffix}"))
+
+    def _on_export_curves(self):
+        """通过共享对话框导出曲线到文件或剪贴板"""
         import datetime
 
-        all_curves_mode = (self._export_scope_combo.currentIndex() == 1)
-        fmt_idx = self._export_fmt_combo.currentIndex()
-        fmt_map = {0: ("CSV 文件 (*.csv)", ".csv"), 1: ("Excel 文件 (*.xlsx)", ".xlsx"),
-                   2: ("JSON 文件 (*.json)", ".json"), 3: ("文本文件 (*.txt)", ".txt")}
-        filter_str, ext = fmt_map[fmt_idx]
-        add_ts = hasattr(self, '_export_timestamp_chk') and self._export_timestamp_chk.isChecked()
-        ts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") if add_ts else None
+        curves = self._get_export_curves()
+        if not curves:
+            InfoBar.warning(title="警告", content="请先选择有效曲线", parent=self, duration=3000)
+            return
 
-        # 获取曲线
-        if all_curves_mode:
-            project = project_manager.current_project
-            if project is None:
-                InfoBar.warning(title="警告", content="没有打开的项目", parent=self, duration=3000)
-                return
-            curves = []
-            for img in project.images:
-                curves.extend(img.curves)
-            curves.extend(project.imported_curves)
-            if not curves:
-                InfoBar.info(title="提示", content="项目中没有曲线", parent=self, duration=3000)
-                return
+        base_name = self._sanitize_export_name(self._export_name_edit.text().strip() or self._suggest_export_name())
+        series_list = []
+        if len(curves) == 1:
+            series_list.append(self._curve_to_data_series(curves[0], export_name=base_name))
         else:
-            if self._current_curve_id is None:
-                InfoBar.warning(title="警告", content="请先选择一条曲线", parent=self, duration=3000)
-                return
-            curve = project_manager.get_curve(self._current_curve_id)
-            if curve is None:
-                return
-            curves = [curve]
+            for curve in curves:
+                series_list.append(self._curve_to_data_series(curve))
 
-        # 选择保存路径
-        default_name = (project_manager.current_project.name if project_manager.current_project else "export") + ext
-        file_path, _ = QFileDialog.getSaveFileName(self, "保存文件", default_name, filter_str)
-        if not file_path:
+        merge_supported = False
+        if len(series_list) > 1:
+            try:
+                merge_supported = Exporter.can_merge_data_series(series_list)
+            except ValueError:
+                merge_supported = False
+
+        export_plan = choose_curve_file_export_plan(
+            self,
+            title="导出曲线",
+            source_labels=[series.name or f"curve_{index + 1}" for index, series in enumerate(series_list)],
+            merge_supported=merge_supported,
+        )
+        if export_plan is None:
             return
 
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") if export_plan.include_timestamp else None
         try:
-            if ext == ".csv":
-                if all_curves_mode:
-                    Exporter.export_csv_all(curves, file_path, timestamp=ts_str)
-                else:
-                    Exporter.export_csv(curves[0], file_path, timestamp=ts_str)
-            elif ext == ".xlsx":
-                if all_curves_mode:
-                    Exporter.export_excel_all(curves, file_path, timestamp=ts_str)
-                else:
-                    Exporter.export_excel(curves[0], file_path, timestamp=ts_str)
-            elif ext == ".json":
-                if all_curves_mode:
-                    Exporter.export_json_all(curves, file_path, timestamp=ts_str)
-                else:
-                    Exporter.export_json(curves[0], file_path, timestamp=ts_str)
-            elif ext == ".txt":
-                if all_curves_mode:
-                    Exporter.export_txt_all(curves, file_path, timestamp=ts_str)
-                else:
-                    Exporter.export_txt(curves[0], file_path, timestamp=ts_str)
+            if export_plan.action == "clipboard":
+                Exporter.export_series_to_clipboard(series_list, timestamp=timestamp, merged=export_plan.merged)
+                self._status_label.setText("已复制到剪贴板")
+                return
+            default_name = self._ensure_curve_export_suffix(base_name, export_plan.file_format)
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "保存文件",
+                default_name,
+                curve_export_file_filter(export_plan.file_format),
+            )
+            if not file_path:
+                return
+            file_path = self._ensure_curve_export_suffix(file_path, export_plan.file_format)
+            Exporter.export_series_file(series_list, file_path, fmt=export_plan.file_format, timestamp=timestamp, merged=export_plan.merged)
             self._status_label.setText(f"已导出: {file_path}")
-        except Exception as e:
-            InfoBar.error(title="导出失败", content=str(e), parent=self, duration=5000)
-
-    def _on_export_to_clipboard(self):
-        """复制当前曲线数据到剪贴板"""
-        from core.exporter import Exporter
-        import datetime
-        if self._current_curve_id is None:
-            InfoBar.warning(title="警告", content="请先选择一条曲线", parent=self, duration=3000)
-            return
-        curve = project_manager.get_curve(self._current_curve_id)
-        if curve is None:
-            return
-        add_ts = hasattr(self, '_export_timestamp_chk') and self._export_timestamp_chk.isChecked()
-        ts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") if add_ts else None
-        Exporter.export_to_clipboard(curve, timestamp=ts_str)
-        self._status_label.setText("已复制到剪贴板")
+        except Exception as exc:
+            InfoBar.error(title="导出失败", content=str(exc), parent=self, duration=5000)
 
     def _get_export_curves(self):
         if self._export_scope_combo.currentIndex() == 1:

@@ -1,7 +1,34 @@
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from core.extension_api import DigitizeExtension, ExtensionConfigField
-from digitize.builtin_extensions import SHAPE_DIGITIZE_EXTENSION_TYPE, _BUILTIN_EXTENSION_VERSION, _shape_digitize
+
+
+SHAPE_DIGITIZE_EXTENSION_TYPE = "builtin_digitize_shape_detect"
+_BUILTIN_EXTENSION_VERSION = "0.1.0"
+
+
+def _shape_digitize(image_path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    from digitize.shape_extractor import ShapeExtractor
+
+    template_info = params.get("template_info")
+    if template_info is None:
+        raise ValueError("请先使用截图按钮截取图例形状")
+
+    points = ShapeExtractor.extract(
+        image_path,
+        template_info=template_info,
+        mask_polygons=params.get("mask_polygons"),
+        mask_include_mode=bool(params.get("mask_include_mode", True)),
+        step=int(params.get("step", 5) or 5),
+        threshold=float(params.get("threshold", 0.65) or 0.65),
+        color_weight=float(params.get("color_weight", 0.7) or 0.7),
+    )
+    return {
+        "points": list(points or []),
+        "summary": f"图形识别到 {len(points or [])} 个点",
+    }
 
 
 def register_extensions(registry) -> None:

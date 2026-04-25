@@ -55,10 +55,12 @@ from core.extension_api import (
     validate_extension_lines_list,
 )
 from core.global_assets import global_assets, parse_plot_style_asset_key
+from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
 from models.schemas import DataFile, DataSeries, Dataset, Curve
+from ui.dialogs.export_flow import choose_curve_file_export_plan, curve_export_file_filter
 
 try:
     import matplotlib
@@ -4549,32 +4551,84 @@ class DataPage(QWidget):
         if self._selected_type and self._selected_id:
             self.send_to_process.emit(self._selected_type, self._selected_id)
 
+    def _selected_export_series(self) -> list[DataSeries]:
+        project = project_manager.current_project
+        if project is None or not self._selected_node_kind or not self._selected_node_id:
+            return []
+        if self._selected_node_kind == "data_file":
+            node = self._current_tree_node()
+            if node is None or node.kind != "data_file":
+                return []
+            data_file = project.find_data_file(node.data_file_id)
+            if data_file is None:
+                return []
+            return [self._clone_series(series) for series in data_file.series]
+        if self._selected_node_kind in {"series", "curve"}:
+            series = project_manager.get_series_from_node(self._selected_node_kind, self._selected_node_id)
+            if series is None:
+                return []
+            return [self._clone_series(series)]
+        return []
+
+    def _default_curve_export_name(self) -> str:
+        name = (self._current_node_name() or "data_export").strip()
+        name = name.replace("/", "_").replace("\\", "_")
+        return name or "data_export"
+
+    @staticmethod
+    def _ensure_curve_export_suffix(path_text: str, file_format: str) -> str:
+        path = Path(path_text)
+        suffix = f".{str(file_format or 'csv').strip().lower()}"
+        if path.suffix.lower() == suffix:
+            return str(path)
+        if path.suffix:
+            return str(path.with_suffix(suffix))
+        return str(path.with_name(f"{path.name}{suffix}"))
+
     def _export_csv(self):
-        if not self._selected_id or not self._selected_type:
-            return
-        p = project_manager.current_project
-        xs, ys, name = [], [], "data"
-        if self._selected_type == _TYPE_CURVE:
-            c = self._find_curve(p, self._selected_id)
-            if c:
-                xs, ys, name = c.x_actual, c.y_actual, c.name
-        elif self._selected_type == _TYPE_SERIES:
-            s = p.find_series(self._selected_id)
-            if s:
-                xs, ys, name = s.x, s.y, s.name
-        if not xs:
+        import datetime
+
+        series_list = self._selected_export_series()
+        if not series_list:
+            InfoBar.warning("提示", "当前节点没有可导出的曲线数据", parent=self, position=InfoBarPosition.TOP)
             return
 
-        path, _ = QFileDialog.getSaveFileName(self, "导出 CSV", f"{name}.csv", "CSV 文件 (*.csv)")
-        if not path:
+        merge_supported = False
+        if len(series_list) > 1:
+            try:
+                merge_supported = Exporter.can_merge_data_series(series_list)
+            except ValueError:
+                merge_supported = False
+
+        export_plan = choose_curve_file_export_plan(
+            self,
+            title="导出数据",
+            source_labels=[series.name or f"series_{index + 1}" for index, series in enumerate(series_list)],
+            merge_supported=merge_supported,
+        )
+        if export_plan is None:
             return
-        import csv
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            w.writerow(["x", "y"])
-            for x, y in zip(xs, ys):
-                w.writerow([x, y])
-        InfoBar.success("导出成功", path, parent=self, position=InfoBarPosition.TOP)
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") if export_plan.include_timestamp else None
+        try:
+            if export_plan.action == "clipboard":
+                Exporter.export_series_to_clipboard(series_list, timestamp=timestamp, merged=export_plan.merged)
+                InfoBar.success("已复制", "曲线数据已复制到剪贴板", parent=self, position=InfoBarPosition.TOP)
+                return
+            default_name = self._ensure_curve_export_suffix(self._default_curve_export_name(), export_plan.file_format)
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "导出数据",
+                default_name,
+                curve_export_file_filter(export_plan.file_format),
+            )
+            if not path:
+                return
+            path = self._ensure_curve_export_suffix(path, export_plan.file_format)
+            Exporter.export_series_file(series_list, path, fmt=export_plan.file_format, timestamp=timestamp, merged=export_plan.merged)
+            InfoBar.success("导出成功", path, parent=self, position=InfoBarPosition.TOP)
+        except Exception as exc:
+            InfoBar.error("导出失败", str(exc), parent=self, position=InfoBarPosition.TOP)
 
     # ─────────────────────────────────────────────────────────
     # 主题更新

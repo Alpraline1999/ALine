@@ -6,7 +6,7 @@ from typing import Callable, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QTableWidgetItem, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CaptionLabel, ComboBox, LineEdit, PrimaryPushButton, PushButton, TableWidget
+from qfluentwidgets import BodyLabel, CaptionLabel, CheckBox, ComboBox, LineEdit, PrimaryPushButton, PushButton, TableWidget
 
 from core.project_manager import project_manager
 from ui.widgets.focus_commit import install_click_away_focus_commit
@@ -45,6 +45,14 @@ class PictureExportPlan:
 class AnalysisResultSavePlan:
     result_name: str
     target_parent_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class CurveFileExportPlan:
+    action: str
+    file_format: str
+    include_timestamp: bool = False
+    merged: bool = False
 
 
 class _DataExportDialog(QDialog):
@@ -593,6 +601,112 @@ class _AnalysisResultSaveDialog(QDialog):
         return self._accepted_plan
 
 
+class _CurveFileExportDialog(QDialog):
+    _FORMAT_OPTIONS = [
+        ("csv", "CSV (.csv)"),
+        ("xls", "Excel 97-2003 (.xls)"),
+        ("txt", "文本 (.txt)"),
+        ("dat", "数据文本 (.dat)"),
+    ]
+
+    def __init__(
+        self,
+        parent,
+        *,
+        title: str,
+        source_labels: List[str],
+        merge_supported: bool,
+        default_format: str = "csv",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(460)
+        self._source_labels = [str(label or "未命名曲线") for label in source_labels]
+        self._merge_supported = bool(merge_supported)
+        self._accepted_plan: Optional[CurveFileExportPlan] = None
+        self._format_values = [value for value, _label in self._FORMAT_OPTIONS]
+        self._click_away_focus_commit = install_click_away_focus_commit(self)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        summary = CaptionLabel(self._summary_text(), self)
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        format_row = QHBoxLayout()
+        format_row.addWidget(BodyLabel("导出格式:", self))
+        self._format_combo = ComboBox(self)
+        for _value, label in self._FORMAT_OPTIONS:
+            self._format_combo.addItem(label)
+        default_index = next((index for index, value in enumerate(self._format_values) if value == default_format), 0)
+        self._format_combo.setCurrentIndex(default_index)
+        format_row.addWidget(self._format_combo, 1)
+        layout.addLayout(format_row)
+
+        self._timestamp_check = CheckBox("导出时添加时间戳", self)
+        self._timestamp_check.setChecked(False)
+        layout.addWidget(self._timestamp_check)
+
+        self._merge_check = CheckBox("X 对齐时合并为单表", self)
+        self._merge_check.setVisible(len(self._source_labels) > 1)
+        self._merge_check.setEnabled(self._merge_supported)
+        self._merge_check.setChecked(False)
+        layout.addWidget(self._merge_check)
+
+        self._merge_hint = CaptionLabel(self._merge_hint_text(), self)
+        self._merge_hint.setWordWrap(True)
+        layout.addWidget(self._merge_hint)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel_btn = PushButton("取消", self)
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        clipboard_btn = PushButton("复制到剪贴板", self)
+        clipboard_btn.clicked.connect(lambda: self._accept_with_action("clipboard"))
+        button_row.addWidget(clipboard_btn)
+        export_btn = PrimaryPushButton("导出到文件", self)
+        export_btn.clicked.connect(lambda: self._accept_with_action("file"))
+        button_row.addWidget(export_btn)
+        layout.addLayout(button_row)
+
+    def _summary_text(self) -> str:
+        count = len(self._source_labels)
+        if count <= 3:
+            label_text = "、".join(self._source_labels)
+        else:
+            label_text = "、".join(self._source_labels[:3]) + f" 等 {count} 条曲线"
+        return f"当前准备导出 {count} 条曲线: {label_text}"
+
+    def _merge_hint_text(self) -> str:
+        if len(self._source_labels) <= 1:
+            return "当前为单曲线导出。"
+        if self._merge_supported:
+            return "多条曲线的 X 坐标已对齐，可选择合并导出为单表。"
+        return "多条曲线的 X 坐标未对齐，将按分组导出。"
+
+    def _selected_format(self) -> str:
+        index = self._format_combo.currentIndex()
+        if 0 <= index < len(self._format_values):
+            return self._format_values[index]
+        return "csv"
+
+    def _accept_with_action(self, action: str) -> None:
+        self._accepted_plan = CurveFileExportPlan(
+            action=action,
+            file_format=self._selected_format(),
+            include_timestamp=self._timestamp_check.isChecked(),
+            merged=self._merge_check.isVisible() and self._merge_check.isEnabled() and self._merge_check.isChecked(),
+        )
+        self.accept()
+
+    @property
+    def accepted_plan(self) -> Optional[CurveFileExportPlan]:
+        return self._accepted_plan
+
+
 def choose_data_export_plan(
     parent,
     *,
@@ -726,6 +840,36 @@ def choose_analysis_result_save_plan(
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.accepted_plan
+
+
+def choose_curve_file_export_plan(
+    parent,
+    *,
+    title: str,
+    source_labels: List[str],
+    merge_supported: bool,
+    default_format: str = "csv",
+) -> Optional[CurveFileExportPlan]:
+    dialog = _CurveFileExportDialog(
+        parent,
+        title=title,
+        source_labels=source_labels,
+        merge_supported=merge_supported,
+        default_format=default_format,
+    )
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dialog.accepted_plan
+
+
+def curve_export_file_filter(file_format: str) -> str:
+    file_format = str(file_format or "csv").strip().lower()
+    return {
+        "csv": "CSV 文件 (*.csv)",
+        "xls": "Excel 97-2003 文件 (*.xls)",
+        "txt": "文本文件 (*.txt)",
+        "dat": "数据文件 (*.dat)",
+    }.get(file_format, "所有文件 (*)")
 
 
 def _build_data_target_entries(

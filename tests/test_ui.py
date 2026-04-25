@@ -1680,6 +1680,30 @@ class TestSettingsPage(unittest.TestCase):
             if temp_page is not None:
                 temp_page.deleteLater()
 
+    def test_page_tree_focus_mode_checkbox_defaults_to_off(self):
+        from pathlib import Path
+        from unittest import mock
+        from ui.pages.settings_page import SettingsPage
+
+        temp_page = None
+        try:
+            with mock.patch("core.ui_preferences._CONFIG_PATH", Path("/nonexistent/aline_ui_preferences_focus.json")):
+                temp_page = SettingsPage()
+            self.assertFalse(temp_page._page_tree_focus_mode_checkbox.isChecked())
+        finally:
+            if temp_page is not None:
+                temp_page.deleteLater()
+
+    def test_page_tree_focus_mode_checkbox_emits_enabled_state(self):
+        received = []
+        self.page.page_tree_focus_mode_changed.connect(received.append)
+        target_state = not self.page._page_tree_focus_mode_checkbox.isChecked()
+
+        with mock.patch("ui.pages.settings_page.set_page_tree_focus_mode_enabled", return_value=target_state):
+            self.page._page_tree_focus_mode_checkbox.setChecked(target_state)
+
+        self.assertEqual(received[-1], target_state)
+
     def test_ai_tab_is_hidden_from_settings_ui(self):
         titles = [self.page._tabs.tabText(i) for i in range(self.page._tabs.count())]
         self.assertEqual(titles, ["常规", "快捷键"])
@@ -2628,6 +2652,19 @@ class TestExtensionOptionsForm(unittest.TestCase):
             self.assertIsInstance(dialog._selected_list.parentWidget(), QFrame)
             self.assertEqual(dialog._available_list.parentWidget().objectName(), "selectionListFrame")
             self.assertEqual(dialog._selected_list.parentWidget().objectName(), "selectionListFrame")
+        finally:
+            dialog.deleteLater()
+            host.deleteLater()
+
+    def test_line_selection_dialog_clear_button_stays_visible_for_fixed_selection(self):
+        from PySide6.QtWidgets import QWidget
+        from ui.widgets.extension_options_form import _LineSelectionDialog
+
+        host = QWidget()
+        dialog = _LineSelectionDialog("输入曲线", ["A", "B", "C"], selected_indices=[1, 2], lines_number=(2, 2), parent=host)
+        try:
+            self.assertTrue(dialog._select_all_btn.isHidden())
+            self.assertFalse(dialog._clear_btn.isHidden())
         finally:
             dialog.deleteLater()
             host.deleteLater()
@@ -3969,6 +4006,33 @@ class TestDataPage(unittest.TestCase):
         self.assertTrue(self.page._btn_export.icon().isNull())
         self.assertIs(self.page._btn_export.parent(), self.page._tool_panel)
         self.assertGreater(self.page._btn_export.x(), self.page._btn_delete_node.x())
+
+    def test_export_button_uses_shared_curve_export_for_data_file(self):
+        from models.schemas import DataSeries
+        from ui.dialogs.export_flow import CurveFileExportPlan
+
+        self.df.series.append(DataSeries(name="s2", x=[1.0, 2.0, 3.0, 4.0, 5.0], y=[3.0, 6.0, 9.0, 12.0, 15.0]))
+        node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
+        self.assertIsNotNone(node)
+        self.page.on_tree_node_selected("data_file", node.id)
+
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
+            path = handle.name
+        try:
+            with mock.patch(
+                "ui.pages.data_page.choose_curve_file_export_plan",
+                return_value=CurveFileExportPlan(action="file", file_format="csv", include_timestamp=False, merged=True),
+            ), mock.patch(
+                "ui.pages.data_page.QFileDialog.getSaveFileName",
+                return_value=(path, "CSV 文件 (*.csv)"),
+            ):
+                self.page._export_csv()
+
+            content = Path(path).read_text(encoding="utf-8-sig")
+            self.assertIn("x,s1,s2", content)
+            self.assertIn("2.0,4.0,6.0", content)
+        finally:
+            Path(path).unlink(missing_ok=True)
 
     def test_management_panel_without_pending_list_keeps_controls_compact_at_top(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
@@ -6891,6 +6955,30 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIsNotNone(data_file)
         self.assertEqual(data_file.series[0].name, "拟合曲线A")
 
+    def test_curve_fit_result_can_export_curves_via_shared_dialog(self):
+        from ui.dialogs.export_flow import CurveFileExportPlan
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
+            path = handle.name
+        try:
+            with mock.patch(
+                "ui.pages.analysis_page.choose_curve_file_export_plan",
+                return_value=CurveFileExportPlan(action="file", file_format="csv", include_timestamp=False, merged=False),
+            ), mock.patch(
+                "ui.pages.analysis_page.QFileDialog.getSaveFileName",
+                return_value=(path, "CSV 文件 (*.csv)"),
+            ):
+                self.page._export_current_plot_series()
+
+            content = Path(path).read_text(encoding="utf-8-sig")
+            self.assertIn("# s1_曲线拟合", content)
+            self.assertIn("x,y", content)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
     def test_save_report_template_as_named(self):
         from core.global_assets import global_assets
 
@@ -7525,17 +7613,19 @@ class TestAnalysisPage(unittest.TestCase):
         active_key = self.page._analysis_tab_key_for_index(self.page._analysis_tabs.currentIndex())
         self.assertIsNotNone(active_key)
         view = self.page._analysis_tab_views[active_key]
-        self.assertIs(view["summary_stack"].currentWidget(), view["peak_summary_widget"])
+        self.assertIs(view["summary_stack"].currentWidget(), view["details_scroll"])
 
-        meta_labels = [view["peak_meta_table"].item(row, 0).text() for row in range(view["peak_meta_table"].rowCount())]
+        detail_summary_table = view["detail_summary_table"]
+        self.assertIsNotNone(detail_summary_table)
+        meta_labels = [detail_summary_table.item(row, 0).text() for row in range(detail_summary_table.rowCount())]
         self.assertIn("波峰数量", meta_labels)
         self.assertIn("波谷数量", meta_labels)
 
-        peak_points_table = view["peak_points_table"]
+        peak_points_table = view["detail_tables"][0]
         headers = [peak_points_table.horizontalHeaderItem(i).text() for i in range(peak_points_table.columnCount())]
         self.assertEqual(headers, ["波峰序号", "波峰 X", "波峰 Y", "波谷序号", "波谷 X", "波谷 Y"])
         self.assertGreaterEqual(peak_points_table.rowCount(), 1)
-        self.assertEqual(view["peak_meta_table"].selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.assertEqual(detail_summary_table.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
         self.assertEqual(peak_points_table.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
         self.assertEqual(peak_points_table.horizontalHeader().sectionResizeMode(0), QHeaderView.ResizeMode.ResizeToContents)
         self.assertEqual(peak_points_table.horizontalHeader().sectionResizeMode(3), QHeaderView.ResizeMode.ResizeToContents)
@@ -7818,7 +7908,7 @@ class TestDigitizePage(unittest.TestCase):
             QSizePolicy.Policy.Expanding,
         )
 
-    def test_digitize_only_auto_config_panel_is_wrapped_in_scroll_area(self):
+    def test_digitize_auto_config_scroll_only_wraps_parameter_editor(self):
         from qfluentwidgets import SmoothScrollArea
 
         def _is_descendant(widget, ancestor) -> bool:
@@ -7830,15 +7920,27 @@ class TestDigitizePage(unittest.TestCase):
             return False
 
         self.assertIsInstance(self.page._digitize_auto_config_scroll, SmoothScrollArea)
-        self.assertTrue(_is_descendant(self.page._digitize_extension_controls, self.page._digitize_auto_config_scroll))
+        self.assertIs(self.page._digitize_auto_config_scroll, self.page._digitize_extension_controls._editor._scroll_area)
+        self.assertFalse(_is_descendant(self.page._digitize_extension_controls._selector_row_widget, self.page._digitize_auto_config_scroll))
+        self.assertFalse(_is_descendant(self.page._digitize_extension_controls._config_row_widget, self.page._digitize_auto_config_scroll))
         self.assertFalse(_is_descendant(self.page._manual_tools_row, self.page._digitize_auto_config_scroll))
         self.assertFalse(_is_descendant(self.page._auto_tools_row, self.page._digitize_auto_config_scroll))
 
+    def test_digitize_curve_table_keeps_half_height_split(self):
+        self.page.resize(1320, 880)
+        self.page.show()
+        QApplication.processEvents()
+
+        sizes = self.page._right_content_splitter.sizes()
+        self.assertEqual(len(sizes), 2)
+        self.assertGreater(sum(sizes), 0)
+        ratio = sizes[0] / sum(sizes)
+        self.assertGreater(ratio, 0.4)
+        self.assertLess(ratio, 0.6)
+
     def test_digitize_pickcolor_and_shot_values_flow_through_extension_panel(self):
-        from digitize.builtin_extensions import (
-            COLOR_DIGITIZE_EXTENSION_TYPE,
-            SHAPE_DIGITIZE_EXTENSION_TYPE,
-        )
+        from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
+        from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
 
         self.page._auto_mode_combo.setCurrentIndex(
             self.page._auto_mode_type_ids.index(COLOR_DIGITIZE_EXTENSION_TYPE)
@@ -7876,7 +7978,7 @@ class TestDigitizePage(unittest.TestCase):
 
     def test_digitize_pickcolor_button_click_triggers_request_and_backfills_value(self):
         from PySide6.QtGui import QColor
-        from digitize.builtin_extensions import COLOR_DIGITIZE_EXTENSION_TYPE
+        from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
         from qfluentwidgets import ToolButton
 
         self.page.show()
@@ -7907,7 +8009,7 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(self.page._auto_status_label.text(), "已采样: #0a141e")
 
     def test_digitize_shot_button_click_triggers_request_and_backfills_value(self):
-        from digitize.builtin_extensions import SHAPE_DIGITIZE_EXTENSION_TYPE
+        from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
         from qfluentwidgets import ToolButton
 
         self.page.show()
@@ -7973,7 +8075,7 @@ class TestDigitizePage(unittest.TestCase):
             self.page._refresh_digitize_extension_choices()
 
     def test_digitize_extension_panel_tracks_current_extension(self):
-        from digitize.builtin_extensions import SHAPE_DIGITIZE_EXTENSION_TYPE
+        from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
 
         self.assertTrue(self.page.supports_extension_panel_toggle())
         self.page.set_extension_panel_visible(True)
@@ -8063,9 +8165,8 @@ class TestDigitizePage(unittest.TestCase):
 
         self.assertTrue(self.page._export_target_label.isHidden())
         self.assertEqual(self.page._export_scope_label.minimumWidth(), self.page._export_scope_label.sizeHint().width())
-        self.assertEqual(self.page._export_format_label.minimumWidth(), self.page._export_format_label.sizeHint().width())
         self.assertEqual(self.page._export_scope_label.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Minimum)
-        self.assertEqual(self.page._export_format_label.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Minimum)
+        self.assertEqual(self.page._export_curve_btn.text(), "导出曲线...")
 
     def test_export_to_data_file_does_not_create_digitize_result_folder_by_default(self):
         from ui.dialogs.export_flow import DataExportPlan
@@ -8121,6 +8222,22 @@ class TestDigitizePage(unittest.TestCase):
 
         self.assertEqual(len(self.df.series), before + 1)
         self.assertIn(data_node.name, self.page._status_label.text())
+
+    def test_curve_export_uses_shared_dialog_and_clipboard(self):
+        from ui.dialogs.export_flow import CurveFileExportPlan
+
+        _image, curve = self._add_digitize_curve()
+
+        with mock.patch(
+            "ui.pages.digitize_page.choose_curve_file_export_plan",
+            return_value=CurveFileExportPlan(action="clipboard", file_format="csv", include_timestamp=False, merged=False),
+        ):
+            self.page._on_export_curves()
+
+        clipboard_text = QApplication.clipboard().text()
+        self.assertIn("SEM_A_曲线1", clipboard_text)
+        self.assertIn("x\ty", clipboard_text)
+        self.assertEqual(self.page._current_curve_id, curve.id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -8385,6 +8502,19 @@ class TestMainWindow(unittest.TestCase):
         self.win.switchTo(self.win.chart_page)
         self.assertFalse(self.win._tree_panel.isHidden())
         self.assertTrue(self.win._tree_toggle_nav_btn.isEnabled())
+
+    def test_page_tree_focus_mode_applies_page_specific_filter(self):
+        previous = self.win._page_tree_focus_mode_enabled
+        try:
+            self.win._page_tree_focus_mode_enabled = True
+            self.win.switchTo(self.win.analysis_page)
+            self.assertEqual(
+                self.win._tree_panel.tree._filter_kinds,
+                ["folder", "data_file", "analysis_result", "report_template", "global_report_template", "series", "curve"],
+            )
+        finally:
+            self.win._page_tree_focus_mode_enabled = previous
+            self.win._update_tree_panel_visibility(self.win.stackedWidget.currentWidget())
 
     def test_extension_toggle_button_visible_on_all_function_pages(self):
         self.win.switchTo(self.win.data_page)
@@ -9353,12 +9483,14 @@ class TestAnalysisPageV3(unittest.TestCase):
         finally:
             extension_registry.unregister_analysis("analysis_extension_state_probe")
 
-    def test_peak_export_buttons_only_visible_in_peak_mode(self):
-        self.page._type_combo.setCurrentIndex(0)
-        self.assertTrue(self.page._export_extrema_btn.isHidden())
+    def test_export_curve_button_visibility_tracks_current_result(self):
+        self.assertTrue(self.page._export_result_series_btn.isHidden())
 
-        self.page._type_combo.setCurrentIndex(1)
-        self.assertFalse(self.page._export_extrema_btn.isHidden())
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+
+        self.assertFalse(self.page._export_result_series_btn.isHidden())
+        self.assertEqual(self.page._export_result_series_btn.text(), "导出曲线")
 
     def test_analysis_selected_input_reorder_preserves_current_indicator(self):
         from models.schemas import DataSeries
