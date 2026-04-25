@@ -341,6 +341,16 @@ class ChartPage(QWidget):
         self._btn_remove.clicked.connect(self._on_remove_selected)
         apply_button_metrics(self._btn_remove, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         toolbar_row.addWidget(self._btn_remove)
+        self._btn_selected_up = ToolButton(FIF.UP, left_card)
+        self._btn_selected_up.setToolTip("上移")
+        self._btn_selected_up.clicked.connect(self._move_selected_curve_up)
+        self._set_square_tool_button(self._btn_selected_up)
+        toolbar_row.addWidget(self._btn_selected_up)
+        self._btn_selected_down = ToolButton(FIF.DOWN, left_card)
+        self._btn_selected_down.setToolTip("下移")
+        self._btn_selected_down.clicked.connect(self._move_selected_curve_down)
+        self._set_square_tool_button(self._btn_selected_down)
+        toolbar_row.addWidget(self._btn_selected_down)
         self._btn_toggle_visible = ToolButton(_ICON_HIDE, left_card)
         self._btn_toggle_visible.setToolTip("隐藏当前曲线")
         self._btn_toggle_visible.clicked.connect(self._toggle_selected_visibility)
@@ -803,50 +813,44 @@ class ChartPage(QWidget):
         color_row.addWidget(self._style_line_combo, 1)
         layout.addLayout(color_row)
 
-        line_width_row = QHBoxLayout()
-        line_width_row.addWidget(self._make_style_form_label("线宽:", page))
+        line_set_row = QHBoxLayout()
+        line_set_row.addWidget(self._make_style_form_label("线宽:", page))
         self._style_line_width_edit = LineEdit(page)
         self._style_line_width_edit.setPlaceholderText("1.4")
         self._style_line_width_edit.setEnabled(False)
         self._connect_line_edit_commit(self._style_line_width_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_line_width_edit)
-        line_width_row.addWidget(self._style_line_width_edit)
-        line_width_row.addStretch()
-        layout.addLayout(line_width_row)
+        line_set_row.addWidget(self._style_line_width_edit)
+        line_set_row.addStretch()
+        layout.addLayout(line_set_row)
 
-        opacity_row = QHBoxLayout()
-        opacity_row.addWidget(self._make_style_form_label("透明度:", page))
+        line_set_row.addWidget(self._make_style_form_label("透明度:", page))
         self._style_opacity_edit = LineEdit(page)
         self._style_opacity_edit.setPlaceholderText("1.0")
         self._style_opacity_edit.setEnabled(False)
         self._connect_line_edit_commit(self._style_opacity_edit, self._on_style_metrics_changed)
         self._style_opacity_edit.textChanged.connect(lambda _text: self._on_style_metrics_changed())
         self._set_compact_edit_width(self._style_opacity_edit)
-        opacity_row.addWidget(self._style_opacity_edit)
-        opacity_row.addStretch()
-        layout.addLayout(opacity_row)
+        line_set_row.addWidget(self._style_opacity_edit)
 
-        marker_size_row = QHBoxLayout()
-        marker_size_row.addWidget(self._make_style_form_label("点大小:", page))
+        marker_set_row = QHBoxLayout()
+        marker_set_row.addWidget(self._make_style_form_label("点大小:", page))
         self._style_marker_size_edit = LineEdit(page)
         self._style_marker_size_edit.setPlaceholderText("5.0")
         self._style_marker_size_edit.setEnabled(False)
         self._connect_line_edit_commit(self._style_marker_size_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_marker_size_edit)
-        marker_size_row.addWidget(self._style_marker_size_edit)
-        marker_size_row.addStretch()
-        layout.addLayout(marker_size_row)
+        marker_set_row.addWidget(self._style_marker_size_edit)
+        marker_set_row.addStretch()
+        layout.addLayout(marker_set_row)
 
-        density_row = QHBoxLayout()
-        density_row.addWidget(self._make_style_form_label("点间距:", page))
+        marker_set_row.addWidget(self._make_style_form_label("点间距:", page))
         self._style_density_edit = LineEdit(page)
         self._style_density_edit.setPlaceholderText("1")
         self._style_density_edit.setEnabled(False)
         self._connect_line_edit_commit(self._style_density_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_density_edit)
-        density_row.addWidget(self._style_density_edit)
-        density_row.addStretch()
-        layout.addLayout(density_row)
+        marker_set_row.addWidget(self._style_density_edit)
 
         layout.addStretch()
         return scroll
@@ -996,25 +1000,22 @@ class ChartPage(QWidget):
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("画布与默认样式", page))
 
-        figure_width_row = QHBoxLayout()
-        figure_width_row.addWidget(self._make_style_form_label("图宽:", page))
+        figure_size_row = QHBoxLayout()
+        figure_size_row.addWidget(self._make_style_form_label("图宽:", page))
         self._figure_width_edit = LineEdit(page)
         self._figure_width_edit.setPlaceholderText("7.0")
         self._connect_line_edit_commit(self._figure_width_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_width_edit)
-        figure_width_row.addWidget(self._figure_width_edit)
-        figure_width_row.addStretch()
-        layout.addLayout(figure_width_row)
+        figure_size_row.addWidget(self._figure_width_edit)
+        figure_size_row.addStretch()
+        layout.addLayout(figure_size_row)
 
-        figure_height_row = QHBoxLayout()
-        figure_height_row.addWidget(self._make_style_form_label("图高:", page))
+        figure_size_row.addWidget(self._make_style_form_label("图高:", page))
         self._figure_height_edit = LineEdit(page)
         self._figure_height_edit.setPlaceholderText("5.0")
         self._connect_line_edit_commit(self._figure_height_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_height_edit)
-        figure_height_row.addWidget(self._figure_height_edit)
-        figure_height_row.addStretch()
-        layout.addLayout(figure_height_row)
+        figure_size_row.addWidget(self._figure_height_edit)
 
         dpi_row = QHBoxLayout()
         dpi_row.addWidget(self._make_style_form_label("DPI:", page))
@@ -2722,11 +2723,31 @@ class ChartPage(QWidget):
         if curve is None:
             self._btn_toggle_visible.setEnabled(False)
             self._btn_toggle_visible.setIcon(_ICON_HIDE.icon())
+            self._update_chart_order_buttons()
             return
         visible = bool(curve.get("visible", True))
         self._btn_toggle_visible.setEnabled(True)
         self._btn_toggle_visible.setIcon((_ICON_HIDE if visible else _ICON_SHOW).icon())
         self._btn_toggle_visible.setToolTip("隐藏当前曲线" if visible else "显示当前曲线")
+        self._update_chart_order_buttons()
+
+    def _selected_curve_index(self) -> int:
+        curve = self._selected_curve()
+        if curve is None:
+            return -1
+        curve_identity = self._curve_identity(curve)
+        for index, item in enumerate(self._chart_series):
+            if self._curve_identity(item) == curve_identity:
+                return index
+        return -1
+
+    def _update_chart_order_buttons(self) -> None:
+        if not hasattr(self, "_btn_selected_up") or not hasattr(self, "_btn_selected_down"):
+            return
+        index = self._selected_curve_index()
+        has_curve = index >= 0
+        self._btn_selected_up.setEnabled(has_curve and index > 0)
+        self._btn_selected_down.setEnabled(has_curve and index < len(self._chart_series) - 1)
 
     def _on_clear_chart(self) -> None:
         self._chart_series.clear()
@@ -2746,6 +2767,31 @@ class ChartPage(QWidget):
         self._curve_style_change_versions.pop(target_key, None)
         if self._style_target == target_key:
             self._style_target = None
+        self._refresh_chart_list()
+        self._redraw_now()
+
+    def _move_selected_curve_up(self) -> None:
+        self._move_selected_curve("up")
+
+    def _move_selected_curve_down(self) -> None:
+        self._move_selected_curve("down")
+
+    def _move_selected_curve(self, direction: str) -> None:
+        current_index = self._selected_curve_index()
+        if current_index < 0:
+            return
+        if direction == "up":
+            target_index = current_index - 1
+        elif direction == "down":
+            target_index = current_index + 1
+        else:
+            return
+        if not (0 <= target_index < len(self._chart_series)):
+            return
+        self._chart_series[current_index], self._chart_series[target_index] = (
+            self._chart_series[target_index],
+            self._chart_series[current_index],
+        )
         self._refresh_chart_list()
         self._redraw_now()
 

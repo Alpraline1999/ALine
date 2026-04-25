@@ -17,7 +17,7 @@ from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_plan
-from core.extension_api import build_extension_entry, extension_registry
+from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from digitize.builtin_extensions import (
@@ -89,6 +89,9 @@ class DigitizePage(QWidget):
         # 图形识别模板
         self._shape_template: dict | None = None  # preprocess_region() 返回的字典
         self._auto_mode_type_ids: list[str] = []
+        self._digitize_extension_controls: ExtensionConfigPanel = cast(ExtensionConfigPanel, None)
+        self._pending_digitize_field_key: str | None = None
+        self._pending_digitize_field_type: str | None = None
         # 表格排序
         self._sort_col = -1  # -1表示未排序
         self._sort_order = Qt.SortOrder.AscendingOrder
@@ -636,46 +639,35 @@ class DigitizePage(QWidget):
         layout.addWidget(make_hsep(content))
         layout.addWidget(make_section_label("自动选点", content))
 
-        # --- 识别模式选择 ---
-        mode_row = QWidget(content)
-        mode_rl = QHBoxLayout(mode_row)
-        mode_rl.setContentsMargins(0, 0, 0, 0)
-        mode_rl.setSpacing(4)
-        mode_rl.addWidget(BodyLabel("识别模式:", mode_row))
-        self._auto_mode_combo = ComboBox(mode_row)
-        self._auto_mode_combo.setFixedHeight(32)
-        self._auto_mode_combo.setMinimumWidth(160)
-        self._auto_mode_combo.currentIndexChanged.connect(self._on_auto_mode_changed)
-        mode_rl.addWidget(self._auto_mode_combo, 1)
-        layout.addWidget(mode_row)
-
-        # --- 按钮行 ---
+        # --- 公共检测工具 ---
         auto_btn_row = QWidget(content)
         abl = QHBoxLayout(auto_btn_row)
         abl.setContentsMargins(0, 0, 0, 0)
         abl.setSpacing(4)
 
-        # 采样颜色按钮（ColorPickerButton 风格，点击打开对话框选色）
-        self._sample_color_btn = ColorPickerButton(QColor("#888888"), "", auto_btn_row, enableAlpha=False)
-        self._sample_color_btn.setToolTip("采样颜色（点击打开颜色对话框）")
-        self._sample_color_btn.setFixedSize(34, 34)
-        self._sample_color_btn.colorChanged.connect(self._on_sample_color_changed_direct)
-        abl.addWidget(self._sample_color_btn)
+        self._box_mask_btn = ToggleToolButton(FIF.ZOOM, auto_btn_row)
+        self._box_mask_btn.setToolTip("框选蒙版")
+        self._box_mask_btn.setFixedSize(34, 34)
+        self._box_mask_btn.clicked.connect(lambda: self._on_tool_clicked("box_mask"))
+        abl.addWidget(self._box_mask_btn)
 
-        # 从图片取色按钮
-        self._screen_pick_btn = ToggleToolButton(FIF.PALETTE, auto_btn_row)
-        self._screen_pick_btn.setToolTip("从图片取色")
-        self._screen_pick_btn.setFixedSize(34, 34)
-        self._screen_pick_btn.clicked.connect(self._on_color_pick)
-        abl.addWidget(self._screen_pick_btn)
+        self._brush_mask_btn = ToggleToolButton(FIF.BRUSH, auto_btn_row)
+        self._brush_mask_btn.setToolTip("画笔蒙版")
+        self._brush_mask_btn.setFixedSize(34, 34)
+        self._brush_mask_btn.clicked.connect(lambda: self._on_tool_clicked("brush_mask"))
+        abl.addWidget(self._brush_mask_btn)
 
-        # 截图模板按钮（图形识别/综合识别时可用）
-        self._crop_template_btn = ToggleToolButton(FIF.CUT, auto_btn_row)
-        self._crop_template_btn.setToolTip("截图图例形状（用于图形识别）\n在图片上拖拽框选图例符号")
-        self._crop_template_btn.setFixedSize(34, 34)
-        self._crop_template_btn.setEnabled(False)
-        self._crop_template_btn.clicked.connect(self._on_crop_template)
-        abl.addWidget(self._crop_template_btn)
+        self._invert_mask_btn = ToggleToolButton(FIF.UPDATE, auto_btn_row)
+        self._invert_mask_btn.setToolTip("反转蒙版\n关闭时蒙版内不识别（默认/规避）。\n开启后蒙版内才识别（感兴趣区域）")
+        self._invert_mask_btn.setFixedSize(34, 34)
+        self._invert_mask_btn.clicked.connect(self._on_invert_mask)
+        abl.addWidget(self._invert_mask_btn)
+
+        self._clear_masks_btn = ToolButton(FIF.CLEAR_SELECTION, auto_btn_row)
+        self._clear_masks_btn.setToolTip("清除蒙版 (Ctrl+Shift+Delete)")
+        self._clear_masks_btn.setFixedSize(34, 34)
+        self._clear_masks_btn.clicked.connect(self._on_clear_masks)
+        abl.addWidget(self._clear_masks_btn)
 
         self._auto_detect_btn = ToolButton(FIF.SEARCH, auto_btn_row)
         self._auto_detect_btn.setToolTip("自动检测 (A)")
@@ -683,157 +675,37 @@ class DigitizePage(QWidget):
         self._auto_detect_btn.clicked.connect(self._on_auto_detect)
         abl.addWidget(self._auto_detect_btn)
 
-        self._apply_auto_btn = ToolButton(FIF.ACCEPT, auto_btn_row)
-        self._apply_auto_btn.setToolTip("应用自动检测结果 (Ctrl+Enter)")
-        self._apply_auto_btn.setFixedSize(34, 34)
-        self._apply_auto_btn.clicked.connect(self._on_apply_auto_points)
-        abl.addWidget(self._apply_auto_btn)
-
         self._cancel_auto_btn = ToolButton(FIF.CLOSE, auto_btn_row)
         self._cancel_auto_btn.setToolTip("放弃检测结果")
         self._cancel_auto_btn.setFixedSize(34, 34)
         self._cancel_auto_btn.clicked.connect(self._on_cancel_auto_preview)
         abl.addWidget(self._cancel_auto_btn)
 
+        self._apply_auto_btn = ToolButton(FIF.ACCEPT, auto_btn_row)
+        self._apply_auto_btn.setToolTip("应用自动检测结果 (Ctrl+Enter)")
+        self._apply_auto_btn.setFixedSize(34, 34)
+        self._apply_auto_btn.clicked.connect(self._on_apply_auto_points)
+        abl.addWidget(self._apply_auto_btn)
+
         abl.addStretch()
         layout.addWidget(auto_btn_row)
 
-        # --- 颜色/模板 信息行 ---
-        info_row = QWidget(content)
-        info_rl = QHBoxLayout(info_row)
-        info_rl.setContentsMargins(0, 0, 0, 0)
-        info_rl.setSpacing(6)
-
-        self._sampled_color_hex_lbl = BodyLabel("#888888", info_row)
-        self._sampled_color_hex_lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        info_rl.addWidget(self._sampled_color_hex_lbl)
-
-        self._shape_template_lbl = CaptionLabel("", info_row)
-        self._shape_template_lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        self._shape_template_lbl.setVisible(False)
-        info_rl.addWidget(self._shape_template_lbl, 1)
-
-        layout.addWidget(info_row)
-
-        # --- 颜色容差（颜色识别 / 综合识别 时显示）---
-        self._tol_widget = QWidget(content)
-        tl = QHBoxLayout(self._tol_widget)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.setSpacing(4)
-        tl.addWidget(BodyLabel("颜色容差:", self._tol_widget))
-        self._tol_slider = Slider(Qt.Orientation.Horizontal, self._tol_widget)
-        self._tol_slider.setRange(1, 80)
-        self._tol_slider.setValue(20)
-        self._tol_slider.setSingleStep(1)
-        self._tol_slider.setPageStep(1)
-        tl.addWidget(self._tol_slider, 1)
-        self._tol_val_lbl = BodyLabel("20", self._tol_widget)
-        self._tol_val_lbl.setFixedWidth(24)
-        self._tol_val_lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        tl.addWidget(self._tol_val_lbl)
-        self._tol_slider.valueChanged.connect(lambda v: self._tol_val_lbl.setText(str(v)))
-        layout.addWidget(self._tol_widget)
-
-        # --- 搜索步长 ---
-        step_row = QWidget(content)
-        sl = QHBoxLayout(step_row)
-        sl.setContentsMargins(0, 0, 0, 0)
-        sl.setSpacing(4)
-        sl.addWidget(BodyLabel("搜索步长:", step_row))
-        self._auto_step_slider = Slider(Qt.Orientation.Horizontal, step_row)
-        self._auto_step_slider.setRange(1, 20)
-        self._auto_step_slider.setValue(5)
-        self._auto_step_slider.setSingleStep(1)
-        self._auto_step_slider.setPageStep(1)
-        sl.addWidget(self._auto_step_slider, 1)
-        self._step_val_lbl = BodyLabel("5", step_row)
-        self._step_val_lbl.setFixedWidth(24)
-        self._step_val_lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        sl.addWidget(self._step_val_lbl)
-        self._auto_step_slider.valueChanged.connect(lambda v: self._step_val_lbl.setText(str(v)))
-        layout.addWidget(step_row)
-
-        # --- 匹配阈值（图形识别 / 综合识别 时显示）---
-        self._match_thr_widget = QWidget(content)
-        mtl = QHBoxLayout(self._match_thr_widget)
-        mtl.setContentsMargins(0, 0, 0, 0)
-        mtl.setSpacing(4)
-        mtl.addWidget(BodyLabel("匹配精度:", self._match_thr_widget))
-        self._match_thr_slider = Slider(Qt.Orientation.Horizontal, self._match_thr_widget)
-        self._match_thr_slider.setRange(30, 95)
-        self._match_thr_slider.setValue(65)
-        self._match_thr_slider.setSingleStep(1)
-        self._match_thr_slider.setPageStep(1)
-        mtl.addWidget(self._match_thr_slider, 1)
-        self._match_thr_val_lbl = BodyLabel("65%", self._match_thr_widget)
-        self._match_thr_val_lbl.setFixedWidth(32)
-        self._match_thr_val_lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        mtl.addWidget(self._match_thr_val_lbl)
-        self._match_thr_slider.valueChanged.connect(
-            lambda v: self._match_thr_val_lbl.setText(f"{v}%")
+        self._digitize_extension_controls = ExtensionConfigPanel(
+            "自动选点扩展",
+            "执行检测",
+            content,
+            mode="compact",
+            framed=False,
         )
-        self._match_thr_widget.setVisible(False)
-        layout.addWidget(self._match_thr_widget)
-
-        # --- 颜色权重（图形识别 / 综合识别 时显示）---
-        self._color_weight_widget = QWidget(content)
-        cwl = QHBoxLayout(self._color_weight_widget)
-        cwl.setContentsMargins(0, 0, 0, 0)
-        cwl.setSpacing(4)
-        cwl.addWidget(BodyLabel("颜色权重:", self._color_weight_widget))
-        self._color_weight_slider = Slider(Qt.Orientation.Horizontal, self._color_weight_widget)
-        self._color_weight_slider.setRange(0, 100)
-        self._color_weight_slider.setValue(70)
-        self._color_weight_slider.setSingleStep(1)
-        self._color_weight_slider.setPageStep(1)
-        self._color_weight_slider.setToolTip(
-            "颜色匹配权重 vs 边缘轮廓权重\n"
-            "100% = 仅靠颜色匹配（彩色标记）\n"
-            "0% = 仅靠边缘轮廓（黑白标记）\n"
-            "70% = 默认，融合两种评分"
+        self._digitize_extension_controls.set_status_context("digitize", "自动选点扩展")
+        self._digitize_extension_controls.selection_changed.connect(self._on_digitize_extension_selection_changed)
+        self._digitize_extension_controls.reload_requested.connect(self._reload_digitize_extensions)
+        self._digitize_extension_controls.configs_changed.connect(self.project_modified.emit)
+        self._digitize_extension_controls._editor.interactiveFieldRequested.connect(
+            self._on_digitize_interactive_field_requested
         )
-        cwl.addWidget(self._color_weight_slider, 1)
-        self._color_weight_val_lbl = BodyLabel("70%", self._color_weight_widget)
-        self._color_weight_val_lbl.setFixedWidth(32)
-        self._color_weight_val_lbl.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        cwl.addWidget(self._color_weight_val_lbl)
-        self._color_weight_slider.valueChanged.connect(
-            lambda v: self._color_weight_val_lbl.setText(f"{v}%")
-        )
-        self._color_weight_widget.setVisible(False)
-        layout.addWidget(self._color_weight_widget)
-
-        mask_row = QWidget(content)
-        mml = QHBoxLayout(mask_row)
-        mml.setContentsMargins(0, 0, 0, 0)
-        mml.setSpacing(4)
-
-        self._box_mask_btn = ToggleToolButton(FIF.ZOOM, mask_row)
-        self._box_mask_btn.setToolTip("框选蒙版")
-        self._box_mask_btn.setFixedSize(34, 34)
-        self._box_mask_btn.clicked.connect(lambda: self._on_tool_clicked("box_mask"))
-        mml.addWidget(self._box_mask_btn)
-
-        self._brush_mask_btn = ToggleToolButton(FIF.BRUSH, mask_row)
-        self._brush_mask_btn.setToolTip("画笔蒙版")
-        self._brush_mask_btn.setFixedSize(34, 34)
-        self._brush_mask_btn.clicked.connect(lambda: self._on_tool_clicked("brush_mask"))
-        mml.addWidget(self._brush_mask_btn)
-
-        self._invert_mask_btn = ToggleToolButton(FIF.UPDATE, mask_row)
-        self._invert_mask_btn.setToolTip("反转蒙版\n关闭时蒙版内不识别（默认/规避）。\n开启后蒙版内才识别（感兴趣区域）")
-        self._invert_mask_btn.setFixedSize(34, 34)
-        self._invert_mask_btn.clicked.connect(self._on_invert_mask)
-        mml.addWidget(self._invert_mask_btn)
-
-        self._clear_masks_btn = ToolButton(FIF.CLEAR_SELECTION, mask_row)
-        self._clear_masks_btn.setToolTip("清除蒙版 (Ctrl+Shift+Delete)")
-        self._clear_masks_btn.setFixedSize(34, 34)
-        self._clear_masks_btn.clicked.connect(self._on_clear_masks)
-        mml.addWidget(self._clear_masks_btn)
-
-        mml.addStretch()
-        layout.addWidget(mask_row)
+        self._auto_mode_combo = self._digitize_extension_controls._selector
+        layout.addWidget(self._digitize_extension_controls)
 
         self._auto_status_label = BodyLabel("", content)
         self._auto_status_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
@@ -841,7 +713,6 @@ class DigitizePage(QWidget):
         layout.addWidget(self._auto_status_label)
 
         self._refresh_digitize_extension_choices()
-        self._on_auto_mode_changed(self._auto_mode_combo.currentIndex())
 
         # ══════════ 辅助选点（暂时隐藏，功能待完善）══════════
         # 创建所有辅助选点控件，但包装在隐藏容器中
@@ -906,22 +777,19 @@ class DigitizePage(QWidget):
         return entries
 
     def _refresh_digitize_extension_choices(self) -> None:
-        if not hasattr(self, "_auto_mode_combo"):
+        if self._digitize_extension_controls is None:
             return
         current_type = self._current_digitize_extension_type()
         entries = self._digitize_extension_entries()
-        self._auto_mode_combo.blockSignals(True)
-        self._auto_mode_combo.clear()
-        self._auto_mode_type_ids = []
-        for entry in entries:
-            self._auto_mode_combo.addItem(str(entry.get("label") or entry.get("name") or entry.get("type") or "数字化扩展"))
-            self._auto_mode_type_ids.append(str(entry.get("type") or ""))
-        if not self._auto_mode_type_ids:
-            self._auto_mode_combo.addItems(["颜色识别", "图形识别 (测试功能)"])
+        self._auto_mode_type_ids = [str(entry.get("type") or "") for entry in entries if str(entry.get("type") or "")]
+        if not entries:
+            entries = [
+                {"type": COLOR_DIGITIZE_EXTENSION_TYPE, "label": "颜色识别", "name": "颜色识别"},
+                {"type": SHAPE_DIGITIZE_EXTENSION_TYPE, "label": "图形识别 (测试功能)", "name": "图形识别 (测试功能)"},
+            ]
             self._auto_mode_type_ids = [COLOR_DIGITIZE_EXTENSION_TYPE, SHAPE_DIGITIZE_EXTENSION_TYPE]
         target_type = current_type if current_type in self._auto_mode_type_ids else self._auto_mode_type_ids[0]
-        self._auto_mode_combo.setCurrentIndex(self._auto_mode_type_ids.index(target_type))
-        self._auto_mode_combo.blockSignals(False)
+        self._digitize_extension_controls.set_entries(entries, current_type=target_type)
         self._refresh_digitize_extension_panel()
 
     def _refresh_digitize_extension_panel(self) -> None:
@@ -934,40 +802,104 @@ class DigitizePage(QWidget):
         )
 
     def _current_digitize_extension_type(self) -> str:
+        if self._digitize_extension_controls is not None:
+            current_type = str(self._digitize_extension_controls.current_type() or "").strip()
+            if current_type:
+                return current_type
         idx = self._auto_mode_combo.currentIndex() if hasattr(self, "_auto_mode_combo") else -1
         if 0 <= idx < len(self._auto_mode_type_ids):
             return self._auto_mode_type_ids[idx]
         return COLOR_DIGITIZE_EXTENSION_TYPE
 
+    def _current_digitize_extension_options(self) -> dict[str, Any]:
+        if self._digitize_extension_controls is None:
+            return {}
+        options = self._digitize_extension_controls.current_options()
+        return dict(options or {})
+
     def _current_digitize_extension_params(
         self,
         type_id: str,
         *,
-        step: int,
         mask_polygons,
         mask_include_mode: bool,
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "step": int(step),
+        params: dict[str, Any] = self._current_digitize_extension_options()
+        params.update({
             "mask_polygons": mask_polygons,
             "mask_include_mode": bool(mask_include_mode),
-        }
-        if type_id == COLOR_DIGITIZE_EXTENSION_TYPE and self._sampled_color is not None:
-            params.update({
-                "sampled_color": {
-                    "r": self._sampled_color.red(),
-                    "g": self._sampled_color.green(),
-                    "b": self._sampled_color.blue(),
-                },
-                "tolerance": int(self._tol_slider.value()),
-            })
-        elif type_id == SHAPE_DIGITIZE_EXTENSION_TYPE:
-            params.update({
-                "template_info": self._shape_template,
-                "threshold": float(self._match_thr_slider.value()) / 100.0,
-                "color_weight": float(self._color_weight_slider.value()) / 100.0,
-            })
+        })
+        params["step"] = int(params.get("step", 5) or 5)
+
+        color_value = params.get("sampled_color")
+        if isinstance(color_value, dict):
+            try:
+                self._sampled_color = QColor(
+                    int(color_value.get("r", 0) or 0),
+                    int(color_value.get("g", 0) or 0),
+                    int(color_value.get("b", 0) or 0),
+                )
+            except (TypeError, ValueError):
+                self._sampled_color = None
+        elif type_id != COLOR_DIGITIZE_EXTENSION_TYPE:
+            self._sampled_color = None
+
+        template_info = params.get("template_info")
+        self._shape_template = dict(template_info) if isinstance(template_info, dict) else None
         return params
+
+    def _clear_pending_digitize_interaction(self) -> None:
+        self._pending_digitize_field_key = None
+        self._pending_digitize_field_type = None
+
+    def _set_digitize_interactive_field_value(self, key: str | None, value: Any) -> bool:
+        if not key or self._digitize_extension_controls is None:
+            return False
+        return self._digitize_extension_controls._editor.set_field_value(key, value)
+
+    def _reload_digitize_extensions(self) -> None:
+        report = reload_configured_extensions()
+        self._refresh_digitize_extension_choices()
+        self.project_modified.emit()
+        if report.get("errors"):
+            InfoBar.warning(
+                title="重载完成",
+                content=f"已加载 {len(report.get('loaded', []))} 个扩展，{len(report.get('errors', []))} 个失败",
+                parent=self,
+                duration=3000,
+            )
+            return
+        InfoBar.success(
+            title="已重载",
+            content=f"已重新加载 {len(report.get('loaded', []))} 个扩展",
+            parent=self,
+            duration=2500,
+        )
+
+    def _on_digitize_extension_selection_changed(self, type_id: str) -> None:
+        del type_id
+        if self._active_tool in {"color_pick", "crop_template"}:
+            self._on_tool_clicked(None)
+        self._clear_pending_digitize_interaction()
+        self._refresh_digitize_extension_panel()
+
+    def _on_digitize_interactive_field_requested(self, key: str, field: object) -> None:
+        if self._current_image_id is None:
+            InfoBar.warning(title="警告", content="请先选择一张图片", parent=self, duration=3000)
+            return
+        field_info = dict(field or {}) if isinstance(field, dict) else {}
+        field_type = str(field_info.get("field_type") or "").strip().lower()
+        self._pending_digitize_field_key = str(key or "").strip() or None
+        self._pending_digitize_field_type = field_type or None
+        if field_type == "pickcolor":
+            self._auto_status_label.setText("请在图片上点击取色，完成后会自动写回当前扩展参数")
+            self._on_tool_clicked("color_pick")
+            return
+        if field_type == "shot":
+            self._auto_status_label.setText("请在图片上拖拽截图，完成后会自动写回当前扩展参数")
+            self._on_tool_clicked("crop_template")
+            return
+        self._clear_pending_digitize_interaction()
 
     def _create_export_tab(self) -> QWidget:
         """创建数据导出功能区"""
@@ -1281,7 +1213,7 @@ class DigitizePage(QWidget):
                 InfoBar.warning(title="警告", content="请先选择一张图片", parent=self, duration=3000)
                 self._deactivate_all_tools()
                 return
-            self._activate_tool_button(self._screen_pick_btn)
+            self._activate_tool_button(getattr(self, "_screen_pick_btn", None))
             self._image_viewer.set_color_pick_mode()
             self._active_tool = tool_name
             self._status_label.setText("取色模式：点击图片上曲线的颜色")
@@ -1290,7 +1222,7 @@ class DigitizePage(QWidget):
                 InfoBar.warning(title="警告", content="请先选择一张图片", parent=self, duration=3000)
                 self._deactivate_all_tools()
                 return
-            self._activate_tool_button(self._crop_template_btn)
+            self._activate_tool_button(getattr(self, "_crop_template_btn", None))
             self._image_viewer.set_crop_mode()
             self._active_tool = tool_name
             self._status_label.setText("截图模式：拖拽选取图例区域")
@@ -1315,18 +1247,24 @@ class DigitizePage(QWidget):
 
     def _activate_tool_button(self, btn):
         """激活工具按钮"""
-        btn.setChecked(True)
+        if btn is not None:
+            btn.setChecked(True)
 
     def _deactivate_all_tools(self):
         """取消所有工具按钮的激活状态"""
-        self._box_mask_btn.setChecked(False)
-        self._brush_mask_btn.setChecked(False)
-        self._eraser_btn.setChecked(False)
-        self._calibrate_btn.setChecked(False)
-        self._extract_btn.setChecked(False)
-        self._screen_pick_btn.setChecked(False)
-        self._assist_btn.setChecked(False)
-        self._crop_template_btn.setChecked(False)
+        for button_name in (
+            "_box_mask_btn",
+            "_brush_mask_btn",
+            "_eraser_btn",
+            "_calibrate_btn",
+            "_extract_btn",
+            "_screen_pick_btn",
+            "_assist_btn",
+            "_crop_template_btn",
+        ):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.setChecked(False)
 
     def _on_escape_tool(self):
         """取消当前工具，恢复到选择模式（Escape 快捷键）"""
@@ -1334,6 +1272,7 @@ class DigitizePage(QWidget):
             self._deactivate_all_tools()
             self._image_viewer.set_select_mode()
             self._active_tool = None
+            self._clear_pending_digitize_interaction()
             self._status_label.setText("")
 
     def _on_clear_masks(self):
@@ -1381,6 +1320,17 @@ class DigitizePage(QWidget):
 
     def _on_assisted_region(self, x1: float, y1: float, x2: float, y2: float):
         """辅助选点：在矩形/椭圆区域内使用自动颜色识别提取点"""
+        options = self._current_digitize_extension_options()
+        sampled_color = options.get("sampled_color")
+        if isinstance(sampled_color, dict):
+            try:
+                self._sampled_color = QColor(
+                    int(sampled_color.get("r", 0) or 0),
+                    int(sampled_color.get("g", 0) or 0),
+                    int(sampled_color.get("b", 0) or 0),
+                )
+            except (TypeError, ValueError):
+                self._sampled_color = None
         if self._sampled_color is None:
             InfoBar.warning(title="警告", content="请先在「自动选点」区取色后再使用辅助选点", parent=self, duration=3000)
             self._deactivate_all_tools()
@@ -1395,11 +1345,11 @@ class DigitizePage(QWidget):
             return
 
         from digitize.auto_extractor import AutoExtractor
-        tol = self._tol_slider.value()
+        tol = int(options.get("tolerance", 20) or 20)
         h_tol = max(5, tol // 2)
         s_tol = min(255, tol * 4)
         v_tol = min(255, tol * 4)
-        step = self._auto_step_slider.value()
+        step = int(options.get("step", 5) or 5)
 
         # 构建区域蒙版（两点对角线的矩形或椭圆近似多边形）
         x_lo, x_hi = min(x1, x2), max(x1, x2)
@@ -1558,46 +1508,19 @@ class DigitizePage(QWidget):
     def _on_auto_mode_changed(self, index: int):
         """识别模式切换。"""
         del index
-        type_id = self._current_digitize_extension_type()
-        color_mode = type_id == COLOR_DIGITIZE_EXTENSION_TYPE
-        shape_mode = type_id == SHAPE_DIGITIZE_EXTENSION_TYPE
-
-        # 颜色相关控件
-        self._sample_color_btn.setEnabled(color_mode)
-        self._screen_pick_btn.setEnabled(color_mode)
-        self._sampled_color_hex_lbl.setVisible(color_mode)
-        self._tol_widget.setVisible(color_mode)
-
-        # 图形相关控件
-        self._crop_template_btn.setEnabled(shape_mode)
-        self._shape_template_lbl.setVisible(shape_mode)
-        self._match_thr_widget.setVisible(shape_mode)
-        self._color_weight_widget.setVisible(shape_mode)
-
-        # 若退出取色模式，恢复 select
-        if not color_mode and self._screen_pick_btn.isChecked():
-            self._screen_pick_btn.setChecked(False)
-            self._on_tool_clicked(None)
-
-        # 若退出截图模式，恢复 select
-        if not shape_mode and self._crop_template_btn.isChecked():
-            self._crop_template_btn.setChecked(False)
-            self._on_tool_clicked(None)
-
         self._refresh_digitize_extension_panel()
 
     def _on_crop_template(self):
         """进入截图模板模式——在图片上框选图例形状"""
         if self._current_image_id is None:
             InfoBar.warning(title="警告", content="请先选择一张图片", parent=self, duration=3000)
-            self._crop_template_btn.setChecked(False)
+            self._clear_pending_digitize_interaction()
             return
         self._on_tool_clicked("crop_template")
 
     def _on_crop_region_selected(self, x1: float, y1: float, x2: float, y2: float):
         """收到 ImageViewer 的截图区域信号，预处理形状模板"""
         # 退出截图模式
-        self._crop_template_btn.setChecked(False)
         self._deactivate_all_tools()
         self._image_viewer.set_select_mode()
         self._active_tool = None
@@ -1616,14 +1539,17 @@ class DigitizePage(QWidget):
                 image_path, x1, y1, x2, y2
             )
             w, h = self._shape_template["size"]
-            self._shape_template_lbl.setText(f"模板: {w}×{h}px")
-            self._shape_template_lbl.setVisible(True)
+            field_key = self._pending_digitize_field_key
+            if not field_key and self._current_digitize_extension_type() == SHAPE_DIGITIZE_EXTENSION_TYPE:
+                field_key = "template_info"
+            self._set_digitize_interactive_field_value(field_key, self._shape_template)
+            self._clear_pending_digitize_interaction()
             self._auto_status_label.setText(
                 f"图例模板已截取 ({w}×{h}px)，点击「识别」搜索匹配形状"
             )
         except Exception as e:
             self._shape_template = None
-            self._shape_template_lbl.setText("")
+            self._clear_pending_digitize_interaction()
             self._auto_status_label.setText(f"截图处理失败: {e}")
 
     def _on_cancel_auto_preview(self):
@@ -1639,13 +1565,13 @@ class DigitizePage(QWidget):
         """进入图片取色模式"""
         if self._current_image_id is None:
             InfoBar.warning(title="警告", content="请先选择一张图片", parent=self, duration=3000)
-            self._screen_pick_btn.setChecked(False)
+            self._clear_pending_digitize_interaction()
             return
         self._on_tool_clicked("color_pick")
 
     def _set_sample_color_card(self, color: QColor):
         """更新自动选点颜色按钮的颜色显示"""
-        self._sample_color_btn.setColor(color)
+        self._sampled_color = color
 
     def _on_color_picked(self, color):
         """收到图片取色信号，更新颜色显示"""
@@ -1654,8 +1580,14 @@ class DigitizePage(QWidget):
             color = _QColor(color)
         self._sampled_color = color
         hex_str = color.name(_QColor.NameFormat.HexRgb)
-        self._sample_color_btn.setColor(color)
-        self._sampled_color_hex_lbl.setText(hex_str)
+        field_key = self._pending_digitize_field_key
+        if not field_key and self._current_digitize_extension_type() == COLOR_DIGITIZE_EXTENSION_TYPE:
+            field_key = "sampled_color"
+        self._set_digitize_interactive_field_value(
+            field_key,
+            {"r": color.red(), "g": color.green(), "b": color.blue()},
+        )
+        self._clear_pending_digitize_interaction()
         # 取色完成后恢复 select 模式
         self._deactivate_all_tools()
         self._image_viewer.set_select_mode()
@@ -1669,7 +1601,10 @@ class DigitizePage(QWidget):
             color = QColor(color)
         self._sampled_color = color
         hex_str = color.name(QColor.NameFormat.HexRgb)
-        self._sampled_color_hex_lbl.setText(hex_str)
+        self._set_digitize_interactive_field_value(
+            "sampled_color",
+            {"r": color.red(), "g": color.green(), "b": color.blue()},
+        )
         self._auto_status_label.setText(f"已采样: {hex_str}")
 
     def _on_auto_detect(self):
@@ -1689,7 +1624,6 @@ class DigitizePage(QWidget):
             InfoBar.warning(title="警告", content="当前数字化扩展不可用，请重试", parent=self, duration=3000)
             self._auto_status_label.setText("")
             return
-        step = self._auto_step_slider.value()
 
         # 获取蒙版多边形和模式
         mask = self._image_viewer.get_mask()
@@ -1702,7 +1636,6 @@ class DigitizePage(QWidget):
 
         params = self._current_digitize_extension_params(
             type_id,
-            step=step,
             mask_polygons=mask_polygons,
             mask_include_mode=mask_include_mode,
         )
@@ -2787,15 +2720,12 @@ class DigitizePage(QWidget):
 
         # 重新设置已知的 self._ 成员
         known_placeholder = [
-            self._status_label,
-            self._point_size_value_label,
-            self._select_area_value_label,
-            self._eraser_size_value_label,
-            self._sampled_color_hex_lbl,
-            self._tol_val_lbl,
-            self._step_val_lbl,
-            self._auto_status_label,
-            self._assist_status_label,
+            getattr(self, "_status_label", None),
+            getattr(self, "_point_size_value_label", None),
+            getattr(self, "_select_area_value_label", None),
+            getattr(self, "_eraser_size_value_label", None),
+            getattr(self, "_auto_status_label", None),
+            getattr(self, "_assist_status_label", None),
         ]
         for lbl in known_placeholder:
             if lbl and lbl.styleSheet():

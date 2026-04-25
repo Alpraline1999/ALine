@@ -512,14 +512,50 @@ class AnalysisPage(QWidget):
 
         figure = None
         canvas = None
+        plot_widget = QWidget(widget)
+        plot_layout = QVBoxLayout(plot_widget)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        plot_layout.setSpacing(0)
         if _HAS_MPL:
             figure = Figure(figsize=(6, 4))
             canvas = FigureCanvas(figure)
             canvas.setMinimumHeight(300)
             self._apply_result_canvas_background(canvas)
-            layout.addWidget(canvas, stretch=2)
+            plot_layout.addWidget(canvas, stretch=1)
         else:
-            layout.addWidget(BodyLabel("需要 matplotlib"), stretch=2)
+            plot_layout.addWidget(BodyLabel("需要 matplotlib"), stretch=1)
+
+        plot_stack = QStackedWidget(widget)
+        plot_stack.setMinimumHeight(300)
+        plot_stack.addWidget(plot_widget)
+
+        busy_widget = QWidget(plot_stack)
+        busy_layout = QVBoxLayout(busy_widget)
+        busy_layout.setContentsMargins(0, 0, 0, 0)
+        busy_layout.setSpacing(0)
+        busy_layout.addStretch(1)
+        busy_card = CardWidget(busy_widget)
+        busy_card.setMaximumWidth(380)
+        busy_card_layout = QVBoxLayout(busy_card)
+        busy_card_layout.setContentsMargins(18, 18, 18, 18)
+        busy_card_layout.setSpacing(6)
+        busy_title = BodyLabel("正在更新曲线预览", busy_card)
+        busy_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        busy_title.setStyleSheet(f"color: {accent_color()}; font-size: 15px; font-weight: 600;")
+        busy_card_layout.addWidget(busy_title)
+        busy_detail = CaptionLabel("正在整理当前输入与参数，请稍候。", busy_card)
+        busy_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        busy_detail.setWordWrap(True)
+        busy_detail.setStyleSheet(f"color: {placeholder_color()};")
+        busy_card_layout.addWidget(busy_detail)
+        busy_hint = make_hint_label("完成后会自动恢复到结果视图。", busy_card)
+        busy_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        busy_card_layout.addWidget(busy_hint)
+        busy_layout.addWidget(busy_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        busy_layout.addStretch(1)
+        plot_stack.addWidget(busy_widget)
+        plot_stack.setCurrentWidget(plot_widget)
+        layout.addWidget(plot_stack, stretch=2)
 
         layout.addWidget(make_hsep())
         layout.addWidget(make_section_label("摘要"))
@@ -579,6 +615,11 @@ class AnalysisPage(QWidget):
             "widget": widget,
             "figure": figure,
             "canvas": canvas,
+            "plot_stack": plot_stack,
+            "plot_widget": plot_widget,
+            "busy_widget": busy_widget,
+            "busy_title": busy_title,
+            "busy_detail": busy_detail,
             "summary_stack": summary_stack,
             "summary_table": summary_table,
             "peak_summary_widget": peak_summary_widget,
@@ -1319,12 +1360,30 @@ class AnalysisPage(QWidget):
         self._canvas = view.get("canvas")
         self._summary_table = view.get("summary_table")
         result = view.get("result")
+        params = view.get("params") if isinstance(view.get("params"), dict) else {}
+        input_refs = params.get("input_refs") if isinstance(params, dict) else None
+        active_input_refs = params.get("active_input_refs") if isinstance(params, dict) else None
         analysis_type = view.get("analysis_type") or result.get("analysis_type", "curve_fit")
         if analysis_type in self._analysis_type_ids:
             self._type_combo.setCurrentIndex(self._analysis_type_ids.index(analysis_type))
         self._restore_analysis_params(view.get("params") or {})
-        self._selected_inputs = [dict(item) for item in view.get("inputs") or []]
-        self._rebuild_input_list()
+        source_inputs = input_refs if isinstance(input_refs, list) else (view.get("inputs") or [])
+        self._selected_inputs = [dict(item) for item in source_inputs if isinstance(item, dict)]
+        active_inputs = active_input_refs if isinstance(active_input_refs, list) else (view.get("inputs") or [])
+        selected_ids = {
+            str(item.get("node_id"))
+            for item in active_inputs
+            if isinstance(item, dict) and item.get("node_id")
+        }
+        current_node_id = next(
+            (
+                str(item.get("node_id"))
+                for item in active_inputs
+                if isinstance(item, dict) and item.get("node_id")
+            ),
+            None,
+        )
+        self._rebuild_input_list(selected_ids, current_node_id)
         self._result = dict(result) if isinstance(result, dict) else None
         self._update_peak_export_buttons()
         if isinstance(result, dict) and result:
@@ -1365,6 +1424,40 @@ class AnalysisPage(QWidget):
     def _set_analysis_status(self, message: str) -> None:
         if hasattr(self, "_analysis_status_label"):
             self._analysis_status_label.setText(message)
+
+    def _current_analysis_view(self) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_analysis_tabs") or not self._analysis_tab_keys:
+            return self._analysis_tab_views.get("current") if hasattr(self, "_analysis_tab_views") else None
+        index = self._analysis_tabs.currentIndex()
+        if 0 <= index < len(self._analysis_tab_keys):
+            return self._analysis_tab_views.get(self._analysis_tab_keys[index])
+        return self._analysis_tab_views.get("current")
+
+    def _set_analysis_busy_state(
+        self,
+        view: Optional[Dict[str, Any]],
+        active: bool,
+        *,
+        title: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        if not isinstance(view, dict):
+            return
+        plot_stack = view.get("plot_stack")
+        plot_widget = view.get("plot_widget")
+        busy_widget = view.get("busy_widget")
+        if plot_stack is None or plot_widget is None or busy_widget is None:
+            return
+        if active:
+            busy_title = view.get("busy_title")
+            busy_detail = view.get("busy_detail")
+            if busy_title is not None and title:
+                busy_title.setText(title)
+            if busy_detail is not None and detail:
+                busy_detail.setText(detail)
+            plot_stack.setCurrentWidget(busy_widget)
+            return
+        plot_stack.setCurrentWidget(plot_widget)
 
     # ─────────────────────────────────────────────────────────
     # 共享树接口
@@ -1700,8 +1793,9 @@ class AnalysisPage(QWidget):
         effective_options = dict(options or {})
         extension = extension_registry.get_analysis(analysis_type)
         lines_number = extension_lines_number(extension) if extension is not None else None
-        if lines_number is not None:
+        if payloads:
             effective_options["lines_list"] = self._payload_indices(payloads)
+        if lines_number is not None:
             validate_extension_lines_list(effective_options["lines_list"], lines_number, present=True)
         return payloads, effective_options
 
@@ -1765,6 +1859,7 @@ class AnalysisPage(QWidget):
 
     def _run_analysis(self):
         analysis_type = self._current_analysis_type()
+        active_view = self._current_analysis_view()
         extension_options: Optional[Dict[str, Any]] = None
         effective_extension_options: Optional[Dict[str, Any]] = None
         input_payloads: List[dict]
@@ -1783,6 +1878,12 @@ class AnalysisPage(QWidget):
         override_cursor = False
         self._set_analysis_status("正在运行分析，结果生成后会创建新的临时标签。")
         self._run_analysis_btn.setEnabled(False)
+        self._set_analysis_busy_state(
+            active_view,
+            True,
+            title="正在运行分析",
+            detail="正在计算结果并准备新的临时结果标签。",
+        )
         QApplication.processEvents()
         try:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1799,6 +1900,7 @@ class AnalysisPage(QWidget):
         finally:
             if override_cursor:
                 QApplication.restoreOverrideCursor()
+            self._set_analysis_busy_state(active_view, False)
             self._run_analysis_btn.setEnabled(True)
 
     # ─────────────────────────────────────────────────────────
@@ -1840,6 +1942,13 @@ class AnalysisPage(QWidget):
         view = self._analysis_tab_views.get("current")
         if view is None:
             return
+        self._set_analysis_busy_state(
+            view,
+            True,
+            title="正在更新曲线预览",
+            detail="正在整理当前选择的曲线和分析参数。",
+        )
+        QApplication.processEvents()
         analysis_type = self._current_analysis_type()
         payloads = self._analysis_input_payloads(analysis_type)
         selected = self._get_data_for_inputs(payloads)
@@ -1856,7 +1965,10 @@ class AnalysisPage(QWidget):
         view["inputs"] = [dict(item) for item in payloads]
         view["params"] = params
         view["analysis_name"] = "当前结果"
-        self._draw_result(analysis_type, selected, {"_preview_only": True}, figure=view.get("figure"), canvas=view.get("canvas"))
+        try:
+            self._draw_result(analysis_type, selected, {"_preview_only": True}, figure=view.get("figure"), canvas=view.get("canvas"))
+        finally:
+            self._set_analysis_busy_state(view, False)
         summary_rows = [("状态", "已更新输入预览，运行分析后显示结果。")]
         if payloads:
             summary_rows.append(("已选曲线", "；".join(str(item.get("label") or "") for item in payloads)))

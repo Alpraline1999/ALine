@@ -12,8 +12,16 @@ def register_extensions(registry) -> None:
             handler=_color_digitize,
             description="按采样颜色和容差自动提取图像中的散点位置。",
             version=_BUILTIN_EXTENSION_VERSION,
+            source_kind="builtin",
             settings=True,
             config_fields=[
+                ExtensionConfigField(
+                    key="sampled_color",
+                    label="采样颜色",
+                    description="点击按钮后在图片上选点取色。",
+                    field_type="pickcolor",
+                    default=None,
+                ),
                 ExtensionConfigField(
                     key="tolerance",
                     label="颜色容差",

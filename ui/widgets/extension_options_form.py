@@ -67,6 +67,10 @@ def _looks_like_color(value: str) -> bool:
 
 def _normalize_field_type(field: Dict[str, Any]) -> str:
     explicit = str(field.get("field_type") or "string").strip().lower()
+    if explicit == "shot":
+        return "shot"
+    if explicit in {"pickcolor", "pick_colour", "pick_color"}:
+        return "pickcolor"
     if explicit in {"bool", "boolean", "checkbox"}:
         return "boolean"
     if explicit in {"int", "integer", "spinbox"}:
@@ -655,6 +659,7 @@ class _SingleLineSelectionDialog(MessageBoxBase):
 class ExtensionOptionsForm(QWidget):
     optionsChanged = Signal(dict)
     optionsCommitted = Signal(dict)
+    interactiveFieldRequested = Signal(str, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -962,6 +967,22 @@ class ExtensionOptionsForm(QWidget):
             values[key] = value
         return values
 
+    def set_field_value(self, key: str, value: Any, *, committed: bool = True) -> bool:
+        binding = self._bindings.get(str(key or "").strip())
+        if binding is None:
+            return False
+        self._updating = True
+        try:
+            binding.setter(copy.deepcopy(value))
+            if value in (None, ""):
+                self._explicit_option_keys.discard(binding.key)
+            else:
+                self._explicit_option_keys.add(binding.key)
+        finally:
+            self._updating = False
+        self._emit_change(committed=committed)
+        return True
+
     def toPlainText(self) -> str:
         if self._invalid_text is not None:
             return self._invalid_text
@@ -1047,10 +1068,14 @@ class ExtensionOptionsForm(QWidget):
             return self._create_number_binding(field)
         if field_type == "color":
             return self._create_color_binding(field)
+        if field_type == "pickcolor":
+            return self._create_pickcolor_binding(field)
         if field_type == "limited":
             return self._create_limited_binding(field)
         if field_type == "figure":
             return self._create_figure_binding(field)
+        if field_type == "shot":
+            return self._create_shot_binding(field)
         if field_type == "line":
             return self._create_line_binding(field)
         if field_type == "lines":
@@ -1310,6 +1335,127 @@ class ExtensionOptionsForm(QWidget):
             field=field,
             getter=_get,
             setter=_set,
+        )
+
+    @staticmethod
+    def _normalize_pickcolor_value(value: Any) -> Optional[Dict[str, int]]:
+        if isinstance(value, QColor) and value.isValid():
+            return {
+                "r": int(value.red()),
+                "g": int(value.green()),
+                "b": int(value.blue()),
+            }
+        if isinstance(value, dict):
+            try:
+                return {
+                    "r": int(value.get("r", 0) or 0),
+                    "g": int(value.get("g", 0) or 0),
+                    "b": int(value.get("b", 0) or 0),
+                }
+            except (TypeError, ValueError):
+                return None
+        text = str(value or "").strip()
+        color = QColor(text)
+        if color.isValid():
+            return {
+                "r": int(color.red()),
+                "g": int(color.green()),
+                "b": int(color.blue()),
+            }
+        return None
+
+    @staticmethod
+    def _pickcolor_summary(value: Optional[Dict[str, int]]) -> str:
+        if not value:
+            return "未取色"
+        return "#{:02X}{:02X}{:02X}".format(
+            int(value.get("r", 0) or 0),
+            int(value.get("g", 0) or 0),
+            int(value.get("b", 0) or 0),
+        )
+
+    @staticmethod
+    def _shot_summary(value: Any) -> str:
+        if isinstance(value, dict):
+            size = value.get("size")
+            if isinstance(size, (list, tuple)) and len(size) >= 2:
+                try:
+                    width = int(size[0])
+                    height = int(size[1])
+                except (TypeError, ValueError):
+                    width = height = 0
+                if width > 0 and height > 0:
+                    return f"已截取 {width}×{height}px"
+            bounds = value.get("bounds")
+            if isinstance(bounds, (list, tuple)) and len(bounds) >= 4:
+                return "已截取区域"
+        if value in (None, "", {}):
+            return "未截图"
+        return "已截取模板"
+
+    def _create_interactive_action_binding(
+        self,
+        field: Dict[str, Any],
+        *,
+        icon,
+        button_tooltip: str,
+        empty_text: str,
+        summary_for_value: Callable[[Any], str],
+        normalize_value: Optional[Callable[[Any], Any]] = None,
+    ) -> _FieldBinding:
+        container, layout, field_row = self._make_field_card(field, min_width=220, min_control_width=132)
+        button = ToolButton(icon, container)
+        button.setObjectName(f"interactiveFieldButton:{field.get('key')}")
+        button.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+        button.setToolTip(button_tooltip)
+        install_fluent_tooltip(button, delay=300, position=ToolTipPosition.BOTTOM)
+        field_row.addWidget(button, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        summary = CaptionLabel(empty_text, container)
+        summary.setObjectName(f"interactiveFieldSummary:{field.get('key')}")
+        summary.setWordWrap(True)
+        summary.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        field_row.addWidget(summary, 1)
+        layout.addStretch(1)
+
+        state = {"value": None}
+
+        def _set(value: Any) -> None:
+            normalized = normalize_value(value) if normalize_value is not None else copy.deepcopy(value)
+            state["value"] = copy.deepcopy(normalized)
+            summary_text = summary_for_value(normalized)
+            summary.setText(summary_text)
+            summary.setToolTip(summary_text if normalized not in (None, "", {}) else "")
+            install_fluent_tooltip(summary, delay=300, position=ToolTipPosition.BOTTOM)
+
+        def _request() -> None:
+            self.interactiveFieldRequested.emit(str(field.get("key") or ""), copy.deepcopy(field))
+
+        button.clicked.connect(_request)
+        return _FieldBinding(
+            key=str(field.get("key")),
+            field=field,
+            getter=lambda: copy.deepcopy(state["value"]),
+            setter=_set,
+        )
+
+    def _create_pickcolor_binding(self, field: Dict[str, Any]) -> _FieldBinding:
+        return self._create_interactive_action_binding(
+            field,
+            icon=FIF.PALETTE,
+            button_tooltip="点击后在页面中取色",
+            empty_text="未取色",
+            summary_for_value=self._pickcolor_summary,
+            normalize_value=self._normalize_pickcolor_value,
+        )
+
+    def _create_shot_binding(self, field: Dict[str, Any]) -> _FieldBinding:
+        return self._create_interactive_action_binding(
+            field,
+            icon=FIF.CUT,
+            button_tooltip="点击后在页面中截图",
+            empty_text="未截图",
+            summary_for_value=self._shot_summary,
         )
 
     def _create_figure_binding(self, field: Dict[str, Any]) -> _FieldBinding:

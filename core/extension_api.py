@@ -31,7 +31,7 @@ _EXTENSION_SOURCE_LABELS = {
 _EXTENSION_ORIGIN_LABELS = {
     "base": "基础",
     "builtin": "内置",
-    "external": "外置",
+    "external": "外部",
 }
 
 _EXTENSION_SOURCE_HINTS = {
@@ -58,6 +58,10 @@ def normalize_extension_field_type(
         return "lines"
     if explicit == "line":
         return "line"
+    if explicit == "shot":
+        return "shot"
+    if explicit in {"pickcolor", "pick_colour", "pick_color"}:
+        return "pickcolor"
     if explicit in {"bool", "boolean", "checkbox"}:
         return "boolean"
     if explicit in {"int", "integer", "spinbox"}:
@@ -92,9 +96,9 @@ def normalize_extension_version(version: str | None, *, default: str = DEFAULT_E
 
 def normalize_extension_source_kind(kind: str | None, *, default: str = "builtin") -> str:
     clean = str(kind or "").strip().lower() or default
-    if clean not in _EXTENSION_SOURCE_KINDS:
-        raise ValueError(f"未知扩展来源分类: {clean}")
-    return clean
+    if clean in _EXTENSION_SOURCE_KINDS:
+        return clean
+    return "external"
 
 
 def parse_extension_version(version: str | None) -> Tuple[int, int, int]:

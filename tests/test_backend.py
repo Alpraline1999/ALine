@@ -1891,6 +1891,33 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(entry["resolved_options"], {})
         self.assertNotIn("default_options", entry)
 
+    def test_build_extension_entry_normalizes_interactive_digitize_fields_and_unknown_source_kind(self):
+        from core.extension_api import DigitizeExtension, ExtensionConfigField, build_extension_entry
+
+        entry = build_extension_entry(
+            DigitizeExtension(
+                type="digitize_interactive_probe",
+                name="数字化交互探针",
+                handler=lambda image_path, params: {"points": [], "image_path": image_path, "params": params},
+                source_kind="third_party_plugin",
+                config_fields=[
+                    ExtensionConfigField(key="sampled_color", field_type="pickcolor", default=None),
+                    ExtensionConfigField(key="template_info", field_type="shot", default=None),
+                ],
+            )
+        )
+
+        normalized_fields = {
+            field["key"]: field
+            for field in entry["normalized_config_fields"]
+            if isinstance(field, dict) and field.get("key")
+        }
+
+        self.assertEqual(entry["source_kind"], "external")
+        self.assertEqual(entry["origin_label"], "外部")
+        self.assertEqual(normalized_fields["sampled_color"]["field_type"], "pickcolor")
+        self.assertEqual(normalized_fields["template_info"]["field_type"], "shot")
+
     def test_reload_configured_extensions_registers_listed_builtin_wrappers(self):
         from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 

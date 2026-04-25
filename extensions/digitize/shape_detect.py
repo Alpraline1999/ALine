@@ -12,8 +12,16 @@ def register_extensions(registry) -> None:
             handler=_shape_digitize,
             description="按截图模板和匹配阈值搜索图中相同形状。",
             version=_BUILTIN_EXTENSION_VERSION,
+            source_kind="builtin",
             settings=True,
             config_fields=[
+                ExtensionConfigField(
+                    key="template_info",
+                    label="截图模板",
+                    description="点击按钮后在图片上框选模板区域。",
+                    field_type="shot",
+                    default=None,
+                ),
                 ExtensionConfigField(
                     key="threshold",
                     label="匹配精度",

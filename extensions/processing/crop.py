@@ -19,6 +19,7 @@ def register_extensions(registry) -> None:
             version=VERSION,
             lines_number=(1, 1),
             settings=True,
+            source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(key="x_min", label="X 最小值", field_type="number", default=None),
                 ExtensionConfigField(key="x_max", label="X 最大值", field_type="number", default=None),

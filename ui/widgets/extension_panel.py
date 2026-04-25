@@ -221,6 +221,9 @@ class ExtensionConfigPanel(QWidget):
         config_row.addWidget(self._inline_apply_btn)
         layout.addWidget(self._config_row_widget)
 
+        self._config_row_divider = make_hsep(card)
+        layout.addWidget(self._config_row_divider)
+
         self._add_section_divider(layout, card)
         self._parameter_section_label = make_section_label("参数", card)
         layout.addWidget(self._parameter_section_label)
@@ -299,6 +302,7 @@ class ExtensionConfigPanel(QWidget):
         self._description_label.setVisible(is_full or is_help_only)
         self._config_section_label.setVisible(is_full and self._config_entry_visible)
         self._config_row_widget.setVisible((not is_help_only) and (self._config_entry_visible or is_compact))
+        self._config_row_divider.setVisible((not is_help_only) and (self._config_entry_visible or is_compact))
         self._parameter_section_label.setVisible(not is_compact or is_help_only)
         self._parameter_section_label.setText("参数说明" if is_help_only else "参数")
         self._usage_hint_label.setVisible(is_full)

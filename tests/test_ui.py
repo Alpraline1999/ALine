@@ -2627,6 +2627,71 @@ class TestExtensionOptionsForm(unittest.TestCase):
         finally:
             form.deleteLater()
 
+    def test_pickcolor_field_requests_interaction_and_accepts_async_value(self):
+        from qfluentwidgets import CaptionLabel, ToolButton
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            requested = []
+            form.interactiveFieldRequested.connect(lambda key, field: requested.append((key, dict(field))))
+            form.set_fields(
+                [{"key": "sampled_color", "label": "采样颜色", "field_type": "pickcolor"}],
+                {},
+            )
+
+            button = next(
+                widget for widget in form.findChildren(ToolButton)
+                if widget.objectName() == "interactiveFieldButton:sampled_color"
+            )
+            summary = next(
+                widget for widget in form.findChildren(CaptionLabel)
+                if widget.objectName() == "interactiveFieldSummary:sampled_color"
+            )
+
+            button.click()
+            self.assertEqual(requested[0][0], "sampled_color")
+
+            self.assertTrue(form.set_field_value("sampled_color", {"r": 17, "g": 34, "b": 51}))
+
+            self.assertEqual(form.current_options()["sampled_color"], {"r": 17, "g": 34, "b": 51})
+            self.assertEqual(summary.text(), "#112233")
+        finally:
+            form.deleteLater()
+
+    def test_shot_field_requests_interaction_and_summarizes_capture(self):
+        from qfluentwidgets import CaptionLabel, ToolButton
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            requested = []
+            form.interactiveFieldRequested.connect(lambda key, field: requested.append((key, dict(field))))
+            form.set_fields(
+                [{"key": "template_info", "label": "截图模板", "field_type": "shot"}],
+                {},
+            )
+
+            button = next(
+                widget for widget in form.findChildren(ToolButton)
+                if widget.objectName() == "interactiveFieldButton:template_info"
+            )
+            summary = next(
+                widget for widget in form.findChildren(CaptionLabel)
+                if widget.objectName() == "interactiveFieldSummary:template_info"
+            )
+
+            button.click()
+            self.assertEqual(requested[0][0], "template_info")
+
+            value = {"size": [32, 14], "bounds": [1, 2, 33, 16]}
+            self.assertTrue(form.set_field_value("template_info", value))
+
+            self.assertEqual(form.current_options()["template_info"], value)
+            self.assertEqual(summary.text(), "已截取 32×14px")
+        finally:
+            form.deleteLater()
+
     def test_boolean_field_keeps_label_on_left_and_checkbox_on_right(self):
         from qfluentwidgets import CheckBox
         from ui.widgets.extension_options_form import ExtensionOptionsForm
@@ -4442,6 +4507,13 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._plot_extension_config_help_area.maximumHeight(), expected_height)
         self.assertIs(self.page._plot_extension_config_help_area.widget(), self.page._plot_extension_config_help_container)
 
+    def test_plot_extension_tab_shows_divider_below_config_selector(self):
+        self.page._style_tabs.setCurrentIndex(2)
+        self.page._refresh_style_extension_panel()
+
+        self.assertFalse(self.page._plot_extension_controls._config_row_widget.isHidden())
+        self.assertFalse(self.page._plot_extension_controls._config_row_divider.isHidden())
+
     def test_extension_panel_uses_splitter_side_panel(self):
         self.page.resize(1280, 820)
         self.page.show()
@@ -4660,6 +4732,41 @@ class TestChartPage(unittest.TestCase):
         finally:
             extension_registry.unregister_plot("ui_plot_extension_test")
             self.page._refresh_style_extension_panel()
+
+    def test_chart_curve_order_buttons_follow_selected_curve_position(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        self.df.series.append(other)
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other.id)
+
+        self.assertFalse(self.page._btn_selected_up.isEnabled())
+        self.assertTrue(self.page._btn_selected_down.isEnabled())
+
+        self.page._chart_list.setCurrentRow(1)
+
+        self.assertTrue(self.page._btn_selected_up.isEnabled())
+        self.assertFalse(self.page._btn_selected_down.isEnabled())
+
+    def test_moving_selected_curve_updates_list_and_draw_order(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        self.df.series.append(other)
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated("series", other.id)
+        self.page._move_selected_curve_down()
+
+        self.assertEqual([curve.get("name") for curve in self.page._chart_series], [other.name, self.s.name])
+        self.assertIn(other.name, self.page._chart_list.item(0).text())
+        self.assertIn(self.s.name, self.page._chart_list.item(1).text())
+
+        axis = self.page._figure.axes[0]
+        labels = [line.get_label() for line in axis.lines if not str(line.get_label()).startswith("_")]
+        self.assertEqual(labels, [other.name, self.s.name])
 
     def test_legacy_plot_extension_still_runs_after_default_draw(self):
         from core.extension_api import PlotExtension, extension_registry
@@ -6466,6 +6573,24 @@ class TestAnalysisPage(unittest.TestCase):
         current_view = self.page._analysis_tab_views["current"]
         self.assertGreaterEqual(current_view["summary_stack"].minimumHeight(), 280)
 
+    def test_analysis_busy_card_switches_plot_stack(self):
+        current_view = self.page._analysis_tab_views["current"]
+
+        self.page._set_analysis_busy_state(
+            current_view,
+            True,
+            title="正在更新曲线预览",
+            detail="正在整理当前选择的曲线和分析参数。",
+        )
+
+        self.assertIs(current_view["plot_stack"].currentWidget(), current_view["busy_widget"])
+        self.assertEqual(current_view["busy_title"].text(), "正在更新曲线预览")
+        self.assertEqual(current_view["busy_detail"].text(), "正在整理当前选择的曲线和分析参数。")
+
+        self.page._set_analysis_busy_state(current_view, False)
+
+        self.assertIs(current_view["plot_stack"].currentWidget(), current_view["plot_widget"])
+
     def test_unknown_analysis_json_renders_as_flattened_summary_rows(self):
         payload = {
             "summary": {"score": 0.875, "status": "ok"},
@@ -6816,6 +6941,47 @@ class TestAnalysisPage(unittest.TestCase):
             self.assertIn(third.name, selected_text)
         finally:
             extension_registry.unregister_analysis("ui_preview_lines")
+            self.page._refresh_analysis_type_choices()
+
+    def test_analysis_extension_with_explicit_lines_keeps_selected_input_list(self):
+        from models.schemas import DataSeries
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
+        self.df.series.append(other)
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_keep_selected_inputs",
+                name="UI 保留已选列表",
+                handler=lambda inputs, params: {
+                    "analysis_type": "ui_keep_selected_inputs",
+                    "input_names": [item.get("name", "") for item in inputs],
+                    "line_refs": list(params.get("lines_list") or []),
+                },
+                lines_number=(2, -1),
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_keep_selected_inputs"))
+
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.on_tree_node_activated("series", other.id)
+
+            self.assertEqual(len(self.page._selected_inputs), 2)
+            self.assertEqual(self.page._input_list.count(), 2)
+            self.assertIn(self.s.name, self.page._input_list.item(0).text())
+            self.assertIn(other.name, self.page._input_list.item(1).text())
+
+            self.page._extension_params_edit.set_options({"lines_list": [1, 2]})
+            self.page._on_extension_analysis_options_changed({"lines_list": [1, 2]})
+            self.page._run_analysis()
+
+            self.assertEqual(self.page._result["input_names"], [self.s.name, other.name])
+            self.assertEqual(self.page._result["line_refs"], [1, 2])
+        finally:
+            extension_registry.unregister_analysis("ui_keep_selected_inputs")
             self.page._refresh_analysis_type_choices()
 
     def test_pair_analysis_extension_uses_pair_dropdown_selection(self):
@@ -7437,6 +7603,52 @@ class TestDigitizePage(unittest.TestCase):
 
         self.assertIn("颜色识别", items)
         self.assertIn("图形识别 (测试功能)", items)
+
+    def test_digitize_auto_controls_use_compact_extension_panel(self):
+        self.assertIs(self.page._auto_mode_combo, self.page._digitize_extension_controls._selector)
+        self.assertFalse(self.page._digitize_extension_controls._selector_row_widget.isHidden())
+        self.assertFalse(self.page._digitize_extension_controls._config_row_widget.isHidden())
+        self.assertFalse(self.page._digitize_extension_controls._editor.isHidden())
+
+    def test_digitize_pickcolor_and_shot_values_flow_through_extension_panel(self):
+        from digitize.builtin_extensions import (
+            COLOR_DIGITIZE_EXTENSION_TYPE,
+            SHAPE_DIGITIZE_EXTENSION_TYPE,
+        )
+
+        self.page._auto_mode_combo.setCurrentIndex(
+            self.page._auto_mode_type_ids.index(COLOR_DIGITIZE_EXTENSION_TYPE)
+        )
+        editor = self.page._digitize_extension_controls._editor
+        self.assertTrue(editor.set_field_value("sampled_color", {"r": 10, "g": 20, "b": 30}))
+        self.assertTrue(editor.set_field_value("tolerance", 18))
+        self.assertTrue(editor.set_field_value("step", 6))
+
+        params = self.page._current_digitize_extension_params(
+            COLOR_DIGITIZE_EXTENSION_TYPE,
+            mask_polygons=[[(1.0, 2.0), (3.0, 4.0), (3.0, 5.0)]],
+            mask_include_mode=False,
+        )
+        self.assertEqual(params["sampled_color"], {"r": 10, "g": 20, "b": 30})
+        self.assertEqual(params["tolerance"], 18)
+        self.assertEqual(params["step"], 6)
+        self.assertFalse(params["mask_include_mode"])
+
+        self.page._auto_mode_combo.setCurrentIndex(
+            self.page._auto_mode_type_ids.index(SHAPE_DIGITIZE_EXTENSION_TYPE)
+        )
+        self.assertTrue(editor.set_field_value("template_info", {"size": [24, 11], "bounds": [0, 1, 24, 12]}))
+        self.assertTrue(editor.set_field_value("threshold", 0.72))
+        self.assertTrue(editor.set_field_value("color_weight", 0.4))
+
+        params = self.page._current_digitize_extension_params(
+            SHAPE_DIGITIZE_EXTENSION_TYPE,
+            mask_polygons=None,
+            mask_include_mode=True,
+        )
+        self.assertEqual(params["template_info"]["size"], [24, 11])
+        self.assertEqual(params["threshold"], 0.72)
+        self.assertEqual(params["color_weight"], 0.4)
 
     def test_digitize_auto_detect_uses_selected_digitize_extension(self):
         from core.extension_api import DigitizeExtension, extension_registry

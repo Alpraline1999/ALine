@@ -68,7 +68,15 @@ def ensure_builtin_digitize_extensions(registry) -> None:
                 description="按采样颜色和容差自动提取图像中的散点位置。",
                 version=_BUILTIN_EXTENSION_VERSION,
                 source_kind="builtin",
+                settings=True,
                 config_fields=[
+                    ExtensionConfigField(
+                        key="sampled_color",
+                        label="采样颜色",
+                        description="点击按钮后在图片上选点取色。",
+                        field_type="pickcolor",
+                        default=None,
+                    ),
                     ExtensionConfigField(
                         key="tolerance",
                         label="颜色容差",
@@ -100,7 +108,15 @@ def ensure_builtin_digitize_extensions(registry) -> None:
                 description="按截图模板和匹配阈值搜索图中相同形状。",
                 version=_BUILTIN_EXTENSION_VERSION,
                 source_kind="builtin",
+                settings=True,
                 config_fields=[
+                    ExtensionConfigField(
+                        key="template_info",
+                        label="截图模板",
+                        description="点击按钮后在图片上框选模板区域。",
+                        field_type="shot",
+                        default=None,
+                    ),
                     ExtensionConfigField(
                         key="threshold",
                         label="匹配精度",
