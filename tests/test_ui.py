@@ -1768,7 +1768,7 @@ class TestSettingsPage(unittest.TestCase):
         from qfluentwidgets import SmoothScrollArea
         from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_MAX_HEIGHT
 
-        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 900)
+        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 2700)
         self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
 
@@ -1999,13 +1999,18 @@ class TestHomePage(unittest.TestCase):
 
         page = HomePage()
         try:
+            page.resize(1200, 900)
+            page.show()
+            QApplication.processEvents()
             self.assertIsNotNone(page._banner)
             self.assertFalse(page._banner._background.isNull())
             self.assertEqual(page._banner._hero_title.text(), "ALine")
             self.assertEqual(page._banner._hero_subtitle.text(), "科研数据管理与可视化工作台")
             self.assertEqual(page._banner._hero_hint.maximumWidth(), 760)
+            self.assertGreaterEqual(page._banner._hero_hint.height(), page._banner._hero_hint.sizeHint().height())
+            self.assertIsNotNone(page._banner._link_card_view)
             self.assertEqual([card.titleLabel.text() for card in page._banner._link_cards], ["软件主页", "GitHub 仓库"])
-            self.assertEqual([card.linkButton.text() for card in page._banner._link_cards], ["占位链接", "占位链接"])
+            self.assertEqual(page._banner._link_card_view.layout().count(), 3)
         finally:
             page.deleteLater()
 
@@ -2809,6 +2814,8 @@ class TestExtensionOptionsForm(unittest.TestCase):
 
             self.assertEqual(form.current_options()["sampled_color"], {"r": 17, "g": 34, "b": 51})
             self.assertEqual(summary.text(), "#112233")
+            self.assertEqual(button.toolTip(), "#112233")
+            self.assertIn("#112233", button.styleSheet().lower())
         finally:
             form.deleteLater()
 
@@ -8091,6 +8098,16 @@ class TestDigitizePage(unittest.TestCase):
         self.assertIsNotNone(layout)
         self.assertIsNotNone(layout.itemAt(layout.count() - 1).widget())
 
+    def test_digitize_brush_mask_slider_updates_viewer_size(self):
+        self.assertEqual(self.page._mask_brush_size_slider.value(), 20)
+        self.assertEqual(self.page._mask_brush_size_value_label.text(), "20 px")
+        self.assertEqual(self.page._image_viewer.get_mask_brush_size(), 20.0)
+
+        self.page._mask_brush_size_slider.setValue(32)
+
+        self.assertEqual(self.page._mask_brush_size_value_label.text(), "32 px")
+        self.assertEqual(self.page._image_viewer.get_mask_brush_size(), 32.0)
+
     def test_digitize_curve_table_uses_compact_upper_split(self):
         self.page.resize(1320, 880)
         self.page.show()
@@ -8170,6 +8187,7 @@ class TestDigitizePage(unittest.TestCase):
 
         self.assertEqual(editor.current_options()["sampled_color"], {"r": 10, "g": 20, "b": 30})
         self.assertEqual(summary_label.text(), "#0A141E")
+        self.assertIn("#0a141e", pick_button.styleSheet().lower())
         self.assertIsNone(self.page._pending_digitize_field_key)
         self.assertEqual(self.page._status_label.text(), "已采样: #0a141e")
 
@@ -8198,7 +8216,7 @@ class TestDigitizePage(unittest.TestCase):
         self.assertIn("请在图片上拖拽截图", self.page._status_label.text())
 
         with mock.patch(
-            "digitize.shape_extractor.ShapeExtractor.preprocess_region",
+            "extensions.digitize._extractors.ShapeExtractor.preprocess_region",
             return_value={"size": [24, 11], "bounds": [0, 1, 24, 12]},
         ):
             self.page._on_crop_region_selected(0.0, 1.0, 24.0, 12.0)
@@ -8218,11 +8236,7 @@ class TestDigitizePage(unittest.TestCase):
             DigitizeExtension(
                 type="ui_digitize_probe",
                 name="UI 数字化探针",
-                handler=lambda image_path, params: {
-                    "points": [(12.0, 34.0)],
-                    "summary": f"探针识别 {params.get('step', 0)}",
-                    "image_path": image_path,
-                },
+                handler=lambda figure, params: [[12.0], [34.0]],
             )
         )
         try:
@@ -8234,7 +8248,7 @@ class TestDigitizePage(unittest.TestCase):
             self.page._on_auto_detect()
 
             self.assertEqual(self.page._auto_preview_points, [(12.0, 34.0)])
-            self.assertIn("探针识别", self.page._status_label.text())
+            self.assertIn("UI 数字化探针识别到 1 个点", self.page._status_label.text())
         finally:
             extension_registry.unregister_digitize("ui_digitize_probe")
             self.page._refresh_digitize_extension_choices()
@@ -8669,6 +8683,8 @@ class TestMainWindow(unittest.TestCase):
         self.assertTrue(self.win._tree_toggle_nav_btn.isEnabled())
 
     def test_page_tree_focus_mode_applies_page_specific_filter(self):
+        from ui.main_window import _BUSINESS_TREE_KINDS
+
         previous = self.win._page_tree_focus_mode_enabled
         try:
             self.win._page_tree_focus_mode_enabled = True
@@ -8682,13 +8698,11 @@ class TestMainWindow(unittest.TestCase):
                 return [tree.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole)[0] for index in range(tree.topLevelItemCount())]
 
             self.win.switchTo(self.win.data_page)
-            self.assertEqual(self.win._tree_panel.tree._filter_kinds, [])
-            self.assertEqual(
-                self.win._tree_panel.tree._focus_root_group_types,
-                ["source_files", "datasets", "pictures", "analysis_result_group", "images", "tools"],
-            )
-            self.assertEqual(_top_level_labels()[:5], ["源文件", "数据集", "图片集", "分析结果", "数字化"])
-            self.assertTrue(all(kind == "folder" for kind in _top_level_kinds()))
+            self.assertEqual(self.win._tree_panel.tree._filter_kinds, list(_BUSINESS_TREE_KINDS))
+            self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, [])
+            self.assertIn("全局资源", _top_level_labels())
+            self.assertIn("project", _top_level_kinds())
+            self.assertIn("global_root", _top_level_kinds())
 
             self.win.switchTo(self.win.chart_page)
             self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "pictures"])

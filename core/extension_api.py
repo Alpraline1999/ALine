@@ -10,6 +10,8 @@ from types import ModuleType
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import hashlib
 
+from processing.extension_tools import normalize_line, series_payloads_to_lines
+
 
 XY = Tuple[List[float], List[float]]
 DEFAULT_EXTENSION_VERSION = "1.0.0"
@@ -1301,35 +1303,8 @@ def invoke_processing_extension_handler(
     inputs: List[Dict[str, Any]],
     params: Dict[str, Any],
 ) -> Any:
-    normalized_inputs = [dict(item or {}) for item in inputs]
-    try:
-        positional_params = [
-            item
-            for item in inspect.signature(handler).parameters.values()
-            if item.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        ]
-    except (TypeError, ValueError):
-        positional_params = []
-
-    if positional_params and str(positional_params[0].name or "").strip().casefold() == "inputs":
-        return _invoke_handler_with_optional_payload(
-            handler,
-            (normalized_inputs, dict(params)),
-            "lines_list",
-            normalized_inputs,
-        )
-
-    primary = dict(normalized_inputs[0] or {}) if normalized_inputs else {}
-    return _invoke_handler_with_optional_payload(
-        handler,
-        (
-            list(primary.get("x", []) or []),
-            list(primary.get("y", []) or []),
-            dict(params),
-        ),
-        "lines",
-        normalized_inputs,
-    )
+    result = handler(series_payloads_to_lines(inputs), dict(params))
+    return normalize_line(result)
 
 
 def invoke_analysis_extension_handler(
@@ -1338,12 +1313,23 @@ def invoke_analysis_extension_handler(
     params: Dict[str, Any],
 ) -> Any:
     normalized_inputs = [dict(item or {}) for item in inputs]
-    return _invoke_handler_with_optional_payload(
-        handler,
-        (normalized_inputs, dict(params)),
-        "lines_list",
-        normalized_inputs,
-    )
+    result = handler(series_payloads_to_lines(normalized_inputs), dict(params))
+    if not isinstance(result, dict):
+        return result
+
+    payload = dict(result)
+    if normalized_inputs:
+        source_name = str(normalized_inputs[0].get("name", "") or "")
+        if source_name and not str(payload.get("source_name", "") or "").strip():
+            payload["source_name"] = source_name
+    if len(normalized_inputs) >= 2:
+        name1 = str(normalized_inputs[0].get("name", "") or "")
+        name2 = str(normalized_inputs[1].get("name", "") or "")
+        if name1 and not str(payload.get("name1", "") or "").strip():
+            payload["name1"] = name1
+        if name2 and not str(payload.get("name2", "") or "").strip():
+            payload["name2"] = name2
+    return payload
 
 
 def plot_extension_uses_context_api(handler: Callable[..., Any]) -> bool:
@@ -1368,12 +1354,53 @@ def invoke_plot_extension_handler(
     supported_phases = normalize_plot_extension_phases(getattr(extension, "phases", None)) if extension is not None else ("before_plot", "after_plot")
     if context.phase not in supported_phases:
         return
-    if plot_extension_uses_context_api(handler):
-        handler(context, dict(options))
-        return
-    if context.phase != "after_plot" or context.axis is None:
-        return
-    handler(context.axis, context.plotted_series, dict(options))
+    base_series = list(context.visible_series or context.plotted_series or [])
+    requested_indices = normalize_extension_lines_list(options.get("lines_list")) if "lines_list" in options else []
+    if requested_indices:
+        series_pool = [base_series[index - 1] for index in requested_indices if 1 <= index <= len(base_series)]
+    else:
+        series_pool: List[Dict[str, Any]] = []
+        if isinstance(context.selected_series, dict):
+            series_pool.append(context.selected_series)
+        for item in base_series:
+            if isinstance(context.selected_series, dict) and item is context.selected_series:
+                continue
+            series_pool.append(item)
+
+    try:
+        import matplotlib.pyplot as plt
+    except Exception:
+        plt = None  # type: ignore[assignment]
+
+    if plt is not None and context.figure is not None:
+        try:
+            plt.figure(context.figure.number)
+        except Exception:
+            pass
+    if plt is not None and context.axis is not None:
+        try:
+            plt.sca(context.axis)
+        except Exception:
+            pass
+
+    handler(series_payloads_to_lines(series_pool), dict(options))
+    context.refresh_axes()
+    if plt is not None and context.axes:
+        try:
+            current_axis = plt.gca()
+        except Exception:
+            current_axis = None
+        if current_axis is not None:
+            context.set_active_axis(current_axis)
+
+
+def invoke_digitize_extension_handler(
+    handler: Callable[..., Any],
+    figure: Any,
+    params: Dict[str, Any],
+) -> Any:
+    result = handler(figure, dict(params))
+    return normalize_line(result)
 
 
 def default_extensions_directory(base_dir: str | Path | None = None) -> Path:

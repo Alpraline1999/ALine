@@ -345,6 +345,7 @@ class ImageViewer(QWidget):
         self._nudge_step = self.DEFAULT_NUDGE_STEP
         self._select_threshold = self.DEFAULT_SELECT_THRESHOLD
         self._eraser_size = 20.0
+        self._mask_brush_size = 20.0
         self._crosshair_size = 8.0
         self._crosshair_color = QColor("#00C2FF")
 
@@ -591,6 +592,15 @@ class ImageViewer(QWidget):
     def get_eraser_size(self) -> float:
         """获取橡皮擦大小"""
         return getattr(self, '_eraser_size', 20.0)
+
+    def set_mask_brush_size(self, size: float):
+        """设置画笔蒙版大小"""
+        self._mask_brush_size = max(1.0, size)
+        self.update()
+
+    def get_mask_brush_size(self) -> float:
+        """获取画笔蒙版大小"""
+        return getattr(self, '_mask_brush_size', 20.0)
 
     def get_mask(self) -> MaskOverlay:
         """获取蒙版"""
@@ -1081,7 +1091,7 @@ class ImageViewer(QWidget):
             pen.setWidthF(2.0 / self._scale)
             painter.setPen(pen)
             painter.setBrush(QBrush(QColor("#30FF9800")))
-            r = self._eraser_size
+            r = self._mask_brush_size
             painter.drawEllipse(self._mouse_image_pos, r, r)
 
     def _draw_precision_crosshair(self, painter: QPainter):
@@ -1526,7 +1536,7 @@ class ImageViewer(QWidget):
         """将当前笔触圆加入待合并缓冲区，并增量更新预缓存路径"""
         import math
         x, y = pt.x(), pt.y()
-        r = self._eraser_size
+        r = self._mask_brush_size
         n = 24
         circle = [
             (x + r * math.cos(2 * math.pi * i / n),

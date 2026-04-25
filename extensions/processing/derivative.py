@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from core.extension_api import ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
 
 
-def _derivative_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    inputs, _options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    x_values, y_values = primary_series_xy(inputs)
+def _derivative_handler(lines, params):
+    del params
+    x_values, y_values = line_xy(primary_line(lines))
     count = len(x_values)
     if count < 2:
-        return x_values, y_values
+        return line_from_xy(x_values, y_values)
     try:
         import numpy as np
 
@@ -21,7 +21,7 @@ def _derivative_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None
             derivative[index] = (y_values[index + 1] - y_values[index - 1]) / delta_x if delta_x else 0.0
         derivative[0] = (y_values[1] - y_values[0]) / (x_values[1] - x_values[0]) if x_values[1] != x_values[0] else 0.0
         derivative[-1] = (y_values[-1] - y_values[-2]) / (x_values[-1] - x_values[-2]) if x_values[-1] != x_values[-2] else 0.0
-    return x_values, derivative
+    return line_from_xy(x_values, derivative)
 
 
 def register_extensions(registry) -> None:

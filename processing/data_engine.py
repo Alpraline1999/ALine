@@ -316,7 +316,15 @@ def _apply_multiline_processing_extension(
 ) -> PipelineResult:
     primary = lines[0]
     result = invoke_processing_extension_handler(extension.handler, lines, params)
-    return _normalize_multiline_extension_result(result, primary)
+    normalized_lines, warnings = _normalize_multiline_extension_result(result, primary)
+    if normalized_lines:
+        result_name = str(params.get("result_name", "") or "").strip()
+        line_color = str(params.get("line_color", "") or "").strip()
+        if result_name:
+            normalized_lines[0]["name"] = result_name
+        if line_color:
+            normalized_lines[0]["color"] = line_color
+    return normalized_lines, warnings
 
 
 def _normalize_multiline_extension_result(result: Any, template_line: PipelineLine) -> PipelineResult:

@@ -717,12 +717,12 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 当前 builtin 扩展已经统一从 `extensions` 目录递归扫描并注册，但成熟度并不一致：
 
-| 类别       | 当前状态                             | 主要问题                                                                           |
-| ---------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
-| processing | 大部分已经是正式工具                 | experimental 能力已拆出，但多曲线输出协议仍有兼容分支                             |
-| analysis   | 核心工具已成熟                       | experimental 分析扩展与正式分析扩展的报告占位符 schema 仍需统一                    |
-| plot       | 可用能力多，已拆成 tool / experimental | before_plot / after_plot 双阶段下，必须依赖显式 phase 元数据避免重复绘制         |
-| digitize   | 颜色识别可视作正式工具               | 图形识别仍偏实验态，参数和输出契约还不够稳定                                       |
+| 类别       | 当前状态                               | 主要问题                                                                 |
+| ---------- | -------------------------------------- | ------------------------------------------------------------------------ |
+| processing | 大部分已经是正式工具                   | experimental 能力已拆出，但多曲线输出协议仍有兼容分支                    |
+| analysis   | 核心工具已成熟                         | experimental 分析扩展与正式分析扩展的报告占位符 schema 仍需统一          |
+| plot       | 可用能力多，已拆成 tool / experimental | before_plot / after_plot 双阶段下，必须依赖显式 phase 元数据避免重复绘制 |
+| digitize   | 颜色识别可视作正式工具                 | 图形识别仍偏实验态，参数和输出契约还不够稳定                             |
 
 按当前仓库现状，可直接视作正式 builtin 工具的优先集合：
 
@@ -766,10 +766,10 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 #### 原则 3：一类扩展只保留一套正式输出协议
 
-1. Processing：正式支持 `(inputs, params)` 输入，以及 `(xs, ys)` 与 `{"lines": [...], "warnings": [...]}` 两种结果。
-2. Analysis：正式支持 `summary_items / tables / texts / _plot_series / report_placeholders` 这一组结构化结果。
-3. Plot：正式支持通过 `plot_context` 修改图表，不依赖页面私有状态，不混用隐式返回值。
-4. Digitize：正式支持 `points + summary + warnings` 结构，不再让页面猜测字段。
+1. Processing：正式签名固定为 `(lines, params) -> line`，不再接受 xs / ys、inputs dict 或 `{"lines": ...}` 返回格式。
+2. Analysis：正式签名固定为 `(lines, params) -> dict`，输入曲线名等元数据由运行时补齐，不再把 dict 曲线协议暴露给扩展。
+3. Plot：正式签名固定为 `(lines, params) -> None`，扩展只操作当前 matplotlib 图元，不再暴露 `plot_context` 给 handler。
+4. Digitize：正式签名固定为 `(figure, params) -> line`，页面统一从 line 还原点列表，不再猜测 `points / summary / warnings` 结构。
 
 #### 原则 4：多曲线输入顺序必须显式化
 
@@ -780,6 +780,11 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 正式工具文件只负责：
 
 1. 参数声明。
+2. 严格协议包装。
+3. 调用稳定底层接口。
+
+当前允许作为稳定底层接口直接复用的只有：`align_lines_to_common_x`、`crop_xy`、`transform_xy`、`resample_xy`。
+其余算法如内置数字化提取器应保留在扩展目录内部实现，不再依赖旧的 app 级提取模块。
 2. 输入规范化。
 3. 调用共享算法函数。
 4. 输出结果封装。

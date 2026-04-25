@@ -44,7 +44,7 @@ from core.ai.providers import (
 )
 
 
-_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 900
+_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 2700
 
 
 class SettingsPage(QWidget):

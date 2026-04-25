@@ -4,6 +4,7 @@ import math
 from typing import Any, Dict, List
 
 from core.extension_api import AnalysisExtension
+from processing.extension_tools import line_xy, primary_line
 
 
 VERSION = "0.1.0"
@@ -54,14 +55,13 @@ def compute_statistics(xs: List[float], ys: List[float]) -> Dict[str, Any]:
     return result
 
 
-def _handler(inputs, params):
+def _handler(lines, params):
     del params
-    if not inputs:
+    if not lines:
         raise ValueError("statistics 需要至少一条输入数据")
-    first = dict(inputs[0] or {})
-    result = compute_statistics(list(first.get("x", []) or []), list(first.get("y", []) or []))
+    xs, ys = line_xy(primary_line(lines))
+    result = compute_statistics(xs, ys)
     result["analysis_type"] = "statistics"
-    result["source_name"] = first.get("name", "")
     return result
 
 

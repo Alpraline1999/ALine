@@ -1,6 +1,8 @@
 import math
 
 from core.extension_api import ExtensionConfigField, PlotExtension
+from extensions.plot._runtime import axis_line_style, current_axis, current_figure
+from processing.extension_tools import normalize_lines
 
 
 def _as_float(value, default=None):
@@ -8,14 +10,6 @@ def _as_float(value, default=None):
         return float(value)
     except (TypeError, ValueError):
         return default
-
-
-def _context_target_series(plot_context):
-    if plot_context.selected_series is not None:
-        return plot_context.selected_series
-    if plot_context.visible_series:
-        return plot_context.visible_series[0]
-    return None
 
 
 def _theta_values(xs, theta_unit):
@@ -28,38 +22,18 @@ def _theta_values(xs, theta_unit):
     return values
 
 
-def draw_polar_projection(plot_context, options):
-    if plot_context.phase == "before_plot":
-        theta_label = str(options.get("theta_label", "")).strip()
-        radius_label = str(options.get("radius_label", "")).strip()
-        figure_patch = {}
-        if theta_label:
-            figure_patch["x_label"] = theta_label
-        if radius_label:
-            figure_patch["y_label"] = radius_label
-        if figure_patch:
-            plot_context.patch_figure_state(figure_patch)
-
-        plot_context.skip_default_plot = True
-        plot_context.skip_default_formatting = True
-        plot_context.figure.clear()
-        axis = plot_context.figure.add_subplot(111, projection="polar")
-        plot_context.set_active_axis(axis)
-        plot_context.refresh_axes()
+def draw_polar_projection(lines, params):
+    figure = current_figure()
+    previous_axis = current_axis()
+    normalized_lines = normalize_lines(lines)
+    if figure is None or not normalized_lines:
         return
 
-    axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
-    if axis is None:
-        return
-
-    series = _context_target_series(plot_context)
-    if series is None:
-        return
-
-    theta_unit = str(options.get("theta_unit", "degree") or "degree").strip().lower()
-    theta_values = _theta_values(series.get("x", []), theta_unit)
+    style = axis_line_style(previous_axis)
+    theta_unit = str(params.get("theta_unit", "degree") or "degree").strip().lower()
+    theta_values = _theta_values(normalized_lines[0][0], theta_unit)
     radius_values = []
-    for raw in series.get("y", []):
+    for raw in normalized_lines[0][1]:
         radius = _as_float(raw)
         if radius is None:
             continue
@@ -71,38 +45,38 @@ def draw_polar_projection(plot_context, options):
     if not theta_values or not radius_values:
         return
 
-    if bool(options.get("close_curve", False)) and point_count > 1:
+    if bool(params.get("close_curve", False)) and point_count > 1:
         theta_values.append(theta_values[0])
         radius_values.append(radius_values[0])
 
-    axis.set_theta_zero_location(str(options.get("zero_location", "N") or "N"))
-    axis.set_theta_direction(-1 if str(options.get("direction", "counterclockwise")) == "clockwise" else 1)
+    figure.clear()
+    axis = figure.add_subplot(111, projection="polar")
+    axis.set_theta_zero_location(str(params.get("zero_location", "N") or "N"))
+    axis.set_theta_direction(-1 if str(params.get("direction", "counterclockwise")) == "clockwise" else 1)
 
-    theta_min = _as_float(options.get("theta_min"))
-    theta_max = _as_float(options.get("theta_max"))
+    theta_min = _as_float(params.get("theta_min"))
+    theta_max = _as_float(params.get("theta_max"))
     if theta_min is not None:
         axis.set_thetamin(theta_min)
     if theta_max is not None:
         axis.set_thetamax(theta_max)
 
-    r_min = _as_float(options.get("r_min"))
-    r_max = _as_float(options.get("r_max"))
+    r_min = _as_float(params.get("r_min"))
+    r_max = _as_float(params.get("r_max"))
     if r_min is not None or r_max is not None:
         axis.set_rlim(bottom=r_min, top=r_max)
 
-    style = dict(series.get("style") or {})
-    figure_state = dict(plot_context.figure_state or {})
-    color = str(options.get("color", "") or style.get("color") or series.get("color") or "#0078D4")
-    marker = str(options.get("marker", "") or style.get("marker") or "")
-    line_width = _as_float(options.get("line_width"), None)
+    color = str(params.get("color", "") or style.get("color") or "#0078D4")
+    marker = str(params.get("marker", "") or style.get("marker") or "")
+    line_width = _as_float(params.get("line_width"), None)
     if line_width is None:
-        line_width = _as_float(style.get("linewidth"), _as_float(figure_state.get("line_width"), 1.5)) or 1.5
-    marker_size = _as_float(options.get("marker_size"), None)
+        line_width = _as_float(style.get("linewidth"), 1.5) or 1.5
+    marker_size = _as_float(params.get("marker_size"), None)
     if marker_size is None:
-        marker_size = _as_float(style.get("marker_size"), _as_float(figure_state.get("marker_size"), 5.0)) or 5.0
-    alpha = max(0.0, min(1.0, _as_float(options.get("alpha"), 0.95) or 0.95))
-    fill_alpha = max(0.0, min(1.0, _as_float(options.get("fill_alpha"), 0.0) or 0.0))
-    label = str(options.get("label", "")).strip() or str(series.get("display_name") or series.get("name") or "极坐标曲线")
+        marker_size = _as_float(style.get("markersize"), 5.0) or 5.0
+    alpha = max(0.0, min(1.0, _as_float(params.get("alpha"), 0.95) or 0.95))
+    fill_alpha = max(0.0, min(1.0, _as_float(params.get("fill_alpha"), 0.0) or 0.0))
+    label = str(params.get("label", "")).strip() or "极坐标曲线"
 
     plot_kwargs = {"color": color, "linewidth": max(0.1, line_width), "alpha": alpha, "label": label}
     if marker:
@@ -113,25 +87,19 @@ def draw_polar_projection(plot_context, options):
     if fill_alpha > 0.0 and len(theta_values) >= 3:
         axis.fill(theta_values, radius_values, color=color, alpha=fill_alpha)
 
-    axis.grid(bool(options.get("show_grid", True)))
-    title = str(options.get("title", "")).strip()
+    axis.grid(bool(params.get("show_grid", True)))
+    title = str(params.get("title", "")).strip()
     if title:
         axis.set_title(title)
-    axis.set_xlabel(str(figure_state.get("x_label") or "角度"))
-    axis.set_ylabel(str(figure_state.get("y_label") or "半径"))
+    axis.set_xlabel(str(params.get("theta_label", "") or "角度"))
+    axis.set_ylabel(str(params.get("radius_label", "") or "半径"))
 
-    radial_label_angle = _as_float(options.get("radial_label_angle"))
+    radial_label_angle = _as_float(params.get("radial_label_angle"))
     if radial_label_angle is not None:
         axis.set_rlabel_position(radial_label_angle)
 
-    if bool(options.get("show_legend", True)):
-        legend_kwargs = {"loc": str(figure_state.get("legend_pos") or "best"), "frameon": bool(options.get("legend_frame", False))}
-        font_family = str(figure_state.get("font_family") or "").strip()
-        legend_font_size = max(1, int(_as_float(figure_state.get("legend_font_size"), 9) or 9))
-        if font_family:
-            legend_kwargs["prop"] = {"family": font_family, "size": legend_font_size}
-        else:
-            legend_kwargs["fontsize"] = legend_font_size
+    if bool(params.get("show_legend", True)):
+        legend_kwargs = {"loc": "best", "frameon": bool(params.get("legend_frame", False)), "fontsize": 9}
         axis.legend(**legend_kwargs)
 
 
@@ -146,7 +114,7 @@ def register_extensions(registry):
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
-            phases=("before_plot", "after_plot"),
+            phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="theta_unit", description="角度数据单位。", field_type="selective", default="degree", choices=("degree", "radian")),
                 ExtensionConfigField(key="theta_label", description="极坐标角度轴标签；留空则保持当前设置。", field_type="string", default="角度"),

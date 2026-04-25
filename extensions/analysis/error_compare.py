@@ -4,6 +4,7 @@ import math
 from typing import Any, Dict, List
 
 from core.extension_api import AnalysisExtension
+from processing.extension_tools import normalize_lines
 
 
 VERSION = "0.1.0"
@@ -37,21 +38,20 @@ def compute_error_metrics(xs1: List[float], ys1: List[float], xs2: List[float], 
     }
 
 
-def _handler(inputs, params):
+def _handler(lines, params):
     del params
-    if len(inputs) < 2:
+    normalized_lines = normalize_lines(lines)
+    if len(normalized_lines) < 2:
         raise ValueError("error_compare 需要两条输入数据")
-    first = dict(inputs[0] or {})
-    second = dict(inputs[1] or {})
+    first = normalized_lines[0]
+    second = normalized_lines[1]
     result = compute_error_metrics(
-        list(first.get("x", []) or []),
-        list(first.get("y", []) or []),
-        list(second.get("x", []) or []),
-        list(second.get("y", []) or []),
+        list(first[0]),
+        list(first[1]),
+        list(second[0]),
+        list(second[1]),
     )
     result["analysis_type"] = "error_compare"
-    result["name1"] = first.get("name", "")
-    result["name2"] = second.get("name", "")
     return result
 
 

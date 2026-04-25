@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, PlotExtension
+from extensions.plot._runtime import current_axis, current_theme_colors
 from processing.data_engine import align_lines_to_common_x
+from processing.extension_tools import line_payloads_from_lines, normalize_lines
 
 
 def _as_float(value, default):
@@ -11,62 +13,16 @@ def _as_float(value, default):
         return float(default)
 
 
-def _candidate_series(plot_context):
-    series = list(plot_context.visible_series or [])
-    if len(series) >= 2:
-        return series[:2]
-    return []
-
-
-def _resolve_line_indices(options, total):
-    raw = options.get("lines_list", [1, 2])
-    if raw in (None, "", []):
-        raw = [1, 2]
-    if not isinstance(raw, (list, tuple)):
-        raw = [raw]
-    result = []
-    for item in raw:
-        try:
-            index = int(item)
-        except (TypeError, ValueError):
-            continue
-        if 1 <= index <= total:
-            result.append(index)
-    return result or [1, 2]
-
-
-def _candidate_series_for_lines(plot_context, options):
-    series = list(plot_context.visible_series or [])
-    if len(series) < 2:
-        return []
-    indices = _resolve_line_indices(options, len(series))
-    chosen = [series[index - 1] for index in indices[:2] if 1 <= index <= len(series)]
-    if len(chosen) >= 2:
-        return chosen[:2]
-    return _candidate_series(plot_context)
-
-
-def draw_dual_curve_band(plot_context, options):
-    axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
+def draw_dual_curve_band(lines, params):
+    axis = current_axis()
     if axis is None:
         return
 
-    candidates = _candidate_series_for_lines(plot_context, options)
+    candidates = normalize_lines(lines)[:2]
     if len(candidates) < 2:
         return
 
-    aligned_lines, warnings = align_lines_to_common_x(
-        [
-            {
-                "name": item.get("display_name") or item.get("name") or "未命名曲线",
-                "x": list(item.get("x") or []),
-                "y": list(item.get("y") or []),
-                "color": item.get("color") or "#0078D4",
-            }
-            for item in candidates
-        ],
-        options,
-    )
+    aligned_lines, warnings = align_lines_to_common_x(line_payloads_from_lines(candidates), params)
     if len(aligned_lines) < 2:
         return
 
@@ -77,37 +33,39 @@ def draw_dual_curve_band(plot_context, options):
     if not x_values:
         return
 
-    fill_color = str(options.get("fill_color", "#F4B183") or "#F4B183")
-    fill_alpha = min(1.0, max(0.0, _as_float(options.get("fill_alpha", 0.18), 0.18)))
-    label = str(options.get("label", "双曲线差异带") or "双曲线差异带")
+    fill_color = str(params.get("fill_color", "#F4B183") or "#F4B183")
+    fill_alpha = min(1.0, max(0.0, _as_float(params.get("fill_alpha", 0.18), 0.18)))
+    label = str(params.get("label", "双曲线差异带") or "双曲线差异带")
+    axis.fill_between(x_values, first_y, second_y, color=fill_color, alpha=fill_alpha, label=label, zorder=0)
 
-    if plot_context.phase == "before_plot":
-        axis.fill_between(x_values, first_y, second_y, color=fill_color, alpha=fill_alpha, label=label, zorder=0)
-        return
-
-    if not bool(options.get("annotate_max_gap", True)):
+    if not bool(params.get("annotate_max_gap", True)):
+        if warnings and bool(params.get("append_alignment_note", True)):
+            current_title = axis.get_title().strip()
+            note = warnings[0]
+            axis.set_title(note if not current_title else f"{current_title}\n{note}")
         return
 
     differences = [abs(left - right) for left, right in zip(first_y, second_y)]
     if not differences:
         return
     peak_index = max(range(len(differences)), key=lambda index: differences[index])
-    foreground = str(plot_context.theme_colors.get("foreground", "#222222"))
-    background = str(plot_context.theme_colors.get("background", "#ffffff"))
+    theme_colors = current_theme_colors(axis)
+    foreground = theme_colors["foreground"]
+    background = theme_colors["background"]
     peak_x = x_values[peak_index]
     peak_y = (first_y[peak_index] + second_y[peak_index]) / 2.0
-    precision = max(0, int(_as_float(options.get("annotation_precision", 3), 3)))
+    precision = max(0, int(_as_float(params.get("annotation_precision", 3), 3)))
     axis.annotate(
         f"最大差值 = {differences[peak_index]:.{precision}f}",
         xy=(peak_x, peak_y),
         xytext=(10, 10),
         textcoords="offset points",
         color=foreground,
-        fontsize=max(8, int(_as_float(options.get("annotation_font_size", 9), 9))),
+        fontsize=max(8, int(_as_float(params.get("annotation_font_size", 9), 9))),
         bbox={"boxstyle": "round,pad=0.3", "fc": background, "ec": fill_color, "alpha": 0.92},
         arrowprops={"arrowstyle": "->", "color": fill_color, "linewidth": 1.0},
     )
-    if warnings and bool(options.get("append_alignment_note", True)):
+    if warnings and bool(params.get("append_alignment_note", True)):
         current_title = axis.get_title().strip()
         note = warnings[0]
         axis.set_title(note if not current_title else f"{current_title}\n{note}")
@@ -125,7 +83,7 @@ def register_extensions(registry):
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
-            phases=("before_plot", "after_plot"),
+            phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="align_mode", description="坐标未对齐时的处理方式：auto 自动重采样，strict 直接报错。", field_type="selective", default="auto", choices=("auto", "strict")),
                 ExtensionConfigField(key="resample_mode", description="自动对齐时的重采样方式：count 固定点数，spacing 固定间距。", field_type="selective", default="count", choices=("count", "spacing")),

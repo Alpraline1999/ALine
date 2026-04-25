@@ -1,4 +1,5 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
+from extensions.plot._runtime import current_axis
 
 
 def _as_float(value, default):
@@ -8,19 +9,20 @@ def _as_float(value, default):
         return float(default)
 
 
-def draw_text_annotation(plot_context, options):
-    axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
+def draw_text_annotation(lines, params):
+    del lines
+    axis = current_axis()
     if axis is None:
         return
 
-    transform = axis.transData if str(options.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
-    x = _as_float(options.get("x", 0.08), 0.08)
-    y = _as_float(options.get("y", 0.9), 0.9)
-    color = str(options.get("color", "#222222"))
-    alpha = min(1.0, max(0.0, _as_float(options.get("alpha", 0.95), 0.95)))
-    font_size = max(6, int(_as_float(options.get("font_size", 11), 11)))
-    text = str(options.get("text", "请在这里补充说明"))
-    bbox_enabled = bool(options.get("show_box", True))
+    transform = axis.transData if str(params.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
+    x = _as_float(params.get("x", 0.08), 0.08)
+    y = _as_float(params.get("y", 0.9), 0.9)
+    color = str(params.get("color", "#222222"))
+    alpha = min(1.0, max(0.0, _as_float(params.get("alpha", 0.95), 0.95)))
+    font_size = max(6, int(_as_float(params.get("font_size", 11), 11)))
+    text = str(params.get("text", "请在这里补充说明"))
+    bbox_enabled = bool(params.get("show_box", True))
 
     axis.text(
         x,
@@ -30,9 +32,9 @@ def draw_text_annotation(plot_context, options):
         color=color,
         fontsize=font_size,
         alpha=alpha,
-        rotation=_as_float(options.get("rotation", 0.0), 0.0),
-        ha=str(options.get("horizontal_align", "left")),
-        va=str(options.get("vertical_align", "center")),
+        rotation=_as_float(params.get("rotation", 0.0), 0.0),
+        ha=str(params.get("horizontal_align", "left")),
+        va=str(params.get("vertical_align", "center")),
         bbox={"boxstyle": "round,pad=0.25", "fc": "#ffffff", "ec": color, "alpha": 0.82} if bbox_enabled else None,
     )
 

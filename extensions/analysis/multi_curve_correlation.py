@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
+from processing.extension_tools import normalize_lines
 
 
 def _pearson(values_a, values_b):
@@ -42,24 +43,24 @@ def _correlation(values_a, values_b, method):
     return _pearson(values_a, values_b)
 
 
-def multi_curve_correlation(inputs, params, lines_list=None):
-    aligned_lines = list(lines_list or inputs or [])
+def multi_curve_correlation(lines, params):
+    aligned_lines = normalize_lines(lines)
     if len(aligned_lines) < 2:
         raise ValueError("多曲线相关性分析至少需要 2 条输入曲线")
 
     method = str(params.get("method", "pearson") or "pearson").strip().lower()
     primary = aligned_lines[0]
     comparison_items = []
-    for line in aligned_lines[1:]:
+    for index, line in enumerate(aligned_lines[1:], start=2):
         comparison_items.append({
-            "name": str(line.get("name", "") or "未命名曲线"),
-            "correlation": _correlation(list(primary.get("y", [])), list(line.get("y", [])), method),
+            "name": f"line_{index}",
+            "correlation": _correlation(list(primary[1]), list(line[1]), method),
         })
 
     best_match = max(comparison_items, key=lambda item: abs(item["correlation"])) if comparison_items else {"name": "", "correlation": 0.0}
     average_correlation = sum(item["correlation"] for item in comparison_items) / len(comparison_items)
     line_color = str(params.get("line_color", "#C23B22") or "#C23B22")
-    primary_name = str(primary.get("name", "") or "主曲线")
+    primary_name = "line_1"
 
     return {
         "analysis_type": "multi_curve_correlation",

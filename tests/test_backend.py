@@ -801,7 +801,7 @@ class TestDataEngine(unittest.TestCase):
         xs = [0.0, 1.0, 2.0, 3.0]
         ys = [2.0, 3.0, 4.0, 5.0]
 
-        nx, ny = handler(xs, ys, {"x_min": None, "x_max": ""})
+        nx, ny = handler([[xs, ys]], {"x_min": None, "x_max": ""})
 
         self.assertEqual(nx, xs)
         self.assertEqual(ny, ys)
@@ -995,9 +995,10 @@ class TestDataEngine(unittest.TestCase):
         from core.extension_api import ProcessingExtension, extension_registry
         from processing.data_engine import apply_operation
 
-        def _scale(xs, ys, params):
+        def _scale(lines, params):
+            xs, ys = lines[0] if lines else ([], [])
             factor = float(params.get("factor", 1.0))
-            return list(xs), [value * factor for value in ys]
+            return [list(xs), [value * factor for value in ys]]
 
         extension_registry.register_processing(
             ProcessingExtension(type="test_scale", name="测试缩放", handler=_scale)
@@ -1063,18 +1064,20 @@ class TestDataEngine(unittest.TestCase):
         from core.extension_api import ProcessingExtension, extension_registry
         from processing.data_engine import align_lines_to_common_x, apply_pipeline_to_lines
 
-        def _mean(xs, ys, params, lines=None):
-            aligned_lines, warnings = align_lines_to_common_x(lines or [], params)
+        def _mean(lines, params):
+            aligned_lines, warnings = align_lines_to_common_x(
+                [
+                    {"name": f"line_{index + 1}", "x": list(line[0]), "y": list(line[1])}
+                    for index, line in enumerate(lines or [])
+                ],
+                params,
+            )
             point_count = len(aligned_lines[0].get("x", [])) if aligned_lines else 0
             averaged = []
             for index in range(point_count):
                 averaged.append(sum(line["y"][index] for line in aligned_lines) / len(aligned_lines))
-            return {
-                "name": "mean",
-                "x": aligned_lines[0].get("x", []),
-                "y": averaged,
-                "warnings": warnings,
-            }
+            self.assertTrue(warnings)
+            return [list(aligned_lines[0].get("x", [])), averaged]
 
         extension_registry.register_processing(
             ProcessingExtension(
@@ -1090,12 +1093,12 @@ class TestDataEngine(unittest.TestCase):
                     {"name": "a", "x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0]},
                     {"name": "b", "x": [0.0, 0.5, 1.0, 1.5, 2.0], "y": [0.0, 1.0, 2.0, 3.0, 4.0]},
                 ],
-                [{"type": "test_mean", "params": {"align_mode": "auto", "n": 3}}],
+                [{"type": "test_mean", "params": {"align_mode": "auto", "n": 3, "lines_list": [1, 2], "result_name": "mean"}}],
             )
             self.assertEqual(len(lines), 1)
             self.assertEqual(lines[0]["name"], "mean")
             self.assertEqual(lines[0]["y"], [1.0, 3.0, 5.0])
-            self.assertTrue(warnings)
+            self.assertEqual(warnings, [])
         finally:
             extension_registry.unregister_processing("test_mean")
 
@@ -1259,11 +1262,10 @@ class TestAnalysisEngine(unittest.TestCase):
         from core.analysis_engine import run_analysis
         from core.extension_api import AnalysisExtension, extension_registry
 
-        def _span(inputs, params):
-            values = list(inputs[0].get("y", []))
+        def _span(lines, params):
+            values = list(lines[0][1] if lines else [])
             return {
                 "analysis_type": "test_span",
-                "source_name": inputs[0].get("name", ""),
                 "span": (max(values) - min(values)) if values else 0.0,
                 "scale": params.get("scale", 1),
             }
@@ -1287,11 +1289,10 @@ class TestAnalysisEngine(unittest.TestCase):
         from core.analysis_engine import run_analysis
         from core.extension_api import AnalysisExtension, extension_registry
 
-        def _summary(inputs, params, lines_list=None):
+        def _summary(lines, params):
             return {
                 "analysis_type": "test_lines_list",
-                "input_count": len(lines_list or []),
-                "primary_name": (lines_list or [{}])[0].get("name", ""),
+                "input_count": len(lines or []),
                 "flag": params.get("flag", ""),
             }
 
@@ -1308,7 +1309,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 {"flag": "ok"},
             )
             self.assertEqual(result["input_count"], 2)
-            self.assertEqual(result["primary_name"], "main")
+            self.assertEqual(result["source_name"], "main")
             self.assertEqual(result["flag"], "ok")
         finally:
             extension_registry.unregister_analysis("test_lines_list")
@@ -1323,15 +1324,15 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import AnalysisExtension, ProcessingExtension
 
-                def _scale(xs, ys, params):
+                def _scale(lines, params):
+                    xs, ys = lines[0] if lines else ([], [])
                     factor = float(params.get('factor', 1.0))
-                    return list(xs), [value * factor for value in ys]
+                    return [list(xs), [value * factor for value in ys]]
 
-                def _span(inputs, params):
-                    values = list(inputs[0].get('y', []))
+                def _span(lines, params):
+                    values = list(lines[0][1] if lines else [])
                     return {
                         'analysis_type': 'dir_span',
-                        'source_name': inputs[0].get('name', ''),
                         'span': (max(values) - min(values)) if values else 0.0,
                     }
 
@@ -1364,9 +1365,10 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import ProcessingExtension
 
-                def _shift(xs, ys, params):
+                def _shift(lines, params):
+                    xs, ys = lines[0] if lines else ([], [])
                     offset = float(params.get('offset', 0.0))
-                    return list(xs), [value + offset for value in ys]
+                    return [list(xs), [value + offset for value in ys]]
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1402,8 +1404,9 @@ class TestAnalysisEngine(unittest.TestCase):
                     """
                     from core.extension_api import ProcessingExtension
 
-                    def _builtin(xs, ys, params):
-                        return list(xs), [value + 1 for value in ys]
+                    def _builtin(lines, params):
+                        xs, ys = lines[0] if lines else ([], [])
+                        return [list(xs), [value + 1 for value in ys]]
 
                     def register_extensions(registry):
                         registry.register_processing(
@@ -1415,11 +1418,12 @@ class TestAnalysisEngine(unittest.TestCase):
                     """
                     from core.extension_api import AnalysisExtension, ProcessingExtension
 
-                    def _external(xs, ys, params):
-                        return list(xs), [value + 2 for value in ys]
+                    def _external(lines, params):
+                        xs, ys = lines[0] if lines else ([], [])
+                        return [list(xs), [value + 2 for value in ys]]
 
-                    def _summary(inputs, params):
-                        return {'analysis_type': 'external_probe', 'count': len(inputs)}
+                    def _summary(lines, params):
+                        return {'analysis_type': 'external_probe', 'count': len(lines)}
 
                     def register_extensions(registry):
                         registry.register_processing(
@@ -1449,11 +1453,11 @@ class TestAnalysisEngine(unittest.TestCase):
 
         registry = ExtensionRegistry()
 
-        def _first(xs, ys, params):
-            return list(xs), list(ys)
+        def _first(lines, params):
+            return lines[0] if lines else [[], []]
 
-        def _second(xs, ys, params):
-            return list(xs), list(ys)
+        def _second(lines, params):
+            return lines[0] if lines else [[], []]
 
         registry.register_processing(ProcessingExtension(type="name_probe_a", name="重复名称", handler=_first))
         with self.assertRaisesRegex(ValueError, "重复的 processing 扩展 name: 重复名称"):
@@ -1477,8 +1481,9 @@ class TestAnalysisEngine(unittest.TestCase):
                     """
                     from core.extension_api import ProcessingExtension
 
-                    def _enabled(xs, ys, params):
-                        return list(xs), [value + 1 for value in ys]
+                    def _enabled(lines, params):
+                        xs, ys = lines[0] if lines else ([], [])
+                        return [list(xs), [value + 1 for value in ys]]
 
                     def register_extensions(registry):
                         registry.register_processing(
@@ -1490,8 +1495,9 @@ class TestAnalysisEngine(unittest.TestCase):
                     """
                     from core.extension_api import ProcessingExtension
 
-                    def _disabled(xs, ys, params):
-                        return list(xs), [value + 2 for value in ys]
+                    def _disabled(lines, params):
+                        xs, ys = lines[0] if lines else ([], [])
+                        return [list(xs), [value + 2 for value in ys]]
 
                     def register_extensions(registry):
                         registry.register_processing(
@@ -1503,8 +1509,8 @@ class TestAnalysisEngine(unittest.TestCase):
                     """
                     from core.extension_api import AnalysisExtension
 
-                    def _summary(inputs, params):
-                        return {'analysis_type': 'external_summary', 'count': len(inputs)}
+                    def _summary(lines, params):
+                        return {'analysis_type': 'external_summary', 'count': len(lines)}
 
                     def register_extensions(registry):
                         registry.register_analysis(
@@ -1546,8 +1552,8 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import ProcessingExtension
 
-                def _noop(xs, ys, params):
-                    return list(xs), list(ys)
+                def _noop(lines, params):
+                    return lines[0] if lines else [[], []]
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1585,8 +1591,8 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import ProcessingExtension
 
-                def _noop(xs, ys, params):
-                    return list(xs), list(ys)
+                def _noop(lines, params):
+                    return lines[0] if lines else [[], []]
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1632,8 +1638,8 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import ProcessingExtension
 
-                def _noop(xs, ys, params):
-                    return list(xs), list(ys)
+                def _noop(lines, params):
+                    return lines[0] if lines else [[], []]
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1645,7 +1651,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import AnalysisExtension
 
-                def _analyze(inputs, params):
+                def _analyze(lines, params):
                     return {"analysis_type": "external_probe", "value": 1}
 
                 def register_extensions(registry):
@@ -1685,7 +1691,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import PlotExtension
 
-                def _plot(axis, lines, params):
+                def _plot(lines, params):
                     return None
 
                 def register_extensions(registry):
@@ -1698,7 +1704,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import PlotExtension
 
-                def _plot(axis, lines, params):
+                def _plot(lines, params):
                     return None
 
                 def register_extensions(registry):
@@ -1729,8 +1735,8 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import ProcessingExtension
 
-                def _first(xs, ys, params):
-                    return list(xs), list(ys)
+                def _first(lines, params):
+                    return lines[0] if lines else [[], []]
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1747,8 +1753,8 @@ class TestAnalysisEngine(unittest.TestCase):
                 """
                 from core.extension_api import ProcessingExtension
 
-                def _second(xs, ys, params):
-                    return list(xs), list(ys)
+                def _second(lines, params):
+                    return lines[0] if lines else [[], []]
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1768,8 +1774,8 @@ class TestAnalysisEngine(unittest.TestCase):
     def test_extension_registry_rejects_invalid_version_format(self):
         from core.extension_api import ProcessingExtension, extension_registry
 
-        def _noop(xs, ys, params):
-            return list(xs), list(ys)
+        def _noop(lines, params):
+            return lines[0] if lines else [[], []]
 
         with self.assertRaisesRegex(ValueError, "x.x.x"):
             extension_registry.register_processing(
@@ -1850,7 +1856,10 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertIsNotNone(correlation)
         self.assertIsNotNone(error_compare)
 
-        stats_result = statistics.handler(
+        from core.extension_api import invoke_analysis_extension_handler
+
+        stats_result = invoke_analysis_extension_handler(
+            statistics.handler,
             [{"x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0], "name": "s1"}],
             {},
         )
@@ -1858,7 +1867,8 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(stats_result["source_name"], "s1")
         self.assertEqual(stats_result["n"], 3)
 
-        corr_result = correlation.handler(
+        corr_result = invoke_analysis_extension_handler(
+            correlation.handler,
             [
                 {"x": [0.0, 1.0, 2.0], "y": [1.0, 2.0, 3.0], "name": "a"},
                 {"x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0], "name": "b"},
@@ -1870,7 +1880,8 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(corr_result["name2"], "b")
         self.assertGreater(corr_result["r"], 0.99)
 
-        error_result = error_compare.handler(
+        error_result = invoke_analysis_extension_handler(
+            error_compare.handler,
             [
                 {"x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0], "name": "ref"},
                 {"x": [0.0, 1.0, 2.0], "y": [1.0, 4.5, 5.0], "name": "cmp"},
@@ -1885,8 +1896,8 @@ class TestAnalysisEngine(unittest.TestCase):
     def test_build_extension_entry_exposes_normalized_metadata_and_resolved_options(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, build_extension_entry
 
-        def _noop(xs, ys, params):
-            return list(xs), list(ys)
+        def _noop(lines, params):
+            return lines[0] if lines else [[], []]
 
         entry = build_extension_entry(
             ProcessingExtension(
@@ -1918,8 +1929,8 @@ class TestAnalysisEngine(unittest.TestCase):
 
         calls = []
 
-        def _handler(context, options):
-            calls.append((context.phase, dict(options)))
+        def _handler(lines, params):
+            calls.append((list(lines), dict(params)))
 
         extension = PlotExtension(
             type="phase_probe",
@@ -1944,7 +1955,7 @@ class TestAnalysisEngine(unittest.TestCase):
         invoke_plot_extension_handler(extension, PlotExtensionContext(**base_kwargs, phase="before_plot"), {"value": 1})
         invoke_plot_extension_handler(extension, PlotExtensionContext(**base_kwargs, phase="after_plot"), {"value": 2})
 
-        self.assertEqual(calls, [("after_plot", {"value": 2})])
+        self.assertEqual(calls, [([], {"value": 2})])
 
     def test_build_extension_entry_normalizes_legacy_all_lines_default(self):
         from core.extension_api import ProcessingExtension, build_extension_entry
@@ -1954,7 +1965,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 ProcessingExtension(
                     type="legacy_lines_all",
                     name="Legacy All",
-                    handler=lambda xs, ys, params: (list(xs), list(ys)),
+                    handler=lambda lines, params: (lines[0] if lines else [[], []]),
                     default_options={"lines": {"number": -1, "lines_list": "all"}},
                 )
             )
@@ -1962,8 +1973,9 @@ class TestAnalysisEngine(unittest.TestCase):
     def test_extension_registry_supports_digitize_extensions(self):
         from core.extension_api import DigitizeExtension, ExtensionRegistry, build_extension_entry
 
-        def _digitize(image, params=None, mask=None):
-            return {"x": [1.0], "y": [2.0], "image": image, "params": params, "mask": mask}
+        def _digitize(figure, params):
+            del figure, params
+            return [[1.0], [2.0]]
 
         registry = ExtensionRegistry()
         registry.register_digitize(
@@ -1992,7 +2004,7 @@ class TestAnalysisEngine(unittest.TestCase):
             DigitizeExtension(
                 type="digitize_interactive_probe",
                 name="数字化交互探针",
-                handler=lambda image_path, params: {"points": [], "image_path": image_path, "params": params},
+                handler=lambda figure, params: [[], []],
                 source_kind="third_party_plugin",
                 config_fields=[
                     ExtensionConfigField(key="sampled_color", field_type="pickcolor", default=None),
@@ -3098,7 +3110,7 @@ class TestRenderReport(unittest.TestCase):
             AnalysisExtension(
                 type="declared_placeholder_probe",
                 name="声明占位符探针",
-                handler=lambda inputs, params: {"analysis_type": "declared_placeholder_probe", "dominant_frequency": 9.9},
+                handler=lambda lines, params: {"analysis_type": "declared_placeholder_probe", "dominant_frequency": 9.9},
                 report_placeholders=[
                     {"key": "dominant_frequency", "label": "主频", "description": "主频字段"},
                 ],

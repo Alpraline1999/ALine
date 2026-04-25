@@ -4,15 +4,15 @@ import cmath
 import math
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy, resolve_sample_rate
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line, resolve_sample_rate
 
 
-def _fft_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    x_values, y_values = primary_series_xy(inputs)
+def _fft_handler(lines, params):
+    x_values, y_values = line_xy(primary_line(lines))
+    options = dict(params or {})
     count = len(y_values)
     if count < 2:
-        return x_values, y_values
+        return line_from_xy(x_values, y_values)
 
     output = options.get("output", "amplitude")
     detrend = bool(options.get("detrend", True))
@@ -30,7 +30,7 @@ def _fft_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
             values = (np.abs(spectrum) ** 2 / max(1, count)).tolist()
         else:
             values = (np.abs(spectrum) / max(1, count)).tolist()
-        return freq.tolist(), values
+        return line_from_xy(freq.tolist(), values)
     except ImportError:
         step = 1.0 / sample_rate if sample_rate and sample_rate > 0 else 1.0
         signal = list(y_values)
@@ -47,7 +47,7 @@ def _fft_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
             amp = abs(total) / max(1, count)
             freq.append(k / (count * step))
             values.append(amp * amp if output == "power" else amp)
-        return freq, values
+        return line_from_xy(freq, values)
 
 
 def register_extensions(registry) -> None:

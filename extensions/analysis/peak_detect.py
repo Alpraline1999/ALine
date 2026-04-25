@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
+from processing.extension_tools import line_xy, primary_line
 
 
 VERSION = "0.1.0"
@@ -79,12 +80,10 @@ def detect_valleys(
     return {"valleys": valleys, "count": len(valleys)}
 
 
-def _handler(inputs, params):
-    if not inputs:
+def _handler(lines, params):
+    if not lines:
         raise ValueError("peak_detect 需要至少一条输入数据")
-    first = dict(inputs[0] or {})
-    xs = list(first.get("x", []) or [])
-    ys = list(first.get("y", []) or [])
+    xs, ys = line_xy(primary_line(lines))
     distance_mode = "x_distance" if params.get("min_distance_x") not in (None, "") else "points"
     distance_value = params.get("min_distance_x") if distance_mode == "x_distance" else params.get("min_distance", 1)
     result = detect_peaks(
@@ -106,7 +105,6 @@ def _handler(inputs, params):
     result["valleys"] = valleys.get("valleys", [])
     result["valley_count"] = valleys.get("count", 0)
     result["analysis_type"] = "peak_detect"
-    result["source_name"] = first.get("name", "")
     result["distance_mode"] = distance_mode
     result["distance_value"] = distance_value
     return result

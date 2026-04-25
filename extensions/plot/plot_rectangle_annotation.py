@@ -1,6 +1,7 @@
 from matplotlib.patches import Rectangle
 
 from core.extension_api import ExtensionConfigField, PlotExtension
+from extensions.plot._runtime import current_axis
 
 
 def _as_float(value, default):
@@ -10,19 +11,20 @@ def _as_float(value, default):
         return float(default)
 
 
-def draw_rectangle_annotation(plot_context, options):
-    axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
+def draw_rectangle_annotation(lines, params):
+    del lines
+    axis = current_axis()
     if axis is None:
         return
 
-    transform = axis.transData if str(options.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
-    x = _as_float(options.get("x", 0.14), 0.14)
-    y = _as_float(options.get("y", 0.2), 0.2)
-    width = max(0.0, _as_float(options.get("width", 0.28), 0.28))
-    height = max(0.0, _as_float(options.get("height", 0.18), 0.18))
-    alpha = min(1.0, max(0.0, _as_float(options.get("alpha", 0.22), 0.22)))
-    fill = bool(options.get("fill", False))
-    facecolor = str(options.get("face_color", "#f7d8d8")) if fill else "none"
+    transform = axis.transData if str(params.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
+    x = _as_float(params.get("x", 0.14), 0.14)
+    y = _as_float(params.get("y", 0.2), 0.2)
+    width = max(0.0, _as_float(params.get("width", 0.28), 0.28))
+    height = max(0.0, _as_float(params.get("height", 0.18), 0.18))
+    alpha = min(1.0, max(0.0, _as_float(params.get("alpha", 0.22), 0.22)))
+    fill = bool(params.get("fill", False))
+    facecolor = str(params.get("face_color", "#f7d8d8")) if fill else "none"
 
     patch = Rectangle(
         (x, y),
@@ -30,9 +32,9 @@ def draw_rectangle_annotation(plot_context, options):
         height,
         transform=transform,
         facecolor=facecolor,
-        edgecolor=str(options.get("edge_color", "#c23934")),
-        linewidth=max(0.1, _as_float(options.get("line_width", 1.6), 1.6)),
-        linestyle=str(options.get("line_style", "--")),
+        edgecolor=str(params.get("edge_color", "#c23934")),
+        linewidth=max(0.1, _as_float(params.get("line_width", 1.6), 1.6)),
+        linestyle=str(params.get("line_style", "--")),
         alpha=alpha,
         fill=fill,
         clip_on=False,

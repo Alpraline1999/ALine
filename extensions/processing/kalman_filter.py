@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
 
 
 def _as_float(value, default):
@@ -11,11 +11,11 @@ def _as_float(value, default):
         return float(default)
 
 
-def kalman_filter_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    xs, ys = primary_series_xy(inputs)
+def kalman_filter_handler(lines, params):
+    xs, ys = line_xy(primary_line(lines))
+    options = dict(params or {})
     if not ys:
-        return list(xs), []
+        return line_from_xy(list(xs), [])
 
     process_variance = max(0.0, _as_float(options.get("process_variance", 1e-4), 1e-4))
     measurement_variance = max(1e-12, _as_float(options.get("measurement_variance", 1e-2), 1e-2))
@@ -31,7 +31,7 @@ def kalman_filter_handler(inputs_or_xs, ys_or_params=None, params=None, lines=No
         error_covariance = (1.0 - kalman_gain) * error_covariance
         filtered.append(estimate)
 
-    return list(xs), filtered
+    return line_from_xy(list(xs), filtered)
 
 
 def register_extensions(registry):

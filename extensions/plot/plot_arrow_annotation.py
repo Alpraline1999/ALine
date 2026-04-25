@@ -1,4 +1,5 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
+from extensions.plot._runtime import current_axis
 
 
 def _as_float(value, default):
@@ -8,26 +9,27 @@ def _as_float(value, default):
         return float(default)
 
 
-def _coord_system(options):
-    return "data" if str(options.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else "axes fraction"
+def _coord_system(params):
+    return "data" if str(params.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else "axes fraction"
 
 
-def draw_arrow_annotation(plot_context, options):
-    axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
+def draw_arrow_annotation(lines, params):
+    del lines
+    axis = current_axis()
     if axis is None:
         return
 
-    coord_system = _coord_system(options)
-    start_x = _as_float(options.get("start_x", 0.18), 0.18)
-    start_y = _as_float(options.get("start_y", 0.82), 0.82)
-    end_x = _as_float(options.get("end_x", 0.72), 0.72)
-    end_y = _as_float(options.get("end_y", 0.24), 0.24)
-    color = str(options.get("color", "#D13438"))
-    text = str(options.get("text", "关键趋势"))
-    text_color = str(options.get("text_color", color))
-    alpha = min(1.0, max(0.0, _as_float(options.get("alpha", 0.95), 0.95)))
-    line_width = max(0.1, _as_float(options.get("line_width", 1.8), 1.8))
-    font_size = max(6, int(_as_float(options.get("font_size", 11), 11)))
+    coord_system = _coord_system(params)
+    start_x = _as_float(params.get("start_x", 0.18), 0.18)
+    start_y = _as_float(params.get("start_y", 0.82), 0.82)
+    end_x = _as_float(params.get("end_x", 0.72), 0.72)
+    end_y = _as_float(params.get("end_y", 0.24), 0.24)
+    color = str(params.get("color", "#D13438"))
+    text = str(params.get("text", "关键趋势"))
+    text_color = str(params.get("text_color", color))
+    alpha = min(1.0, max(0.0, _as_float(params.get("alpha", 0.95), 0.95)))
+    line_width = max(0.1, _as_float(params.get("line_width", 1.8), 1.8))
+    font_size = max(6, int(_as_float(params.get("font_size", 11), 11)))
 
     bbox = None
     if text:
@@ -43,7 +45,7 @@ def draw_arrow_annotation(plot_context, options):
         fontsize=font_size,
         bbox=bbox,
         arrowprops={
-            "arrowstyle": str(options.get("arrow_style", "->")),
+            "arrowstyle": str(params.get("arrow_style", "->")),
             "color": color,
             "linewidth": line_width,
             "alpha": alpha,

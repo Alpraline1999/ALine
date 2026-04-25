@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
 from processing.smoother import smooth_moving_average, smooth_savgol
 
 
-def _smooth_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    xs, ys = primary_series_xy(inputs)
+def _smooth_handler(lines, params):
+    xs, ys = line_xy(primary_line(lines))
+    options = dict(params or {})
     method = options.get("method", "savgol")
     if method == "savgol":
-        return smooth_savgol(list(xs), list(ys), int(options.get("window", 11)), int(options.get("poly", 3)))
+        nx, ny = smooth_savgol(list(xs), list(ys), int(options.get("window", 11)), int(options.get("poly", 3)))
+        return line_from_xy(nx, ny)
     if method == "moving_avg":
-        return smooth_moving_average(list(xs), list(ys), int(options.get("window", 5)))
-    return list(xs), list(ys)
+        nx, ny = smooth_moving_average(list(xs), list(ys), int(options.get("window", 5)))
+        return line_from_xy(nx, ny)
+    return line_from_xy(list(xs), list(ys))
 
 
 def register_extensions(registry) -> None:

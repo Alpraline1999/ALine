@@ -4,9 +4,18 @@ import math
 from typing import Any, Dict, List
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
+from processing.extension_tools import normalize_lines
 
 
 VERSION = "0.1.0"
+
+
+def _result_pair(result: Any) -> tuple[float, float]:
+    statistic = getattr(result, "statistic", None)
+    p_value = getattr(result, "pvalue", None)
+    if statistic is None or p_value is None:
+        statistic, p_value = result
+    return float(statistic), float(p_value)
 
 
 def compute_correlation(ys1: List[float], ys2: List[float], method: str = "pearson") -> Dict[str, Any]:
@@ -19,15 +28,15 @@ def compute_correlation(ys1: List[float], ys2: List[float], method: str = "pears
         try:
             from scipy.stats import spearmanr
 
-            r, p = spearmanr(y1, y2)
-            return {"method": "spearman", "r": float(r), "p_value": float(p)}
+            statistic, p_value = _result_pair(spearmanr(y1, y2))
+            return {"method": "spearman", "r": float(statistic), "p_value": float(p_value)}
         except ImportError:
             pass
     try:
         from scipy.stats import pearsonr
 
-        r, p = pearsonr(y1, y2)
-        return {"method": "pearson", "r": float(r), "p_value": float(p)}
+        statistic, p_value = _result_pair(pearsonr(y1, y2))
+        return {"method": "pearson", "r": float(statistic), "p_value": float(p_value)}
     except ImportError:
         try:
             import numpy as np
@@ -48,19 +57,18 @@ def compute_correlation(ys1: List[float], ys2: List[float], method: str = "pears
         return {"method": "pearson", "r": r, "p_value": None}
 
 
-def _handler(inputs, params):
-    if len(inputs) < 2:
+def _handler(lines, params):
+    normalized_lines = normalize_lines(lines)
+    if len(normalized_lines) < 2:
         raise ValueError("correlation 需要两条输入数据")
-    first = dict(inputs[0] or {})
-    second = dict(inputs[1] or {})
+    first = normalized_lines[0]
+    second = normalized_lines[1]
     result = compute_correlation(
-        list(first.get("y", []) or []),
-        list(second.get("y", []) or []),
+        list(first[1]),
+        list(second[1]),
         str(params.get("method", "pearson") or "pearson"),
     )
     result["analysis_type"] = "correlation"
-    result["name1"] = first.get("name", "")
-    result["name2"] = second.get("name", "")
     return result
 
 

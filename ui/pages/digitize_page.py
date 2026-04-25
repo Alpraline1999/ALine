@@ -730,6 +730,25 @@ class DigitizePage(QWidget):
         abl.addStretch()
         layout.addWidget(auto_btn_row)
 
+        brush_size_row = QWidget(tab)
+        self._mask_brush_size_row = brush_size_row
+        bsl = QHBoxLayout(brush_size_row)
+        bsl.setContentsMargins(0, 0, 0, 0)
+        bsl.setSpacing(4)
+        bsl.addWidget(BodyLabel("画笔尺寸:", brush_size_row))
+        self._mask_brush_size_slider = Slider(Qt.Orientation.Horizontal, brush_size_row)
+        self._mask_brush_size_slider.setRange(4, 80)
+        self._mask_brush_size_slider.setValue(20)
+        self._mask_brush_size_slider.setSingleStep(1)
+        self._mask_brush_size_slider.setPageStep(4)
+        self._mask_brush_size_slider.valueChanged.connect(self._on_mask_brush_size_changed)
+        bsl.addWidget(self._mask_brush_size_slider, 1)
+        self._mask_brush_size_value_label = BodyLabel("20 px", brush_size_row)
+        self._mask_brush_size_value_label.setFixedWidth(44)
+        self._mask_brush_size_value_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        bsl.addWidget(self._mask_brush_size_value_label)
+        layout.addWidget(brush_size_row)
+
         self._digitize_extension_controls = ExtensionConfigPanel(
             "自动选点扩展",
             "执行检测",
@@ -1228,7 +1247,8 @@ class DigitizePage(QWidget):
             self._activate_tool_button(self._brush_mask_btn)
             self._image_viewer.set_brush_mask_mode()
             self._active_tool = tool_name
-            self._status_label.setText("涂刷蒙版：按住拖动涂抹遮罩区域")
+            brush_size = int(self._mask_brush_size_slider.value()) if hasattr(self, "_mask_brush_size_slider") else 20
+            self._status_label.setText(f"涂刷蒙版：按住拖动涂抹遮罩区域（画笔 {brush_size}px）")
         elif tool_name == "color_pick":
             if self._current_image_id is None:
                 InfoBar.warning(title="警告", content="请先选择一张图片", parent=self, duration=3000)
@@ -1365,7 +1385,7 @@ class DigitizePage(QWidget):
         if not image_path:
             return
 
-        from digitize.auto_extractor import AutoExtractor
+        from extensions.digitize._extractors import AutoExtractor
         tol = int(options.get("tolerance", 20) or 20)
         h_tol = max(5, tol // 2)
         s_tol = min(255, tol * 4)
@@ -1555,7 +1575,7 @@ class DigitizePage(QWidget):
         QApplication.processEvents()
 
         try:
-            from digitize.shape_extractor import ShapeExtractor
+            from extensions.digitize._extractors import ShapeExtractor
             self._shape_template = ShapeExtractor.preprocess_region(
                 image_path, x1, y1, x2, y2
             )
@@ -1660,17 +1680,15 @@ class DigitizePage(QWidget):
             mask_include_mode=mask_include_mode,
         )
         try:
-            result = extension.handler(image_path, params)
+            from core.extension_api import invoke_digitize_extension_handler
+
+            xs, ys = invoke_digitize_extension_handler(extension.handler, image_path, params)
         except Exception as e:
             self._set_tool_status(f"{extension.name}失败: {e}")
             return
 
-        if isinstance(result, dict):
-            points = list(result.get("points") or [])
-            desc = str(result.get("summary") or f"{extension.name}识别到 {len(points)} 个点")
-        else:
-            points = list(result or [])
-            desc = f"{extension.name}识别到 {len(points)} 个点"
+        points = list(zip(list(xs), list(ys)))
+        desc = f"{extension.name}识别到 {len(points)} 个点"
 
         self._auto_preview_points = points
         self._image_viewer.set_preview_points(points)
@@ -2047,6 +2065,10 @@ class DigitizePage(QWidget):
     def _on_eraser_size_changed(self, value):
         self._image_viewer.set_eraser_size(float(value))
         self._eraser_size_value_label.setText(f"{value} px")
+
+    def _on_mask_brush_size_changed(self, value):
+        self._image_viewer.set_mask_brush_size(float(value))
+        self._mask_brush_size_value_label.setText(f"{value} px")
 
     def _on_color_changed(self, color):
         """颜色改变"""

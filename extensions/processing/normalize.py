@@ -3,15 +3,15 @@ from __future__ import annotations
 import math
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
 
 
-def _normalize_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    xs, ys = primary_series_xy(inputs)
+def _normalize_handler(lines, params):
+    xs, ys = line_xy(primary_line(lines))
+    options = dict(params or {})
     mode = options.get("mode", "minmax")
     if not ys:
-        return list(xs), list(ys)
+        return line_from_xy(list(xs), list(ys))
     try:
         import numpy as np
 
@@ -36,7 +36,7 @@ def _normalize_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None)
             normalized = [(value - mean) / std for value in ys]
         else:
             normalized = list(ys)
-    return list(xs), normalized
+    return line_from_xy(list(xs), normalized)
 
 
 def register_extensions(registry) -> None:

@@ -1,29 +1,29 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
 
 
-def _integral_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    x_values, y_values = primary_series_xy(inputs)
+def _integral_handler(lines, params):
+    x_values, y_values = line_xy(primary_line(lines))
+    options = dict(params or {})
     cumulative = bool(options.get("cumulative", True))
     count = len(x_values)
     if count < 2:
-        return x_values, y_values
+        return line_from_xy(x_values, y_values)
     try:
         import numpy as np
         from scipy.integrate import cumulative_trapezoid
 
         cumulative_values = cumulative_trapezoid(np.array(y_values), np.array(x_values), initial=0.0).tolist()
-        return (x_values, cumulative_values) if cumulative else (x_values, [cumulative_values[-1]] * count)
+        return line_from_xy(x_values, cumulative_values if cumulative else [cumulative_values[-1]] * count)
     except ImportError:
         accumulated = 0.0
         values = [0.0]
         for index in range(1, count):
             accumulated += (y_values[index] + y_values[index - 1]) * (x_values[index] - x_values[index - 1]) / 2
             values.append(accumulated)
-        return (x_values, values) if cumulative else (x_values, [values[-1]] * count)
+        return line_from_xy(x_values, values if cumulative else [values[-1]] * count)
 
 
 def register_extensions(registry) -> None:

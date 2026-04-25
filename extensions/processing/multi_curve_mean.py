@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
 from processing.data_engine import align_lines_to_common_x
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_payloads_from_lines, normalize_lines
 
 
-def multi_curve_mean_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    input_lines, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    aligned_lines, warnings = align_lines_to_common_x(list(input_lines or []), {"align_mode": "strict"})
+def multi_curve_mean_handler(lines, params):
+    del params
+    input_lines = normalize_lines(lines)
+    aligned_lines, warnings = align_lines_to_common_x(line_payloads_from_lines(input_lines), {"align_mode": "strict"})
     if len(aligned_lines) < 2:
         raise ValueError("多曲线均值至少需要 2 条输入曲线")
 
@@ -17,17 +18,10 @@ def multi_curve_mean_handler(inputs_or_xs, ys_or_params=None, params=None, lines
         averaged.append(sum(float(line["y"][index]) for line in aligned_lines) / len(aligned_lines))
 
     primary = aligned_lines[0]
-    result_name = str(options.get("result_name", "") or "").strip() or f"{primary.get('name', 'primary')}_mean"
-    line_color = str(options.get("line_color", primary.get("color", "#0078D4")) or primary.get("color", "#0078D4"))
-    return {
-        "name": result_name,
-        "x": list(primary.get("x", [])),
-        "y": averaged,
-        "x_label": str(primary.get("x_label", "x") or "x"),
-        "y_label": str(primary.get("y_label", "y") or "y"),
-        "color": line_color,
-        "warnings": warnings,
-    }
+    if warnings:
+        # strict line 协议下不再返回 warnings；对齐说明由运行时或上层界面处理。
+        pass
+    return line_from_xy(list(primary.get("x", [])), averaged)
 
 
 def register_extensions(registry):

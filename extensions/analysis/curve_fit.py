@@ -5,6 +5,7 @@ import warnings
 from typing import Any, Dict, List, Optional
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
+from processing.extension_tools import line_xy, primary_line
 
 
 VERSION = "0.1.0"
@@ -98,18 +99,17 @@ def fit_curve(
     }
 
 
-def _handler(inputs, params):
-    if not inputs:
+def _handler(lines, params):
+    if not lines:
         raise ValueError("curve_fit 需要至少一条输入数据")
-    first = dict(inputs[0] or {})
+    xs, ys = line_xy(primary_line(lines))
     result = fit_curve(
-        list(first.get("x", []) or []),
-        list(first.get("y", []) or []),
+        xs,
+        ys,
         str(params.get("model", "linear") or "linear"),
         parse_optional_json_list(params.get("p0")),
     )
     result["analysis_type"] = "curve_fit"
-    result["source_name"] = first.get("name", "")
     return result
 
 

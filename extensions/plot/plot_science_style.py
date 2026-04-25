@@ -1,4 +1,5 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
+from extensions.plot._runtime import current_axis, current_figure
 
 
 _NAMED_SIZES = {
@@ -52,57 +53,75 @@ def _science_style_rcparams():
         plt.rcParams.update(original)
 
 
-def apply_science_style(plot_context, options):
+def _apply_legend(axis, legend_location, legend_font_size, legend_frame, legend_frame_alpha, legend_edge_color):
+    handles, labels = axis.get_legend_handles_labels()
+    if not handles:
+        return
+    legend = axis.legend(
+        handles,
+        labels,
+        loc=legend_location,
+        frameon=legend_frame,
+        framealpha=legend_frame_alpha,
+        edgecolor=legend_edge_color,
+        fontsize=legend_font_size,
+    )
+    for text in legend.get_texts():
+        text.set_fontsize(legend_font_size)
+
+
+def apply_science_style(lines, params):
+    del lines
+    figure = current_figure()
+    axis = current_axis()
+    if figure is None or axis is None:
+        return
+
     rc_params = _science_style_rcparams()
 
-    x_label = str(options.get("x_label", "")).strip()
-    y_label = str(options.get("y_label", "")).strip()
-    axis_label_size = max(1, _as_int(options.get("axis_label_size", rc_params.get("axes.labelsize", 11)), rc_params.get("axes.labelsize", 11)))
-    tick_label_size = max(1, _as_int(options.get("tick_label_size", rc_params.get("xtick.labelsize", 10)), rc_params.get("xtick.labelsize", 10)))
-    legend_font_size = max(1, _as_int(options.get("legend_font_size", rc_params.get("legend.fontsize", 9)), rc_params.get("legend.fontsize", 9)))
-    line_width = max(0.1, _as_float(options.get("line_width", rc_params.get("lines.linewidth", 1.6)), rc_params.get("lines.linewidth", 1.6)))
-    marker_size = max(0.1, _as_float(options.get("marker_size", rc_params.get("lines.markersize", 4.8)), rc_params.get("lines.markersize", 4.8)))
-    grid_alpha = _clamp(options.get("grid_alpha", rc_params.get("grid.alpha", 0.18)), 0.0, 1.0, rc_params.get("grid.alpha", 0.18))
-    grid_line_width = max(0.1, _as_float(options.get("grid_line_width", rc_params.get("grid.linewidth", 0.8)), rc_params.get("grid.linewidth", 0.8)))
-    spine_width = max(0.1, _as_float(options.get("spine_width", rc_params.get("axes.linewidth", 1.0)), rc_params.get("axes.linewidth", 1.0)))
+    x_label = str(params.get("x_label", "")).strip()
+    y_label = str(params.get("y_label", "")).strip()
+    axis_label_size = max(1, _as_int(params.get("axis_label_size", rc_params.get("axes.labelsize", 11)), rc_params.get("axes.labelsize", 11)))
+    tick_label_size = max(1, _as_int(params.get("tick_label_size", rc_params.get("xtick.labelsize", 10)), rc_params.get("xtick.labelsize", 10)))
+    legend_font_size = max(1, _as_int(params.get("legend_font_size", rc_params.get("legend.fontsize", 9)), rc_params.get("legend.fontsize", 9)))
+    line_width = max(0.1, _as_float(params.get("line_width", rc_params.get("lines.linewidth", 1.6)), rc_params.get("lines.linewidth", 1.6)))
+    marker_size = max(0.1, _as_float(params.get("marker_size", rc_params.get("lines.markersize", 4.8)), rc_params.get("lines.markersize", 4.8)))
+    grid_alpha = _clamp(params.get("grid_alpha", rc_params.get("grid.alpha", 0.18)), 0.0, 1.0, rc_params.get("grid.alpha", 0.18))
+    grid_line_width = max(0.1, _as_float(params.get("grid_line_width", rc_params.get("grid.linewidth", 0.8)), rc_params.get("grid.linewidth", 0.8)))
+    spine_width = max(0.1, _as_float(params.get("spine_width", rc_params.get("axes.linewidth", 1.0)), rc_params.get("axes.linewidth", 1.0)))
+    show_grid = bool(params.get("show_grid", rc_params.get("axes.grid", False)))
+    legend_location = str(params.get("legend_location", rc_params.get("legend.loc", "best")) or "best")
+    legend_frame = bool(params.get("legend_frame", rc_params.get("legend.frameon", False)))
+    legend_frame_alpha = _clamp(params.get("legend_frame_alpha", rc_params.get("legend.framealpha", 1.0)), 0.0, 1.0, rc_params.get("legend.framealpha", 1.0))
+    legend_edge_color = str(params.get("legend_edge_color", "#222222"))
 
-    figure_patch = {
-        "font_size": axis_label_size,
-        "legend_font_size": legend_font_size,
-        "line_width": line_width,
-        "marker_size": marker_size,
-        "grid": bool(options.get("show_grid", rc_params.get("axes.grid", False))),
-        "grid_alpha": grid_alpha,
-        "grid_line_width": grid_line_width,
-        "legend_pos": str(options.get("legend_location", rc_params.get("legend.loc", "best")) or "best"),
-    }
-    if x_label:
-        figure_patch["x_label"] = x_label
-    if y_label:
-        figure_patch["y_label"] = y_label
-    plot_context.patch_figure_state(figure_patch)
-
-    legend_kwargs = {"frameon": bool(options.get("legend_frame", rc_params.get("legend.frameon", False)))}
-    if legend_kwargs["frameon"]:
-        legend_kwargs["framealpha"] = _clamp(options.get("legend_frame_alpha", rc_params.get("legend.framealpha", 1.0)), 0.0, 1.0, rc_params.get("legend.framealpha", 1.0))
-        legend_kwargs["edgecolor"] = str(options.get("legend_edge_color", "#222222"))
-
-    plot_context.patch_plot_style(
-        {
-            "figure_facecolor": str(rc_params.get("figure.facecolor", "#ffffff")),
-            "axes_facecolor": str(rc_params.get("axes.facecolor", "#ffffff")),
-            "spine_width": spine_width,
-            "tick_params": {
-                "direction": str(options.get("tick_direction", rc_params.get("xtick.direction", "in")) or "in"),
-                "length": max(0.0, _as_float(options.get("tick_length", rc_params.get("xtick.major.size", 4.0)), rc_params.get("xtick.major.size", 4.0))),
-                "width": max(0.1, _as_float(options.get("tick_width", rc_params.get("xtick.major.width", 1.0)), rc_params.get("xtick.major.width", 1.0))),
-                "top": bool(options.get("show_top_ticks", rc_params.get("xtick.top", True))),
-                "right": bool(options.get("show_right_ticks", rc_params.get("ytick.right", True))),
-                "labelsize": tick_label_size,
-            },
-            "legend_kwargs": legend_kwargs,
-        }
-    )
+    figure.set_facecolor(str(rc_params.get("figure.facecolor", "#ffffff")))
+    for current in list(getattr(figure, "axes", []) or [axis]):
+        current.set_facecolor(str(rc_params.get("axes.facecolor", "#ffffff")))
+        if x_label:
+            current.set_xlabel(x_label, fontsize=axis_label_size)
+        elif current.get_xlabel():
+            current.xaxis.label.set_size(axis_label_size)
+        if y_label:
+            current.set_ylabel(y_label, fontsize=axis_label_size)
+        elif current.get_ylabel():
+            current.yaxis.label.set_size(axis_label_size)
+        current.tick_params(
+            direction=str(params.get("tick_direction", rc_params.get("xtick.direction", "in")) or "in"),
+            length=max(0.0, _as_float(params.get("tick_length", rc_params.get("xtick.major.size", 4.0)), rc_params.get("xtick.major.size", 4.0))),
+            width=max(0.1, _as_float(params.get("tick_width", rc_params.get("xtick.major.width", 1.0)), rc_params.get("xtick.major.width", 1.0))),
+            top=bool(params.get("show_top_ticks", rc_params.get("xtick.top", True))),
+            right=bool(params.get("show_right_ticks", rc_params.get("ytick.right", True))),
+            labelsize=tick_label_size,
+        )
+        current.grid(show_grid, alpha=grid_alpha, linewidth=grid_line_width)
+        for spine in current.spines.values():
+            spine.set_linewidth(spine_width)
+        for line in list(getattr(current, "lines", []) or []):
+            line.set_linewidth(line_width)
+            if str(line.get_marker() or ""):
+                line.set_markersize(marker_size)
+        _apply_legend(current, legend_location, legend_font_size, legend_frame, legend_frame_alpha, legend_edge_color)
 
 
 def register_extensions(registry):
@@ -116,7 +135,7 @@ def register_extensions(registry):
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
-            phases=("before_plot",),
+            phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="x_label", description="X 轴标签；留空则保持当前设置。", field_type="string", default=""),
                 ExtensionConfigField(key="y_label", description="Y 轴标签；留空则保持当前设置。", field_type="string", default=""),

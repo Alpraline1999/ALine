@@ -1375,6 +1375,40 @@ class ExtensionOptionsForm(QWidget):
         )
 
     @staticmethod
+    def _pickcolor_button_style(value: Optional[Dict[str, int]]) -> str:
+        if not value:
+            return ""
+        color = QColor(
+            int(value.get("r", 0) or 0),
+            int(value.get("g", 0) or 0),
+            int(value.get("b", 0) or 0),
+        )
+        if not color.isValid():
+            return ""
+
+        text_color = QColor(255, 255, 255) if color.lightnessF() < 0.5 else QColor(0, 0, 0)
+        hover_color = color.lighter(108) if color.lightnessF() < 0.75 else color.darker(105)
+        pressed_color = color.lighter(116) if color.lightnessF() < 0.75 else color.darker(112)
+        return (
+            "ToolButton {"
+            f"background: {color.name(QColor.NameFormat.HexRgb)};"
+            f"border: 1px solid {border_color()};"
+            "border-radius: 6px;"
+            f"color: {text_color.name(QColor.NameFormat.HexRgb)};"
+            "}"
+            "ToolButton:hover {"
+            f"background: {hover_color.name(QColor.NameFormat.HexRgb)};"
+            f"border: 1px solid {border_color()};"
+            "border-radius: 6px;"
+            "}"
+            "ToolButton:pressed {"
+            f"background: {pressed_color.name(QColor.NameFormat.HexRgb)};"
+            f"border: 1px solid {border_color()};"
+            "border-radius: 6px;"
+            "}"
+        )
+
+    @staticmethod
     def _shot_summary(value: Any) -> str:
         if isinstance(value, dict):
             size = value.get("size")
@@ -1402,6 +1436,7 @@ class ExtensionOptionsForm(QWidget):
         empty_text: str,
         summary_for_value: Callable[[Any], str],
         normalize_value: Optional[Callable[[Any], Any]] = None,
+        button_style_for_value: Optional[Callable[[Any], str]] = None,
     ) -> _FieldBinding:
         container, layout, field_row = self._make_field_card(field, min_width=220, min_control_width=132)
         button = ToolButton(icon, container)
@@ -1427,6 +1462,9 @@ class ExtensionOptionsForm(QWidget):
             summary.setText(summary_text)
             summary.setToolTip(summary_text if normalized not in (None, "", {}) else "")
             install_fluent_tooltip(summary, delay=300, position=ToolTipPosition.BOTTOM)
+            button.setToolTip(summary_text if normalized not in (None, "", {}) else button_tooltip)
+            install_fluent_tooltip(button, delay=300, position=ToolTipPosition.BOTTOM)
+            button.setStyleSheet(button_style_for_value(normalized) if button_style_for_value is not None else "")
 
         def _request() -> None:
             self.interactiveFieldRequested.emit(str(field.get("key") or ""), copy.deepcopy(field))
@@ -1447,6 +1485,7 @@ class ExtensionOptionsForm(QWidget):
             empty_text="未取色",
             summary_for_value=self._pickcolor_summary,
             normalize_value=self._normalize_pickcolor_value,
+            button_style_for_value=self._pickcolor_button_style,
         )
 
     def _create_shot_binding(self, field: Dict[str, Any]) -> _FieldBinding:

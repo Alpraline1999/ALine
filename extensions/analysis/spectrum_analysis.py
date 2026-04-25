@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
+from processing.extension_tools import line_xy, primary_line
 
 
 def _as_float(value, default):
@@ -35,11 +36,10 @@ def _window_values(window_name, size):
     return np.hanning(size)
 
 
-def spectrum_analysis(inputs, params, lines_list=None):
-    effective_inputs = list(lines_list or inputs or [])
-    source = effective_inputs[0] if effective_inputs else {}
-    xs = np.asarray(list(source.get("x", []) or []), dtype=float)
-    ys = np.asarray(list(source.get("y", []) or []), dtype=float)
+def spectrum_analysis(lines, params):
+    xs_raw, ys_raw = line_xy(primary_line(lines))
+    xs = np.asarray(list(xs_raw), dtype=float)
+    ys = np.asarray(list(ys_raw), dtype=float)
     if ys.size < 2:
         raise ValueError("频谱分析至少需要 2 个采样点")
 
@@ -61,14 +61,12 @@ def spectrum_analysis(inputs, params, lines_list=None):
         amplitudes = amplitudes[mask]
 
     dominant_index = int(np.argmax(amplitudes[1:]) + 1) if amplitudes.size > 1 else 0
-    source_name = str(source.get("name", "")).strip()
     dominant_frequency = float(freqs[dominant_index]) if freqs.size else 0.0
     dominant_amplitude = float(amplitudes[dominant_index]) if amplitudes.size else 0.0
     line_color = str(params.get("line_color", "#0078D4"))
 
     return {
         "analysis_type": "spectrum_analysis",
-        "source_name": source_name,
         "sampling_rate": float(sampling_rate),
         "window": window_name,
         "frequency_resolution": float(sampling_rate / centered.size),
@@ -77,10 +75,10 @@ def spectrum_analysis(inputs, params, lines_list=None):
         "spectrum_points": int(freqs.size),
         "x_label": "频率 (Hz)",
         "y_label": "幅值",
-        "plot_title": f"{source_name or '当前数据'} 频谱",
+        "plot_title": "当前数据 频谱",
         "_plot_series": [
             {
-                "name": f"{source_name or '频谱'}",
+                "name": "频谱",
                 "x": freqs.tolist(),
                 "y": amplitudes.tolist(),
                 "color": line_color,

@@ -1,17 +1,18 @@
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPixmap
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QFrame, QSizePolicy
-from qfluentwidgets import (HyperlinkCard, PrimaryPushButton, PushButton, FluentIcon as FIF,
+from PySide6.QtCore import QRectF, Qt, Signal, QUrl
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QLinearGradient, QPainter, QPainterPath, QPixmap
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QFrame, QSizePolicy, QLabel
+from qfluentwidgets import (PrimaryPushButton, PushButton, FluentIcon as FIF,
     BodyLabel, LargeTitleLabel, SubtitleLabel, SmoothScrollArea,
-    InfoBar, TeachingTipTailPosition, isDarkTheme)
+    InfoBar, TeachingTipTailPosition, isDarkTheme, IconWidget, SingleDirectionScrollArea)
 
 from core.extension_api import get_extension_load_status
 from core.ui_preferences import is_home_onboarding_completed, set_home_onboarding_completed
 from ui.theme import (
     accent_color,
     border_color,
+    card_background_color,
     flat_status_button_style,
     install_fluent_tooltip,
     make_empty_state_label,
@@ -31,50 +32,176 @@ from ui.widgets.extension_panel import show_extension_load_report_dialog
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 
 
+_HOME_CONTENT_MARGIN = 40
+_HOME_BANNER_HEIGHT = 392
+_HOME_LINK_CARD_WIDTH = 198
+_HOME_LINK_CARD_HEIGHT = 220
+
+
+class _HomeLinkCard(QFrame):
+    def __init__(self, icon, title: str, content: str, url: str, parent=None):
+        super().__init__(parent)
+        self.url = QUrl(url)
+        self.setObjectName("homeLinkCard")
+        self.setFixedSize(_HOME_LINK_CARD_WIDTH, _HOME_LINK_CARD_HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.iconWidget = IconWidget(icon, self)
+        self.titleLabel = QLabel(title, self)
+        self.contentLabel = QLabel(content, self)
+        self.urlWidget = IconWidget(FIF.LINK, self)
+
+        self.iconWidget.setFixedSize(54, 54)
+        self.urlWidget.setFixedSize(16, 16)
+        self.contentLabel.setWordWrap(True)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(0)
+        layout.setContentsMargins(24, 24, 18, 16)
+        layout.addWidget(self.iconWidget, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addSpacing(16)
+        layout.addWidget(self.titleLabel, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addSpacing(8)
+        layout.addWidget(self.contentLabel, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self.urlWidget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        self.update_theme()
+
+    def update_theme(self) -> None:
+        self.setStyleSheet(
+            "QFrame#homeLinkCard {"
+            f"background: {card_background_color()};"
+            f"border: 1px solid {border_color()};"
+            "border-radius: 8px;"
+            "}"
+            "QFrame#homeLinkCard:hover {"
+            f"background: {hover_color()};"
+            f"border: 1px solid {accent_color()};"
+            "}"
+        )
+        self.titleLabel.setStyleSheet(
+            f"color: {text_color()}; font-size: 15px; font-weight: 600; background: transparent;"
+        )
+        self.contentLabel.setStyleSheet(
+            f"color: {secondary_color()}; font-size: 12px; background: transparent;"
+        )
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            QDesktopServices.openUrl(self.url)
+
+
+class _HomeLinkCardView(SingleDirectionScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Orientation.Horizontal)
+        self._cards = []
+        self.view = QWidget(self)
+
+        layout = QHBoxLayout(self.view)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._layout = layout
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setFixedHeight(_HOME_LINK_CARD_HEIGHT)
+        self.setStyleSheet(
+            "SingleDirectionScrollArea { background: transparent; border: none; }"
+            "QWidget { background: transparent; }"
+        )
+
+    def addCard(self, icon, title: str, content: str, url: str) -> _HomeLinkCard:
+        card = _HomeLinkCard(icon, title, content, url, self.view)
+        self._cards.append(card)
+        self._layout.addWidget(card, 0, Qt.AlignmentFlag.AlignLeft)
+        return card
+
+    def update_theme(self) -> None:
+        for card in self._cards:
+            card.update_theme()
+
+
 class _HomeBannerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(336)
+        self.setFixedHeight(_HOME_BANNER_HEIGHT)
         self._background = QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "aline_home_background.png"))
         self._card_icon_path = str(Path(__file__).resolve().parents[2] / "assets" / "aline_icon.png")
         self._link_cards = []
+        self._link_card_view = None
         self._hero_title = None
         self._hero_subtitle = None
         self._hero_hint = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
+    layout.setContentsMargins(_HOME_CONTENT_MARGIN, 24, _HOME_CONTENT_MARGIN, 20)
         layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+    layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._layout = layout
 
         self._hero_title = LargeTitleLabel("ALine", self)
-        layout.addWidget(self._hero_title, 0, Qt.AlignLeft | Qt.AlignTop)
+    layout.addWidget(self._hero_title, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         self._hero_subtitle = SubtitleLabel("科研数据管理与可视化工作台", self)
-        layout.addWidget(self._hero_subtitle, 0, Qt.AlignLeft | Qt.AlignTop)
+    layout.addWidget(self._hero_subtitle, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         self._hero_hint = BodyLabel("项目、数据、绘图和分析结果在同一工作台内流转。", self)
         self._hero_hint.setWordWrap(True)
         self._hero_hint.setMaximumWidth(760)
         self._hero_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._hero_hint, 0, Qt.AlignLeft | Qt.AlignTop)
+    layout.addWidget(self._hero_hint, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         layout.addStretch(1)
 
-        card_row = QHBoxLayout()
-        card_row.setSpacing(14)
-        card_row.setContentsMargins(0, 0, 0, 0)
-        for title, content in (
-            ("软件主页", "预留软件主页入口，后续替换为正式介绍页面。"),
-            ("GitHub 仓库", "预留代码仓库入口，后续替换为正式仓库地址。"),
-        ):
-            card = HyperlinkCard("https://example.com", "占位链接", self._card_icon_path, title, content, self)
-            card.setFixedWidth(288)
-            self._link_cards.append(card)
-            card_row.addWidget(card)
-        card_row.addStretch(1)
-        layout.addLayout(card_row)
+        self._link_card_view = _HomeLinkCardView(self)
+        self._link_cards.append(
+            self._link_card_view.addCard(
+                self._card_icon_path,
+                "软件主页",
+                "预留软件主页入口，后续替换为正式介绍页面。",
+                "https://example.com",
+            )
+        )
+        self._link_cards.append(
+            self._link_card_view.addCard(
+                FIF.GITHUB,
+                "GitHub 仓库",
+                "预留代码仓库入口，后续替换为正式仓库地址。",
+                "https://example.com",
+            )
+        )
+        layout.addWidget(
+            self._link_card_view,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+        )
         self.update_theme()
+        self._update_hero_hint_height()
+
+    def _update_hero_hint_height(self) -> None:
+        if self._hero_hint is None:
+            return
+
+        margins = self._layout.contentsMargins()
+        available_width = max(1, self.width() - margins.left() - margins.right())
+        available_width = min(available_width, self._hero_hint.maximumWidth())
+        text_rect = self._hero_hint.fontMetrics().boundingRect(
+            0,
+            0,
+            available_width,
+            0,
+            Qt.TextFlag.TextWordWrap,
+            self._hero_hint.text(),
+        )
+        self._hero_hint.setMinimumHeight(max(text_rect.height() + 4, self._hero_hint.minimumSizeHint().height()))
+        self._hero_hint.updateGeometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_hero_hint_height()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -84,7 +211,7 @@ class _HomeBannerWidget(QWidget):
 
         path = QPainterPath()
         rect = QRectF(self.rect())
-        path.addRoundedRect(rect, 18, 18)
+        path.addRect(rect)
 
         if not self._background.isNull():
             target_rect = self.rect()
@@ -110,22 +237,25 @@ class _HomeBannerWidget(QWidget):
 
         gradient = QLinearGradient(0, 0, 0, self.height())
         if isDarkTheme():
-            gradient.setColorAt(0.0, QColor(0, 0, 0, 116))
-            gradient.setColorAt(0.5, QColor(0, 0, 0, 84))
-            gradient.setColorAt(1.0, QColor(0, 0, 0, 168))
+            gradient.setColorAt(0.0, QColor(0, 0, 0, 196))
+            gradient.setColorAt(0.58, QColor(0, 0, 0, 92))
+            gradient.setColorAt(1.0, QColor(0, 0, 0, 42))
         else:
-            gradient.setColorAt(0.0, QColor(17, 27, 43, 120))
-            gradient.setColorAt(0.42, QColor(27, 39, 58, 68))
-            gradient.setColorAt(1.0, QColor(255, 255, 255, 152))
+            gradient.setColorAt(0.0, QColor(255, 255, 255, 232))
+            gradient.setColorAt(0.58, QColor(255, 255, 255, 150))
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 46))
         painter.fillPath(path, QBrush(gradient))
 
     def update_theme(self) -> None:
         if self._hero_title is not None:
-            self._hero_title.setStyleSheet("font-size: 44px; font-weight: 700; color: #f8fbff; background: transparent;")
+            self._hero_title.setStyleSheet(f"font-size: 44px; font-weight: 700; color: {text_color()}; background: transparent;")
         if self._hero_subtitle is not None:
-            self._hero_subtitle.setStyleSheet("font-size: 18px; color: rgba(248, 251, 255, 0.96); background: transparent;")
+            self._hero_subtitle.setStyleSheet(f"font-size: 18px; color: {secondary_color()}; background: transparent;")
         if self._hero_hint is not None:
-            self._hero_hint.setStyleSheet("font-size: 13px; color: rgba(248, 251, 255, 0.88); background: transparent;")
+            self._hero_hint.setStyleSheet(f"font-size: 13px; color: {secondary_color()}; background: transparent;")
+            self._update_hero_hint_height()
+        if self._link_card_view is not None:
+            self._link_card_view.update_theme()
         self.update()
 
 
@@ -148,6 +278,7 @@ class HomePage(QWidget):
         self._guide_toggle_btn = None
         self._status_bar = None
         self._extension_status_btn = None
+        self._content_widget = None
         self._recent_scroll = None
         self._recent_items_widget = None
         self._recent_items_layout = None
@@ -161,15 +292,19 @@ class HomePage(QWidget):
         )
 
     def setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        # 左侧边距需要足够大，避免被导航栏遮挡
-        layout.setContentsMargins(40, 40, 40, 40)
+        page_layout = QVBoxLayout(self)
+        page_layout.setSpacing(0)
+        page_layout.setContentsMargins(0, 0, 0, 0)
 
         self._banner = _HomeBannerWidget(self)
-        layout.addWidget(self._banner)
+        page_layout.addWidget(self._banner)
 
-        layout.addSpacing(8)
+        self._content_widget = QWidget(self)
+        self._content_widget.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(self._content_widget)
+        layout.setSpacing(20)
+        layout.setContentsMargins(_HOME_CONTENT_MARGIN, 20, _HOME_CONTENT_MARGIN, 40)
+        page_layout.addWidget(self._content_widget, 1)
 
         # 按钮区域
         btn_layout = QHBoxLayout()

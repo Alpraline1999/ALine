@@ -3,34 +3,11 @@ from __future__ import annotations
 import math
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, coerce_processing_handler_call, primary_series_xy
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, crop_xy, primary_line
 
 
-def _crop_xy(xs, ys, params):
-    options = dict(params or {})
-    raw_x_min = options.get("x_min")
-    raw_x_max = options.get("x_max")
-    x_min = -math.inf if raw_x_min in (None, "") else float(raw_x_min)
-    x_max = math.inf if raw_x_max in (None, "") else float(raw_x_max)
-    try:
-        import numpy as np
-
-        ax = np.asarray(xs, dtype=float)
-        ay = np.asarray(ys, dtype=float)
-        mask = (ax >= x_min) & (ax <= x_max)
-        return ax[mask].tolist(), ay[mask].tolist()
-    except ImportError:
-        pairs = [(x, y) for x, y in zip(xs, ys) if x_min <= x <= x_max]
-        if not pairs:
-            return [], []
-        nx, ny = zip(*pairs)
-        return list(nx), list(ny)
-
-
-def crop_handler(inputs_or_xs, ys_or_params=None, params=None, lines=None):
-    inputs, options = coerce_processing_handler_call(inputs_or_xs, ys_or_params, params, lines=lines)
-    xs, ys = primary_series_xy(inputs)
-    return _crop_xy(xs, ys, options)
+def crop_handler(lines, params):
+    return crop_xy(primary_line(lines), params)
 
 
 def register_extensions(registry) -> None:

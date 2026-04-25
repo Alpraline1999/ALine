@@ -3,22 +3,22 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from core.extension_api import DigitizeExtension, ExtensionConfigField
+from extensions.digitize._extractors import AutoExtractor
+from processing.extension_tools import line_from_xy
 
 
 COLOR_DIGITIZE_EXTENSION_TYPE = "builtin_digitize_color_detect"
 _BUILTIN_EXTENSION_VERSION = "0.1.0"
 
 
-def _color_digitize(image_path: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    from digitize.auto_extractor import AutoExtractor
-
+def _color_digitize(figure: str, params: Dict[str, Any]):
     sampled_color = dict(params.get("sampled_color") or {})
     if not sampled_color:
         raise ValueError("请先使用取色按钮采样颜色")
 
     tolerance = int(params.get("tolerance", 20) or 20)
     points = AutoExtractor.extract(
-        image_path,
+        str(figure or ""),
         target_r=int(sampled_color.get("r", 0) or 0),
         target_g=int(sampled_color.get("g", 0) or 0),
         target_b=int(sampled_color.get("b", 0) or 0),
@@ -29,10 +29,9 @@ def _color_digitize(image_path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         mask_include_mode=bool(params.get("mask_include_mode", True)),
         step=int(params.get("step", 5) or 5),
     )
-    return {
-        "points": list(points or []),
-        "summary": f"颜色识别到 {len(points or [])} 个点",
-    }
+    xs = [float(point[0]) for point in list(points or [])]
+    ys = [float(point[1]) for point in list(points or [])]
+    return line_from_xy(xs, ys)
 
 
 def register_extensions(registry) -> None:

@@ -56,7 +56,7 @@ _PAGE_TREE_KINDS = {
 
 _PAGE_TREE_FOCUS_KINDS = {
     "homePage":      [],
-    "dataPage":      ["source_files", "datasets", "pictures", "analysis_result_group", "images", "tools"],
+    "dataPage":      [],
     "chartPage":     ["datasets", "pictures"],
     "processPage":   ["datasets"],
     "analysisPage":  ["datasets", "analysis_result_group"],
@@ -324,6 +324,8 @@ class MainWindow(FluentWindow):
     def _tree_kinds_for_interface(self, interface) -> list[str]:
         obj_name = getattr(interface, "objectName", lambda: "")()
         if self._page_tree_focus_mode_enabled:
+            if obj_name == "dataPage":
+                return list(_PAGE_TREE_KINDS.get(obj_name, []))
             return []
         return list(_PAGE_TREE_KINDS.get(obj_name, []))
 
@@ -422,7 +424,7 @@ class MainWindow(FluentWindow):
         self._update_tree_panel_visibility(interface)
 
     def _tree_available_for_interface(self, interface) -> bool:
-        return bool(self._tree_kinds_for_interface(interface))
+        return bool(self._tree_kinds_for_interface(interface) or self._tree_focus_groups_for_interface(interface))
 
     def _page_supports_extension_panel(self, interface) -> bool:
         if interface is None or not hasattr(interface, "supports_extension_panel_toggle"):
