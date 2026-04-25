@@ -28,6 +28,10 @@ class ProjectTreeManageDialog(MessageBoxBase):
         self._refresh_btn.clicked.connect(self._refresh_tree)
         button_row.addWidget(self._refresh_btn)
 
+        self._focus_btn = PushButton("专注", self.widget)
+        self._focus_btn.clicked.connect(self._toggle_focus)
+        button_row.addWidget(self._focus_btn)
+
         self._rename_btn = PushButton("重命名", self.widget)
         self._rename_btn.clicked.connect(self._tree.rename_selected_item)
         button_row.addWidget(self._rename_btn)
@@ -42,6 +46,7 @@ class ProjectTreeManageDialog(MessageBoxBase):
 
         apply_button_metrics(
             self._refresh_btn,
+            self._focus_btn,
             self._rename_btn,
             self._move_btn,
             self._delete_btn,
@@ -70,12 +75,30 @@ class ProjectTreeManageDialog(MessageBoxBase):
         self._update_action_buttons()
         self.project_modified.emit()
 
+    def _toggle_focus(self) -> None:
+        selected_items = self._tree._selected_items_or_current()
+        selected_key = self._tree._item_key(selected_items[0]) if len(selected_items) == 1 else None
+        if self._tree.is_focus_active() and (selected_key is None or selected_key == self._tree._focused_item_key):
+            self._tree.clear_focus()
+        else:
+            self._tree.focus_selected_item()
+        self._update_action_buttons()
+
     def _update_action_buttons(self) -> None:
         selected_items = self._tree._selected_items_or_current()
         if not selected_items:
             self._selection_label.setText("未选择节点")
         else:
             self._selection_label.setText(f"已选 {len(selected_items)} 项")
+        selected_key = self._tree._item_key(selected_items[0]) if len(selected_items) == 1 else None
+        focus_active = self._tree.is_focus_active()
+        focus_matches_selection = bool(selected_key and selected_key == self._tree._focused_item_key)
+        if focus_active and (focus_matches_selection or selected_key is None):
+            self._focus_btn.setText("退出专注")
+            self._focus_btn.setEnabled(True)
+        else:
+            self._focus_btn.setText("专注")
+            self._focus_btn.setEnabled(self._tree.can_focus_selected_item())
         self._rename_btn.setEnabled(self._tree.can_rename_selected_item())
         self._move_btn.setEnabled(self._tree.can_move_selected_items())
         self._delete_btn.setEnabled(self._tree.can_delete_selected_items())

@@ -425,6 +425,21 @@ class TestProjectTreeWidget(unittest.TestCase):
     def test_tree_supports_extended_selection_for_batch_actions(self):
         self.assertEqual(self.widget._tree.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
 
+    def test_f2_shortcut_renames_current_tree_item(self):
+        self.widget.refresh()
+        data_file_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+        item = self.widget._find_item(data_file_node.id)
+        self.assertIsNotNone(item)
+
+        self.widget._tree.setCurrentItem(item)
+        item.setSelected(True)
+        self.widget._tree.setFocus()
+
+        with mock.patch.object(self.widget, "rename_selected_item") as rename_mock:
+            QTest.keyClick(self.widget._tree, Qt.Key.Key_F2)
+
+        rename_mock.assert_called_once_with()
+
     def test_tree_disables_double_click_inline_rename(self):
         self.assertEqual(self.widget._tree.editTriggers(), QAbstractItemView.EditTrigger.NoEditTriggers)
 
@@ -458,6 +473,93 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.set_name_display_mode("elide")
         self.assertEqual(self.widget._tree.textElideMode(), Qt.TextElideMode.ElideRight)
         self.assertTrue(self.widget._tree.uniformRowHeights())
+
+    def test_set_name_display_mode_does_not_trigger_rename_warning(self):
+        with mock.patch("ui.widgets.project_tree.InfoBar.warning") as warning_mock:
+            self.widget.set_name_display_mode("wrap")
+            self.widget.set_name_display_mode("elide")
+            self.widget.set_name_display_mode("wrap")
+
+        warning_mock.assert_not_called()
+
+    def test_batch_drop_move_moves_multiple_selected_items(self):
+        from models.schemas import DataFile, DataSeries
+
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        target_folder = self.pm.add_folder("批量目标", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(target_folder)
+
+        other = DataFile(name="batch_other.csv", series=[DataSeries(name="s2", x=[0.0], y=[2.0])])
+        self.pm.add_data_file(other)
+
+        self.widget.refresh()
+
+        first_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+        second_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == other.id)
+        source_items = [self.widget._find_item(first_node.id), self.widget._find_item(second_node.id)]
+        self.assertTrue(all(item is not None for item in source_items))
+        target_item = self.widget._find_item(target_folder.id)
+        self.assertIsNotNone(target_item)
+
+        moved = self.widget._perform_batch_drop_move(source_items, target_item, defer_view_refresh=False)
+
+        self.assertTrue(moved)
+        self.assertEqual(self.pm.get_node_by_id(first_node.id).parent_id, target_folder.id)
+        self.assertEqual(self.pm.get_node_by_id(second_node.id).parent_id, target_folder.id)
+        selected_ids = {item.data(0, Qt.ItemDataRole.UserRole)[1] for item in self.widget._tree.selectedItems()}
+        self.assertEqual(selected_ids, {first_node.id, second_node.id})
+
+    def test_focus_selected_item_hides_unrelated_tree_branches(self):
+        from models.schemas import DataFile, DataSeries
+
+        other = DataFile(name="focus_other.csv", series=[DataSeries(name="s2", x=[0.0], y=[2.0])])
+        self.pm.add_data_file(other)
+        self.widget.refresh()
+
+        target_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+        other_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == other.id)
+
+        self.widget.select_node(target_node.id)
+        self.widget.focus_selected_item()
+
+        project_root = self.widget._tree.topLevelItem(0)
+        global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
+        datasets_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "数据集")
+        source_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "源文件")
+        target_item = self.widget._find_item(target_node.id)
+        other_item = self.widget._find_item(other_node.id)
+
+        self.assertTrue(self.widget.is_focus_active())
+        self.assertFalse(datasets_group.isHidden())
+        self.assertTrue(source_group.isHidden())
+        self.assertTrue(global_root.isHidden())
+        self.assertFalse(target_item.isHidden())
+        self.assertTrue(other_item.isHidden())
+
+    def test_clear_focus_restores_hidden_tree_branches(self):
+        from models.schemas import DataFile, DataSeries
+
+        other = DataFile(name="focus_restore.csv", series=[DataSeries(name="s2", x=[0.0], y=[2.0])])
+        self.pm.add_data_file(other)
+        self.widget.refresh()
+
+        target_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+        other_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == other.id)
+
+        self.widget.select_node(target_node.id)
+        self.widget.focus_selected_item()
+        self.widget.clear_focus()
+
+        project_root = self.widget._tree.topLevelItem(0)
+        global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
+        source_group = next(project_root.child(i) for i in range(project_root.childCount()) if project_root.child(i).text(0) == "源文件")
+        other_item = self.widget._find_item(other_node.id)
+
+        self.assertFalse(self.widget.is_focus_active())
+        self.assertFalse(source_group.isHidden())
+        self.assertFalse(global_root.isHidden())
+        self.assertFalse(other_item.isHidden())
 
     def test_tree_item_tooltip_shows_full_long_label(self):
         self.p.name = "这是一个用于验证项目树节点 hover 可显示完整名称的超长项目名称"
@@ -4419,6 +4521,41 @@ class TestDataPage(unittest.TestCase):
 
         dialog.load_file.assert_called_once_with("/tmp/dropped.csv")
 
+    def test_dataset_pending_import_shows_default_mode_button(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        self.page.on_tree_node_selected("folder", datasets_root.id)
+        self.page._pending_import_paths = ["/tmp/demo.csv"]
+        self.page._pending_import_names = {"/tmp/demo.csv": "demo.csv"}
+
+        self.page._refresh_pending_source_controls()
+
+        self.assertFalse(self.page._btn_import_pending_default.isHidden())
+        self.assertTrue(self.page._btn_import_pending_default.isEnabled())
+
+    def test_default_mode_pending_dataset_import_uses_dialog_defaults(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        self.page.on_tree_node_selected("folder", datasets_root.id)
+
+        temp_path = Path(tempfile.NamedTemporaryFile(suffix=".csv", delete=False).name)
+        try:
+            temp_path.write_text("x,y\n0,1\n1,2\n", encoding="utf-8")
+            self.page._pending_import_paths = [str(temp_path)]
+            self.page._pending_import_names = {str(temp_path): temp_path.name}
+            dialog = mock.Mock()
+            dialog.import_with_default_options.return_value = [mock.Mock(name="series")]
+
+            with mock.patch.object(self.page, "_create_import_dialog", return_value=dialog) as create_dialog, \
+                 mock.patch.object(self.page, "_apply_import_dialog_results", return_value=True):
+                self.page._import_pending_source_files_to_datasets_default_mode()
+
+            create_dialog.assert_called_once_with(str(temp_path), default_file_name=temp_path.name)
+            dialog.import_with_default_options.assert_called_once_with()
+            self.assertEqual(self.page._pending_import_paths, [])
+        finally:
+            temp_path.unlink(missing_ok=True)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. ChartPage — on_tree_node_selected, load_template
@@ -5655,6 +5792,59 @@ class TestProcessPage(unittest.TestCase):
 
         self.assertIn("#1e1e1e", self.page._canvas.styleSheet())
 
+    def test_process_preview_zoom_buttons_adjust_axes_range(self):
+        if self.page._figure is None or self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page._src_xs = [0.0, 1.0, 2.0, 3.0]
+        self.page._src_ys = [1.0, 2.0, 1.5, 2.5]
+        self.page._out_xs = list(self.page._src_xs)
+        self.page._out_ys = [1.1, 1.8, 1.6, 2.2]
+        self.page._draw_preview()
+
+        original_ax = self.page._figure.axes[0]
+        original_x_span = abs(original_ax.get_xlim()[1] - original_ax.get_xlim()[0])
+        original_y_span = abs(original_ax.get_ylim()[1] - original_ax.get_ylim()[0])
+
+        self.page._preview_zoom_in_btn.click()
+        QApplication.processEvents()
+
+        zoomed_ax = self.page._figure.axes[0]
+        self.assertLess(abs(zoomed_ax.get_xlim()[1] - zoomed_ax.get_xlim()[0]), original_x_span)
+        self.assertLess(abs(zoomed_ax.get_ylim()[1] - zoomed_ax.get_ylim()[0]), original_y_span)
+
+        self.page._preview_fit_btn.click()
+        QApplication.processEvents()
+
+        reset_ax = self.page._figure.axes[0]
+        self.assertAlmostEqual(abs(reset_ax.get_xlim()[1] - reset_ax.get_xlim()[0]), original_x_span, places=6)
+        self.assertAlmostEqual(abs(reset_ax.get_ylim()[1] - reset_ax.get_ylim()[0]), original_y_span, places=6)
+
+    def test_process_preview_navigation_modes_switch_exclusively(self):
+        if self.page._preview_nav_toolbar is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page.show()
+        QApplication.processEvents()
+
+        self.page._preview_box_zoom_btn.click()
+        QApplication.processEvents()
+        self.assertEqual(self.page._preview_navigation_mode(), "zoom")
+        self.assertTrue(self.page._preview_box_zoom_btn.isChecked())
+        self.assertFalse(self.page._preview_pan_btn.isChecked())
+
+        self.page._preview_pan_btn.click()
+        QApplication.processEvents()
+        self.assertEqual(self.page._preview_navigation_mode(), "pan")
+        self.assertTrue(self.page._preview_pan_btn.isChecked())
+        self.assertFalse(self.page._preview_box_zoom_btn.isChecked())
+
+        self.page._preview_pan_btn.click()
+        QApplication.processEvents()
+        self.assertEqual(self.page._preview_navigation_mode(), "")
+        self.assertFalse(self.page._preview_pan_btn.isChecked())
+        self.assertFalse(self.page._preview_box_zoom_btn.isChecked())
+
     def test_on_tree_node_selected_series(self):
         self.page.on_tree_node_activated("series", self.s.id)
 
@@ -6573,23 +6763,31 @@ class TestAnalysisPage(unittest.TestCase):
         current_view = self.page._analysis_tab_views["current"]
         self.assertGreaterEqual(current_view["summary_stack"].minimumHeight(), 280)
 
-    def test_analysis_busy_card_switches_plot_stack(self):
+    def test_analysis_preview_without_inputs_uses_empty_placeholder_surface(self):
         current_view = self.page._analysis_tab_views["current"]
 
-        self.page._set_analysis_busy_state(
-            current_view,
-            True,
-            title="正在更新曲线预览",
-            detail="正在整理当前选择的曲线和分析参数。",
+        self.assertIs(current_view["plot_stack"].currentWidget(), current_view["empty_preview_widget"])
+        self.assertIn("选择曲线后将在此预览", current_view["empty_preview_label"].text())
+
+    def test_switching_builtin_analysis_types_keeps_preview_plot_available(self):
+        from models.schemas import DataFile, DataSeries
+
+        other = DataFile(name="other.csv", series=[DataSeries(name="other", x=[0.0, 1.0], y=[1.0, 2.0])])
+        self.pm.add_data_file(other)
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page.on_tree_node_activated(
+            "data_file",
+            next(n.id for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == other.id),
         )
 
-        self.assertIs(current_view["plot_stack"].currentWidget(), current_view["busy_widget"])
-        self.assertEqual(current_view["busy_title"].text(), "正在更新曲线预览")
-        self.assertEqual(current_view["busy_detail"].text(), "正在整理当前选择的曲线和分析参数。")
-
-        self.page._set_analysis_busy_state(current_view, False)
-
-        self.assertIs(current_view["plot_stack"].currentWidget(), current_view["plot_widget"])
+        for type_id in ["peak_detect", "statistics", "correlation", "error_compare"]:
+            if type_id in {"correlation", "error_compare"}:
+                self.page._analysis_extension_options[type_id] = {"lines_list": [1, 2]}
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index(type_id))
+            current_view = self.page._analysis_tab_views["current"]
+            self.assertEqual(self.page._current_analysis_type(), type_id)
+            self.assertIs(current_view["plot_stack"].currentWidget(), current_view["plot_widget"])
 
     def test_unknown_analysis_json_renders_as_flattened_summary_rows(self):
         payload = {
@@ -7610,6 +7808,32 @@ class TestDigitizePage(unittest.TestCase):
         self.assertFalse(self.page._digitize_extension_controls._config_row_widget.isHidden())
         self.assertFalse(self.page._digitize_extension_controls._editor.isHidden())
 
+    def test_digitize_right_tabs_use_segmented_navigation(self):
+        from qfluentwidgets import SegmentedWidget
+        from PySide6.QtWidgets import QSizePolicy
+
+        self.assertIsInstance(self.page._right_tabs.navigationWidget, SegmentedWidget)
+        self.assertEqual(
+            self.page._right_tabs.navigationWidget.sizePolicy().horizontalPolicy(),
+            QSizePolicy.Policy.Expanding,
+        )
+
+    def test_digitize_only_auto_config_panel_is_wrapped_in_scroll_area(self):
+        from qfluentwidgets import SmoothScrollArea
+
+        def _is_descendant(widget, ancestor) -> bool:
+            current = widget
+            while current is not None:
+                if current is ancestor:
+                    return True
+                current = current.parentWidget()
+            return False
+
+        self.assertIsInstance(self.page._digitize_auto_config_scroll, SmoothScrollArea)
+        self.assertTrue(_is_descendant(self.page._digitize_extension_controls, self.page._digitize_auto_config_scroll))
+        self.assertFalse(_is_descendant(self.page._manual_tools_row, self.page._digitize_auto_config_scroll))
+        self.assertFalse(_is_descendant(self.page._auto_tools_row, self.page._digitize_auto_config_scroll))
+
     def test_digitize_pickcolor_and_shot_values_flow_through_extension_panel(self):
         from digitize.builtin_extensions import (
             COLOR_DIGITIZE_EXTENSION_TYPE,
@@ -7649,6 +7873,76 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(params["template_info"]["size"], [24, 11])
         self.assertEqual(params["threshold"], 0.72)
         self.assertEqual(params["color_weight"], 0.4)
+
+    def test_digitize_pickcolor_button_click_triggers_request_and_backfills_value(self):
+        from PySide6.QtGui import QColor
+        from digitize.builtin_extensions import COLOR_DIGITIZE_EXTENSION_TYPE
+        from qfluentwidgets import ToolButton
+
+        self.page.show()
+        self.page._current_image_id = "img-pick"
+        self.page._image_viewer.get_image_path = lambda: "probe.png"
+        self.page._auto_mode_combo.setCurrentIndex(
+            self.page._auto_mode_type_ids.index(COLOR_DIGITIZE_EXTENSION_TYPE)
+        )
+        editor = self.page._digitize_extension_controls._editor
+        pick_button = editor.findChild(ToolButton, "interactiveFieldButton:sampled_color")
+        summary_label = editor.findChild(QWidget, "interactiveFieldSummary:sampled_color")
+
+        self.assertIsNotNone(pick_button)
+        self.assertIsNotNone(summary_label)
+
+        QTest.mouseClick(pick_button, Qt.MouseButton.LeftButton)
+
+        self.assertEqual(self.page._pending_digitize_field_key, "sampled_color")
+        self.assertEqual(self.page._pending_digitize_field_type, "pickcolor")
+        self.assertEqual(self.page._active_tool, "color_pick")
+        self.assertIn("请在图片上点击取色", self.page._auto_status_label.text())
+
+        self.page._on_color_picked(QColor("#0A141E"))
+
+        self.assertEqual(editor.current_options()["sampled_color"], {"r": 10, "g": 20, "b": 30})
+        self.assertEqual(summary_label.text(), "#0A141E")
+        self.assertIsNone(self.page._pending_digitize_field_key)
+        self.assertEqual(self.page._auto_status_label.text(), "已采样: #0a141e")
+
+    def test_digitize_shot_button_click_triggers_request_and_backfills_value(self):
+        from digitize.builtin_extensions import SHAPE_DIGITIZE_EXTENSION_TYPE
+        from qfluentwidgets import ToolButton
+
+        self.page.show()
+        self.page._current_image_id = "img-shot"
+        self.page._image_viewer.get_image_path = lambda: "probe.png"
+        self.page._auto_mode_combo.setCurrentIndex(
+            self.page._auto_mode_type_ids.index(SHAPE_DIGITIZE_EXTENSION_TYPE)
+        )
+        editor = self.page._digitize_extension_controls._editor
+        shot_button = editor.findChild(ToolButton, "interactiveFieldButton:template_info")
+        summary_label = editor.findChild(QWidget, "interactiveFieldSummary:template_info")
+
+        self.assertIsNotNone(shot_button)
+        self.assertIsNotNone(summary_label)
+
+        QTest.mouseClick(shot_button, Qt.MouseButton.LeftButton)
+
+        self.assertEqual(self.page._pending_digitize_field_key, "template_info")
+        self.assertEqual(self.page._pending_digitize_field_type, "shot")
+        self.assertEqual(self.page._active_tool, "crop_template")
+        self.assertIn("请在图片上拖拽截图", self.page._auto_status_label.text())
+
+        with mock.patch(
+            "digitize.shape_extractor.ShapeExtractor.preprocess_region",
+            return_value={"size": [24, 11], "bounds": [0, 1, 24, 12]},
+        ):
+            self.page._on_crop_region_selected(0.0, 1.0, 24.0, 12.0)
+
+        self.assertEqual(
+            editor.current_options()["template_info"],
+            {"size": [24, 11], "bounds": [0, 1, 24, 12]},
+        )
+        self.assertEqual(summary_label.text(), "已截取 24×11px")
+        self.assertIsNone(self.page._pending_digitize_field_key)
+        self.assertIn("图例模板已截取", self.page._auto_status_label.text())
 
     def test_digitize_auto_detect_uses_selected_digitize_extension(self):
         from core.extension_api import DigitizeExtension, extension_registry
@@ -8760,7 +9054,7 @@ class TestImportDialogParsers(unittest.TestCase):
         self.assertEqual(dlg._name_edits[2].text(), "变量3")
         self.assertTrue(dlg._role_buttons[0]["X 轴"].isChecked())
         self.assertTrue(dlg._role_buttons[1]["Y 轴"].isChecked())
-        self.assertTrue(dlg._role_buttons[2]["跳过"].isChecked())
+        self.assertTrue(dlg._role_buttons[2]["Y 轴"].isChecked())
         dlg.deleteLater()
 
     def test_import_dialog_defaults_to_new_data_file_name(self):
@@ -8773,7 +9067,21 @@ class TestImportDialogParsers(unittest.TestCase):
         dlg._populate_col_table()
 
         self.assertIsNone(dlg.get_target_data_file_id())
-        self.assertEqual(dlg.get_file_name(), "demo.csv")
+        self.assertEqual(dlg.get_file_name(), "demo")
+        dlg.deleteLater()
+
+    def test_import_dialog_default_import_uses_all_y_columns_and_stem_name(self):
+        from ui.dialogs.import_dialog import ImportDialog
+
+        dlg = ImportDialog()
+        dlg._file_path = "demo.csv"
+        dlg._raw_headers = ["time", "force", "stress"]
+        dlg._raw_rows = [[0.0, 1.0, 3.0], [1.0, 2.0, 4.0]]
+
+        series_list = dlg.import_with_default_options()
+
+        self.assertEqual([series.name for series in series_list], ["force", "stress"])
+        self.assertEqual(dlg.get_file_name(), "demo")
         dlg.deleteLater()
 
     def test_import_dialog_load_file_populates_preview_state(self):

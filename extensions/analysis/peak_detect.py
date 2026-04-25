@@ -47,6 +47,7 @@ def register_extensions(registry) -> None:
             version=VERSION,
             lines_number=(1, 1),
             settings=True,
+                source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(key="min_height", label="最小峰高", field_type="number", default=None),
                 ExtensionConfigField(key="min_distance", label="最小点间距", field_type="integer", default=1, min_value=1),

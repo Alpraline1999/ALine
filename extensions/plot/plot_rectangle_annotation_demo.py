@@ -49,6 +49,7 @@ def register_extensions(registry):
             description="在图中绘制矩形框，可用于圈选关注区域。",
             version="0.1.0",
             settings=True,
+            source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),
                 ExtensionConfigField(key="x", description="矩形左下角 X。", field_type="number", default=0.14),

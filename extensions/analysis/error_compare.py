@@ -32,5 +32,6 @@ def register_extensions(registry) -> None:
             version=VERSION,
             lines_number=(2, 2),
             settings=True,
+                source_kind="builtin",
         )
     )

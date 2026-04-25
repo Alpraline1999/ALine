@@ -117,6 +117,7 @@ def register_extensions(registry) -> None:
             version=VERSION,
             lines_number=(2, 2),
             settings=True,
+                source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(key="x_expr", label="X 表达式", field_type="string", default="x1"),
                 ExtensionConfigField(key="y_expr", label="Y 表达式", field_type="string", default="y1"),

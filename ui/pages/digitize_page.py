@@ -7,13 +7,14 @@ from PySide6.QtGui import QFont, QColor
 from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePushButton,
     LineEdit, SpinBox, ColorPickerButton, BodyLabel, CaptionLabel, SubtitleLabel,
     PushButton as FPushButton, TableWidget, ComboBox, TreeWidget, TreeItemDelegate,
-    Slider, SmoothScrollArea, TabWidget, TabCloseButtonDisplayMode, PrimaryPushButton,
+    Slider, SmoothScrollArea, TabCloseButtonDisplayMode, PrimaryPushButton,
     MessageBox, InfoBar, RoundMenu, MessageBoxBase,
-    ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action)
+    ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action, FluentIcon as FIF)
 
 from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_data_export_plan
@@ -388,7 +389,7 @@ class DigitizePage(QWidget):
         layout.addWidget(line)
 
         # 功能区页面
-        self._right_tabs = TabWidget(panel)
+        self._right_tabs = SegmentedStackWidget(panel, fill_width=True)
         self._right_tabs.tabBar.setAddButtonVisible(False)
         self._right_tabs.tabBar.setCloseButtonDisplayMode(TabCloseButtonDisplayMode.NEVER)
         combined_tab = self._create_combined_tab()
@@ -548,30 +549,17 @@ class DigitizePage(QWidget):
 
     def _create_combined_tab(self) -> QWidget:
         """创建合并的图片选点功能区（手动/自动/辅助三节）"""
-        from qfluentwidgets import Slider, SmoothScrollArea
-
         tab = QWidget()
-        scroll = SmoothScrollArea(tab)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
-
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(4)
-
         outer = QVBoxLayout(tab)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
-        scroll.setWidget(content)
+        outer.setSpacing(4)
+        layout = outer
 
         # ══════════ 手动选点 ══════════
-        layout.addWidget(make_section_label("手动选点", content))
+        layout.addWidget(make_section_label("手动选点", tab))
 
-        manual_row = QWidget(content)
+        manual_row = QWidget(tab)
+        self._manual_tools_row = manual_row
         ml = QHBoxLayout(manual_row)
         ml.setContentsMargins(0, 0, 0, 0)
         ml.setSpacing(4)
@@ -598,7 +586,7 @@ class DigitizePage(QWidget):
         layout.addWidget(manual_row)
 
         # --- 十字辅助配置 ---
-        cross_row = QWidget(content)
+        cross_row = QWidget(tab)
         cl = QHBoxLayout(cross_row)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(4)
@@ -617,7 +605,7 @@ class DigitizePage(QWidget):
         layout.addWidget(cross_row)
 
         # --- 微调步长 ---
-        nudge_row = QWidget(content)
+        nudge_row = QWidget(tab)
         nl = QHBoxLayout(nudge_row)
         nl.setContentsMargins(0, 0, 0, 0)
         nl.setSpacing(4)
@@ -636,11 +624,12 @@ class DigitizePage(QWidget):
         layout.addWidget(nudge_row)
 
         # ══════════ 自动选点（置于辅助选点之前）══════════
-        layout.addWidget(make_hsep(content))
-        layout.addWidget(make_section_label("自动选点", content))
+        layout.addWidget(make_hsep(tab))
+        layout.addWidget(make_section_label("自动选点", tab))
 
         # --- 公共检测工具 ---
-        auto_btn_row = QWidget(content)
+        auto_btn_row = QWidget(tab)
+        self._auto_tools_row = auto_btn_row
         abl = QHBoxLayout(auto_btn_row)
         abl.setContentsMargins(0, 0, 0, 0)
         abl.setSpacing(4)
@@ -690,10 +679,26 @@ class DigitizePage(QWidget):
         abl.addStretch()
         layout.addWidget(auto_btn_row)
 
+        self._auto_status_label = BodyLabel("", tab)
+        self._auto_status_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
+        self._auto_status_label.setWordWrap(True)
+        layout.addWidget(self._auto_status_label)
+
+        self._digitize_auto_config_scroll = SmoothScrollArea(tab)
+        self._digitize_auto_config_scroll.setWidgetResizable(True)
+        self._digitize_auto_config_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._digitize_auto_config_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._digitize_auto_config_scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+        auto_config_host = QWidget(self._digitize_auto_config_scroll)
+        auto_config_host.setStyleSheet("background: transparent;")
+        auto_config_layout = QVBoxLayout(auto_config_host)
+        auto_config_layout.setContentsMargins(0, 0, 0, 0)
+        auto_config_layout.setSpacing(0)
+
         self._digitize_extension_controls = ExtensionConfigPanel(
             "自动选点扩展",
             "执行检测",
-            content,
+            auto_config_host,
             mode="compact",
             framed=False,
         )
@@ -705,18 +710,16 @@ class DigitizePage(QWidget):
             self._on_digitize_interactive_field_requested
         )
         self._auto_mode_combo = self._digitize_extension_controls._selector
-        layout.addWidget(self._digitize_extension_controls)
-
-        self._auto_status_label = BodyLabel("", content)
-        self._auto_status_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
-        self._auto_status_label.setWordWrap(True)
-        layout.addWidget(self._auto_status_label)
+        auto_config_layout.addWidget(self._digitize_extension_controls)
+        auto_config_layout.addStretch(1)
+        self._digitize_auto_config_scroll.setWidget(auto_config_host)
+        layout.addWidget(self._digitize_auto_config_scroll, 1)
 
         self._refresh_digitize_extension_choices()
 
         # ══════════ 辅助选点（暂时隐藏，功能待完善）══════════
         # 创建所有辅助选点控件，但包装在隐藏容器中
-        _assist_container = QWidget(content)
+        _assist_container = QWidget(tab)
         _assist_container.setVisible(False)
         ac_layout = QVBoxLayout(_assist_container)
         ac_layout.setContentsMargins(0, 0, 0, 0)
@@ -763,7 +766,7 @@ class DigitizePage(QWidget):
 
         layout.addWidget(_assist_container)
 
-        layout.addStretch()
+        layout.addStretch(1)
         return tab
 
     def _digitize_extension_entries(self) -> list[dict]:

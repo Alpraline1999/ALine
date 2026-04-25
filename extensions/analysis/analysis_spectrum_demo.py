@@ -99,6 +99,7 @@ def register_extensions(registry):
             version="0.1.0",
             lines_number=(1, 1),
                 settings=True,
+                source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(
                     key="sampling_rate",

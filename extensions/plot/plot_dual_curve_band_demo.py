@@ -123,6 +123,7 @@ def register_extensions(registry):
             version="0.1.0",
             lines_number=(2, 2),
             settings=True,
+            source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(
                     key="align_mode",

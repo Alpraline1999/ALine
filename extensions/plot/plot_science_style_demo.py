@@ -119,6 +119,7 @@ def register_extensions(registry):
             description="通过 plt.style.use('science') 套用 scienceplots 论文风格，并叠加当前图幅的少量覆盖设置。",
             version="0.1.0",
             settings=True,
+            source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(key="x_label", description="X 轴标签；留空则保持当前设置。", field_type="string", default=""),
                 ExtensionConfigField(key="y_label", description="Y 轴标签；留空则保持当前设置。", field_type="string", default=""),

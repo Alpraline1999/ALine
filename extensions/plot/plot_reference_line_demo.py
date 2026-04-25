@@ -110,6 +110,7 @@ def register_extensions(registry):
             description="演示 PlotExtensionContext 的 before_plot/after_plot 两阶段绘制能力。",
             version="0.1.0",
             settings=True,
+            source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(
                     key="show_reference_line",

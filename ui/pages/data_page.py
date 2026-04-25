@@ -585,9 +585,12 @@ class DataPage(QWidget):
         queue_layout.addLayout(pending_row)
 
         import_row = QHBoxLayout()
+        self._btn_import_pending_default = PushButton("默认模式导入", self._import_queue_panel)
+        self._btn_import_pending_default.clicked.connect(self._import_pending_source_files_to_datasets_default_mode)
         self._btn_import_pending = PrimaryPushButton(FIF.DOWNLOAD, "执行导入", self._import_queue_panel)
         self._btn_import_pending.clicked.connect(self._import_pending_files_for_current_group)
-        self._apply_panel_button_metrics(self._btn_import_pending)
+        self._apply_panel_button_metrics(self._btn_import_pending_default, self._btn_import_pending)
+        import_row.addWidget(self._btn_import_pending_default, 1)
         import_row.addWidget(self._btn_import_pending, 1)
         queue_layout.addLayout(import_row)
         manage_layout.addWidget(self._import_queue_panel, 1)
@@ -2382,11 +2385,14 @@ class DataPage(QWidget):
         group_type = self._current_import_group()
         has_items = bool(self._pending_import_paths)
         has_selection = bool(self._selected_pending_source_file_ids())
+        is_dataset_group = group_type == "datasets"
         self._btn_remove_pending.setEnabled(has_selection)
         self._btn_clear_pending.setEnabled(has_items)
         self._btn_import_pending.setEnabled(has_items and group_type is not None)
+        self._btn_import_pending_default.setVisible(is_dataset_group)
+        self._btn_import_pending_default.setEnabled(has_items and is_dataset_group)
 
-        if group_type == "datasets":
+        if is_dataset_group:
             self._btn_import_pending.setText("导入到数据集")
         elif group_type == "images":
             self._btn_import_pending.setText("导入到数字化")
@@ -4258,6 +4264,47 @@ class DataPage(QWidget):
             InfoBar.success("批量导入完成", summary, parent=self, position=InfoBarPosition.TOP)
         elif failed_names or stopped:
             InfoBar.warning("批量导入未完成", summary, parent=self, position=InfoBarPosition.TOP)
+
+    def _import_pending_source_files_to_datasets_default_mode(self) -> None:
+        if not self._pending_import_paths:
+            return
+
+        completed_paths: list[str] = []
+        failed_names: list[str] = []
+        current_selection = (self._selected_node_kind, self._selected_node_id)
+
+        for file_path in list(self._pending_import_paths):
+            path = Path(file_path)
+            import_name = self._pending_import_names.get(file_path, path.name)
+            if not path.exists():
+                failed_names.append(import_name)
+                continue
+            try:
+                dialog = self._create_import_dialog(str(path), default_file_name=import_name)
+                dialog.import_with_default_options()
+            except Exception as exc:
+                failed_names.append(import_name)
+                InfoBar.warning("导入失败", f"无法按默认模式导入文件 {path.name}: {exc}", parent=self, position=InfoBarPosition.TOP)
+                continue
+            if self._apply_import_dialog_results(dialog, show_feedback=False):
+                completed_paths.append(str(path))
+            else:
+                failed_names.append(import_name)
+
+        if completed_paths:
+            self._remove_pending_source_files(completed_paths)
+            self.project_modified.emit()
+            self.refresh()
+            if current_selection[0] and current_selection[1]:
+                self.on_tree_node_selected(current_selection[0], current_selection[1])
+
+        summary = f"成功按默认模式导入 {len(completed_paths)} 个文件到数据集"
+        if failed_names:
+            summary += f"，失败 {len(failed_names)} 个"
+        if completed_paths:
+            InfoBar.success("默认模式导入完成", summary, parent=self, position=InfoBarPosition.TOP)
+        elif failed_names:
+            InfoBar.warning("默认模式导入未完成", summary, parent=self, position=InfoBarPosition.TOP)
 
     def _import_pending_source_files_to_digitize(self) -> None:
         if not self._pending_import_paths:

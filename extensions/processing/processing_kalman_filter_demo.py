@@ -39,6 +39,7 @@ def register_extensions(registry):
             version="0.1.0",
             lines_number=(1, 1),
                 settings=True,
+                source_kind="builtin",
                 config_fields=[
                 ExtensionConfigField(key="process_variance", description="过程噪声方差，越大表示对状态变化越敏感。", field_type="number", default=1e-4),
                 ExtensionConfigField(key="measurement_variance", description="测量噪声方差，越大表示更信任历史估计。", field_type="number", default=1e-2),

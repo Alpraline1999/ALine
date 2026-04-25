@@ -78,7 +78,7 @@ class ImportDialog(QDialog):
     def set_default_file_name(self, name: str) -> None:
         clean_name = str(name or "").strip()
         old_auto_name = self._default_data_file_name()
-        self._preferred_file_name = clean_name
+        self._preferred_file_name = self._normalize_default_file_name(clean_name)
         new_auto_name = self._default_data_file_name()
         if hasattr(self, "_data_file_name_edit"):
             current_name = self._data_file_name_edit.text().strip()
@@ -294,7 +294,7 @@ class ImportDialog(QDialog):
             self._role_groups.append(group)
             self._role_buttons.append(role_map)
 
-            default_role = "X 轴" if row == 0 else "Y 轴" if row == 1 else "跳过"
+            default_role = "X 轴" if row == 0 else "Y 轴"
             role_map[default_role].setChecked(True)
 
         self._refresh_data_file_target_choices()
@@ -353,7 +353,20 @@ class ImportDialog(QDialog):
     def _default_data_file_name(self) -> str:
         if self._preferred_file_name:
             return self._preferred_file_name
-        return Path(self._file_path).name if self._file_path else "导入数据"
+        if not self._file_path:
+            return "导入数据"
+        return self._normalize_default_file_name(Path(self._file_path).name) or "导入数据"
+
+    @staticmethod
+    def _normalize_default_file_name(name: str) -> str:
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            return ""
+        suffix = Path(clean_name).suffix.lower()
+        if suffix in SUPPORTED_IMPORT_SUFFIXES:
+            stem = Path(clean_name).stem.strip()
+            return stem or clean_name
+        return clean_name
 
     def _refresh_data_file_target_choices(self) -> None:
         current_new_name = self._data_file_name_edit.text().strip() if hasattr(self, "_data_file_name_edit") else ""
@@ -495,6 +508,16 @@ class ImportDialog(QDialog):
             ))
 
         return series_list
+
+    def import_with_default_options(self) -> List[DataSeries]:
+        if not self._raw_headers or not self._raw_rows:
+            if not self._file_path:
+                raise ValueError("没有可用的数据")
+            self.load_file(self._file_path)
+        self._populate_col_table()
+        self.imported_series = self._do_import()
+        self._import_completed = True
+        return list(self.imported_series)
 
     def get_results(self) -> List[DataSeries]:
         return self.imported_series

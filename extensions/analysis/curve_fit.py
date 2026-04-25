@@ -29,6 +29,7 @@ def register_extensions(registry) -> None:
             version=VERSION,
             lines_number=(1, 1),
             settings=True,
+                source_kind="builtin",
             config_fields=[
                 ExtensionConfigField(
                     key="model",

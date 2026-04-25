@@ -1,150 +1,306 @@
-# ALine 扩展使用说明
+# ALine 扩展规则
 
-ALine 启动时会自动递归扫描 extensions 目录及其子目录中的扩展文件。当前支持 4 类扩展：
+ALine 会在启动时扫描当前工作区的 extensions 目录，并按处理、分析、绘图、数字化四类扩展注册到统一的 ExtensionRegistry。本文档只描述当前仓库已经落地的规则，不再保留旧版 PlotStyleExtension / CurveStyleExtension 约定。
 
-- `ProcessingExtension`: 推荐 `(xs, ys, params, lines=None) -> (xs, ys)`；旧式三参数签名仍兼容
-- `AnalysisExtension`: 推荐 `(inputs, params, lines_list=None) -> result_dict`；旧式双参数签名仍兼容
-- `PlotExtension`: 推荐使用 `(plot_context, options)`；旧式 `(axis, plotted_series, options)` 仍兼容
-- `DigitizeExtension`: 推荐使用 `(image_path, params) -> result_dict`
+## 1. 扩展分类
 
-扩展来源分类只使用 3 个规范值：
+### 1.1 功能分类
 
-- `base`: 基础扩展。用于工作台内置基础能力，默认不在扩展列表中展示，也不可关闭。
-- `builtin`: 内置扩展。来自当前工作区或程序内置注册，默认出现在扩展列表中。
-- `external`: 外部扩展。来自其他目录或任何非 `base` / `builtin` 的来源值。运行时会把其他字符串统一归一化到 `external`。
+| 功能分类 | 注册类型 | 推荐处理函数签名 | 主要用途 |
+| --- | --- | --- | --- |
+| 处理扩展 | ProcessingExtension | (xs, ys, params, lines=None) -> (xs, ys) | 对单条或多条曲线做数据处理 |
+| 分析扩展 | AnalysisExtension | (inputs, params) -> dict | 计算摘要、结果表、结果曲线 |
+| 绘图扩展 | PlotExtension | (plot_context, options) -> None | 在 before_plot / after_plot 阶段修改图表 |
+| 数字化扩展 | DigitizeExtension | (image_path, params) -> dict | 从图片中提取点、模板或区域 |
 
-`PlotStyleExtension` 和 `CurveStyleExtension` 已不再支持。曲线透明度等样式参数现在直接由界面内置表单管理，不再通过扩展注入。
+当前仓库推荐目录：
 
-## 1. 加载模型
+- extensions/processing
+- extensions/analysis
+- extensions/plot
+- extensions/digitize
 
-- 仓库内置扩展位于当前工作区的 `extensions` 目录；推荐按 `extensions/processing`、`extensions/analysis`、`extensions/plot`、`extensions/digitize` 分目录管理。
-- 设置页可以控制“是否加载内置扩展”，并支持按扩展文件逐项禁用。
-- 外部扩展仍然支持，默认扫描目录为 `~/.config/aline/extensions`。
-- 文件名建议使用 `snake_case.py`。
-- 以下划线开头的 Python 文件不会被自动加载。
-- 每个扩展文件都必须导出 `register_extensions(registry)`。
+### 1.2 类别分类
 
-当前仓库自带的内置示例包括：
+扩展来源分类只允许使用以下三个规范值：
 
-- `processing/processing_kalman_filter_demo.py`: 处理扩展，演示卡尔曼滤波
-- `processing/processing_multi_curve_mean_demo.py`: 多曲线处理扩展，演示多条曲线求均值
-- `analysis/analysis_spectrum_demo.py`: 分析扩展，返回频谱结果、主频和可绘制曲线
-- `analysis/analysis_multi_curve_correlation_demo.py`: 多曲线分析扩展，以第一条曲线为主曲线对其余曲线做相关性比较
-- `plot/plot_reference_line_demo.py`: 绘图扩展，添加参考线和注释
-- `plot/plot_arrow_annotation_demo.py`: 绘图扩展，绘制箭头标注
-- `plot/plot_rectangle_annotation_demo.py`: 绘图扩展，绘制矩形框
-- `plot/plot_circle_annotation_demo.py`: 绘图扩展，绘制圆形框
-- `plot/plot_text_annotation_demo.py`: 绘图扩展，绘制文字说明
-- `plot/plot_dual_curve_band_demo.py`: 双曲线绘图扩展，读取 `options["lines"]` 后仅绘制选中的两条曲线区间
-- `plot/plot_science_style_demo.py`: 绘图扩展，套用 Science 风格图幅
-- `plot/plot_polar_projection_demo.py`: 绘图扩展，将曲线改绘为极坐标图
-- `digitize/color_detect.py`: 数字化扩展，按采样颜色自动识别散点
-- `digitize/shape_detect.py`: 数字化扩展，按截图模板匹配相同形状
+| source_kind | 含义 | 界面行为 |
+| --- | --- | --- |
+| base | 基础扩展 | 不显示在可开关列表中，不允许关闭 |
+| builtin | 内置扩展 | 默认显示在扩展列表中，可随仓库分发 |
+| external | 外部扩展 | 来自外部目录或任何非 base / builtin 的来源 |
 
-修改扩展文件后通常不需要重启应用。处理页、分析页和可视化页都提供“重载扩展”入口，可重新扫描当前 builtin 与外部扩展目录。
+规则：
 
-## 2. 入口函数
+- 新增仓库内扩展时，必须显式声明 source_kind="builtin"。
+- 工作台内部基础能力必须显式声明 source_kind="base"。
+- 任何其他字符串都会在运行时被归一化为 external，但不应依赖这个隐式行为。
 
-每个扩展文件都必须定义：
+### 1.3 加载入口
+
+每个扩展文件都必须导出 register_extensions(registry)：
 
 ```python
 def register_extensions(registry):
     ...
 ```
 
-ALine 会将 `ExtensionRegistry` 实例传给这个函数，由扩展自行完成注册。
+加载规则：
 
-## 3. 配置如何进入扩展
+- 工作区 builtin 扩展默认从当前目录下的 extensions 递归扫描。
+- 外部扩展默认目录为 ~/.config/aline/extensions。
+- 文件名建议使用 snake_case.py。
+- 以下划线开头的 Python 文件不会自动加载。
+- 修改扩展文件后，可通过页面上的“重载扩展”入口重新扫描，无需重启应用。
 
-- `ProcessingExtension`
-    输入：当前主曲线 `xs` / `ys`，可选多曲线 `lines`
-    输出：新的 `(xs, ys)` 元组，或兼容旧协议的等价结果
-- `AnalysisExtension`
-    输入：`inputs` 列表，每项至少包含 `x`、`y`、`name`；界面参数在 `params`
-    输出：`dict` 结果。建议包含 `analysis_type`，可选 `_plot_series`、标量摘要字段和报告占位符字段
-- `PlotExtension`
-    输入：推荐 `(plot_context, options)`，其中 `options` 为界面配置
-    输出：通常直接修改图表上下文；如需跳过默认绘制，应通过 `plot_context` 的补丁/跳过标记完成
-- `DigitizeExtension`
-    输入：`image_path` 与 `params`
-    输出：推荐返回 `{"points": [(x, y), ...], "summary": "..."}`；也兼容直接返回点列表
+## 2. 扩展规则
 
-建议同时提供：
+### 2.1 扩展定义规则
 
-- `default_options`: 面板默认配置
-- `config_fields`: 字段说明，用于在界面中展示配置提示
-- `lines_number`: 处理扩展 / 分析扩展 / 绘图扩展的内置曲线数量协议
+所有扩展定义都应显式给出以下核心字段：
 
-### 3.1 参数字段规范
+- type：扩展唯一标识，必须全局唯一。
+- name：界面显示名称。
+- handler：扩展处理函数。
+- description：扩展用途说明。
+- version：必须是 x.y.z 格式。
+- settings：是否允许在设置页生成可保存配置。
+- source_kind：必须显式声明为 base / builtin / external 之一。
+- hidden：仅用于不希望显示在列表中的扩展。
 
-`config_fields` 建议统一使用以下标准字段类型：
+标准定义示例：
 
-- `string`: 单行文本
-- `integer`: 整数
-- `number`: 浮点数
-- `boolean`: 布尔开关
-- `selective`: 固定选项
-- `limited`: 带范围的连续值
-- `color`: 颜色
-- `line`: 单条曲线选择
-- `lines`: 多条曲线选择
-- `figure`: 文件 / 图像 / 路径类输入
-- `pickcolor`: 点击按钮后在当前图像上取色，回填 `{ "r": int, "g": int, "b": int }`
-- `shot`: 点击按钮后在当前图像上截图，回填模板字典，例如 `{ "size": [w, h], "bounds": [x1, y1, x2, y2] }`
+```python
+from core.extension_api import ExtensionConfigField, ProcessingExtension
 
-内置扩展和基础扩展应优先直接声明这些标准字段类型，而不是依赖页面侧的临时别名或手写控件。
 
-### 3.2 四类扩展的参数约定
+def smooth_handler(xs, ys, params, lines=None):
+    del lines
+    return list(xs), list(ys)
 
-- 处理扩展：界面参数统一放在 `params`；若扩展支持多曲线，建议通过 `lines_number` 和 `lines_list` 描述目标曲线。
-- 分析扩展：界面参数统一放在 `params`；运行时会补齐当前参与分析的 `lines_list`，便于结果页恢复输入顺序。
-- 绘图扩展：界面参数统一放在 `options`；若扩展需要引用曲线，应优先使用 `visible_series`、`plotted_series` 或显式 `lines_list`。
-- 数字化扩展：界面参数统一放在 `params`；与图片交互相关的参数应优先声明为 `pickcolor` / `shot`，蒙版统一通过 `mask_polygons` 与 `mask_include_mode` 传入。
 
-多曲线协议约定：
+def register_extensions(registry):
+    registry.register_processing(
+        ProcessingExtension(
+            type="smooth",
+            name="平滑",
+            handler=smooth_handler,
+            description="对当前曲线做平滑处理。",
+            version="1.0.0",
+            lines_number=(1, 1),
+            settings=True,
+            source_kind="builtin",
+            default_options={"window": 9},
+            config_fields=[
+                ExtensionConfigField(
+                    key="window",
+                    label="窗口大小",
+                    description="平滑窗口长度。",
+                    field_type="integer",
+                    default=9,
+                    min_value=1,
+                )
+            ],
+        )
+    )
+```
 
-- 不显式声明 `lines_number`：表示该扩展不支持曲线选择内置参数，界面不会显示“选择曲线”控件
-- 单曲线扩展：声明 `lines_number=(1, 1)` 或空值，运行时默认取当前上下文中的单条曲线
-- 双曲线扩展：声明 `lines_number=(2, 2)`，界面会显示“选择曲线”按钮，用户需显式勾选两条曲线
-- 多曲线扩展：声明 `lines_number=(2, -1)` 或其他范围，界面会显示“选择曲线”按钮并提示支持的数量范围
-- `lines_list` 始终作为顶层参数保存，例如 `[1, 3, 4]`
-- 分析扩展收到的 `lines_list` 顺序与界面最终解析顺序一致；第 1 项始终视为主曲线，其余项默认为副曲线
-- 如果处理扩展声明了 `lines` 形参，运行时会收到当前参与处理的全部曲线 payload
+#### 扩展定义字段规则
 
-字段描述结构示例：
+1. register_extensions 中只做注册，不做重计算或 I/O。
+2. handler 内只依赖入参与运行时上下文，不读取页面私有状态。
+3. config_fields 优先使用标准字段类型，不再依赖页面侧别名。
+4. lines_number 只用于处理扩展、分析扩展、绘图扩展；数字化扩展不需要这个字段。
+5. 默认值应放在 default_options 中，并与 config_fields.default 保持一致。
+
+#### 标准字段类型与参数示例
+
+| field_type | 用途 | 参数示例 |
+| --- | --- | --- |
+| string | 单行文本 | key="label", default="平均值" |
+| integer | 整数 | key="window", default=9, min_value=1 |
+| number | 浮点数 | key="threshold", default=0.75, step=0.01 |
+| boolean | 布尔开关 | key="fill", default=False |
+| selective | 固定选项 | key="mode", choices=("low", "high") |
+| limited | 区间滑杆 | key="alpha", default=0.2, min_value=0.0, max_value=1.0 |
+| color | 颜色 | key="line_color", default="#0078D4" |
+| line | 单条曲线选择 | key="line_index", default=1 |
+| lines | 多条曲线选择 | key="lines_list", default=[1, 2] |
+| figure | 路径 / 文件 / 图片输入 | key="template_path", placeholder="/tmp/template.png" |
+| pickcolor | 在当前图像上取色 | key="sampled_color", default={"r": 10, "g": 20, "b": 30} |
+| shot | 在当前图像上截图 | key="template_info", default={"size": [24, 11], "bounds": [0, 1, 24, 12]} |
+
+推荐写法：
 
 ```python
 ExtensionConfigField(
-    key="window",
-    description="平滑窗口长度。",
-    field_type="number",
-    required=False,
-    default=7,
+    key="sampled_color",
+    label="采样颜色",
+    description="点击按钮后在当前图片上取色。",
+    field_type="pickcolor",
+    default={"r": 255, "g": 0, "b": 0},
 )
 ```
 
-## 4. AnalysisExtension 结果约定
+#### lines_number / lines_list 规则
 
-除结果字段外，分析扩展建议把 `lines` 作为顶层参数的一部分保留在 `params` 中，便于页面恢复当前输入顺序。
+- 不声明 lines_number：界面不显示“选择曲线”控件。
+- lines_number=(1, 1)：单曲线扩展。
+- lines_number=(2, 2)：双曲线扩展，必须显式勾选两条曲线。
+- lines_number=(2, -1)：两条及以上曲线扩展。
+- lines_list 始终保存为从 1 开始的下标列表，例如 [1, 3, 4]。
+- 不再支持 all、:、*、selected 等旧哨兵值。
 
-分析扩展除了返回摘要字段外，还可以约定一些通用键，让分析页和报告模板自动消费：
+### 2.2 扩展输入规则
 
-- 普通标量字段：例如 `dominant_frequency`、`dominant_amplitude`
-- 这些字段会自动出现在报告模板占位符列表中，可直接写成 `{{dominant_frequency}}` 或 `{{dominant_frequency:.2f}}`
-- 以下划线开头的字段会被视为内部字段，不进入摘要列表和动态占位符
-- `_plot_series`: 供分析页直接绘图的曲线列表
-- `x_label` / `y_label` / `plot_title`: 自定义结果图的坐标轴标题和图标题
+#### 处理扩展输入规则
 
-`_plot_series` 的典型结构如下：
+推荐签名：
 
 ```python
-{
+def handler(xs, ys, params, lines=None):
+    ...
+```
+
+输入规则：
+
+- xs、ys 是当前主曲线。
+- params 是页面解析后的参数字典。
+- lines 在多曲线处理时可用，每项通常包含 x、y、name。
+
+参数示例：
+
+```python
+params = {
+    "method": "moving_avg",
+    "window": 9,
+    "lines_list": [1, 2],
+}
+```
+
+#### 分析扩展输入规则
+
+推荐签名：
+
+```python
+def handler(inputs, params):
+    ...
+```
+
+输入规则：
+
+- inputs 是列表，每项至少包含 x、y、name。
+- params 是扩展参数字典。
+- 多曲线分析扩展会在运行前补齐 lines_list，用于恢复输入顺序。
+
+参数示例：
+
+```python
+inputs = [
+    {"name": "曲线 A", "x": [0.0, 1.0], "y": [1.0, 2.0]},
+    {"name": "曲线 B", "x": [0.0, 1.0], "y": [2.0, 3.0]},
+]
+params = {
+    "lines_list": [1, 2],
+    "method": "pearson",
+}
+```
+
+#### 绘图扩展输入规则
+
+推荐签名：
+
+```python
+def handler(plot_context, options):
+    ...
+```
+
+plot_context 常用字段：
+
+- figure / canvas
+- axis / axes
+- visible_series
+- plotted_series
+- selected_series
+- phase
+- theme_colors
+- figure_state
+
+options 示例：
+
+```python
+options = {
+    "line_color": "#C23B22",
+    "line_style": "--",
+    "append_summary_to_title": True,
+}
+```
+
+#### 数字化扩展输入规则
+
+推荐签名：
+
+```python
+def handler(image_path, params):
+    ...
+```
+
+输入规则：
+
+- image_path 是当前图片路径。
+- params 是数字化参数字典。
+- 蒙版统一通过 mask_polygons 与 mask_include_mode 传入。
+- 与图片交互相关的字段优先用 pickcolor / shot。
+
+参数示例：
+
+```python
+params = {
+    "sampled_color": {"r": 10, "g": 20, "b": 30},
+    "template_info": {"size": [24, 11], "bounds": [0, 1, 24, 12]},
+    "threshold": 0.72,
+    "mask_polygons": [[(1.0, 2.0), (3.0, 4.0), (3.0, 5.0)]],
+    "mask_include_mode": False,
+}
+```
+
+### 2.3 扩展输出规则
+
+#### 处理扩展输出规则
+
+推荐输出：
+
+```python
+return list(xs), list(ys)
+```
+
+规则：
+
+- 返回值必须能表示新的一条曲线。
+- 推荐返回 (xs, ys) 元组。
+- 处理扩展不负责直接操作界面控件。
+
+#### 分析扩展输出规则
+
+推荐输出必须是 dict。
+
+常用结果键：
+
+- analysis_type：分析类型标识。
+- 普通标量字段：自动进入摘要与报告占位符。
+- _plot_series 或 plot_series：供分析页绘图。
+- summary_items：显式摘要表，格式为 [("项目", "结果"), ...]。
+- tables / table_sections：结果表。
+- texts / text_sections / text / markdown：补充说明文本。
+
+结果示例：
+
+```python
+return {
     "analysis_type": "spectrum_analysis",
     "dominant_frequency": 12.5,
     "dominant_amplitude": 3.4,
-    "x_label": "频率 (Hz)",
-    "y_label": "幅值",
-    "plot_title": "频谱分析",
+    "summary_items": [("主频", 12.5), ("主峰幅值", 3.4)],
     "_plot_series": [
         {
             "name": "频谱",
@@ -154,95 +310,201 @@ ExtensionConfigField(
             "line_width": 1.6,
         }
     ],
+    "tables": [
+        {
+            "title": "峰值表",
+            "headers": ["序号", "X", "Y"],
+            "rows": [[1, 1.0, 3.4]],
+        }
+    ],
 }
 ```
 
-分析页会优先绘制 `_plot_series` 中的数据；导出“分析曲线”时会导出其中第一条曲线。
+#### 绘图扩展输出规则
 
-## 5. PlotExtensionContext 速览
+绘图扩展通常不返回数据，而是直接修改 plot_context 对应的 matplotlib 对象或状态。
 
-推荐为 `PlotExtension` 使用上下文签名：
+规则：
+
+- before_plot 阶段适合加参考线、底图、背景区域。
+- after_plot 阶段适合加注释、统计说明、标题补充。
+- 如需跳过默认绘制，应通过 plot_context.skip_default_plot 等标记完成，而不是直接破坏页面状态。
+
+#### 数字化扩展输出规则
+
+推荐输出：
 
 ```python
-def handler(plot_context, options):
-    ...
+return {
+    "points": [(10.0, 12.0), (13.0, 15.0)],
+    "summary": "识别到 2 个点",
+}
 ```
 
-`plot_context` 常用字段包括：
+规则：
 
-- `figure` / `canvas`: 当前 matplotlib Figure 与画布
-- `axis` / `axes`: 当前主轴与 Figure 内全部轴
-- `visible_series`: 默认绘制前的可见曲线源数据
-- `plotted_series`: 默认绘制后得到的曲线摘要
-- `figure_state`: 当前绘图状态字典
-- `theme_colors`: 当前主题下的背景色、前景色、网格色
-- `phase`: `before_plot` 或 `after_plot`
-- `skip_default_plot`: 设为 `True` 可跳过默认曲线绘制
-- `skip_default_formatting`: 设为 `True` 可跳过默认坐标轴格式化
-- `skip_default_layout`: 设为 `True` 可跳过默认布局调整
+- points 是最重要的标准结果键。
+- summary 用于界面提示，可选。
+- 也兼容直接返回点列表，但新扩展建议统一返回 dict。
 
-如果扩展希望以“最小覆盖”方式修改当前图表样式，而不是直接硬改 matplotlib 对象，可使用以下补丁方法：
+## 3. 扩展样例
 
-- `patch_figure_state({...})`: 覆盖 `FigureState` 中的字段，例如 `x_label`、`legend_pos`、`line_width`
-- `patch_plot_style({...})`: 覆盖 `plot_style_extras` 中的附加样式，例如 `tick_params`、`legend_kwargs`
-- `patch_selected_curve_style({...})`: 覆盖当前选中曲线的样式字段
-- `patch_curve_style(curve_identity, {...})`: 覆盖指定曲线的样式字段
+### 3.1 处理扩展示例
 
-这些补丁会与界面设置按“后操作覆盖先操作、且仅覆盖被修改参数”的规则合并。适合做 Science 风格、极坐标模式等需要和设置面板共同工作的绘图扩展。
-
-这允许扩展在 `before_plot` 阶段放置参考区域、底图或额外轴，也允许在 `after_plot` 阶段补充注释、标记和统计信息。
-
-## 6. 最小示例
+最小样例：
 
 ```python
-from core.extension_api import AnalysisExtension, ExtensionConfigField
+from core.extension_api import ProcessingExtension
 
 
-def spectrum(inputs, params):
-    xs = [0.0, 1.0, 2.0]
-    ys = [0.2, 3.4, 1.1]
+def passthrough(xs, ys, params, lines=None):
+    del params, lines
+    return list(xs), list(ys)
+
+
+def register_extensions(registry):
+    registry.register_processing(
+        ProcessingExtension(
+            type="demo_processing",
+            name="示例处理",
+            handler=passthrough,
+            version="1.0.0",
+            settings=True,
+            source_kind="builtin",
+        )
+    )
+```
+
+当前仓库样例：
+
+- extensions/processing/crop.py：裁剪指定区间。
+- extensions/processing/derivative.py：导数计算。
+- extensions/processing/fft.py：快速傅里叶变换。
+- extensions/processing/filter.py：低通 / 高通滤波。
+- extensions/processing/integral.py：积分计算。
+- extensions/processing/normalize.py：归一化。
+- extensions/processing/pairwise_compute.py：双曲线逐点计算。
+- extensions/processing/processing_kalman_filter_demo.py：卡尔曼滤波示例。
+- extensions/processing/processing_multi_curve_mean_demo.py：多曲线均值示例。
+- extensions/processing/resample.py：重采样。
+- extensions/processing/smooth.py：平滑。
+- extensions/processing/transform.py：坐标变换。
+
+### 3.2 分析扩展示例
+
+最小样例：
+
+```python
+from core.extension_api import AnalysisExtension
+
+
+def summary_only(inputs, params):
+    del params
     return {
-        "analysis_type": "demo_spectrum",
+        "analysis_type": "demo_analysis",
         "source_name": inputs[0].get("name", ""),
-        "dominant_frequency": 1.0,
-        "_plot_series": [{"name": "频谱", "x": xs, "y": ys}],
+        "point_count": len(inputs[0].get("x", [])),
     }
 
 
 def register_extensions(registry):
     registry.register_analysis(
         AnalysisExtension(
-            type="demo_spectrum",
-            name="示例频谱分析",
-            handler=spectrum,
-            description="返回一个带自定义占位符和结果曲线的分析结果。",
+            type="demo_analysis",
+            name="示例分析",
+            handler=summary_only,
+            version="1.0.0",
             lines_number=(1, 1),
-            default_options={
-                "window": 7,
-            },
-            config_fields=[
-                ExtensionConfigField(
-                    key="window",
-                    description="频谱窗口长度。",
-                    field_type="number",
-                    default=7,
-                )
-            ],
+            settings=True,
+            source_kind="builtin",
         )
     )
 ```
 
-## 7. 调试建议
+当前仓库样例：
 
-- 扩展未出现在界面中时，先检查文件是否位于 builtin `extensions` 目录或默认外部目录 `~/.config/aline/extensions`。
-- 确认文件中实现了 `register_extensions(registry)`。
-- 确认 `type` 唯一；重复的 `type` 会覆盖已有扩展。
-- 如果扩展面板 JSON 解析失败，界面会提示必须是合法 JSON 对象。
-- 如果分析结果希望参与报告模板，返回字段应是标量，且键名不要以下划线开头。
-- 如果分析结果希望直接绘图，确保 `_plot_series` 中每条曲线都提供等长的 `x` 和 `y`。
+- extensions/analysis/curve_fit.py：曲线拟合。
+- extensions/analysis/peak_detect.py：峰值检测。
+- extensions/analysis/statistics.py：统计分析。
+- extensions/analysis/correlation.py：相关性分析。
+- extensions/analysis/error_compare.py：误差对比。
+- extensions/analysis/analysis_spectrum_demo.py：频谱分析示例。
+- extensions/analysis/analysis_multi_curve_correlation_demo.py：多曲线相关性示例。
 
-## 8. 程序化调用
+### 3.3 绘图扩展示例
 
-- 手动加载目录：`extension_registry.load_from_directory("./extensions")`
-- 处理扩展：`processing.data_engine.apply_operation(..., {"type": "kalman_filter", "params": {...}})`
-- 分析扩展：`core.analysis_engine.run_analysis("spectrum_analysis", inputs, params)`
+最小样例：
+
+```python
+from core.extension_api import PlotExtension
+
+
+def add_title_note(plot_context, options):
+    axis = plot_context.axis or (plot_context.axes[0] if plot_context.axes else None)
+    if axis is None or plot_context.phase != "after_plot":
+        return
+    axis.set_title(str(options.get("title", "绘图扩展示例")))
+
+
+def register_extensions(registry):
+    registry.register_plot(
+        PlotExtension(
+            type="demo_plot",
+            name="示例绘图",
+            handler=add_title_note,
+            version="1.0.0",
+            settings=True,
+            source_kind="builtin",
+        )
+    )
+```
+
+当前仓库样例：
+
+- extensions/plot/plot_reference_line_demo.py：参考线与峰值标注。
+- extensions/plot/plot_arrow_annotation_demo.py：箭头标注。
+- extensions/plot/plot_rectangle_annotation_demo.py：矩形框。
+- extensions/plot/plot_circle_annotation_demo.py：圆形框。
+- extensions/plot/plot_text_annotation_demo.py：文字标注。
+- extensions/plot/plot_dual_curve_band_demo.py：双曲线差异带。
+- extensions/plot/plot_science_style_demo.py：Science 风格图幅。
+- extensions/plot/plot_polar_projection_demo.py：极坐标投影。
+
+### 3.4 数字化扩展示例
+
+最小样例：
+
+```python
+from core.extension_api import DigitizeExtension
+
+
+def detect_points(image_path, params):
+    del image_path, params
+    return {"points": [(10.0, 10.0), (20.0, 20.0)], "summary": "识别到 2 个点"}
+
+
+def register_extensions(registry):
+    registry.register_digitize(
+        DigitizeExtension(
+            type="demo_digitize",
+            name="示例数字化",
+            handler=detect_points,
+            version="1.0.0",
+            settings=True,
+            source_kind="builtin",
+        )
+    )
+```
+
+当前仓库样例：
+
+- extensions/digitize/color_detect.py：取色后按颜色识别点。
+- extensions/digitize/shape_detect.py：截图模板后按形状匹配点。
+
+## 4. 程序化调用参考
+
+- 手动加载目录：extension_registry.load_from_directory("./extensions")
+- 处理扩展：processing.data_engine.apply_operation(..., {"type": "smooth", "params": {...}})
+- 分析扩展：core.analysis_engine.run_analysis("curve_fit", inputs, params)
+- 绘图扩展：通过可视化页触发 PlotExtensionContext 生命周期
+- 数字化扩展：通过数字化页自动检测入口触发

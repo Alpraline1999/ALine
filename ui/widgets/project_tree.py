@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 
 from math import ceil
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAbstractTextDocumentLayout, QColor, QDesktopServices, QFontMetrics, QPainter, QPalette, QPen, QPixmap, QTextDocument, QTextOption
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QFileDialog, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -229,19 +229,41 @@ class _ProjectTreeView(TreeWidget):
         self._owner = owner
 
     def startDrag(self, supportedActions) -> None:
-        self._owner._remember_drag_source_item(self.currentItem())
+        selected_items = [item for item in self.selectedItems() if item is not None]
+        current_item = self.currentItem()
+        if current_item is not None and current_item in selected_items:
+            self._owner._remember_drag_source_items(selected_items)
+        elif current_item is not None:
+            self._owner._remember_drag_source_items([current_item])
+        else:
+            self._owner._remember_drag_source_items(selected_items)
         super().startDrag(supportedActions)
 
     def dropEvent(self, event) -> None:
-        source_item = self._owner._drag_source_item_for_drop(self.currentItem())
+        source_items = self._owner._drag_source_items_for_drop(self.currentItem())
         target_item = self.itemAt(event.position().toPoint())
         try:
+            if len(source_items) > 1:
+                if self._owner._perform_batch_drop_move(source_items, target_item, defer_view_refresh=True):
+                    event.acceptProposedAction()
+                    return
+                event.ignore()
+                return
+            source_item = source_items[0] if source_items else None
             if self._owner._perform_drop_move(source_item, target_item, defer_view_refresh=True):
                 event.acceptProposedAction()
                 return
             event.ignore()
         finally:
             self._owner._clear_drag_source_item()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_F2 and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            if self._owner.can_rename_selected_item():
+                self._owner.rename_selected_item()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class _ProjectTreeWrapAnywhereDelegate(TreeItemDelegate):
@@ -365,6 +387,8 @@ class ProjectTreeWidget(QWidget):
         self._renaming = False  # 防止 itemChanged 循环
         self._branch_toggle_item_key: Optional[str] = None
         self._drag_source_item_key: Optional[str] = None
+        self._drag_source_item_keys: List[str] = []
+        self._focused_item_key: Optional[str] = None
         self._fluent_tooltip: Optional[ToolTip] = None
         self._name_display_mode = "elide"
         self.set_name_display_mode(get_tree_name_display_mode())
@@ -404,6 +428,7 @@ class ProjectTreeWidget(QWidget):
             project_item.setExpanded(True)
         self._build_global_assets_root()
         self._restore_expansion_state(expansion_state)
+        selected_key = self._apply_focus_view(selected_key)
         self._restore_selection(selected_key)
         self._apply_name_display_mode()
         self._tree.blockSignals(False)
@@ -425,6 +450,8 @@ class ProjectTreeWidget(QWidget):
         has_expandable_item = False
         while stack:
             item = stack.pop()
+            if item is None or item.isHidden():
+                continue
             if item.childCount() > 0:
                 has_expandable_item = True
                 if not item.isExpanded():
@@ -452,6 +479,29 @@ class ProjectTreeWidget(QWidget):
     def set_name_display_mode(self, mode: str) -> None:
         self._name_display_mode = "elide" if mode == "elide" else "wrap"
         self._apply_name_display_mode()
+
+    def is_focus_active(self) -> bool:
+        return bool(self._focused_item_key)
+
+    def can_focus_selected_item(self) -> bool:
+        return len(self._selected_items_or_current()) == 1
+
+    def focus_selected_item(self) -> None:
+        if not self.can_focus_selected_item():
+            return
+        item = self._selected_items_or_current()[0]
+        item_key = self._item_key(item)
+        if not item_key:
+            return
+        self._focused_item_key = item_key
+        self._reapply_focus_view(preferred_selection_key=item_key)
+
+    def clear_focus(self) -> None:
+        if not self._focused_item_key:
+            return
+        selected_key = self._current_item_key()
+        self._focused_item_key = None
+        self._reapply_focus_view(preferred_selection_key=selected_key)
 
     def get_selected_node(self) -> Optional[Tuple[str, str]]:
         """返回 (kind, node_id) 或 None。"""
@@ -1896,13 +1946,42 @@ class ProjectTreeWidget(QWidget):
     def _append_tree_scope_actions(self, menu: RoundMenu, separated: bool = False) -> None:
         if separated and menu.actions():
             menu.addSeparator()
+        focus_items = self._selected_items_or_current()
+        focus_item = focus_items[0] if len(focus_items) == 1 else None
+        focus_key = self._item_key(focus_item)
+        if focus_key and focus_key == self._focused_item_key:
+            self._add_menu_action(menu, getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self.clear_focus)
+        else:
+            if focus_item is not None:
+                label = "切换专注到此处" if self.is_focus_active() else "专注此处"
+                self._add_menu_action(menu, getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)), label, self.focus_selected_item)
+            if self.is_focus_active():
+                self._add_menu_action(menu, getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self.clear_focus)
         self._add_menu_action(menu, FIF.SYNC, "清理空文件夹", self._cmd_prune_empty_folders)
 
     def _expand_all_items(self) -> None:
-        self._tree.expandAll()
+        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+            if item is None or item.isHidden():
+                return
+            if item.childCount() > 0:
+                item.setExpanded(True)
+            for index in range(item.childCount()):
+                _walk(item.child(index))
+
+        for index in range(self._tree.topLevelItemCount()):
+            _walk(self._tree.topLevelItem(index))
 
     def _collapse_all_items(self) -> None:
-        self._tree.collapseAll()
+        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+            if item is None or item.isHidden():
+                return
+            if item.childCount() > 0:
+                item.setExpanded(False)
+            for index in range(item.childCount()):
+                _walk(item.child(index))
+
+        for index in range(self._tree.topLevelItemCount()):
+            _walk(self._tree.topLevelItem(index))
 
     def _add_menu_action(self, menu: RoundMenu, icon, text: str, callback) -> Action:
         action = Action(icon, text)
@@ -2273,21 +2352,111 @@ class ProjectTreeWidget(QWidget):
         self.project_modified.emit()
         return True
 
+    def _perform_batch_drop_move(
+        self,
+        source_items: List[QTreeWidgetItem],
+        target_item: Optional[QTreeWidgetItem],
+        defer_view_refresh: bool = False,
+    ) -> bool:
+        payloads = self._batch_action_payloads(source_items)
+        if not payloads:
+            return False
+
+        project_ids = {self._item_project_id(item) for item in source_items}
+        target_project_id = self._item_project_id(target_item)
+        if len(project_ids) != 1 or not target_project_id or target_project_id not in project_ids:
+            return False
+
+        names = [str(payload.get("name") or "").strip() for payload in payloads]
+        if len(set(names)) != len(names):
+            return False
+
+        target_ids = {
+            self._resolve_drop_target_id(str(payload["kind"]), str(payload["node_id"]), target_item)
+            for payload in payloads
+        }
+        target_ids.discard(None)
+        if len(target_ids) != 1:
+            return False
+
+        target_id = next(iter(target_ids), None)
+        if not target_id:
+            return False
+
+        common_choice_ids = {choice_id for _label, choice_id in self._common_batch_move_choices(payloads)}
+        if target_id not in common_choice_ids:
+            return False
+
+        project_manager.set_current_project(target_project_id)
+        moved_ids: List[str] = []
+        for payload in payloads:
+            node_id = str(payload["node_id"])
+            kind = str(payload["kind"])
+            if not self._move_node_to_target(kind, node_id, target_id):
+                return False
+            moved_ids.append(node_id)
+
+        if defer_view_refresh:
+            QTimer.singleShot(0, lambda node_ids=list(moved_ids): self._finalize_batch_drop_move(node_ids))
+        else:
+            self._finalize_batch_drop_move(moved_ids)
+        self.project_modified.emit()
+        return True
+
     def _finalize_drop_move(self, source_id: str) -> None:
         self.refresh()
         self.select_node(source_id)
         self._tree.viewport().update()
         self._tree.updateGeometry()
 
+    def _finalize_batch_drop_move(self, source_ids: List[str]) -> None:
+        self.refresh()
+        self._select_nodes(source_ids)
+        self._tree.viewport().update()
+        self._tree.updateGeometry()
+
     def _remember_drag_source_item(self, item: Optional[QTreeWidgetItem]) -> None:
-        self._drag_source_item_key = self._item_key(item)
+        self._remember_drag_source_items([item] if item is not None else [])
+
+    def _remember_drag_source_items(self, items: List[QTreeWidgetItem]) -> None:
+        keys = [key for key in (self._item_key(item) for item in items) if key]
+        self._drag_source_item_keys = list(dict.fromkeys(keys))
+        self._drag_source_item_key = self._drag_source_item_keys[0] if self._drag_source_item_keys else None
 
     def _drag_source_item_for_drop(self, fallback_item: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
         remembered = self._find_item_by_key(self._drag_source_item_key)
         return remembered or fallback_item
 
+    def _drag_source_items_for_drop(self, fallback_item: Optional[QTreeWidgetItem]) -> List[QTreeWidgetItem]:
+        remembered_items = [item for item in (self._find_item_by_key(key) for key in self._drag_source_item_keys) if item is not None]
+        if remembered_items:
+            return remembered_items
+        fallback = self._drag_source_item_for_drop(fallback_item)
+        return [fallback] if fallback is not None else []
+
     def _clear_drag_source_item(self) -> None:
         self._drag_source_item_key = None
+        self._drag_source_item_keys = []
+
+    def _select_nodes(self, node_ids: List[str]) -> None:
+        clean_ids = [str(node_id) for node_id in node_ids if node_id]
+        if not clean_ids:
+            return
+        self._tree.blockSignals(True)
+        try:
+            self._tree.clearSelection()
+            current_item = None
+            for node_id in clean_ids:
+                item = self._find_item(node_id)
+                if item is None:
+                    continue
+                self._expand_item_ancestors(item)
+                item.setSelected(True)
+                current_item = item
+            if current_item is not None:
+                self._tree.setCurrentItem(current_item, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+        finally:
+            self._tree.blockSignals(False)
 
     def _folder_path_label(self, folder_id: str) -> str:
         label = project_manager.format_tree_path_label(folder_id, separator="/", omit_root_group=True)
@@ -2361,6 +2530,69 @@ class ProjectTreeWidget(QWidget):
         if item is not None:
             self._expand_item_ancestors(item)
             self._tree.setCurrentItem(item)
+
+    def _reapply_focus_view(self, preferred_selection_key: Optional[str] = None) -> None:
+        target_selection = preferred_selection_key
+        self._tree.blockSignals(True)
+        try:
+            target_selection = self._apply_focus_view(target_selection)
+            if target_selection:
+                self._restore_selection(target_selection)
+        finally:
+            self._tree.blockSignals(False)
+        self._tree.viewport().update()
+        self._tree.updateGeometry()
+
+    def _apply_focus_view(self, selected_key: Optional[str]) -> Optional[str]:
+        focus_key = self._focused_item_key
+        focus_item = self._find_item_by_key(focus_key) if focus_key else None
+        if focus_key and focus_item is None:
+            self._focused_item_key = None
+            focus_key = None
+
+        visible_keys = self._focus_visible_keys(focus_item) if focus_item is not None else None
+
+        def _walk(parent: Optional[QTreeWidgetItem]) -> None:
+            count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
+            for index in range(count):
+                item = self._tree.topLevelItem(index) if parent is None else parent.child(index)
+                if item is None:
+                    continue
+                item_key = self._item_key(item)
+                item.setHidden(bool(visible_keys is not None and item_key not in visible_keys))
+                _walk(item)
+
+        _walk(None)
+
+        if focus_item is not None:
+            self._expand_item_ancestors(focus_item)
+            if focus_item.childCount() > 0:
+                focus_item.setExpanded(True)
+            if visible_keys and selected_key not in visible_keys:
+                return self._focused_item_key
+        return selected_key
+
+    def _focus_visible_keys(self, focus_item: Optional[QTreeWidgetItem]) -> set[str]:
+        visible_keys: set[str] = set()
+        if focus_item is None:
+            return visible_keys
+
+        current = focus_item
+        while current is not None:
+            item_key = self._item_key(current)
+            if item_key:
+                visible_keys.add(item_key)
+            current = current.parent()
+
+        stack = [focus_item]
+        while stack:
+            item = stack.pop()
+            item_key = self._item_key(item)
+            if item_key:
+                visible_keys.add(item_key)
+            stack.extend(item.child(index) for index in range(item.childCount()))
+
+        return visible_keys
 
     @staticmethod
     def _expand_item_ancestors(item: Optional[QTreeWidgetItem]) -> None:
@@ -2436,15 +2668,22 @@ class ProjectTreeWidget(QWidget):
 
     def _apply_name_display_mode(self) -> None:
         wrap_mode = self._name_display_mode == "wrap"
-        self._tree.setWordWrap(wrap_mode)
-        self._tree.setTextElideMode(Qt.TextElideMode.ElideNone if wrap_mode else Qt.TextElideMode.ElideRight)
-        self._tree.setUniformRowHeights(not wrap_mode)
-        if wrap_mode:
-            self._update_wrapped_item_size_hints()
-        else:
-            self._reset_item_size_hints()
-        self._tree.viewport().update()
-        self._tree.updateGeometry()
+        was_blocked = self._tree.signalsBlocked()
+        if not was_blocked:
+            self._tree.blockSignals(True)
+        try:
+            self._tree.setWordWrap(wrap_mode)
+            self._tree.setTextElideMode(Qt.TextElideMode.ElideNone if wrap_mode else Qt.TextElideMode.ElideRight)
+            self._tree.setUniformRowHeights(not wrap_mode)
+            if wrap_mode:
+                self._update_wrapped_item_size_hints()
+            else:
+                self._reset_item_size_hints()
+            self._tree.viewport().update()
+            self._tree.updateGeometry()
+        finally:
+            if not was_blocked:
+                self._tree.blockSignals(False)
 
     @staticmethod
     def _item_depth(item: Optional[QTreeWidgetItem]) -> int:

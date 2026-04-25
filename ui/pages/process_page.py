@@ -9,7 +9,7 @@ import json
 import math
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QItemSelectionModel, Qt, QTimer, Signal
+from PySide6.QtCore import QItemSelectionModel, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListWidgetItem, QSizePolicy, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem
 from qfluentwidgets import (
     BodyLabel, CaptionLabel, ComboBox, FluentIcon as FIF,
@@ -51,6 +51,7 @@ try:
     import matplotlib
     matplotlib.use("QtAgg")
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
     from matplotlib.figure import Figure
     from qfluentwidgets import isDarkTheme
     _HAS_MPL = True
@@ -116,6 +117,7 @@ class ProcessPage(QWidget):
         self._processing_label_map: Dict[str, str] = {}
         self._processing_op_hints: Dict[str, str] = {}
         self._processing_extension_options: Dict[str, Dict[str, Any]] = {}
+        self._preview_nav_toolbar = None
         self._selected_src_id: Optional[str] = None
         self._selected_source_kind: Optional[str] = None
         self._selected_source_node_id: Optional[str] = None
@@ -427,8 +429,59 @@ class ProcessPage(QWidget):
         if _HAS_MPL:
             self._figure = Figure(figsize=(5, 4))
             self._canvas = FigureCanvas(self._figure)
+            self._preview_nav_toolbar = NavigationToolbar(self._canvas, panel)
+            self._preview_nav_toolbar.hide()
+
+            preview_toolbar = QHBoxLayout()
+            preview_toolbar.setContentsMargins(0, 0, 0, 0)
+            preview_toolbar.setSpacing(4)
+
+            self._preview_fit_btn = ToolButton(getattr(FIF, "FIT_PAGE", FIF.HOME), panel)
+            self._preview_fit_btn.setToolTip("重置预览范围")
+            self._preview_fit_btn.clicked.connect(self._reset_preview_view)
+            self._preview_fit_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+            preview_toolbar.addWidget(self._preview_fit_btn)
+
+            self._preview_zoom_in_btn = ToolButton(getattr(FIF, "ZOOM_IN", FIF.ZOOM), panel)
+            self._preview_zoom_in_btn.setToolTip("放大预览")
+            self._preview_zoom_in_btn.clicked.connect(lambda checked=False: self._zoom_preview_axes(0.8))
+            self._preview_zoom_in_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+            preview_toolbar.addWidget(self._preview_zoom_in_btn)
+
+            self._preview_zoom_out_btn = ToolButton(getattr(FIF, "ZOOM_OUT", FIF.ZOOM), panel)
+            self._preview_zoom_out_btn.setToolTip("缩小预览")
+            self._preview_zoom_out_btn.clicked.connect(lambda checked=False: self._zoom_preview_axes(1.25))
+            self._preview_zoom_out_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+            preview_toolbar.addWidget(self._preview_zoom_out_btn)
+
+            self._preview_pan_btn = ToolButton(getattr(FIF, "MOVE", getattr(FIF, "MOVE_TO", FIF.ZOOM)), panel)
+            self._preview_pan_btn.setToolTip("拖拽平移预览")
+            self._preview_pan_btn.setCheckable(True)
+            self._preview_pan_btn.toggled.connect(self._toggle_preview_pan_mode)
+            self._preview_pan_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+            preview_toolbar.addWidget(self._preview_pan_btn)
+
+            self._preview_box_zoom_btn = ToolButton(FIF.ZOOM, panel)
+            self._preview_box_zoom_btn.setToolTip("框选局部放大")
+            self._preview_box_zoom_btn.setCheckable(True)
+            self._preview_box_zoom_btn.toggled.connect(self._toggle_preview_box_zoom_mode)
+            self._preview_box_zoom_btn.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+            preview_toolbar.addWidget(self._preview_box_zoom_btn)
+            preview_toolbar.addStretch(1)
+
+            for widget in (
+                self._preview_fit_btn,
+                self._preview_zoom_in_btn,
+                self._preview_zoom_out_btn,
+                self._preview_pan_btn,
+                self._preview_box_zoom_btn,
+            ):
+                _install_fluent_tip(widget, widget.toolTip(), ToolTipPosition.BOTTOM)
+
+            rv.addLayout(preview_toolbar)
             self._canvas.setMinimumHeight(260)
             rv.addWidget(self._canvas, stretch=1)
+            self._sync_preview_nav_toggle_states()
         else:
             self._figure = None
             self._canvas = None
@@ -437,6 +490,84 @@ class ProcessPage(QWidget):
         self._stats_label.setWordWrap(True)
         rv.addWidget(self._stats_label)
         return panel
+
+    def _preview_navigation_mode(self) -> str:
+        toolbar = getattr(self, "_preview_nav_toolbar", None)
+        if toolbar is None:
+            return ""
+        mode = getattr(toolbar, "mode", None)
+        mode_name = str(getattr(mode, "name", mode or "")).strip().lower()
+        if "zoom" in mode_name:
+            return "zoom"
+        if "pan" in mode_name:
+            return "pan"
+        return ""
+
+    def _sync_preview_nav_toggle_states(self) -> None:
+        mode = self._preview_navigation_mode()
+        for button, active in (
+            (getattr(self, "_preview_pan_btn", None), mode == "pan"),
+            (getattr(self, "_preview_box_zoom_btn", None), mode == "zoom"),
+        ):
+            if button is None:
+                continue
+            blocker = QSignalBlocker(button)
+            button.setChecked(active)
+            del blocker
+
+    def _toggle_preview_pan_mode(self, checked: bool) -> None:
+        toolbar = getattr(self, "_preview_nav_toolbar", None)
+        if toolbar is None:
+            return
+        current_mode = self._preview_navigation_mode()
+        if checked:
+            if current_mode == "zoom":
+                toolbar.zoom()
+            if self._preview_navigation_mode() != "pan":
+                toolbar.pan()
+        elif current_mode == "pan":
+            toolbar.pan()
+        self._sync_preview_nav_toggle_states()
+
+    def _toggle_preview_box_zoom_mode(self, checked: bool) -> None:
+        toolbar = getattr(self, "_preview_nav_toolbar", None)
+        if toolbar is None:
+            return
+        current_mode = self._preview_navigation_mode()
+        if checked:
+            if current_mode == "pan":
+                toolbar.pan()
+            if self._preview_navigation_mode() != "zoom":
+                toolbar.zoom()
+        elif current_mode == "zoom":
+            toolbar.zoom()
+        self._sync_preview_nav_toggle_states()
+
+    def _zoom_preview_axes(self, factor: float) -> None:
+        if not _HAS_MPL or self._figure is None or self._canvas is None:
+            return
+        axes = list(self._figure.axes)
+        if not axes:
+            self._draw_preview()
+            axes = list(self._figure.axes)
+        if not axes:
+            return
+        for ax in axes:
+            x0, x1 = ax.get_xlim()
+            y0, y1 = ax.get_ylim()
+            cx = (x0 + x1) / 2.0
+            cy = (y0 + y1) / 2.0
+            half_x = abs(x1 - x0) * factor / 2.0
+            half_y = abs(y1 - y0) * factor / 2.0
+            if half_x <= 0 or half_y <= 0:
+                continue
+            ax.set_xlim(cx - half_x, cx + half_x)
+            ax.set_ylim(cy - half_y, cy + half_y)
+        self._canvas.draw_idle()
+
+    def _reset_preview_view(self) -> None:
+        self._draw_preview()
+        self._sync_preview_nav_toggle_states()
 
     # ─────────────────────────────────────────────────────────
     # 数据源树
