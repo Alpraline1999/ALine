@@ -198,7 +198,7 @@ class _SharedTreePanel(QWidget):
 
     def _sync_tree_expand_toggle_button(self, *_args) -> None:
         expanded = self.tree.all_expandable_items_expanded()
-        icon_source = _TREE_COLLAPSE_ALL_ICON if expanded else _TREE_EXPAND_ALL_ICON
+        icon_source = _TREE_EXPAND_ALL_ICON if expanded else _TREE_COLLAPSE_ALL_ICON
         tooltip = "全部折叠" if expanded else "全部展开"
         self.tree_expand_toggle_btn.setIcon(self._tool_button_icon(icon_source))
         self.tree_expand_toggle_btn.setToolTip(tooltip)

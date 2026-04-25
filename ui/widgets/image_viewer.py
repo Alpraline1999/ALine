@@ -705,7 +705,7 @@ class ImageViewer(QWidget):
 
         if self._pixmap is None:
             painter.setPen(Qt.GlobalColor.gray)
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "拖放图片到此处\n或使用上方「添加图片」按钮")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "拖放图片到此处\n或使用上方「导入图片」按钮")
             painter.end()
             return
 
