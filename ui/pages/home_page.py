@@ -42,6 +42,7 @@ class _HomeLinkCard(QFrame):
     def __init__(self, icon, title: str, content: str, url: str, parent=None):
         super().__init__(parent)
         self.url = QUrl(url)
+        self._icon_source = icon
         self.setObjectName("homeLinkCard")
         self.setFixedSize(_HOME_LINK_CARD_WIDTH, _HOME_LINK_CARD_HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -137,22 +138,22 @@ class _HomeBannerWidget(QWidget):
         self._hero_hint = None
 
         layout = QVBoxLayout(self)
-    layout.setContentsMargins(_HOME_CONTENT_MARGIN, 24, _HOME_CONTENT_MARGIN, 20)
+        layout.setContentsMargins(_HOME_CONTENT_MARGIN, 24, _HOME_CONTENT_MARGIN, 20)
         layout.setSpacing(6)
-    layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._layout = layout
 
         self._hero_title = LargeTitleLabel("ALine", self)
-    layout.addWidget(self._hero_title, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self._hero_title, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         self._hero_subtitle = SubtitleLabel("科研数据管理与可视化工作台", self)
-    layout.addWidget(self._hero_subtitle, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self._hero_subtitle, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         self._hero_hint = BodyLabel("项目、数据、绘图和分析结果在同一工作台内流转。", self)
         self._hero_hint.setWordWrap(True)
         self._hero_hint.setMaximumWidth(760)
         self._hero_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-    layout.addWidget(self._hero_hint, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self._hero_hint, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
         layout.addStretch(1)
 
