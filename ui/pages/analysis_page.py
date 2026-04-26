@@ -458,6 +458,7 @@ class AnalysisPage(QWidget):
 
         self._export_result_btn = PushButton(FIF.SHARE, "导出结果曲线")
         self._export_result_btn.clicked.connect(self._export_result_series)
+        self._export_result_btn.hide()
         self._export_result_btn.setEnabled(False)
         apply_button_metrics(self._export_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         result_actions.addWidget(self._export_result_btn)
@@ -1494,7 +1495,14 @@ class AnalysisPage(QWidget):
     def _refresh_result_action_buttons(self) -> None:
         if not hasattr(self, "_export_result_btn") or self._export_result_btn is None:
             return
-        self._export_result_btn.setEnabled(self._build_analysis_output_series("结果预览") is not None)
+        result = dict(self._result or {}) if isinstance(self._result, dict) else {}
+        if not result:
+            active_view = self._active_analysis_view()
+            if isinstance(active_view, dict):
+                result = dict(active_view.get("result") or {})
+        has_lines = bool(result and self._analysis_result_lines(result))
+        self._export_result_btn.setVisible(has_lines)
+        self._export_result_btn.setEnabled(has_lines)
 
     def _on_analysis_tab_changed(self, index: int) -> None:
         key = self._analysis_tab_key_for_index(index)
@@ -2399,7 +2407,6 @@ class AnalysisPage(QWidget):
                 result = dict(active_view.get("result") or {})
         if not result:
             return None
-        analysis_type = result.get("analysis_type", "analysis")
         result_lines = self._analysis_result_lines(result)
         line_lookup = {item["line_name"]: item["line"] for item in result_lines}
         custom_series = list(result.get("_plot_series", []) or result.get("plot_series", []) or [])
@@ -2420,20 +2427,6 @@ class AnalysisPage(QWidget):
                 name=export_name,
                 x=xs,
                 y=ys,
-                source="computed",
-            )
-        if analysis_type == "curve_fit" and "fit_x" in result and "fit_y" in result:
-            return DataSeries(
-                name=export_name,
-                x=list(result["fit_x"]),
-                y=list(result["fit_y"]),
-                source="computed",
-            )
-        if analysis_type == "error_compare" and "error_x" in result:
-            return DataSeries(
-                name=export_name,
-                x=list(result["error_x"]),
-                y=list(result["error_y"]),
                 source="computed",
             )
         return None

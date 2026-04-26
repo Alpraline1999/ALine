@@ -47,7 +47,7 @@ from core.ai.providers import (
 )
 
 
-_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 20250
+_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 60750
 
 
 class _MutableFolderListSettingCard(FolderListSettingCard):
@@ -160,6 +160,7 @@ class SettingsPage(QWidget):
         self._tabs = tabs
 
         tabs.addTab(self._build_general_tab(), "常规")
+        tabs.addTab(self._build_extensions_tab(), "扩展")
         tabs.addTab(self._build_shortcuts_tab(), "快捷键")
         self._hidden_ai_tab = self._build_ai_tab()
         self._hidden_ai_tab.hide()
@@ -336,7 +337,24 @@ class SettingsPage(QWidget):
         appearance_group.addSettingCard(onboarding_card)
         layout.addWidget(appearance_group)
 
+        layout.addStretch()
+        return outer
+
+    def _build_extensions_tab(self) -> QWidget:
+        outer = SmoothScrollArea()
+        outer.setWidgetResizable(True)
+        outer.setFrameShape(QFrame.Shape.NoFrame)
+        outer.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(content)
+        layout.setSpacing(12)
+        layout.setContentsMargins(*self._tab_content_margins())
+        outer.setWidget(content)
+
         extension_group = SettingCardGroup("扩展", content)
+        self._extension_card = extension_group
         self._extension_title = extension_group.titleLabel
         self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
         self._extension_status_card = SettingCard(FIF.INFO, "扩展状态", "查看当前扩展加载情况与失败详情。", extension_group)
@@ -346,78 +364,6 @@ class SettingsPage(QWidget):
         self._attach_setting_card_control(self._extension_status_card, self._extension_status_summary_btn, alignment=Qt.AlignmentFlag.AlignLeft)
         extension_group.addSettingCard(self._extension_status_card)
 
-        self._builtin_extension_card = ExpandGroupSettingCard(
-            FIF.DOWNLOAD,
-            "内置扩展",
-            "管理内置扩展的总开关和逐项启用状态。",
-            extension_group,
-        )
-        self._builtin_extension_card.setExpand(True)
-        self._extension_card = self._builtin_extension_card
-        self._extension_hint = self._builtin_extension_card.card.contentLabel
-        self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-
-        builtin_section = QWidget(self._builtin_extension_card)
-        builtin_layout = QVBoxLayout(builtin_section)
-        builtin_layout.setContentsMargins(4, 4, 4, 4)
-        builtin_layout.setSpacing(8)
-        builtin_toggle_row = QHBoxLayout()
-        self._builtin_extensions_enabled_checkbox = CheckBox("启用内置扩展", builtin_section)
-        self._builtin_extensions_enabled_checkbox.stateChanged.connect(self._on_builtin_extensions_enabled_changed)
-        builtin_toggle_row.addWidget(self._builtin_extensions_enabled_checkbox)
-        builtin_toggle_row.addStretch(1)
-        builtin_layout.addLayout(builtin_toggle_row)
-
-        self._extension_tabs = self._build_extension_category_tabs(
-            builtin_section,
-            empty_hints=self._extension_empty_hints,
-            option_layouts=self._extension_option_layouts,
-        )
-        builtin_layout.addWidget(self._extension_tabs)
-        self._builtin_extension_card.addGroupWidget(builtin_section)
-        extension_group.addSettingCard(self._builtin_extension_card)
-
-        self._external_extension_card = ExpandGroupSettingCard(
-            FIF.FOLDER,
-            "外部扩展",
-            "单独管理外部扩展目录、扫描结果和逐项启用状态。",
-            extension_group,
-        )
-        self._external_extension_card.setExpand(True)
-
-        external_section = QWidget(self._external_extension_card)
-        external_layout = QVBoxLayout(external_section)
-        external_layout.setContentsMargins(4, 4, 4, 4)
-        external_layout.setSpacing(8)
-        self._external_extensions_dirs_card = _MutableFolderListSettingCard(
-            "外部扩展目录",
-            "可添加多个文件夹；保存后会统一扫描并重载。",
-            [],
-            directory="~/.config/aline/extensions",
-            parent=external_section,
-        )
-        external_layout.addWidget(self._external_extensions_dirs_card)
-
-        source_toggle_row = QHBoxLayout()
-        self._external_extensions_enabled_checkbox = CheckBox("启用外部扩展", external_section)
-        self._external_extensions_enabled_checkbox.stateChanged.connect(self._on_external_extensions_enabled_changed)
-        source_toggle_row.addWidget(self._external_extensions_enabled_checkbox)
-
-        self._refresh_external_extensions_btn = PushButton("刷新外部扩展扫描", external_section)
-        self._refresh_external_extensions_btn.clicked.connect(self._refresh_external_extension_specs)
-        source_toggle_row.addWidget(self._refresh_external_extensions_btn)
-        source_toggle_row.addStretch(1)
-        external_layout.addLayout(source_toggle_row)
-
-        self._external_extension_tabs = self._build_extension_category_tabs(
-            external_section,
-            empty_hints=self._external_extension_empty_hints,
-            option_layouts=self._external_extension_option_layouts,
-        )
-        external_layout.addWidget(self._external_extension_tabs)
-        self._external_extension_card.addGroupWidget(external_section)
-        extension_group.addSettingCard(self._external_extension_card)
-
         self._extension_actions_card = SettingCard(FIF.SYNC, "应用扩展设置", "保存当前启用状态与目录配置，并重新加载扩展。", extension_group)
         self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", self._extension_actions_card)
         self._save_extension_settings_btn.clicked.connect(self._save_extension_settings)
@@ -425,17 +371,80 @@ class SettingsPage(QWidget):
         extension_group.addSettingCard(self._extension_actions_card)
         layout.addWidget(extension_group)
 
-        # ── 语言设置（预留）──
-        self._lang_card = SettingCardGroup("语言", content)
-        self._lang_title = self._lang_card.titleLabel
-        self._lang_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        lang_placeholder_card = SettingCard(FIF.INFO, "语言设置（预留）", "", self._lang_card)
-        self._lang_placeholder = lang_placeholder_card.titleLabel
-        self._lang_placeholder.setStyleSheet(placeholder_text_style_sheet(font_size=12, italic=True))
-        self._lang_card.addSettingCard(lang_placeholder_card)
+        self._builtin_extension_card = CardWidget(content)
+        builtin_layout = QVBoxLayout(self._builtin_extension_card)
+        self._apply_card_layout_metrics(builtin_layout)
+        builtin_title = BodyLabel("内置扩展", self._builtin_extension_card)
+        builtin_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        builtin_layout.addWidget(builtin_title)
+        self._builtin_section_hint = BodyLabel("管理内置扩展的总开关和逐项启用状态。", self._builtin_extension_card)
+        self._builtin_section_hint.setWordWrap(True)
+        self._builtin_section_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._extension_hint = self._builtin_section_hint
+        builtin_layout.addWidget(self._builtin_section_hint)
+        self._builtin_extensions_enabled_checkbox = SwitchSettingCard(
+            FIF.DOWNLOAD,
+            "启用内置扩展",
+            "关闭后保留内置扩展配置，但不参与加载。",
+            parent=self._builtin_extension_card,
+        )
+        self._builtin_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
+        self._builtin_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._builtin_extensions_enabled_checkbox.checkedChanged.connect(self._on_builtin_extensions_enabled_changed)
+        builtin_layout.addWidget(self._builtin_extensions_enabled_checkbox)
+        self._extension_tabs = self._build_extension_category_tabs(
+            self._builtin_extension_card,
+            empty_hints=self._extension_empty_hints,
+            option_layouts=self._extension_option_layouts,
+        )
+        builtin_layout.addWidget(self._extension_tabs, 1)
+        layout.addWidget(self._builtin_extension_card)
 
-        layout.addWidget(self._lang_card)
-        self._lang_card.hide()  # 暂不实现语言设置
+        self._external_extension_card = CardWidget(content)
+        external_layout = QVBoxLayout(self._external_extension_card)
+        self._apply_card_layout_metrics(external_layout)
+        external_title = BodyLabel("外部扩展", self._external_extension_card)
+        external_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        external_layout.addWidget(external_title)
+        self._external_section_hint = BodyLabel("单独管理外部扩展目录、扫描结果和逐项启用状态。", self._external_extension_card)
+        self._external_section_hint.setWordWrap(True)
+        self._external_section_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        external_layout.addWidget(self._external_section_hint)
+        self._external_extensions_enabled_checkbox = SwitchSettingCard(
+            FIF.FOLDER,
+            "启用外部扩展",
+            "关闭后保留目录配置，但不加载外部扩展。",
+            parent=self._external_extension_card,
+        )
+        self._external_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
+        self._external_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._external_extensions_enabled_checkbox.checkedChanged.connect(self._on_external_extensions_enabled_changed)
+        external_layout.addWidget(self._external_extensions_enabled_checkbox)
+        self._external_extensions_dirs_card = _MutableFolderListSettingCard(
+            "外部扩展目录",
+            "可添加多个文件夹；保存后会统一扫描并重载。",
+            [],
+            directory="~/.config/aline/extensions",
+            parent=self._external_extension_card,
+        )
+        external_layout.addWidget(self._external_extensions_dirs_card)
+
+        refresh_row = QWidget(self._external_extension_card)
+        refresh_layout = QHBoxLayout(refresh_row)
+        refresh_layout.setContentsMargins(0, 0, 0, 0)
+        refresh_layout.setSpacing(8)
+        self._refresh_external_extensions_btn = PushButton("刷新外部扩展扫描", refresh_row)
+        self._refresh_external_extensions_btn.clicked.connect(self._refresh_external_extension_specs)
+        refresh_layout.addWidget(self._refresh_external_extensions_btn)
+        refresh_layout.addStretch(1)
+        external_layout.addWidget(refresh_row)
+        self._external_extension_tabs = self._build_extension_category_tabs(
+            self._external_extension_card,
+            empty_hints=self._external_extension_empty_hints,
+            option_layouts=self._external_extension_option_layouts,
+        )
+        external_layout.addWidget(self._external_extension_tabs, 1)
+        layout.addWidget(self._external_extension_card)
 
         layout.addStretch()
         return outer
@@ -970,7 +979,7 @@ class SettingsPage(QWidget):
                 self._register_extension_checkbox("external", spec_id, checkbox)
                 layout.addWidget(checkbox)
 
-    def _on_builtin_extensions_enabled_changed(self) -> None:
+    def _on_builtin_extensions_enabled_changed(self, *_args) -> None:
         enabled = bool(
             self._builtin_extensions_enabled_checkbox is not None
             and self._builtin_extensions_enabled_checkbox.isChecked()
@@ -979,7 +988,7 @@ class SettingsPage(QWidget):
             for checkbox in checkboxes:
                 checkbox.setEnabled(enabled)
 
-    def _on_external_extensions_enabled_changed(self) -> None:
+    def _on_external_extensions_enabled_changed(self, *_args) -> None:
         enabled = bool(
             self._external_extensions_enabled_checkbox is not None
             and self._external_extensions_enabled_checkbox.isChecked()

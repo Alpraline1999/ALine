@@ -1626,16 +1626,17 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_settings_scroll_content_uses_workbench_like_margins(self):
         general_layout = self.page._tabs.widget(0).widget().layout()
-        shortcuts_layout = self.page._tabs.widget(1).widget().layout()
+        extensions_layout = self.page._tabs.widget(1).widget().layout()
+        shortcuts_layout = self.page._tabs.widget(2).widget().layout()
 
-        for layout in (general_layout, shortcuts_layout):
+        for layout in (general_layout, extensions_layout, shortcuts_layout):
             margins = layout.contentsMargins()
             self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), (14, 12, 14, 12))
 
     def test_shortcut_edit_shows_focus_border_when_selected(self):
         from ui.theme import accent_color
 
-        self.page._tabs.setCurrentIndex(1)
+        self.page._tabs.setCurrentIndex(2)
         self.page.show()
         QApplication.processEvents()
         first_edit = next(iter(self.page._shortcut_edits.values()))
@@ -1666,13 +1667,16 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._extension_hint.styleSheet(), placeholder_text_style_sheet(font_size=11))
 
     def test_settings_page_uses_setting_card_containers(self):
-        from qfluentwidgets import ExpandGroupSettingCard, FolderListSettingCard, SettingCardGroup, SwitchSettingCard
+        from qfluentwidgets import CardWidget, FolderListSettingCard, SettingCardGroup, SwitchSettingCard
 
         self.assertIsInstance(self.page._appearance_card, SettingCardGroup)
-        self.assertIsInstance(self.page._builtin_extension_card, ExpandGroupSettingCard)
-        self.assertIsInstance(self.page._external_extension_card, ExpandGroupSettingCard)
+        self.assertIsInstance(self.page._extension_card, SettingCardGroup)
+        self.assertIsInstance(self.page._builtin_extension_card, CardWidget)
+        self.assertIsInstance(self.page._external_extension_card, CardWidget)
         self.assertIsInstance(self.page._shortcuts_card, SettingCardGroup)
         self.assertIsInstance(self.page._page_tree_focus_mode_card, SwitchSettingCard)
+        self.assertIsInstance(self.page._builtin_extensions_enabled_checkbox, SwitchSettingCard)
+        self.assertIsInstance(self.page._external_extensions_enabled_checkbox, SwitchSettingCard)
         self.assertIsInstance(self.page._external_extensions_dirs_card, FolderListSettingCard)
 
     def test_shortcut_filter_field_is_nested_in_mapping_card(self):
@@ -1724,7 +1728,7 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_ai_tab_is_hidden_from_settings_ui(self):
         titles = [self.page._tabs.tabText(i) for i in range(self.page._tabs.count())]
-        self.assertEqual(titles, ["常规", "快捷键"])
+        self.assertEqual(titles, ["常规", "扩展", "快捷键"])
 
     def test_settings_tabs_and_extension_sections_use_fluent_navigation_widgets(self):
         from pathlib import Path
@@ -1770,6 +1774,7 @@ class TestSettingsPage(unittest.TestCase):
                 temp_page = SettingsPage()
 
             self.assertIsInstance(temp_page._tabs.navigationWidget, Pivot)
+            self.assertEqual(temp_page._tabs.tabText(1), "扩展")
             self.assertIsInstance(temp_page._extension_tabs.navigationWidget, SegmentedWidget)
             self.assertIsInstance(temp_page._external_extension_tabs.navigationWidget, SegmentedWidget)
             self.assertEqual(temp_page._extension_tabs.tabText(0), "绘图扩展")
@@ -1786,7 +1791,7 @@ class TestSettingsPage(unittest.TestCase):
         from qfluentwidgets import SmoothScrollArea
         from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_MAX_HEIGHT
 
-        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 20250)
+        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 60750)
         self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
 
@@ -1820,7 +1825,8 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._extension_status_summary_btn.text(), "当前扩展状态：3 项可用（内置 2 / 外部 1），1 项失败")
         self.assertTrue(self.page._extension_status_summary_btn.isEnabled())
         self.assertIn(warning_color(), self.page._extension_status_summary_btn.styleSheet())
-        self.assertLess(self.page._extension_status_card.y(), self.page._builtin_extension_card.y())
+        extensions_layout = self.page._tabs.widget(1).widget().layout()
+        self.assertLess(extensions_layout.indexOf(self.page._extension_card), extensions_layout.indexOf(self.page._builtin_extension_card))
 
     def test_save_ai_config_no_crash(self):
         self.page._ai_url_edit.setText("https://api.openai.com/v1")
@@ -7287,6 +7293,7 @@ class TestAnalysisPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
 
+        self.assertFalse(self.page._export_result_btn.isHidden())
         self.assertTrue(self.page._export_result_btn.isEnabled())
 
         with mock.patch(
@@ -7313,6 +7320,7 @@ class TestAnalysisPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", target.id)
         self.page._run_analysis()
 
+        self.assertFalse(self.page._export_result_btn.isHidden())
         self.assertTrue(self.page._export_result_btn.isEnabled())
 
         with mock.patch(
@@ -7327,6 +7335,14 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(exported_series.name, "峰值点A")
         self.assertEqual(exported_series.x, [1.0])
         self.assertEqual(exported_series.y, [2.0])
+
+    def test_statistics_result_hides_export_curve_button_without_lines(self):
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("statistics"))
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+
+        self.assertTrue(self.page._export_result_btn.isHidden())
+        self.assertFalse(self.page._export_result_btn.isEnabled())
 
     def test_export_result_series_uses_current_tab_result(self):
         from models.schemas import DataSeries
@@ -9889,6 +9905,7 @@ class TestAnalysisPageV3(unittest.TestCase):
 
     def test_analysis_result_actions_include_curve_export_button(self):
         self.assertIsNotNone(self.page._export_result_btn)
+        self.assertTrue(self.page._export_result_btn.isHidden())
         self.assertFalse(self.page._export_result_btn.isEnabled())
 
     def test_analysis_selected_input_reorder_preserves_current_indicator(self):

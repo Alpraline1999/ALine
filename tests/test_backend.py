@@ -1217,6 +1217,20 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertIn("波谷点", names)
         self.assertEqual(result["_plot_series"][0]["line"], "波峰点")
 
+    def test_error_compare_extension_handler_returns_structured_line(self):
+        from extensions.analysis.error_compare import _handler
+
+        result = _handler(
+            [
+                [[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]],
+                [[0.0, 0.5], [1.0, 2.5], [2.0, 3.0]],
+            ],
+            {},
+        )
+
+        self.assertEqual(result["lines"][0]["line_name"], "误差曲线")
+        self.assertEqual(result["_plot_series"][0]["line"], "误差曲线")
+
     def test_compute_statistics(self):
         from core.analysis_engine import compute_statistics
         xs = [1.0, 2.0, 3.0, 4.0, 5.0]

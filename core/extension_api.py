@@ -1335,33 +1335,33 @@ def _normalize_analysis_result_lines(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _normalize_analysis_plot_series(payload: Dict[str, Any], line_lookup: Dict[str, Any]) -> None:
-    raw_plot_series = payload.get("plot_series", payload.get("_plot_series"))
+    raw_plot_series = payload.get("_plot_series", payload.get("plot_series"))
     if raw_plot_series is None:
         return
     if not isinstance(raw_plot_series, (list, tuple)):
-        raise ValueError("分析扩展结果中的 plot_series 必须是列表")
+        raise ValueError("分析扩展结果中的 _plot_series 必须是列表")
 
     normalized_plot_series: List[Dict[str, Any]] = []
     for index, item in enumerate(raw_plot_series, start=1):
         if not isinstance(item, dict):
-            raise ValueError("分析扩展结果中的 plot_series 必须是字典列表")
+            raise ValueError("分析扩展结果中的 _plot_series 必须是字典列表")
         if "x" in item or "y" in item:
-            raise ValueError("分析扩展结果曲线已改为 line 协议，请使用顶层 lines 和 plot_series[].line")
+            raise ValueError("分析扩展结果曲线已改为 line 协议，请使用顶层 lines 和 _plot_series[].line")
         line_value = item.get("line")
         if line_value in (None, ""):
-            raise ValueError("分析扩展结果中的 plot_series 每项都必须通过 line 字段指定结果曲线")
+            raise ValueError("分析扩展结果中的 _plot_series 每项都必须通过 line 字段指定结果曲线")
         normalized_item = dict(item)
         if isinstance(line_value, str):
             if line_value not in line_lookup:
-                raise ValueError(f"plot_series 引用了未知结果曲线: {line_value}")
+                raise ValueError(f"_plot_series 引用了未知结果曲线: {line_value}")
         else:
             normalized_item["line"] = normalize_line(line_value)
         normalized_plot_series.append(normalized_item)
 
-    if "plot_series" in payload:
-        payload["plot_series"] = [dict(item) for item in normalized_plot_series]
     if "_plot_series" in payload or "plot_series" not in payload:
         payload["_plot_series"] = [dict(item) for item in normalized_plot_series]
+    if "plot_series" in payload:
+        payload["plot_series"] = [dict(item) for item in normalized_plot_series]
 
 
 def invoke_analysis_extension_handler(
