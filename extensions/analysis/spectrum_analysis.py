@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_xy, primary_line
+from processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
 def _as_float(value, default):
@@ -64,6 +64,7 @@ def spectrum_analysis(lines, params):
     dominant_frequency = float(freqs[dominant_index]) if freqs.size else 0.0
     dominant_amplitude = float(amplitudes[dominant_index]) if amplitudes.size else 0.0
     line_color = str(params.get("line_color", "#0078D4"))
+    spectrum_line = line_from_xy(freqs.tolist(), amplitudes.tolist())
 
     return {
         "analysis_type": "spectrum_analysis",
@@ -76,11 +77,16 @@ def spectrum_analysis(lines, params):
         "x_label": "频率 (Hz)",
         "y_label": "幅值",
         "plot_title": "当前数据 频谱",
+        "lines": [
+            {
+                "line_name": "频谱",
+                "line": spectrum_line,
+            }
+        ],
         "_plot_series": [
             {
                 "name": "频谱",
-                "x": freqs.tolist(),
-                "y": amplitudes.tolist(),
+                "line": "频谱",
                 "color": line_color,
             }
         ],

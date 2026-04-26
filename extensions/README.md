@@ -197,6 +197,7 @@ def handler(lines, params):
 def handler(lines, params):
     line = primary_line(lines)
     xs, ys = line_xy(line)
+    result_line = line_from_xy(xs[:5], ys[:5])
     return {
         "analysis_type": "demo_analysis",
         "point_count": len(xs),
@@ -208,6 +209,12 @@ def handler(lines, params):
                 "rows": list(zip(xs[:5], ys[:5])),
             }
         ],
+        "lines": [
+            {"line_name": "前几个点", "line": result_line},
+        ],
+        "_plot_series": [
+            {"name": "前几个点", "line": "前几个点", "color": "#0078D4"},
+        ],
     }
 ```
 
@@ -217,7 +224,14 @@ def handler(lines, params):
 - `summary_items`：摘要区，格式为 `[('项目', 值), ...]`。
 - `tables`：表格区，格式为 `title / headers / rows`。
 - `texts`：文本区。
-- `_plot_series`：分析页可绘制结果曲线，每项包含 `x` 和 `y`。
+- `lines`：分析结果携带的命名曲线，格式为 `[{"line_name": "名称", "line": line}]`。
+- `_plot_series`：分析页可绘制结果曲线，每项通过 `line` 字段引用 `lines` 中的 `line_name`，不再直接返回 `x` / `y`。
+
+规则：
+
+- 分析扩展如需返回结果曲线，必须先构造合法 point-list `line`。
+- `_plot_series[].line` 必须引用顶层 `lines` 中已声明的 `line_name`。
+- 不再使用 `_plot_series[].x / y` 传递结果曲线。
 
 分析扩展可以声明 `report_placeholders`：
 

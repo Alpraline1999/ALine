@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor, QDoubleValidator, QIntValidator
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -15,6 +15,7 @@ from qfluentwidgets import (
     CheckBox,
     ColorPickerButton,
     ComboBox,
+    DoubleSpinBox,
     FluentIcon as FIF,
     InfoBar,
     InfoBarPosition,
@@ -24,6 +25,7 @@ from qfluentwidgets import (
     PushButton,
     Slider,
     SmoothScrollArea,
+    SpinBox,
     SubtitleLabel,
     ToolButton,
     ToolTip,
@@ -1199,30 +1201,34 @@ class ExtensionOptionsForm(QWidget):
 
     def _create_integer_binding(self, field: Dict[str, Any]) -> _FieldBinding:
         container, _layout, field_row = self._make_field_card(field, min_width=144, min_control_width=60)
-        edit = LineEdit(container)
-        edit.setClearButtonEnabled(True)
+        edit = SpinBox(container)
         self._set_expanding_control(edit, 60)
         placeholder = str(field.get("placeholder") or "").strip()
-        if placeholder:
-            edit.setPlaceholderText(placeholder)
         min_value = int(field.get("min_value", -999999999) or -999999999)
         max_value = int(field.get("max_value", 999999999) or 999999999)
-        edit.setValidator(QIntValidator(min_value, max_value, edit))
+        allow_empty = field.get("default") in (None, "")
+        sentinel = min_value - 1 if allow_empty and min_value > -2147483647 else min_value
+        edit.setRange(sentinel, max_value)
+        edit.setSingleStep(max(1, int(field.get("step", 1) or 1)))
+        if allow_empty and sentinel < min_value:
+            edit.setSpecialValueText("")
+        if placeholder and hasattr(edit, "lineEdit"):
+            line_edit = edit.lineEdit()
+            if line_edit is not None and hasattr(line_edit, "setPlaceholderText"):
+                line_edit.setPlaceholderText(placeholder)
         field_row.addWidget(edit, 1)
-        edit.editingFinished.connect(lambda: self._emit_change(committed=True))
+        edit.valueChanged.connect(lambda _value: self._emit_change(committed=True))
 
         def _get() -> Any:
-            text = edit.text().strip()
-            if not text:
+            if allow_empty and sentinel < min_value and edit.value() == sentinel:
                 return None
-            try:
-                return int(text)
-            except ValueError:
-                default = field.get("default")
-                return None if default in (None, "") else int(default)
+            return int(edit.value())
 
         def _set(value: Any) -> None:
-            edit.setText("" if value in (None, "") else str(int(value)))
+            if value in (None, "") and allow_empty and sentinel < min_value:
+                edit.setValue(sentinel)
+                return
+            edit.setValue(int(str(value)))
 
         return _FieldBinding(
             key=str(field.get("key")),
@@ -1233,37 +1239,37 @@ class ExtensionOptionsForm(QWidget):
 
     def _create_number_binding(self, field: Dict[str, Any]) -> _FieldBinding:
         container, _layout, field_row = self._make_field_card(field, min_width=144, min_control_width=60)
-        edit = LineEdit(container)
-        edit.setClearButtonEnabled(True)
+        edit = DoubleSpinBox(container)
         self._set_expanding_control(edit, 60)
         placeholder = str(field.get("placeholder") or "").strip()
-        if placeholder:
-            edit.setPlaceholderText(placeholder)
         min_value = float(field.get("min_value", -999999999.0) or -999999999.0)
         max_value = float(field.get("max_value", 999999999.0) or 999999999.0)
-        validator = QDoubleValidator(min_value, max_value, 12, edit)
-        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
-        edit.setValidator(validator)
+        decimals = max(0, min(12, int(field.get("decimals", 12) or 12)))
+        step = float(field.get("step", 0.1) or 0.1)
+        allow_empty = field.get("default") in (None, "")
+        sentinel = min_value - max(abs(step), 1.0) if allow_empty else min_value
+        edit.setDecimals(decimals)
+        edit.setRange(sentinel, max_value)
+        edit.setSingleStep(abs(step) if step else 0.1)
+        if allow_empty:
+            edit.setSpecialValueText("")
+        if placeholder and hasattr(edit, "lineEdit"):
+            line_edit = edit.lineEdit()
+            if line_edit is not None and hasattr(line_edit, "setPlaceholderText"):
+                line_edit.setPlaceholderText(placeholder)
         field_row.addWidget(edit, 1)
-        edit.editingFinished.connect(lambda: self._emit_change(committed=True))
+        edit.valueChanged.connect(lambda _value: self._emit_change(committed=True))
 
         def _get() -> Any:
-            text = edit.text().strip()
-            if not text:
+            if allow_empty and edit.value() == sentinel:
                 return None
-            try:
-                return float(text)
-            except ValueError:
-                default = field.get("default")
-                return None if default in (None, "") else float(default)
+            return float(edit.value())
 
         def _set(value: Any) -> None:
-            if value in (None, ""):
-                edit.clear()
+            if value in (None, "") and allow_empty:
+                edit.setValue(sentinel)
                 return
-            numeric = float(value)
-            text = f"{numeric:.12f}".rstrip("0").rstrip(".")
-            edit.setText(text or "0")
+            edit.setValue(float(str(value)))
 
         return _FieldBinding(
             key=str(field.get("key")),

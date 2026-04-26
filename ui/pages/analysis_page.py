@@ -62,6 +62,7 @@ from core.extension_api import (
 )
 from core.global_assets import global_assets
 from core.project_manager import project_manager
+from processing.extension_tools import line_xy, normalize_line
 
 try:
     import matplotlib
@@ -876,7 +877,7 @@ class AnalysisPage(QWidget):
         return sections
 
     def _normalize_analysis_output(self, t: str, selected: list, r: dict) -> Dict[str, Any]:
-        # 允许分析扩展输出四类结构化内容：summary_items、plot_series、table_sections、text_sections。
+        # 允许分析扩展输出四类结构化内容：summary_items、lines + plot_series、table_sections、text_sections。
         plot = {
             "series": [],
             "x_label": str(r.get("x_label") or "").strip() or None,
@@ -1004,16 +1005,22 @@ class AnalysisPage(QWidget):
             normalized["summary_items"] = self._summary_rows(t, r)
             return normalized
 
+        result_lines = self._analysis_result_lines(r)
+        line_lookup = {item["line_name"]: item["line"] for item in result_lines}
         custom_series = list(r.get("plot_series", []) or r.get("_plot_series", []) or [])
         for index, series in enumerate(custom_series):
             if not isinstance(series, dict):
                 continue
+            resolved_line = self._resolve_analysis_series_line(series, line_lookup)
+            if resolved_line is None:
+                continue
+            xs, ys = line_xy(resolved_line)
             plot["series"].append(
                 {
                     "kind": str(series.get("kind") or series.get("mode") or "line"),
-                    "x": list(series.get("x", []) or []),
-                    "y": list(series.get("y", []) or []),
-                    "label": str(series.get("name") or f"结果曲线 {index + 1}"),
+                    "x": xs,
+                    "y": ys,
+                    "label": str(series.get("name") or series.get("line") or f"结果曲线 {index + 1}"),
                     "color": str(series.get("color") or "#0078D4"),
                     "line_width": float(series.get("line_width", 1.6)),
                     "line_style": str(series.get("line_style") or "-"),
@@ -1025,6 +1032,7 @@ class AnalysisPage(QWidget):
 
         structured_keys = {
             "summary_items",
+            "lines",
             "plot_series",
             "_plot_series",
             "tables",
@@ -1046,6 +1054,34 @@ class AnalysisPage(QWidget):
         if normalized["tables"] or normalized["texts"]:
             normalized["preferred_summary_widget"] = "details"
         return normalized
+
+    @staticmethod
+    def _analysis_result_lines(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for index, item in enumerate(list(result.get("lines") or []), start=1):
+            if not isinstance(item, dict):
+                continue
+            line_name = str(item.get("line_name") or item.get("name") or f"结果曲线 {index}").strip()
+            if not line_name:
+                continue
+            try:
+                line_value = normalize_line(item.get("line"))
+            except ValueError:
+                continue
+            items.append({"line_name": line_name, "line": line_value})
+        return items
+
+    @staticmethod
+    def _resolve_analysis_series_line(series: Dict[str, Any], line_lookup: Dict[str, Any]) -> Any:
+        line_value = series.get("line")
+        if isinstance(line_value, str):
+            return line_lookup.get(line_value)
+        if line_value in (None, ""):
+            return None
+        try:
+            return normalize_line(line_value)
+        except ValueError:
+            return None
 
     def _populate_detail_summary_view(self, view: Dict[str, Any], normalized: Dict[str, Any]) -> None:
         details_layout = view.get("details_layout")
@@ -2351,18 +2387,28 @@ class AnalysisPage(QWidget):
         if not result:
             return None
         analysis_type = result.get("analysis_type", "analysis")
+        result_lines = self._analysis_result_lines(result)
+        line_lookup = {item["line_name"]: item["line"] for item in result_lines}
         custom_series = list(result.get("_plot_series", []) or [])
         if custom_series:
             first_series = dict(custom_series[0])
-            xs = list(first_series.get("x", []) or [])
-            ys = list(first_series.get("y", []) or [])
-            if xs and ys and len(xs) == len(ys):
+            resolved_line = self._resolve_analysis_series_line(first_series, line_lookup)
+            if resolved_line is not None:
+                xs, ys = line_xy(resolved_line)
                 return DataSeries(
                     name=export_name,
                     x=xs,
                     y=ys,
                     source="computed",
                 )
+        if result_lines:
+            xs, ys = line_xy(result_lines[0]["line"])
+            return DataSeries(
+                name=export_name,
+                x=xs,
+                y=ys,
+                source="computed",
+            )
         if analysis_type == "curve_fit" and "fit_x" in result and "fit_y" in result:
             return DataSeries(
                 name=export_name,

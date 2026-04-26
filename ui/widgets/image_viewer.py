@@ -1086,11 +1086,13 @@ class ImageViewer(QWidget):
             painter.setBrush(QBrush(QColor("#20F44336")))
             r = self._eraser_size
             painter.drawEllipse(self._mouse_image_pos, r, r)
-        elif self._current_tool == self.MODE_BRUSH_MASK and self._brush_painting:
-            pen = QPen(QColor("#FF9800"))
+        elif self._current_tool == self.MODE_BRUSH_MASK:
+            stroke_color = QColor("#FF9800") if self._mask.include_mode else QColor("#2196F3")
+            fill_color = QColor("#30FF9800") if self._mask.include_mode else QColor("#302196F3")
+            pen = QPen(stroke_color)
             pen.setWidthF(2.0 / self._scale)
             painter.setPen(pen)
-            painter.setBrush(QBrush(QColor("#30FF9800")))
+            painter.setBrush(QBrush(fill_color))
             r = self._mask_brush_size
             painter.drawEllipse(self._mouse_image_pos, r, r)
 

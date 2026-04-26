@@ -1663,6 +1663,13 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._theme_label.styleSheet(), body_text_style_sheet())
         self.assertEqual(self.page._extension_hint.styleSheet(), placeholder_text_style_sheet(font_size=11))
 
+    def test_settings_page_uses_setting_card_containers(self):
+        from qfluentwidgets import ExpandGroupSettingCard, SettingCardGroup
+
+        self.assertIsInstance(self.page._appearance_card, SettingCardGroup)
+        self.assertIsInstance(self.page._extension_card, ExpandGroupSettingCard)
+        self.assertIsInstance(self.page._shortcuts_card, SettingCardGroup)
+
     def test_settings_title_label_is_removed(self):
         self.assertIsNone(self.page._title_label)
 
@@ -2900,7 +2907,7 @@ class TestExtensionOptionsForm(unittest.TestCase):
 
     def test_fields_use_inline_row_layout_and_compact_spacing(self):
         from PySide6.QtWidgets import QWidget
-        from qfluentwidgets import LineEdit
+        from qfluentwidgets import DoubleSpinBox
         from ui.widgets.extension_options_form import ExtensionOptionsForm
 
         form = ExtensionOptionsForm()
@@ -2917,7 +2924,7 @@ class TestExtensionOptionsForm(unittest.TestCase):
             container_widget = form._flow.itemAt(0).widget()
             container_layout = container_widget.layout() if container_widget is not None else None
             row_widget = container_layout.itemAt(0).widget() if container_layout is not None else None
-            editors = form.findChildren(LineEdit)
+            editors = form.findChildren(DoubleSpinBox)
 
             self.assertIsInstance(row_widget, QWidget)
             self.assertEqual(row_widget.objectName(), "adaptiveFieldRow")
@@ -2925,6 +2932,36 @@ class TestExtensionOptionsForm(unittest.TestCase):
             self.assertTrue(editors)
             row_widget.resize(280, row_widget.height() or 40)
             self.assertFalse(bool(row_widget.property("wrapped")))
+        finally:
+            form.deleteLater()
+
+    def test_integer_and_number_fields_use_spin_widgets(self):
+        from qfluentwidgets import DoubleSpinBox, SpinBox
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        form = ExtensionOptionsForm()
+        try:
+            form.set_fields(
+                [
+                    {"key": "count", "label": "计数", "field_type": "integer", "default": 3, "min_value": 0, "max_value": 10},
+                    {"key": "factor", "label": "倍率", "field_type": "number", "default": 1.25, "min_value": 0.0, "max_value": 10.0},
+                ],
+                {"count": 3, "factor": 1.25},
+            )
+
+            int_widget = form.findChild(SpinBox)
+            float_widget = form.findChild(DoubleSpinBox)
+
+            self.assertIsNotNone(int_widget)
+            self.assertIsNotNone(float_widget)
+            self.assertEqual(int_widget.value(), 3)
+            self.assertAlmostEqual(float_widget.value(), 1.25)
+
+            int_widget.setValue(5)
+            float_widget.setValue(2.5)
+
+            self.assertEqual(form.current_options()["count"], 5)
+            self.assertAlmostEqual(form.current_options()["factor"], 2.5)
         finally:
             form.deleteLater()
 
@@ -7607,6 +7644,7 @@ class TestAnalysisPage(unittest.TestCase):
 
     def test_analysis_extension_can_render_custom_plot_series_and_custom_placeholders(self):
         from core.extension_api import AnalysisExtension, extension_registry
+        from processing.extension_tools import line_from_xy
 
         if self.page._figure is None:
             self.skipTest("matplotlib unavailable")
@@ -7619,8 +7657,11 @@ class TestAnalysisPage(unittest.TestCase):
                 "x_label": "频率 (Hz)",
                 "y_label": "幅值",
                 "plot_title": "自定义频谱",
+                "lines": [
+                    {"line_name": "频谱结果", "line": line_from_xy([0.0, 1.0, 2.0], [0.2, 3.4, 1.1])}
+                ],
                 "_plot_series": [
-                    {"name": "频谱", "x": [0.0, 1.0, 2.0], "y": [0.2, 3.4, 1.1], "color": "#0078D4"}
+                    {"name": "频谱", "line": "频谱结果", "color": "#0078D4"}
                 ],
             }
 
@@ -7666,6 +7707,7 @@ class TestAnalysisPage(unittest.TestCase):
 
     def test_analysis_extension_structured_output_uses_detail_view(self):
         from core.extension_api import AnalysisExtension, extension_registry
+        from processing.extension_tools import line_from_xy
 
         if self.page._figure is None:
             self.skipTest("matplotlib unavailable")
@@ -7674,8 +7716,11 @@ class TestAnalysisPage(unittest.TestCase):
             return {
                 "analysis_type": "ui_structured_output",
                 "summary_items": [{"label": "主指标", "value": 3.14}],
+                "lines": [
+                    {"line_name": "结构化曲线", "line": line_from_xy([0.0, 1.0, 2.0], [1.0, 1.5, 2.5])}
+                ],
                 "plot_series": [
-                    {"name": "结构化曲线", "x": [0.0, 1.0, 2.0], "y": [1.0, 1.5, 2.5], "plot_type": "line", "color": "#0078D4"}
+                    {"name": "结构化曲线", "line": "结构化曲线", "plot_type": "line", "color": "#0078D4"}
                 ],
                 "table_sections": [
                     {"title": "结果明细", "headers": ["项", "值"], "rows": [["A", 1], ["B", 2]]}
@@ -8084,6 +8129,21 @@ class TestDigitizePage(unittest.TestCase):
         viewer._current_tool = viewer.MODE_ERASER
         viewer._mouse_image_pos = QPointF(10.0, 12.0)
         viewer._eraser_pressed = False
+        viewer._scale = 1.0
+
+        painter = mock.Mock()
+
+        viewer._draw_eraser_cursor(painter)
+
+        painter.drawEllipse.assert_called_once()
+
+    def test_brush_mask_cursor_draws_without_press(self):
+        from PySide6.QtCore import QPointF
+
+        viewer = self.page._image_viewer
+        viewer._current_tool = viewer.MODE_BRUSH_MASK
+        viewer._mouse_image_pos = QPointF(10.0, 12.0)
+        viewer._brush_painting = False
         viewer._scale = 1.0
 
         painter = mock.Mock()

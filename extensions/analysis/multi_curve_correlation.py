@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_xy, normalize_lines
+from processing.extension_tools import line_from_xy, line_xy, normalize_lines
 
 
 def _pearson(values_a, values_b):
@@ -63,6 +63,10 @@ def multi_curve_correlation(lines, params):
     average_correlation = sum(item["correlation"] for item in comparison_items) / len(comparison_items)
     line_color = str(params.get("line_color", "#C23B22") or "#C23B22")
     primary_name = "line_1"
+    correlation_line = line_from_xy(
+        list(range(1, len(comparison_items) + 1)),
+        [item["correlation"] for item in comparison_items],
+    )
 
     return {
         "analysis_type": "multi_curve_correlation",
@@ -78,11 +82,16 @@ def multi_curve_correlation(lines, params):
         "x_label": "对比序号",
         "y_label": "相关系数",
         "plot_title": f"{primary_name} 多曲线相关性",
+        "lines": [
+            {
+                "line_name": "相关系数",
+                "line": correlation_line,
+            }
+        ],
         "_plot_series": [
             {
                 "name": "相关系数",
-                "x": list(range(1, len(comparison_items) + 1)),
-                "y": [item["correlation"] for item in comparison_items],
+                "line": "相关系数",
                 "color": line_color,
             }
         ],

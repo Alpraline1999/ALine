@@ -15,6 +15,7 @@ def analysis_interface_contract(lines, params):
     method = str(params.get("method", "summary") or "summary")
 
     rows = []
+    result_lines = []
     plot_series = []
     total_points = 0
     for index, line in enumerate(normalized, start=1):
@@ -25,7 +26,9 @@ def analysis_interface_contract(lines, params):
         y_mean = sum(ys) / len(ys) if ys else 0.0
         rows.append([index, len(xs), round(y_min, precision), round(y_max, precision), round(y_mean, precision)])
         if include_plot:
-            plot_series.append({"name": f"line_{index}", "x": xs, "y": ys})
+            line_name = f"line_{index}"
+            result_lines.append({"line_name": line_name, "line": line})
+            plot_series.append({"name": line_name, "line": line_name})
 
     result = {
         "analysis_type": "interface_contract_analysis",
@@ -48,6 +51,7 @@ def analysis_interface_contract(lines, params):
         "texts": ["该扩展示例展示分析扩展的 dict 输出结构。"],
     }
     if include_plot:
+        result["lines"] = result_lines
         result["_plot_series"] = plot_series
     return result
 

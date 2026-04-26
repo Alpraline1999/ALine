@@ -1943,6 +1943,9 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(analysis_result["analysis_type"], "interface_contract_analysis")
         self.assertEqual(analysis_result["line_count"], 1)
         self.assertIn("tables", analysis_result)
+        self.assertEqual(analysis_result["lines"][0]["line_name"], "line_1")
+        self.assertEqual(line_xy(analysis_result["lines"][0]["line"]), ([0.0, 1.0], [2.0, 4.0]))
+        self.assertEqual(analysis_result["_plot_series"][0]["line"], "line_1")
 
         import matplotlib.pyplot as plt
 
@@ -1967,6 +1970,24 @@ class TestAnalysisEngine(unittest.TestCase):
 
         digitized_line = invoke_digitize_extension_handler(digitize.handler, "demo.png", {"point_count": 2, "spacing": 5})
         self.assertEqual(line_xy(digitized_line), ([10.0, 15.0], [10.0, 15.0]))
+
+    def test_analysis_extension_plot_series_requires_line_protocol(self):
+        from core.extension_api import invoke_analysis_extension_handler
+
+        def _legacy(_lines, _params):
+            return {
+                "analysis_type": "legacy_analysis",
+                "_plot_series": [
+                    {"name": "旧曲线", "x": [0.0, 1.0], "y": [2.0, 3.0]}
+                ],
+            }
+
+        with self.assertRaisesRegex(ValueError, "line 协议"):
+            invoke_analysis_extension_handler(
+                _legacy,
+                [{"x": [0.0, 1.0], "y": [1.0, 2.0], "name": "demo"}],
+                {},
+            )
 
     def test_build_extension_entry_exposes_normalized_metadata_and_resolved_options(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, build_extension_entry

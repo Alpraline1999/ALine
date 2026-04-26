@@ -6,7 +6,8 @@ from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     BodyLabel, SubtitleLabel, TitleLabel, SmoothScrollArea,
     LineEdit, PrimaryPushButton, InfoBar, InfoBarPosition, PlainTextEdit,
-    CheckBox)
+    CheckBox, SettingCard, SettingCardGroup, ExpandGroupSettingCard,
+    FluentIcon as FIF)
 
 from ui.theme import (
     accent_color,
@@ -179,6 +180,20 @@ class SettingsPage(QWidget):
             f" border: 1px solid {accent_color()}; border-radius: 8px; padding: 4px 8px;"
         )
 
+    @staticmethod
+    def _attach_setting_card_control(card: SettingCard, widget: QWidget, *, alignment: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignRight) -> None:
+        card.hBoxLayout.addWidget(widget, 0, alignment | Qt.AlignmentFlag.AlignVCenter)
+
+    @staticmethod
+    def _build_setting_card_row(parent: QWidget, *widgets: QWidget) -> QWidget:
+        row = QWidget(parent)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        for widget in widgets:
+            layout.addWidget(widget)
+        return row
+
     def _build_extension_category_tabs(
         self,
         parent: QWidget,
@@ -228,184 +243,180 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(*self._tab_content_margins())
         outer.setWidget(content)
 
-        # ── 外观设置 ──
-        self._appearance_card = CardWidget(content)
-        appearance_layout = QVBoxLayout(self._appearance_card)
-        self._apply_card_layout_metrics(appearance_layout)
-
-        self._appearance_title = BodyLabel("外观", self._appearance_card)
+        appearance_group = SettingCardGroup("外观", content)
+        self._appearance_card = appearance_group
+        self._appearance_title = appearance_group.titleLabel
         self._appearance_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        appearance_layout.addWidget(self._appearance_title)
 
-        theme_layout = QVBoxLayout()
-        self._theme_label = BodyLabel("主题", content)
+        theme_card = SettingCard(FIF.BRUSH, "主题", "切换浅色、深色或跟随系统。", appearance_group)
+        self._theme_label = theme_card.titleLabel
         self._theme_label.setStyleSheet(body_text_style_sheet())
-        theme_layout.addWidget(self._theme_label)
-
-        self.theme_combo = ComboBox(content)
+        self.theme_combo = ComboBox(theme_card)
+        self.theme_combo.setMinimumWidth(148)
         self.theme_combo.addItems(["浅色", "深色", "跟随系统"])
         self.theme_combo.setCurrentIndex(2)
         self.theme_combo.currentIndexChanged.connect(self.on_theme_changed)
-        theme_layout.addWidget(self.theme_combo)
+        self._attach_setting_card_control(theme_card, self.theme_combo)
+        appearance_group.addSettingCard(theme_card)
 
-        appearance_layout.addLayout(theme_layout)
-
-        tree_mode_layout = QVBoxLayout()
-        self._tree_display_mode_label = BodyLabel("项目树长名称显示", content)
+        tree_mode_card = SettingCard(FIF.INFO, "项目树长名称显示", "控制项目树长名称使用自动换行还是省略显示。", appearance_group)
+        self._tree_display_mode_label = tree_mode_card.titleLabel
         self._tree_display_mode_label.setStyleSheet(body_text_style_sheet())
-        tree_mode_layout.addWidget(self._tree_display_mode_label)
-
-        self._tree_display_mode_combo = ComboBox(content)
+        self._tree_display_mode_combo = ComboBox(tree_mode_card)
+        self._tree_display_mode_combo.setMinimumWidth(148)
         self._tree_display_mode_combo.addItems(["自动换行", "部分隐藏"])
         current_mode = get_tree_name_display_mode()
         current_index = 1 if current_mode == "elide" else 0
         self._tree_display_mode_combo.setCurrentIndex(current_index)
         self._tree_display_mode_combo.currentIndexChanged.connect(self._on_tree_display_mode_changed)
-        tree_mode_layout.addWidget(self._tree_display_mode_combo)
-        appearance_layout.addLayout(tree_mode_layout)
+        self._attach_setting_card_control(tree_mode_card, self._tree_display_mode_combo)
+        appearance_group.addSettingCard(tree_mode_card)
 
-        tree_focus_layout = QVBoxLayout()
-        self._page_tree_focus_mode_label = BodyLabel("项目树页面专注模式", content)
+        focus_mode_card = SettingCard(
+            FIF.INFO,
+            "项目树页面专注模式",
+            "开启后，功能页中的共享项目树只显示当前页面直接相关的节点。",
+            appearance_group,
+        )
+        self._page_tree_focus_mode_label = focus_mode_card.titleLabel
         self._page_tree_focus_mode_label.setStyleSheet(body_text_style_sheet())
-        tree_focus_layout.addWidget(self._page_tree_focus_mode_label)
-
-        self._page_tree_focus_mode_hint = BodyLabel("开启后，功能页中的共享项目树只显示当前页面直接相关的节点。", content)
-        self._page_tree_focus_mode_hint.setWordWrap(True)
+        self._page_tree_focus_mode_hint = focus_mode_card.contentLabel
         self._page_tree_focus_mode_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        tree_focus_layout.addWidget(self._page_tree_focus_mode_hint)
-
-        self._page_tree_focus_mode_checkbox = CheckBox("仅显示当前功能页相关节点", content)
+        self._page_tree_focus_mode_checkbox = CheckBox("仅显示当前功能页相关节点", focus_mode_card)
         self._page_tree_focus_mode_checkbox.setChecked(is_page_tree_focus_mode_enabled())
         self._page_tree_focus_mode_checkbox.stateChanged.connect(self._on_page_tree_focus_mode_changed)
-        tree_focus_layout.addWidget(self._page_tree_focus_mode_checkbox)
-        appearance_layout.addLayout(tree_focus_layout)
+        self._attach_setting_card_control(focus_mode_card, self._page_tree_focus_mode_checkbox)
+        appearance_group.addSettingCard(focus_mode_card)
 
-        onboarding_layout = QVBoxLayout()
-        self._onboarding_label = BodyLabel("新手引导", content)
-        self._onboarding_label.setStyleSheet(body_text_style_sheet())
-        onboarding_layout.addWidget(self._onboarding_label)
-
-        self._onboarding_hint = BodyLabel("点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数字化页面的 TeachingTip 状态。", content)
-        self._onboarding_hint.setWordWrap(True)
-        self._onboarding_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        onboarding_layout.addWidget(self._onboarding_hint)
-
-        self._replay_onboarding_btn = PushButton("重新显示引导", content)
-        self._replay_onboarding_btn.clicked.connect(self.replay_onboarding_requested.emit)
-        onboarding_layout.addWidget(self._replay_onboarding_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-        appearance_layout.addLayout(onboarding_layout)
-
-        layout.addWidget(self._appearance_card)
-
-        self._extension_card = CardWidget(content)
-        extension_layout = QVBoxLayout(self._extension_card)
-        self._apply_card_layout_metrics(extension_layout)
-
-        self._extension_title = BodyLabel("扩展", self._extension_card)
-        self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        extension_layout.addWidget(self._extension_title)
-
-        self._extension_hint = BodyLabel(
-            "内置扩展和外部扩展分块管理；两类扩展分别按绘图/处理/分析/数字化分段显示，并在保存后一起重载。",
-            self._extension_card,
+        onboarding_card = SettingCard(
+            FIF.HELP,
+            "新手引导",
+            "点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数字化页面的 TeachingTip 状态。",
+            appearance_group,
         )
-        self._extension_hint.setWordWrap(True)
+        self._onboarding_label = onboarding_card.titleLabel
+        self._onboarding_label.setStyleSheet(body_text_style_sheet())
+        self._onboarding_hint = onboarding_card.contentLabel
+        self._onboarding_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._replay_onboarding_btn = PushButton("重新显示引导", onboarding_card)
+        self._replay_onboarding_btn.clicked.connect(self.replay_onboarding_requested.emit)
+        self._attach_setting_card_control(onboarding_card, self._replay_onboarding_btn)
+        appearance_group.addSettingCard(onboarding_card)
+        layout.addWidget(appearance_group)
+
+        extension_group = SettingCardGroup("扩展", content)
+        self._extension_title = extension_group.titleLabel
+        self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._extension_card = ExpandGroupSettingCard(
+            FIF.DOWNLOAD,
+            "扩展管理",
+            "内置扩展和外部扩展分块管理；两类扩展分别按绘图/处理/分析/数字化分段显示，并在保存后一起重载。",
+            extension_group,
+        )
+        self._extension_card.setExpand(True)
+        self._extension_hint = self._extension_card.card.contentLabel
         self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        extension_layout.addWidget(self._extension_hint)
 
-        builtin_section_label = BodyLabel("内置扩展", self._extension_card)
+        builtin_section = QWidget(self._extension_card)
+        builtin_layout = QVBoxLayout(builtin_section)
+        builtin_layout.setContentsMargins(4, 4, 4, 4)
+        builtin_layout.setSpacing(8)
+        builtin_section_label = BodyLabel("内置扩展", builtin_section)
         builtin_section_label.setStyleSheet(body_text_style_sheet())
-        extension_layout.addWidget(builtin_section_label)
-
-        builtin_hint = BodyLabel("管理仓库自带扩展的总开关和逐项启用状态。", self._extension_card)
+        builtin_layout.addWidget(builtin_section_label)
+        builtin_hint = BodyLabel("管理仓库自带扩展的总开关和逐项启用状态。", builtin_section)
         builtin_hint.setWordWrap(True)
         builtin_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        extension_layout.addWidget(builtin_hint)
-
+        builtin_layout.addWidget(builtin_hint)
         builtin_toggle_row = QHBoxLayout()
-        self._builtin_extensions_enabled_checkbox = CheckBox("启用内置扩展", self._extension_card)
+        self._builtin_extensions_enabled_checkbox = CheckBox("启用内置扩展", builtin_section)
         self._builtin_extensions_enabled_checkbox.stateChanged.connect(self._on_builtin_extensions_enabled_changed)
         builtin_toggle_row.addWidget(self._builtin_extensions_enabled_checkbox)
         builtin_toggle_row.addStretch(1)
-        extension_layout.addLayout(builtin_toggle_row)
+        builtin_layout.addLayout(builtin_toggle_row)
 
         self._extension_tabs = self._build_extension_category_tabs(
-            self._extension_card,
+            builtin_section,
             empty_hints=self._extension_empty_hints,
             option_layouts=self._extension_option_layouts,
         )
-        extension_layout.addWidget(self._extension_tabs)
+        builtin_layout.addWidget(self._extension_tabs)
+        self._extension_card.addGroupWidget(builtin_section)
 
-        separator = QFrame(self._extension_card)
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet(f"color: {border_color()};")
-        extension_layout.addWidget(separator)
-
-        external_section_label = BodyLabel("外部扩展", self._extension_card)
+        external_section = QWidget(self._extension_card)
+        external_layout = QVBoxLayout(external_section)
+        external_layout.setContentsMargins(4, 4, 4, 4)
+        external_layout.setSpacing(8)
+        external_section_label = BodyLabel("外部扩展", external_section)
         external_section_label.setStyleSheet(body_text_style_sheet())
-        extension_layout.addWidget(external_section_label)
-
-        external_hint = BodyLabel("单独管理外部扩展目录、扫描结果和逐项启用状态。", self._extension_card)
+        external_layout.addWidget(external_section_label)
+        external_hint = BodyLabel("单独管理外部扩展目录、扫描结果和逐项启用状态。", external_section)
         external_hint.setWordWrap(True)
         external_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        extension_layout.addWidget(external_hint)
-
+        external_layout.addWidget(external_hint)
         external_dir_row = QHBoxLayout()
-        self._external_extensions_dir_label = BodyLabel("外部扩展目录", self._extension_card)
+        self._external_extensions_dir_label = BodyLabel("外部扩展目录", external_section)
         self._external_extensions_dir_label.setStyleSheet(body_text_style_sheet())
         external_dir_row.addWidget(self._external_extensions_dir_label)
-        self._external_extensions_dir_edit = LineEdit(self._extension_card)
+        self._external_extensions_dir_edit = LineEdit(external_section)
         self._external_extensions_dir_edit.setPlaceholderText("~/.config/aline/extensions")
         external_dir_row.addWidget(self._external_extensions_dir_edit, 1)
-        self._browse_external_extensions_dir_btn = PushButton("浏览", self._extension_card)
+        self._browse_external_extensions_dir_btn = PushButton("浏览", external_section)
         self._browse_external_extensions_dir_btn.clicked.connect(self._choose_external_extensions_directory)
         external_dir_row.addWidget(self._browse_external_extensions_dir_btn)
-        extension_layout.addLayout(external_dir_row)
+        external_layout.addLayout(external_dir_row)
 
         source_toggle_row = QHBoxLayout()
-        self._external_extensions_enabled_checkbox = CheckBox("启用外部扩展", self._extension_card)
+        self._external_extensions_enabled_checkbox = CheckBox("启用外部扩展", external_section)
         self._external_extensions_enabled_checkbox.stateChanged.connect(self._on_external_extensions_enabled_changed)
         source_toggle_row.addWidget(self._external_extensions_enabled_checkbox)
 
-        self._refresh_external_extensions_btn = PushButton("刷新外部扩展", self._extension_card)
+        self._refresh_external_extensions_btn = PushButton("刷新外部扩展", external_section)
         self._refresh_external_extensions_btn.clicked.connect(self._refresh_external_extension_specs)
         source_toggle_row.addWidget(self._refresh_external_extensions_btn)
         source_toggle_row.addStretch(1)
-        extension_layout.addLayout(source_toggle_row)
+        external_layout.addLayout(source_toggle_row)
 
         self._external_extension_tabs = self._build_extension_category_tabs(
-            self._extension_card,
+            external_section,
             empty_hints=self._external_extension_empty_hints,
             option_layouts=self._external_extension_option_layouts,
         )
-        extension_layout.addWidget(self._external_extension_tabs)
+        external_layout.addWidget(self._external_extension_tabs)
+        self._extension_card.addGroupWidget(external_section)
 
-        extension_btn_row = QHBoxLayout()
-        self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", self._extension_card)
+        extension_actions = QWidget(self._extension_card)
+        extension_btn_row = QHBoxLayout(extension_actions)
+        extension_btn_row.setContentsMargins(4, 4, 4, 0)
+        extension_btn_row.setSpacing(8)
+        self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", extension_actions)
         self._save_extension_settings_btn.clicked.connect(self._save_extension_settings)
         extension_btn_row.addWidget(self._save_extension_settings_btn)
         extension_btn_row.addStretch()
-        extension_layout.addLayout(extension_btn_row)
+        self._extension_card.addGroupWidget(extension_actions)
 
-        self._extension_status_summary_btn = PushButton("", self._extension_card)
+        extension_status = QWidget(self._extension_card)
+        extension_status_layout = QHBoxLayout(extension_status)
+        extension_status_layout.setContentsMargins(4, 0, 4, 4)
+        extension_status_layout.setSpacing(0)
+        self._extension_status_summary_btn = PushButton("", extension_status)
         self._extension_status_summary_btn.setFlat(True)
         self._extension_status_summary_btn.clicked.connect(self._show_extension_status_details)
-        extension_layout.addWidget(self._extension_status_summary_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        extension_status_layout.addWidget(self._extension_status_summary_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        extension_status_layout.addStretch(1)
+        self._extension_card.addGroupWidget(extension_status)
 
-        layout.addWidget(self._extension_card)
+        extension_group.addSettingCard(self._extension_card)
+        layout.addWidget(extension_group)
 
         # ── 语言设置（预留）──
-        self._lang_card = CardWidget(content)
-        lang_layout = QVBoxLayout(self._lang_card)
-        self._apply_card_layout_metrics(lang_layout)
-
-        self._lang_title = BodyLabel("语言", self._lang_card)
+        self._lang_card = SettingCardGroup("语言", content)
+        self._lang_title = self._lang_card.titleLabel
         self._lang_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        lang_layout.addWidget(self._lang_title)
-
-        self._lang_placeholder = BodyLabel("语言设置（预留）", content)
+        lang_placeholder_card = SettingCard(FIF.INFO, "语言设置（预留）", "", self._lang_card)
+        self._lang_placeholder = lang_placeholder_card.titleLabel
         self._lang_placeholder.setStyleSheet(placeholder_text_style_sheet(font_size=12, italic=True))
-        lang_layout.addWidget(self._lang_placeholder)
+        self._lang_card.addSettingCard(lang_placeholder_card)
 
         layout.addWidget(self._lang_card)
         self._lang_card.hide()  # 暂不实现语言设置
@@ -426,26 +437,20 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(*self._tab_content_margins())
         outer.setWidget(content)
 
-        self._shortcuts_card = CardWidget(content)
-        shortcuts_layout = QVBoxLayout(self._shortcuts_card)
-        self._apply_card_layout_metrics(shortcuts_layout)
-
-        self._shortcuts_title = BodyLabel("快捷键", self._shortcuts_card)
+        self._shortcuts_card = SettingCardGroup("快捷键", content)
+        self._shortcuts_title = self._shortcuts_card.titleLabel
         self._shortcuts_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        shortcuts_layout.addWidget(self._shortcuts_title)
 
-        hint = BodyLabel("所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击“应用快捷键”保存。", self._shortcuts_card)
-        hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        hint.setWordWrap(True)
-        shortcuts_layout.addWidget(hint)
-
-        self._shortcut_filter_edit = LineEdit(self._shortcuts_card)
+        filter_card = SettingCard(FIF.FILTER, "筛选", "按动作名称、分类或关键词筛选快捷键。", self._shortcuts_card)
+        self._shortcut_filter_edit = LineEdit(filter_card)
         self._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如“分析”或“导出”")
         self._shortcut_filter_edit.setClearButtonEnabled(True)
         self._shortcut_filter_edit.setToolTip("按动作名称、分类或关键词筛选快捷键")
         self._shortcut_filter_edit.textChanged.connect(self._filter_shortcut_rows)
         self._apply_shortcut_filter_style()
-        shortcuts_layout.addWidget(self._shortcut_filter_edit)
+        self._shortcut_filter_edit.setMinimumWidth(280)
+        self._attach_setting_card_control(filter_card, self._shortcut_filter_edit)
+        self._shortcuts_card.addSettingCard(filter_card)
 
         sc_content = QWidget(self._shortcuts_card)
         sc_form = QFormLayout(sc_content)
@@ -483,17 +488,28 @@ class SettingsPage(QWidget):
             self._conflict_labels[action] = conflict_lbl
             edit.keySequenceChanged.connect(lambda ks, a=action: self._check_shortcut_conflict(a, ks))
 
-        shortcuts_layout.addWidget(sc_content)
-
-        btn_row = QHBoxLayout()
-        apply_btn = PushButton("应用快捷键", self._shortcuts_card)
+        btn_container = QWidget(self._shortcuts_card)
+        btn_row = QHBoxLayout(btn_container)
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(8)
+        apply_btn = PushButton("应用快捷键", btn_container)
         apply_btn.clicked.connect(self._on_apply_shortcuts)
-        reset_btn = PushButton("恢复默认", self._shortcuts_card)
+        reset_btn = PushButton("恢复默认", btn_container)
         reset_btn.clicked.connect(self._on_reset_shortcuts)
         btn_row.addWidget(apply_btn)
         btn_row.addWidget(reset_btn)
         btn_row.addStretch()
-        shortcuts_layout.addLayout(btn_row)
+
+        shortcuts_editor_card = ExpandGroupSettingCard(
+            FIF.INFO,
+            "快捷键映射",
+            "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击“应用快捷键”保存。",
+            self._shortcuts_card,
+        )
+        shortcuts_editor_card.setExpand(True)
+        shortcuts_editor_card.addGroupWidget(sc_content)
+        shortcuts_editor_card.addGroupWidget(btn_container)
+        self._shortcuts_card.addSettingCard(shortcuts_editor_card)
 
         layout.addWidget(self._shortcuts_card)
         layout.addStretch()
