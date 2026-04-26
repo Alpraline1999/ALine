@@ -145,7 +145,7 @@ def _handler(lines, params):
     if result_lines:
         result["lines"] = result_lines
     if plot_series:
-        result["plot_series"] = plot_series
+        result["_plot_series"] = plot_series
     result["analysis_type"] = "peak_detect"
     result["distance_mode"] = distance_mode
     result["distance_value"] = distance_value

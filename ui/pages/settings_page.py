@@ -47,7 +47,7 @@ from core.ai.providers import (
 )
 
 
-_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 8100
+_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 20250
 
 
 class _MutableFolderListSettingCard(FolderListSettingCard):
@@ -96,6 +96,10 @@ class SettingsPage(QWidget):
         self._page_tree_focus_mode_hint = None
         self._appearance_title = None
         self._extension_card = None
+        self._builtin_extension_card = None
+        self._external_extension_card = None
+        self._extension_status_card = None
+        self._extension_actions_card = None
         self._extension_title = None
         self._extension_hint = None
         self._builtin_section_hint = None
@@ -335,17 +339,25 @@ class SettingsPage(QWidget):
         extension_group = SettingCardGroup("扩展", content)
         self._extension_title = extension_group.titleLabel
         self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        self._extension_card = ExpandGroupSettingCard(
+        self._extension_status_card = SettingCard(FIF.INFO, "扩展状态", "查看当前扩展加载情况与失败详情。", extension_group)
+        self._extension_status_summary_btn = PushButton("", self._extension_status_card)
+        self._extension_status_summary_btn.setFlat(True)
+        self._extension_status_summary_btn.clicked.connect(self._show_extension_status_details)
+        self._attach_setting_card_control(self._extension_status_card, self._extension_status_summary_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        extension_group.addSettingCard(self._extension_status_card)
+
+        self._builtin_extension_card = ExpandGroupSettingCard(
             FIF.DOWNLOAD,
-            "扩展管理",
-            "扩展按来源分块管理；各来源分别按绘图/处理/分析/数字化分段显示，并在保存后一起重载。",
+            "内置扩展",
+            "管理仓库自带扩展的总开关和逐项启用状态。",
             extension_group,
         )
-        self._extension_card.setExpand(True)
-        self._extension_hint = self._extension_card.card.contentLabel
+        self._builtin_extension_card.setExpand(True)
+        self._extension_card = self._builtin_extension_card
+        self._extension_hint = self._builtin_extension_card.card.contentLabel
         self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
 
-        builtin_section = QWidget(self._extension_card)
+        builtin_section = QWidget(self._builtin_extension_card)
         builtin_layout = QVBoxLayout(builtin_section)
         builtin_layout.setContentsMargins(4, 4, 4, 4)
         builtin_layout.setSpacing(8)
@@ -366,9 +378,18 @@ class SettingsPage(QWidget):
             option_layouts=self._extension_option_layouts,
         )
         builtin_layout.addWidget(self._extension_tabs)
-        self._extension_card.addGroupWidget(builtin_section)
+        self._builtin_extension_card.addGroupWidget(builtin_section)
+        extension_group.addSettingCard(self._builtin_extension_card)
 
-        external_section = QWidget(self._extension_card)
+        self._external_extension_card = ExpandGroupSettingCard(
+            FIF.FOLDER,
+            "外部扩展",
+            "单独管理外部目录、扫描结果和逐项启用状态。",
+            extension_group,
+        )
+        self._external_extension_card.setExpand(True)
+
+        external_section = QWidget(self._external_extension_card)
         external_layout = QVBoxLayout(external_section)
         external_layout.setContentsMargins(4, 4, 4, 4)
         external_layout.setSpacing(8)
@@ -402,30 +423,14 @@ class SettingsPage(QWidget):
             option_layouts=self._external_extension_option_layouts,
         )
         external_layout.addWidget(self._external_extension_tabs)
-        self._extension_card.addGroupWidget(external_section)
+        self._external_extension_card.addGroupWidget(external_section)
+        extension_group.addSettingCard(self._external_extension_card)
 
-        extension_actions = QWidget(self._extension_card)
-        extension_btn_row = QHBoxLayout(extension_actions)
-        extension_btn_row.setContentsMargins(4, 4, 4, 0)
-        extension_btn_row.setSpacing(8)
-        self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", extension_actions)
+        self._extension_actions_card = SettingCard(FIF.SYNC, "应用扩展设置", "保存当前启用状态与目录配置，并重新加载扩展。", extension_group)
+        self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", self._extension_actions_card)
         self._save_extension_settings_btn.clicked.connect(self._save_extension_settings)
-        extension_btn_row.addWidget(self._save_extension_settings_btn)
-        extension_btn_row.addStretch()
-        self._extension_card.addGroupWidget(extension_actions)
-
-        extension_status = QWidget(self._extension_card)
-        extension_status_layout = QHBoxLayout(extension_status)
-        extension_status_layout.setContentsMargins(4, 0, 4, 4)
-        extension_status_layout.setSpacing(0)
-        self._extension_status_summary_btn = PushButton("", extension_status)
-        self._extension_status_summary_btn.setFlat(True)
-        self._extension_status_summary_btn.clicked.connect(self._show_extension_status_details)
-        extension_status_layout.addWidget(self._extension_status_summary_btn, 0, Qt.AlignmentFlag.AlignLeft)
-        extension_status_layout.addStretch(1)
-        self._extension_card.addGroupWidget(extension_status)
-
-        extension_group.addSettingCard(self._extension_card)
+        self._attach_setting_card_control(self._extension_actions_card, self._save_extension_settings_btn)
+        extension_group.addSettingCard(self._extension_actions_card)
         layout.addWidget(extension_group)
 
         # ── 语言设置（预留）──
@@ -948,7 +953,7 @@ class SettingsPage(QWidget):
                 spec_id = str(spec.get("id") or "").strip()
                 if not spec_id:
                     continue
-                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._extension_card)
+                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._builtin_extension_card)
                 checkbox.setChecked(spec_id not in disabled_markers["builtin"])
                 checkbox.setEnabled(source_enabled["builtin"])
                 checkbox.setToolTip(self._extension_spec_tooltip(spec, category))
@@ -965,7 +970,7 @@ class SettingsPage(QWidget):
                 spec_id = str(spec.get("id") or "").strip()
                 if not spec_id:
                     continue
-                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._extension_card)
+                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._external_extension_card)
                 checkbox.setChecked(spec_id not in disabled_markers["external"])
                 checkbox.setEnabled(source_enabled["external"])
                 checkbox.setToolTip(self._extension_spec_tooltip(spec, category))

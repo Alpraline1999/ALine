@@ -456,10 +456,17 @@ class AnalysisPage(QWidget):
         apply_button_metrics(self._save_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         result_actions.addWidget(self._save_result_btn)
 
+        self._export_result_btn = PushButton(FIF.SHARE, "导出结果曲线")
+        self._export_result_btn.clicked.connect(self._export_result_series)
+        self._export_result_btn.setEnabled(False)
+        apply_button_metrics(self._export_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        result_actions.addWidget(self._export_result_btn)
+
         self._generate_report_btn = PushButton(FIF.DOCUMENT, "生成报告")
         self._generate_report_btn.clicked.connect(self._on_generate_report)
         apply_button_metrics(self._generate_report_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         result_actions.addWidget(self._generate_report_btn)
+        result_actions.addStretch(1)
 
         result_layout.addLayout(result_actions)
 
@@ -877,7 +884,7 @@ class AnalysisPage(QWidget):
         return sections
 
     def _normalize_analysis_output(self, t: str, selected: list, r: dict) -> Dict[str, Any]:
-        # 允许分析扩展输出四类结构化内容：summary_items、lines + plot_series、table_sections、text_sections。
+        # 允许分析扩展输出四类结构化内容：summary_items、lines + _plot_series、table_sections、text_sections。
         plot = {
             "series": [],
             "x_label": str(r.get("x_label") or "").strip() or None,
@@ -1007,7 +1014,7 @@ class AnalysisPage(QWidget):
 
         result_lines = self._analysis_result_lines(r)
         line_lookup = {item["line_name"]: item["line"] for item in result_lines}
-        custom_series = list(r.get("plot_series", []) or r.get("_plot_series", []) or [])
+        custom_series = list(r.get("_plot_series", []) or r.get("plot_series", []) or [])
         for index, series in enumerate(custom_series):
             if not isinstance(series, dict):
                 continue
@@ -1481,7 +1488,13 @@ class AnalysisPage(QWidget):
             self._set_analysis_status(f"当前结果: {view.get('analysis_name') or self._analysis_type_label(analysis_type)}")
         else:
             self._set_analysis_status("调整输入或参数后，点击“运行分析”生成新的结果标签。")
+        self._refresh_result_action_buttons()
         self._render_report_preview()
+
+    def _refresh_result_action_buttons(self) -> None:
+        if not hasattr(self, "_export_result_btn") or self._export_result_btn is None:
+            return
+        self._export_result_btn.setEnabled(self._build_analysis_output_series("结果预览") is not None)
 
     def _on_analysis_tab_changed(self, index: int) -> None:
         key = self._analysis_tab_key_for_index(index)
@@ -2389,7 +2402,7 @@ class AnalysisPage(QWidget):
         analysis_type = result.get("analysis_type", "analysis")
         result_lines = self._analysis_result_lines(result)
         line_lookup = {item["line_name"]: item["line"] for item in result_lines}
-        custom_series = list(result.get("plot_series", []) or result.get("_plot_series", []) or [])
+        custom_series = list(result.get("_plot_series", []) or result.get("plot_series", []) or [])
         if custom_series:
             first_series = dict(custom_series[0])
             resolved_line = self._resolve_analysis_series_line(first_series, line_lookup)
@@ -2969,16 +2982,18 @@ class AnalysisPage(QWidget):
         series = project.find_series(analysis.result_series_id)
         if series is None:
             return result
+        if "_plot_series" not in result and isinstance(result.get("plot_series"), list):
+            result["_plot_series"] = [dict(item) for item in result.get("plot_series", []) if isinstance(item, dict)]
         if analysis.analysis_type == "curve_fit":
             result.setdefault("fit_x", list(series.x))
             result.setdefault("fit_y", list(series.y))
             result.setdefault("lines", [{"line_name": "拟合曲线", "line": line_from_xy(series.x, series.y)}])
-            result.setdefault("plot_series", [{"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438"}])
+            result.setdefault("_plot_series", [{"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438"}])
         elif analysis.analysis_type == "error_compare":
             result.setdefault("error_x", list(series.x))
             result.setdefault("error_y", list(series.y))
             result.setdefault("lines", [{"line_name": "误差曲线", "line": line_from_xy(series.x, series.y)}])
-            result.setdefault("plot_series", [{"name": "误差", "line": "误差曲线", "color": "#D13438"}])
+            result.setdefault("_plot_series", [{"name": "误差", "line": "误差曲线", "color": "#D13438"}])
         return result
 
     def _rehydrate_saved_result(self, analysis) -> None:

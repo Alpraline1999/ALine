@@ -113,7 +113,7 @@ def _handler(lines, params):
     result["lines"] = [
         {"line_name": "拟合曲线", "line": fit_line},
     ]
-    result["plot_series"] = [
+    result["_plot_series"] = [
         {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438"},
     ]
     result["analysis_type"] = "curve_fit"

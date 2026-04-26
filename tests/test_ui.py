@@ -1611,6 +1611,8 @@ class TestSettingsPage(unittest.TestCase):
         self.assertIsNotNone(self.page.theme_combo)
 
     def test_extension_controls_exist(self):
+        self.assertIsNotNone(self.page._builtin_extension_card)
+        self.assertIsNotNone(self.page._external_extension_card)
         self.assertIsNotNone(self.page._builtin_extensions_enabled_checkbox)
         self.assertIsNotNone(self.page._external_extensions_enabled_checkbox)
         self.assertIsNotNone(self.page._external_extensions_dirs_card)
@@ -1667,7 +1669,8 @@ class TestSettingsPage(unittest.TestCase):
         from qfluentwidgets import ExpandGroupSettingCard, FolderListSettingCard, SettingCardGroup, SwitchSettingCard
 
         self.assertIsInstance(self.page._appearance_card, SettingCardGroup)
-        self.assertIsInstance(self.page._extension_card, ExpandGroupSettingCard)
+        self.assertIsInstance(self.page._builtin_extension_card, ExpandGroupSettingCard)
+        self.assertIsInstance(self.page._external_extension_card, ExpandGroupSettingCard)
         self.assertIsInstance(self.page._shortcuts_card, SettingCardGroup)
         self.assertIsInstance(self.page._page_tree_focus_mode_card, SwitchSettingCard)
         self.assertIsInstance(self.page._external_extensions_dirs_card, FolderListSettingCard)
@@ -1783,7 +1786,7 @@ class TestSettingsPage(unittest.TestCase):
         from qfluentwidgets import SmoothScrollArea
         from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_MAX_HEIGHT
 
-        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 8100)
+        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 20250)
         self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
 
@@ -1812,9 +1815,12 @@ class TestSettingsPage(unittest.TestCase):
         ):
             self.page._refresh_extension_status_summary()
 
+        self.page.show()
+        QApplication.processEvents()
         self.assertEqual(self.page._extension_status_summary_btn.text(), "当前扩展状态：3 项可用（内置 2 / 外部 1），1 项失败")
         self.assertTrue(self.page._extension_status_summary_btn.isEnabled())
         self.assertIn(warning_color(), self.page._extension_status_summary_btn.styleSheet())
+        self.assertLess(self.page._extension_status_card.y(), self.page._builtin_extension_card.y())
 
     def test_save_ai_config_no_crash(self):
         self.page._ai_url_edit.setText("https://api.openai.com/v1")
@@ -5369,6 +5375,8 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._btn_remove.text(), "移除选中")
 
     def test_selected_curve_actions_do_not_overlap_in_left_panel(self):
+        from ui.theme import WORKBENCH_BUTTON_MIN_WIDTH
+
         self.page.resize(1280, 820)
         self.page.show()
         QApplication.processEvents()
@@ -5383,6 +5391,8 @@ class TestChartPage(unittest.TestCase):
         for index, button in enumerate(action_buttons):
             for other in action_buttons[index + 1:]:
                 self.assertFalse(button.geometry().intersects(other.geometry()))
+        self.assertEqual(len({button.geometry().top() for button in action_buttons}), 1)
+        self.assertLess(self.page._btn_clear.width(), WORKBENCH_BUTTON_MIN_WIDTH)
 
     def test_plot_extension_side_panel_omits_description_section(self):
         self.assertFalse(hasattr(self.page, "_plot_extension_description_label"))
@@ -7277,6 +7287,8 @@ class TestAnalysisPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
 
+        self.assertTrue(self.page._export_result_btn.isEnabled())
+
         with mock.patch(
             "ui.pages.analysis_page.choose_data_export_plan",
             return_value=self._analysis_export_plan("拟合曲线A"),
@@ -7300,6 +7312,8 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("peak_detect"))
         self.page.on_tree_node_activated("series", target.id)
         self.page._run_analysis()
+
+        self.assertTrue(self.page._export_result_btn.isEnabled())
 
         with mock.patch(
             "ui.pages.analysis_page.choose_data_export_plan",
@@ -9873,8 +9887,9 @@ class TestAnalysisPageV3(unittest.TestCase):
         self.assertEqual(current_payload["node_id"], other.id)
         self.assertIn(other.name, self.page._selected_input_state_label.text())
 
-    def test_analysis_result_actions_omit_legacy_curve_export_button(self):
-        self.assertFalse(hasattr(self.page, "_export_result_series_btn"))
+    def test_analysis_result_actions_include_curve_export_button(self):
+        self.assertIsNotNone(self.page._export_result_btn)
+        self.assertFalse(self.page._export_result_btn.isEnabled())
 
     def test_analysis_selected_input_reorder_preserves_current_indicator(self):
         from models.schemas import DataSeries

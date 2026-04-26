@@ -1137,7 +1137,7 @@ class TestAnalysisEngine(unittest.TestCase):
         result = _handler([[[0.0, 1.0], [1.0, 3.0], [2.0, 5.0], [3.0, 7.0]]], {"model": "linear"})
 
         self.assertEqual(result["lines"][0]["line_name"], "拟合曲线")
-        self.assertEqual(result["plot_series"][0]["line"], "拟合曲线")
+        self.assertEqual(result["_plot_series"][0]["line"], "拟合曲线")
         self.assertGreater(len(result["lines"][0]["line"]), 10)
 
     def test_fit_poly2(self):
@@ -1215,7 +1215,7 @@ class TestAnalysisEngine(unittest.TestCase):
         names = [item["line_name"] for item in result.get("lines", [])]
         self.assertIn("波峰点", names)
         self.assertIn("波谷点", names)
-        self.assertEqual(result["plot_series"][0]["line"], "波峰点")
+        self.assertEqual(result["_plot_series"][0]["line"], "波峰点")
 
     def test_compute_statistics(self):
         from core.analysis_engine import compute_statistics
