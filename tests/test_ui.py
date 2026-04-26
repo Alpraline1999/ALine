@@ -239,8 +239,8 @@ class TestProjectTreeWidget(unittest.TestCase):
     def test_global_resource_contains_extension_config_groups_without_default_leaves(self):
         from core.extension_api import ProcessingExtension, extension_registry
 
-        def _probe(xs, ys, params):
-            return list(xs), list(ys)
+        def _probe(lines, params):
+            return lines[0] if lines else []
 
         extension_registry.register_processing(
             ProcessingExtension(type="tree_extension_config_probe", name="树配置探针", handler=_probe, default_options={"factor": 2}, settings=True)
@@ -273,8 +273,8 @@ class TestProjectTreeWidget(unittest.TestCase):
         from core.extension_api import ProcessingExtension, extension_registry
         from core.global_assets import global_assets
 
-        def _probe(xs, ys, params):
-            return list(xs), list(ys)
+        def _probe(lines, params):
+            return lines[0] if lines else []
 
         extension_registry.register_processing(
             ProcessingExtension(type="tree_extension_config_create", name="树配置新建探针", handler=_probe, default_options={"factor": 2}, settings=True)
@@ -295,8 +295,8 @@ class TestProjectTreeWidget(unittest.TestCase):
     def test_extension_config_groups_hide_entries_without_settings_support(self):
         from core.extension_api import ProcessingExtension, extension_registry
 
-        def _probe(xs, ys, params):
-            return list(xs), list(ys)
+        def _probe(lines, params):
+            return lines[0] if lines else []
 
         extension_registry.register_processing(
             ProcessingExtension(type="tree_extension_config_hidden", name="隐藏配置扩展", handler=_probe, settings=False)
@@ -3117,8 +3117,8 @@ class TestDataPage(unittest.TestCase):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
         from core.global_assets import global_assets
 
-        def _probe(xs, ys, params):
-            return list(xs), list(ys)
+        def _probe(lines, params):
+            return lines[0] if lines else []
 
         restore_assets = _patch_global_assets()
         extension_registry.register_processing(
@@ -3170,8 +3170,8 @@ class TestDataPage(unittest.TestCase):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
         from core.global_assets import global_assets
 
-        def _probe(xs, ys, params):
-            return list(xs), list(ys)
+        def _probe(lines, params):
+            return lines[0] if lines else []
 
         restore_assets = _patch_global_assets()
         extension_registry.register_processing(
@@ -3211,7 +3211,7 @@ class TestDataPage(unittest.TestCase):
             ProcessingExtension(
                 type="data_page_lines_help",
                 name="DataPage 曲线帮助",
-                handler=lambda xs, ys, params: (list(xs), list(ys)),
+                handler=lambda lines, params: lines[0] if lines else [],
                 lines_number=(2, -1),
             )
         )
@@ -3227,7 +3227,7 @@ class TestDataPage(unittest.TestCase):
             ProcessingExtension(
                 type="data_page_help_label_only",
                 name="DataPage 标签帮助",
-                handler=lambda xs, ys, params: (list(xs), list(ys)),
+                handler=lambda lines, params: lines[0] if lines else [],
                 config_fields=[
                     ExtensionConfigField(key="n", label="n", field_type="integer", default=3, description="采样点数量。")
                 ],
@@ -5001,9 +5001,13 @@ class TestChartPage(unittest.TestCase):
 
     def test_plot_extension_appears_in_extension_panel(self):
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
 
-        def _draw(axis, series, options):
-            axis.axhline(options.get("y", 0.0))
+        def _draw(lines, options):
+            del lines
+            axis = current_axis()
+            if axis is not None:
+                axis.axhline(options.get("y", 0.0))
 
         extension_registry.register_plot(
             PlotExtension(
@@ -5061,25 +5065,30 @@ class TestChartPage(unittest.TestCase):
         labels = [line.get_label() for line in axis.lines if not str(line.get_label()).startswith("_")]
         self.assertEqual(labels, [other.name, self.s.name])
 
-    def test_legacy_plot_extension_still_runs_after_default_draw(self):
+    def test_plot_extension_runs_after_default_draw(self):
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
 
-        def _draw(axis, series, options):
-            axis.axhline(options.get("y", 0.0), color="red", label="Legacy Reference")
+        def _draw(lines, options):
+            del lines
+            axis = current_axis()
+            if axis is not None:
+                axis.axhline(options.get("y", 0.0), color="red", label="参考线")
 
         extension_registry.register_plot(
             PlotExtension(
-                type="ui_plot_extension_legacy_test",
-                name="Legacy 参考线",
+                type="ui_plot_extension_reference_test",
+                name="参考线",
                 handler=_draw,
                 default_options={"y": 3.5},
+                phases=("after_plot",),
             )
         )
         try:
             self.page.on_tree_node_activated("series", self.s.id)
-            self.page._plot_extension_options["ui_plot_extension_legacy_test"] = {"y": 3.5}
+            self.page._plot_extension_options["ui_plot_extension_reference_test"] = {"y": 3.5}
 
-            self.page._apply_plot_extension("ui_plot_extension_legacy_test")
+            self.page._apply_plot_extension("ui_plot_extension_reference_test")
 
             axis = self.page._figure.axes[0]
             self.assertTrue(
@@ -5089,24 +5098,23 @@ class TestChartPage(unittest.TestCase):
                 )
             )
         finally:
-            extension_registry.unregister_plot("ui_plot_extension_legacy_test")
-            self.page._plot_extension_options.pop("ui_plot_extension_legacy_test", None)
+            extension_registry.unregister_plot("ui_plot_extension_reference_test")
+            self.page._plot_extension_options.pop("ui_plot_extension_reference_test", None)
 
     def test_plot_extension_context_can_take_over_matplotlib_figure(self):
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_figure
 
-        def _draw(context, options):
-            if context.phase == "before_plot":
-                context.skip_default_plot = True
-                context.skip_default_formatting = True
-                context.skip_default_layout = True
-                context.figure.clear()
-                left = context.figure.add_subplot(121)
-                right = context.figure.add_subplot(122)
-                left.plot([0, 1, 2], [1, 3, 2], color=options.get("color", "#ff6600"))
-                right.bar(["A", "B"], [2, 4], color=options.get("bar_color", "#3366cc"))
-                context.set_active_axis(left)
-                context.refresh_axes()
+        def _draw(lines, options):
+            del lines
+            figure = current_figure()
+            if figure is None:
+                return
+            figure.clear()
+            left = figure.add_subplot(121)
+            right = figure.add_subplot(122)
+            left.plot([0, 1, 2], [1, 3, 2], color=options.get("color", "#ff6600"))
+            right.bar(["A", "B"], [2, 4], color=options.get("bar_color", "#3366cc"))
 
         extension_registry.register_plot(
             PlotExtension(
@@ -5114,6 +5122,7 @@ class TestChartPage(unittest.TestCase):
                 name="Context 自定义子图",
                 handler=_draw,
                 default_options={"color": "#ff6600", "bar_color": "#3366cc"},
+                phases=("after_plot",),
             )
         )
         try:
@@ -5132,16 +5141,21 @@ class TestChartPage(unittest.TestCase):
             extension_registry.unregister_plot("ui_plot_extension_context_test")
             self.page._plot_extension_options.pop("ui_plot_extension_context_test", None)
 
-    def test_plot_extension_style_patch_uses_latest_operation_per_field(self):
+    def test_plot_extension_after_plot_preserves_manual_line_width_and_updates_legend(self):
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
 
-        def _style_patch(context, options):
-            if context.phase != "before_plot":
+        def _style_patch(lines, options):
+            del lines
+            axis = current_axis()
+            if axis is None:
                 return
-            context.patch_figure_state({
-                "line_width": float(options.get("line_width", 4.0)),
-                "legend_font_size": int(options.get("legend_font_size", 12)),
-            })
+            legend = axis.get_legend()
+            if legend is None:
+                return
+            font_size = int(options.get("legend_font_size", 12))
+            for text in legend.get_texts():
+                text.set_fontsize(font_size)
 
         extension_registry.register_plot(
             PlotExtension(
@@ -5149,6 +5163,7 @@ class TestChartPage(unittest.TestCase):
                 name="样式覆盖顺序",
                 handler=_style_patch,
                 default_options={"line_width": 4.0, "legend_font_size": 12},
+                phases=("after_plot",),
             )
         )
         try:
@@ -5159,7 +5174,10 @@ class TestChartPage(unittest.TestCase):
             self.page._on_chart_extension_apply("chart_plot_style_patch_order", {"line_width": 4.0, "legend_font_size": 12})
 
             axis = self.page._figure.axes[0]
-            self.assertAlmostEqual(axis.lines[0].get_linewidth(), 4.0)
+            legend = axis.get_legend()
+            self.assertAlmostEqual(axis.lines[0].get_linewidth(), 2.0)
+            self.assertIsNotNone(legend)
+            self.assertAlmostEqual(legend.get_texts()[0].get_fontsize(), 12)
 
             self.page._plot_line_width_edit.setText("2.6")
             self.page._on_quick_config_changed()
@@ -5182,17 +5200,18 @@ class TestChartPage(unittest.TestCase):
     def test_plot_extension_style_patch_preserves_other_nested_style_fields_on_manual_update(self):
         from matplotlib.colors import to_rgba
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
 
-        def _style_patch(context, _options):
-            if context.phase != "before_plot":
+        def _style_patch(lines, _options):
+            del lines
+            axis = current_axis()
+            if axis is None:
                 return
-            context.patch_plot_style({
-                "legend_kwargs": {
-                    "frameon": True,
-                    "facecolor": "#ffeecc",
-                    "edgecolor": "#333333",
-                }
-            })
+            legend = axis.get_legend()
+            if legend is None:
+                legend = axis.legend()
+            legend.get_frame().set_visible(True)
+            legend.get_frame().set_edgecolor("#333333")
 
         extension_registry.register_plot(
             PlotExtension(
@@ -5495,9 +5514,13 @@ class TestChartPage(unittest.TestCase):
 
     def test_chart_plot_extension_applies_from_extension_tab(self):
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
 
-        def _draw(axis, series, options):
-            axis.axhline(float(options.get("y", 0.0)), color="#D13438")
+        def _draw(lines, options):
+            del lines
+            axis = current_axis()
+            if axis is not None:
+                axis.axhline(float(options.get("y", 0.0)), color="#D13438")
 
         extension_registry.register_plot(
             PlotExtension(
@@ -5506,6 +5529,7 @@ class TestChartPage(unittest.TestCase):
                 handler=_draw,
                 description="应通过左侧绘图扩展标签页应用。",
                 default_options={"y": 3.2},
+                phases=("after_plot",),
             )
         )
         try:
@@ -5533,9 +5557,13 @@ class TestChartPage(unittest.TestCase):
     def test_plot_extension_applied_list_height_is_not_locked_to_loaded_count(self):
         from PySide6.QtWidgets import QSizePolicy
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
 
-        def _draw(axis, series, options):
-            axis.axhline(float(options.get("y", 0.0)), color="#D13438")
+        def _draw(lines, options):
+            del lines
+            axis = current_axis()
+            if axis is not None:
+                axis.axhline(float(options.get("y", 0.0)), color="#D13438")
 
         extension_registry.register_plot(
             PlotExtension(
@@ -5543,6 +5571,7 @@ class TestChartPage(unittest.TestCase):
                 name="动态高度绘图扩展",
                 handler=_draw,
                 default_options={"y": 1.0},
+                phases=("after_plot",),
             )
         )
         try:
@@ -5583,7 +5612,7 @@ class TestChartPage(unittest.TestCase):
             PlotExtension(
                 type="chart_plot_remove",
                 name="绘图扩展撤销",
-                handler=lambda context, options: None,
+                handler=lambda lines, options: None,
                 description="用于验证绘图扩展可撤销。",
                 default_options={"enabled": True},
             )
@@ -5609,7 +5638,7 @@ class TestChartPage(unittest.TestCase):
             PlotExtension(
                 type="chart_plot_clear_all",
                 name="绘图扩展清空",
-                handler=lambda context, options: None,
+                handler=lambda lines, options: None,
                 default_options={"enabled": True},
             )
         )
@@ -5637,13 +5666,21 @@ class TestChartPage(unittest.TestCase):
 
     def test_plot_extension_supports_multiple_instances_with_different_params(self):
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
+
+        def _draw(lines, options):
+            del lines
+            axis = current_axis()
+            if axis is not None:
+                axis.axhline(float(options.get("y", 0.0)), color=options.get("color", "#cc3300"))
 
         extension_registry.register_plot(
             PlotExtension(
                 type="chart_plot_multi",
                 name="多实例参考线",
-                handler=lambda axis, series, options: axis.axhline(float(options.get("y", 0.0)), color=options.get("color", "#cc3300")),
+                handler=_draw,
                 default_options={"y": 1.0, "color": "#cc3300"},
+                phases=("after_plot",),
             )
         )
         try:
@@ -5666,18 +5703,23 @@ class TestChartPage(unittest.TestCase):
             self.page._plot_extension_options.pop("chart_plot_multi", None)
             self.page._refresh_style_extension_panel()
 
-    def test_plot_extension_context_uses_selected_curve_when_applying(self):
+    def test_plot_extension_uses_selected_curve_line_when_applying(self):
         from core.extension_api import PlotExtension, extension_registry
+        from extensions.plot._runtime import current_axis
+        from processing.extension_tools import line_xy, normalize_lines
 
-        selected_names: list[str | None] = []
+        selected_first_y_values: list[float | None] = []
 
-        def _draw(context, options):
-            if context.phase != "after_plot" or context.axis is None:
+        def _draw(lines, options):
+            axis = current_axis()
+            normalized = normalize_lines(lines)
+            if axis is None or not normalized:
                 return
-            selected_names.append(None if context.selected_series is None else context.selected_series.get("name"))
-            if context.selected_series is None:
+            _xs, ys = line_xy(normalized[0])
+            if not ys:
                 return
-            context.axis.axhline(float(context.selected_series["y"][0]), color=options.get("color", "#009966"))
+            selected_first_y_values.append(float(ys[0]))
+            axis.axhline(float(ys[0]), color=options.get("color", "#009966"))
 
         extension_registry.register_plot(
             PlotExtension(
@@ -5685,6 +5727,7 @@ class TestChartPage(unittest.TestCase):
                 name="读取当前选中曲线",
                 handler=_draw,
                 default_options={"color": "#009966"},
+                phases=("after_plot",),
             )
         )
         try:
@@ -6240,7 +6283,7 @@ class TestProcessPage(unittest.TestCase):
             ProcessingExtension(
                 type="ui_process_config_height",
                 name="UI 配置高度刷新",
-                handler=lambda xs, ys, params: (xs, ys),
+                handler=lambda lines, params: lines[0] if lines else [],
                 settings=True,
                 config_fields=[
                     {"key": "mode", "field_type": "choice", "choices": ["short", "long"], "default": "short"},
@@ -6572,9 +6615,11 @@ class TestProcessPage(unittest.TestCase):
     def test_processing_extension_appears_in_selector_and_panel(self):
         from core.extension_api import ProcessingExtension, extension_registry
 
-        def _scale(xs, ys, params):
+        def _scale(lines, params):
             factor = float(params.get("factor", 1.0))
-            return list(xs), [value * factor for value in ys]
+            if not lines:
+                return []
+            return [[point[0], point[1] * factor] for point in lines[0]]
 
         extension_registry.register_processing(
             ProcessingExtension(
@@ -6599,9 +6644,11 @@ class TestProcessPage(unittest.TestCase):
     def test_processing_extension_panel_adds_extension_op(self):
         from core.extension_api import ProcessingExtension, extension_registry
 
-        def _scale(xs, ys, params):
+        def _scale(lines, params):
             factor = float(params.get("factor", 1.0))
-            return list(xs), [value * factor for value in ys]
+            if not lines:
+                return []
+            return [[point[0], point[1] * factor] for point in lines[0]]
 
         extension_registry.register_processing(
             ProcessingExtension(
@@ -6742,7 +6789,7 @@ class TestProcessPage(unittest.TestCase):
             ProcessingExtension(
                 type="ui_pipeline_config_restore",
                 name="Pipeline 配置恢复",
-                handler=lambda xs, ys, params: (list(xs), list(ys)),
+                handler=lambda lines, params: lines[0] if lines else [],
                 description="验证 pipeline 会恢复扩展 settings 配置。",
                 default_options={"factor": 2},
                 settings=True,
@@ -6790,7 +6837,7 @@ class TestProcessPage(unittest.TestCase):
             ProcessingExtension(
                 type="ui_hidden_processing",
                 name="隐藏处理扩展",
-                handler=lambda xs, ys, params: (list(xs), list(ys)),
+                handler=lambda lines, params: lines[0] if lines else [],
                 source_kind="base",
             )
         )
@@ -7007,9 +7054,11 @@ class TestAnalysisPage(unittest.TestCase):
         other = DataFile(name="other.csv", series=[DataSeries(name="other", x=[0.0, 1.0], y=[1.0, 2.0])])
         self.pm.add_data_file(other)
 
-        self.page._type_combo.setCurrentIndex(3)
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("correlation"))
         self.page.on_tree_node_activated("series", self.s.id)
         self.page.on_tree_node_activated("data_file", next(n.id for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == other.id))
+        self.page._extension_params_edit.set_options({"lines_list": [1, 2]})
+        self.page._on_extension_analysis_options_changed({"lines_list": [1, 2]})
 
         self.page._input_list.item(0).setSelected(True)
         self.page._input_list.item(1).setSelected(True)
@@ -7252,11 +7301,10 @@ class TestAnalysisPage(unittest.TestCase):
     def test_analysis_extension_appears_in_type_selector_and_panel(self):
         from core.extension_api import AnalysisExtension, extension_registry
 
-        def _span(inputs, params):
-            values = list(inputs[0].get("y", []))
+        def _span(lines, params):
+            values = [point[1] for point in lines[0]] if lines else []
             return {
                 "analysis_type": "ui_span_selector",
-                "source_name": inputs[0].get("name", ""),
                 "span": (max(values) - min(values)) if values else 0.0,
             }
 
@@ -7283,11 +7331,10 @@ class TestAnalysisPage(unittest.TestCase):
     def test_analysis_extension_panel_switches_type_and_runs(self):
         from core.extension_api import AnalysisExtension, extension_registry
 
-        def _span(inputs, params):
-            values = list(inputs[0].get("y", []))
+        def _span(lines, params):
+            values = [point[1] for point in lines[0]] if lines else []
             return {
                 "analysis_type": "ui_span_run",
-                "source_name": inputs[0].get("name", ""),
                 "span": (max(values) - min(values)) if values else 0.0,
                 "scale": params.get("scale", 1),
             }
@@ -7324,11 +7371,10 @@ class TestAnalysisPage(unittest.TestCase):
     def test_analysis_extension_can_run_with_left_json_params_editor(self):
         from core.extension_api import AnalysisExtension, extension_registry
 
-        def _span(inputs, params):
-            values = list(inputs[0].get("y", []))
+        def _span(lines, params):
+            values = [point[1] for point in lines[0]] if lines else []
             return {
                 "analysis_type": "ui_span_left_json",
-                "source_name": inputs[0].get("name", ""),
                 "span": (max(values) - min(values)) if values else 0.0,
                 "scale": params.get("scale", 1),
             }
@@ -7384,10 +7430,9 @@ class TestAnalysisPage(unittest.TestCase):
             AnalysisExtension(
                 type="ui_lines_selected",
                 name="UI 选中曲线扩展",
-                handler=lambda inputs, params: {
+                handler=lambda lines, params: {
                     "analysis_type": "ui_lines_selected",
-                    "source_name": inputs[0].get("name", "") if inputs else "",
-                    "input_names": [item.get("name", "") for item in inputs],
+                    "line_lengths": [len(line) for line in lines],
                     "line_refs": list(params.get("lines_list") or []),
                 },
                 lines_number=(2, -1),
@@ -7407,7 +7452,10 @@ class TestAnalysisPage(unittest.TestCase):
 
             self.page._run_analysis()
 
-            self.assertEqual(self.page._result["input_names"], [other.name, third.name])
+            self.assertEqual(self.page._result["source_name"], other.name)
+            self.assertEqual(self.page._result["name1"], other.name)
+            self.assertEqual(self.page._result["name2"], third.name)
+            self.assertEqual(self.page._result["line_lengths"], [2, 2])
             self.assertEqual(self.page._result["line_refs"], [2, 3])
         finally:
             extension_registry.unregister_analysis("ui_lines_selected")
@@ -7425,7 +7473,7 @@ class TestAnalysisPage(unittest.TestCase):
             AnalysisExtension(
                 type="ui_preview_lines",
                 name="UI 预览曲线扩展",
-                handler=lambda inputs, params: {"analysis_type": "ui_preview_lines", "count": len(inputs)},
+                handler=lambda lines, params: {"analysis_type": "ui_preview_lines", "count": len(lines)},
                 lines_number=(2, -1),
             )
         )
@@ -7462,9 +7510,9 @@ class TestAnalysisPage(unittest.TestCase):
             AnalysisExtension(
                 type="ui_keep_selected_inputs",
                 name="UI 保留已选列表",
-                handler=lambda inputs, params: {
+                handler=lambda lines, params: {
                     "analysis_type": "ui_keep_selected_inputs",
-                    "input_names": [item.get("name", "") for item in inputs],
+                    "line_lengths": [len(line) for line in lines],
                     "line_refs": list(params.get("lines_list") or []),
                 },
                 lines_number=(2, -1),
@@ -7486,7 +7534,10 @@ class TestAnalysisPage(unittest.TestCase):
             self.page._on_extension_analysis_options_changed({"lines_list": [1, 2]})
             self.page._run_analysis()
 
-            self.assertEqual(self.page._result["input_names"], [self.s.name, other.name])
+            self.assertEqual(self.page._result["source_name"], self.s.name)
+            self.assertEqual(self.page._result["name1"], self.s.name)
+            self.assertEqual(self.page._result["name2"], other.name)
+            self.assertEqual(self.page._result["line_lengths"], [len(self.s.x), 2])
             self.assertEqual(self.page._result["line_refs"], [1, 2])
         finally:
             extension_registry.unregister_analysis("ui_keep_selected_inputs")
@@ -7504,10 +7555,9 @@ class TestAnalysisPage(unittest.TestCase):
             AnalysisExtension(
                 type="ui_pair_lines_extension",
                 name="UI 双曲线扩展",
-                handler=lambda inputs, params: {
+                handler=lambda lines, params: {
                     "analysis_type": "ui_pair_lines_extension",
-                    "source_name": inputs[0].get("name", "") if inputs else "",
-                    "input_names": [item.get("name", "") for item in inputs],
+                    "line_lengths": [len(line) for line in lines],
                     "line_refs": list(params.get("lines_list") or []),
                 },
                 lines_number=(2, 2),
@@ -7524,7 +7574,10 @@ class TestAnalysisPage(unittest.TestCase):
 
             self.page._run_analysis()
 
-            self.assertEqual(self.page._result["input_names"], [self.s.name, third.name])
+            self.assertEqual(self.page._result["source_name"], self.s.name)
+            self.assertEqual(self.page._result["name1"], self.s.name)
+            self.assertEqual(self.page._result["name2"], third.name)
+            self.assertEqual(self.page._result["line_lengths"], [len(self.s.x), 2])
             self.assertEqual(self.page._result["line_refs"], [1, 3])
         finally:
             extension_registry.unregister_analysis("ui_pair_lines_extension")
@@ -7537,7 +7590,7 @@ class TestAnalysisPage(unittest.TestCase):
             AnalysisExtension(
                 type="ui_hidden_analysis",
                 name="隐藏分析扩展",
-                handler=lambda inputs, params: {"analysis_type": "ui_hidden_analysis"},
+                handler=lambda lines, params: {"analysis_type": "ui_hidden_analysis"},
                 source_kind="base",
             )
         )
@@ -7558,10 +7611,9 @@ class TestAnalysisPage(unittest.TestCase):
         if self.page._figure is None:
             self.skipTest("matplotlib unavailable")
 
-        def _spectrum(inputs, params):
+        def _spectrum(lines, params):
             return {
                 "analysis_type": "ui_spectrum_plot",
-                "source_name": inputs[0].get("name", ""),
                 "dominant_frequency": 12.5,
                 "dominant_amplitude": 3.4,
                 "x_label": "频率 (Hz)",
@@ -7618,10 +7670,9 @@ class TestAnalysisPage(unittest.TestCase):
         if self.page._figure is None:
             self.skipTest("matplotlib unavailable")
 
-        def _structured(inputs, params):
+        def _structured(lines, params):
             return {
                 "analysis_type": "ui_structured_output",
-                "source_name": inputs[0].get("name", ""),
                 "summary_items": [{"label": "主指标", "value": 3.14}],
                 "plot_series": [
                     {"name": "结构化曲线", "x": [0.0, 1.0, 2.0], "y": [1.0, 1.5, 2.5], "plot_type": "line", "color": "#0078D4"}
@@ -7679,12 +7730,12 @@ class TestAnalysisPage(unittest.TestCase):
             AnalysisExtension(
                 type="ui_declared_placeholder_search",
                 name="UI 声明占位符",
-                handler=lambda inputs, params: {
+                handler=lambda lines, params: {
                     "analysis_type": "ui_declared_placeholder_search",
                     "dominant_frequency": 7.5,
                 },
                 report_placeholders=[
-                    {"key": "dominant_frequency", "label": "主频", "description": "主频字段"},
+                    {"token": "{{dominant_frequency}}", "label": "主频", "description": "主频字段"},
                 ],
             )
         )
@@ -7712,7 +7763,7 @@ class TestAnalysisPage(unittest.TestCase):
             AnalysisExtension(
                 type="ui_init_analysis_extension",
                 name="初始化分析扩展",
-                handler=lambda inputs, params: {"analysis_type": "ui_init_analysis_extension"},
+                handler=lambda lines, params: {"analysis_type": "ui_init_analysis_extension"},
                 description="用于验证初始化时自动加载扩展。",
             )
         )
@@ -7828,7 +7879,7 @@ class TestAnalysisPage(unittest.TestCase):
         )
         self.df.series.append(target)
 
-        self.page._type_combo.setCurrentIndex(1)
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("peak_detect"))
         self.page.on_tree_node_activated("series", target.id)
         self.page._run_analysis()
 
@@ -7870,11 +7921,11 @@ class TestAnalysisPage(unittest.TestCase):
             side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "拟合结果B", "统计结果A"),
         ):
             self.page.on_tree_node_activated("series", self.s.id)
-            self.page._type_combo.setCurrentIndex(0)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("curve_fit"))
             self.page._run_analysis()
             self.page._save_result()
             self.page._save_result()
-            self.page._type_combo.setCurrentIndex(2)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("statistics"))
             self.page._run_analysis()
             self.page._save_result()
 
@@ -7901,10 +7952,10 @@ class TestAnalysisPage(unittest.TestCase):
             side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "统计结果A"),
         ):
             self.page.on_tree_node_activated("series", self.s.id)
-            self.page._type_combo.setCurrentIndex(0)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("curve_fit"))
             self.page._run_analysis()
             self.page._save_result()
-            self.page._type_combo.setCurrentIndex(2)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("statistics"))
             self.page._run_analysis()
             self.page._save_result()
 
@@ -7939,10 +7990,10 @@ class TestAnalysisPage(unittest.TestCase):
             side_effect=_analysis_result_save_plans(self.pm, "拟合结果A", "统计结果A"),
         ):
             self.page.on_tree_node_activated("series", self.s.id)
-            self.page._type_combo.setCurrentIndex(0)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("curve_fit"))
             self.page._run_analysis()
             self.page._save_result()
-            self.page._type_combo.setCurrentIndex(2)
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("statistics"))
             self.page._run_analysis()
             self.page._save_result()
 
@@ -8953,8 +9004,8 @@ class TestMainWindow(unittest.TestCase):
         from core.extension_api import ProcessingExtension, extension_registry
         from core.global_assets import global_assets
 
-        def _probe(xs, ys, params):
-            return list(xs), list(ys)
+        def _probe(lines, params):
+            return lines[0] if lines else []
 
         extension_registry.register_processing(
             ProcessingExtension(type="mw_extension_route_probe", name="主窗口路由探针", handler=_probe, default_options={"factor": 2})
@@ -9654,7 +9705,7 @@ class TestAnalysisPageV3(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page.on_tree_node_activated("series", other.id)
         self.page.on_tree_node_activated("series", third.id)
-        self.page._type_combo.setCurrentIndex(4)
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("error_compare"))
         self.page._extension_params_edit.set_options({"lines_list": [1, 3]})
         self.page._on_extension_analysis_options_changed({"lines_list": [1, 3]})
 
@@ -9668,8 +9719,8 @@ class TestAnalysisPageV3(unittest.TestCase):
         from core.extension_api import AnalysisExtension, ExtensionConfigField, extension_registry
         from models.schemas import DataSeries
 
-        def _probe(inputs, params, lines_list=None):
-            return {"analysis_type": "analysis_extension_state_probe", "inputs": list(lines_list or [])}
+        def _probe(lines, params):
+            return {"analysis_type": "analysis_extension_state_probe", "inputs": list(params.get("lines_list") or [])}
 
         other = DataSeries(name="s2", x=[1.0, 2.0], y=[2.0, 3.0])
         third = DataSeries(name="s3", x=[1.0, 2.0], y=[3.0, 4.0])

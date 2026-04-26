@@ -4,7 +4,7 @@ from typing import List, Tuple
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
 from processing.data_engine import align_lines_to_common_x
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_payloads_from_lines, normalize_lines
+from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, normalize_lines
 
 
 def pairwise_compute_handler(lines, params):
@@ -13,12 +13,10 @@ def pairwise_compute_handler(lines, params):
     if len(input_lines) != 2:
         raise ValueError("双曲线计算需要恰好选择两条输入曲线")
 
-    aligned_lines, _warnings = align_lines_to_common_x(line_payloads_from_lines(input_lines), {"align_mode": "strict"})
+    aligned_lines, _warnings = align_lines_to_common_x(input_lines, {"align_mode": "strict"})
     primary, secondary = aligned_lines
-    x1 = list(primary.get("x", []) or [])
-    y1 = list(primary.get("y", []) or [])
-    x2 = list(secondary.get("x", []) or [])
-    y2 = list(secondary.get("y", []) or [])
+    x1, y1 = line_xy(primary)
+    x2, y2 = line_xy(secondary)
 
     x_expr, y_expr = _resolve_pairwise_expressions(options)
     new_x, new_y = _evaluate_pairwise_expression(x_expr, y_expr, x1, y1, x2, y2)

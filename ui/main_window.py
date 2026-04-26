@@ -159,12 +159,10 @@ class _SharedTreePanel(QWidget):
         self.add_dataset_btn = ToolButton(FIF.DICTIONARY_ADD, self)
         self.add_dataset_btn.setToolTip("新建数据集")
         right_group.addWidget(self.add_dataset_btn)
-        self.add_dataset_btn.hide()
 
         self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
         self.import_file_btn.setToolTip("导入数据文件")
         right_group.addWidget(self.import_file_btn)
-        self.import_file_btn.hide()
 
         self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
         self.extension_toggle_btn.setToolTip("隐藏扩展面板")

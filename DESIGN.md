@@ -744,8 +744,8 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 1. builtin 扫描是递归且按文件启停，不是按扩展条目启停；因此正式工具阶段不应把多个长期维护工具塞进同一个文件。
 2. 页面启动链路中仍保留 `core.builtin_extensions.py` 的兼容补位逻辑，因此“builtin 的唯一真相”还需要继续收口到目录扫描模型。
 3. plot 扩展在图表页中会经历 before_plot / after_plot 两个阶段；任何绘制型 builtin 若不显式判断 phase，都可能重复绘制。
-4. processing 扩展运行层仍兼容多种历史输出形态，因此扩展工具化必须先约束正式协议，再逐步回收兼容分支。
-5. analysis 的 `report_placeholders` 文档规则与运行时接受格式仍未完全一致，不能再继续放宽。
+4. processing / analysis / plot / digitize 的扩展边界已经收口为严格协议，后续新增能力不得再引入历史输入输出兼容分支。
+5. analysis 的 `report_placeholders` 文档规则与运行时接受格式必须保持一致，不能再继续放宽。
 
 ### 10.4 设计原则
 
@@ -766,9 +766,11 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 #### 原则 3：一类扩展只保留一套正式输出协议
 
+统一曲线协议为 point-list：`line = [[x, y], ...]`。扩展内部如需从 `x_list` / `y_list` 生成曲线，必须调用 `processing.extension_tools.line_from_xy(xs, ys)`，由该接口完成长度、数值和有限性检查。
+
 1. Processing：正式签名固定为 `(lines, params) -> line`，不再接受 xs / ys、inputs dict 或 `{"lines": ...}` 返回格式。
 2. Analysis：正式签名固定为 `(lines, params) -> dict`，输入曲线名等元数据由运行时补齐，不再把 dict 曲线协议暴露给扩展。
-3. Plot：正式签名固定为 `(lines, params) -> None`，扩展只操作当前 matplotlib 图元，不再暴露 `plot_context` 给 handler。
+3. Plot：正式签名固定为 `(lines, params) -> None`，扩展只通过 `extensions.plot._runtime.current_axis()` 等公开运行时工具操作当前 matplotlib 图元，不再把私有 `plot_context` 作为 handler 参数。
 4. Digitize：正式签名固定为 `(figure, params) -> line`，页面统一从 line 还原点列表，不再猜测 `points / summary / warnings` 结构。
 
 #### 原则 4：多曲线输入顺序必须显式化
@@ -783,11 +785,8 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 2. 严格协议包装。
 3. 调用稳定底层接口。
 
-当前允许作为稳定底层接口直接复用的只有：`align_lines_to_common_x`、`crop_xy`、`transform_xy`、`resample_xy`。
+当前允许作为稳定底层接口直接复用的只有：`align_lines_to_common_x`、`crop_xy`、`transform_xy`、`resample_xy`、`line_from_xy`。
 其余算法如内置数字化提取器应保留在扩展目录内部实现，不再依赖旧的 app 级提取模块。
-2. 输入规范化。
-3. 调用共享算法函数。
-4. 输出结果封装。
 
 算法逻辑应尽量下沉到共用模块，避免以后在 builtin、external、页面私有逻辑之间复制实现。
 

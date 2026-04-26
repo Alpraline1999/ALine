@@ -1,8 +1,9 @@
 import math
+from typing import Any, cast
 
 from core.extension_api import ExtensionConfigField, PlotExtension
 from extensions.plot._runtime import axis_line_style, current_axis, current_figure
-from processing.extension_tools import normalize_lines
+from processing.extension_tools import line_xy, normalize_lines
 
 
 def _as_float(value, default=None):
@@ -31,9 +32,10 @@ def draw_polar_projection(lines, params):
 
     style = axis_line_style(previous_axis)
     theta_unit = str(params.get("theta_unit", "degree") or "degree").strip().lower()
-    theta_values = _theta_values(normalized_lines[0][0], theta_unit)
+    xs, ys = line_xy(normalized_lines[0])
+    theta_values = _theta_values(xs, theta_unit)
     radius_values = []
-    for raw in normalized_lines[0][1]:
+    for raw in ys:
         radius = _as_float(raw)
         if radius is None:
             continue
@@ -50,7 +52,7 @@ def draw_polar_projection(lines, params):
         radius_values.append(radius_values[0])
 
     figure.clear()
-    axis = figure.add_subplot(111, projection="polar")
+    axis = cast(Any, figure.add_subplot(111, projection="polar"))
     axis.set_theta_zero_location(str(params.get("zero_location", "N") or "N"))
     axis.set_theta_direction(-1 if str(params.get("direction", "counterclockwise")) == "clockwise" else 1)
 

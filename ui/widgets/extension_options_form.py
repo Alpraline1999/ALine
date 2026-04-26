@@ -1000,6 +1000,13 @@ class ExtensionOptionsForm(QWidget):
             self._invalid_text = clean_text
             self._invalid_error = "扩展配置必须是 JSON 对象"
             return
+        if not self._bindings:
+            self._invalid_text = None
+            self._invalid_error = None
+            self._explicit_option_keys = set(data)
+            self._extra_options = copy.deepcopy(data)
+            self._emit_change(committed=True)
+            return
         self.set_options(data)
 
     def _emit_change(self, *, committed: bool) -> None:
@@ -1541,10 +1548,12 @@ class ExtensionOptionsForm(QWidget):
         self._set_expanding_control(button, 96)
         field_row.addWidget(button, 1)
 
-        state = {"line": None}
+        state: Dict[str, Optional[int]] = {"line": None}
 
         def _selected_label() -> str:
             value = state["line"]
+            if value is None:
+                return ""
             try:
                 index = int(value)
             except (TypeError, ValueError):
@@ -1621,6 +1630,11 @@ class ExtensionOptionsForm(QWidget):
         button = PushButton("选择曲线", container)
         self._set_expanding_control(button, 96)
         field_row.addWidget(button, 1)
+        summary = CaptionLabel("当前: 未选择", container)
+        summary.setWordWrap(True)
+        summary.setStyleSheet(f"color: {secondary_color()}; font-size: 11px;")
+        layout.addWidget(summary)
+        install_fluent_tooltip(summary, delay=300, position=ToolTipPosition.BOTTOM)
 
         def _selected_labels() -> List[str]:
             labels: List[str] = []
@@ -1640,6 +1654,15 @@ class ExtensionOptionsForm(QWidget):
             return f"本扩展支持 {support_text}。尚未显式选择曲线。"
 
         def _refresh() -> None:
+            labels = _selected_labels()
+            summary_text = "；".join(labels)
+            if summary_text:
+                summary.setText(f"当前: {summary_text}")
+                summary.setToolTip(summary_text)
+            else:
+                summary.setText("当前: 未选择")
+                summary.setToolTip("")
+            install_fluent_tooltip(summary, delay=300, position=ToolTipPosition.BOTTOM)
             button.setEnabled(bool(self._line_candidates))
             button.setText("选择曲线")
             button.setToolTip(_tooltip_text())

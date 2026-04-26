@@ -385,6 +385,9 @@ class DigitizePage(QWidget):
         actions_row.addStretch()
         layout.addLayout(actions_row)
 
+        self._curve_panel_title = make_section_label("曲线数据", panel)
+        layout.addWidget(self._curve_panel_title)
+
         self._right_content_splitter = QSplitter(Qt.Orientation.Vertical, panel)
         self._right_content_splitter.setHandleWidth(6)
         self._right_content_splitter.splitterMoved.connect(self._on_right_content_splitter_moved)
@@ -394,9 +397,6 @@ class DigitizePage(QWidget):
         curve_layout = QVBoxLayout(curve_section)
         curve_layout.setContentsMargins(0, 0, 0, 0)
         curve_layout.setSpacing(8)
-
-        self._curve_panel_title = make_section_label("曲线数据", curve_section)
-        curve_layout.addWidget(self._curve_panel_title)
 
         self._curve_table = TableWidget(curve_section)
         self._curve_table.setColumnCount(2)
@@ -1681,8 +1681,10 @@ class DigitizePage(QWidget):
         )
         try:
             from core.extension_api import invoke_digitize_extension_handler
+            from processing.extension_tools import line_xy
 
-            xs, ys = invoke_digitize_extension_handler(extension.handler, image_path, params)
+            result_line = invoke_digitize_extension_handler(extension.handler, image_path, params)
+            xs, ys = line_xy(result_line)
         except Exception as e:
             self._set_tool_status(f"{extension.name}失败: {e}")
             return

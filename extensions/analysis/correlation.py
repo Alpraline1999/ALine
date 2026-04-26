@@ -4,7 +4,7 @@ import math
 from typing import Any, Dict, List
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import normalize_lines
+from processing.extension_tools import line_xy, normalize_lines
 
 
 VERSION = "0.1.0"
@@ -63,9 +63,11 @@ def _handler(lines, params):
         raise ValueError("correlation 需要两条输入数据")
     first = normalized_lines[0]
     second = normalized_lines[1]
+    _x1, y1 = line_xy(first)
+    _x2, y2 = line_xy(second)
     result = compute_correlation(
-        list(first[1]),
-        list(second[1]),
+        y1,
+        y2,
         str(params.get("method", "pearson") or "pearson"),
     )
     result["analysis_type"] = "correlation"

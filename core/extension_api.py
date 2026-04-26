@@ -7,7 +7,7 @@ import copy
 from pathlib import Path
 import re
 from types import ModuleType
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
 import hashlib
 
 from processing.extension_tools import normalize_line, series_payloads_to_lines
@@ -1332,30 +1332,18 @@ def invoke_analysis_extension_handler(
     return payload
 
 
-def plot_extension_uses_context_api(handler: Callable[..., Any]) -> bool:
-    try:
-        parameters = [
-            item
-            for item in inspect.signature(handler).parameters.values()
-            if item.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        ]
-    except (TypeError, ValueError):
-        return False
-    return len(parameters) <= 2
-
-
 def invoke_plot_extension_handler(
     extension_or_handler: Any,
     context: PlotExtensionContext,
-    options: Dict[str, Any],
+    params: Dict[str, Any],
 ) -> None:
     extension = extension_or_handler if isinstance(extension_or_handler, PlotExtension) else None
-    handler = extension.handler if extension is not None else extension_or_handler
+    handler: Callable[..., Any] = extension.handler if extension is not None else cast(Callable[..., Any], extension_or_handler)
     supported_phases = normalize_plot_extension_phases(getattr(extension, "phases", None)) if extension is not None else ("before_plot", "after_plot")
     if context.phase not in supported_phases:
         return
     base_series = list(context.visible_series or context.plotted_series or [])
-    requested_indices = normalize_extension_lines_list(options.get("lines_list")) if "lines_list" in options else []
+    requested_indices = normalize_extension_lines_list(params.get("lines_list")) if "lines_list" in params else []
     if requested_indices:
         series_pool = [base_series[index - 1] for index in requested_indices if 1 <= index <= len(base_series)]
     else:
@@ -1383,14 +1371,26 @@ def invoke_plot_extension_handler(
         except Exception:
             pass
 
-    handler(series_payloads_to_lines(series_pool), dict(options))
-    context.refresh_axes()
+    plot_runtime = None
+    try:
+        from extensions.plot import _runtime as plot_runtime
+        plot_runtime._set_active_plot_target(context.figure, context.axis)
+    except Exception:
+        plot_runtime = None
+
+    try:
+        handler(series_payloads_to_lines(series_pool), dict(params))
+        context.refresh_axes()
+    finally:
+        if plot_runtime is not None:
+            plot_runtime._clear_active_plot_target()
+
     if plt is not None and context.axes:
         try:
             current_axis = plt.gca()
         except Exception:
             current_axis = None
-        if current_axis is not None:
+        if current_axis is not None and getattr(current_axis, "figure", None) is context.figure:
             context.set_active_axis(current_axis)
 
 
@@ -1645,11 +1645,14 @@ def get_extension_load_status(category: Optional[str] = None) -> Dict[str, Any]:
     normalized = category.strip().lower() if category else None
     details = get_last_extension_load_details(normalized)
     source_summary = _summarize_extension_sources(details, normalized)
+    scanned_registered_count = sum(source_summary.get("loaded_extension_counts", {}).values())
 
     def _listed_count(items: List[Any]) -> int:
         return len([item for item in items if bool(getattr(item, "listed", True))])
 
-    if normalized == "processing":
+    if details.get("loaded") or details.get("errors"):
+        registered_count = scanned_registered_count
+    elif normalized == "processing":
         registered_count = _listed_count(extension_registry.list_processing())
     elif normalized == "analysis":
         registered_count = _listed_count(extension_registry.list_analysis())
@@ -1667,7 +1670,7 @@ def get_extension_load_status(category: Optional[str] = None) -> Dict[str, Any]:
 
     return {
         "category": normalized,
-        "label": _EXTENSION_CATEGORY_LABELS.get(normalized, "扩展"),
+        "label": _EXTENSION_CATEGORY_LABELS.get(normalized, "扩展") if normalized else "扩展",
         "registered_count": registered_count,
         "loaded_file_count": len(details.get("loaded", [])),
         "error_count": len(details.get("errors", [])),
@@ -1703,7 +1706,7 @@ def format_extension_load_report(category: Optional[str] = None) -> str:
         lines.append("")
         lines.append("失败文件:")
         for item in details["errors"]:
-            category_text = "、".join(_EXTENSION_CATEGORY_LABELS.get(cat, cat) for cat in item.get("categories", []))
+            category_text = "、".join(_EXTENSION_CATEGORY_LABELS.get(str(cat), str(cat)) for cat in item.get("categories", []))
             lines.append(f"- {Path(item['path']).name} [{item.get('source_label', '外部')}]: {item.get('message', '')}")
             if category_text:
                 lines.append(f"  推断分类: {category_text}")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import normalize_lines
+from processing.extension_tools import line_xy, normalize_lines
 
 
 def _pearson(values_a, values_b):
@@ -50,11 +50,13 @@ def multi_curve_correlation(lines, params):
 
     method = str(params.get("method", "pearson") or "pearson").strip().lower()
     primary = aligned_lines[0]
+    _primary_x, primary_y = line_xy(primary)
     comparison_items = []
     for index, line in enumerate(aligned_lines[1:], start=2):
+        _line_x, line_y = line_xy(line)
         comparison_items.append({
             "name": f"line_{index}",
-            "correlation": _correlation(list(primary[1]), list(line[1]), method),
+            "correlation": _correlation(primary_y, line_y, method),
         })
 
     best_match = max(comparison_items, key=lambda item: abs(item["correlation"])) if comparison_items else {"name": "", "correlation": 0.0}

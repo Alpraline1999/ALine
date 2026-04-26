@@ -2015,7 +2015,12 @@ class AnalysisPage(QWidget):
         self._set_summary_rows(view["summary_table"], summary_rows)
         view["summary_stack"].setCurrentWidget(view["summary_table"])
         if self._analysis_tabs.currentIndex() == 0:
-            self._sync_state_from_analysis_view(view)
+            self._figure = view.get("figure")
+            self._canvas = view.get("canvas")
+            self._summary_table = view.get("summary_table")
+            self._result = None
+            self._set_analysis_status("调整输入或参数后，点击“运行分析”生成新的结果标签。")
+            self._render_report_preview()
 
     def _draw_result(self, t: str, selected: list, r: dict, figure=None, canvas=None, normalized: Optional[Dict[str, Any]] = None):
         figure = self._figure if figure is None else figure
@@ -2250,6 +2255,17 @@ class AnalysisPage(QWidget):
             return rows
         else:
             return self._json_summary_rows(r)
+
+    def _write_summary(self, analysis_type: str, result: Dict[str, Any]) -> None:
+        view = self._active_analysis_view() or self._analysis_tab_views.get("current")
+        table = self._summary_table if self._summary_table is not None else (view.get("summary_table") if isinstance(view, dict) else None)
+        if table is None:
+            return
+
+        normalized = self._normalize_analysis_output(analysis_type, view.get("selected") if isinstance(view, dict) else [], dict(result or {}))
+        self._set_summary_rows(table, list(normalized.get("summary_items") or []))
+        if isinstance(view, dict) and view.get("summary_stack") is not None and view.get("summary_table") is not None:
+            view["summary_stack"].setCurrentWidget(view["summary_table"])
 
     # ─────────────────────────────────────────────────────────
     # 保存分析结果

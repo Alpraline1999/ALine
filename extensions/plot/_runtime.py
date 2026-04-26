@@ -7,8 +7,25 @@ from matplotlib.colors import to_hex
 
 from processing.extension_tools import line_xy, normalize_lines
 
+_ACTIVE_FIGURE = None
+_ACTIVE_AXIS = None
+
+
+def _set_active_plot_target(figure: Any, axis: Any) -> None:
+    global _ACTIVE_FIGURE, _ACTIVE_AXIS
+    _ACTIVE_FIGURE = figure
+    _ACTIVE_AXIS = axis
+
+
+def _clear_active_plot_target() -> None:
+    global _ACTIVE_FIGURE, _ACTIVE_AXIS
+    _ACTIVE_FIGURE = None
+    _ACTIVE_AXIS = None
+
 
 def current_figure():
+    if _ACTIVE_FIGURE is not None:
+        return _ACTIVE_FIGURE
     try:
         return plt.gcf()
     except Exception:
@@ -22,10 +39,15 @@ def current_axis():
     axes = list(getattr(figure, "axes", []) or [])
     if not axes:
         return None
+    if _ACTIVE_AXIS is not None and getattr(_ACTIVE_AXIS, "figure", None) is figure and _ACTIVE_AXIS in axes:
+        return _ACTIVE_AXIS
     try:
-        return plt.gca()
+        axis = plt.gca()
+        if getattr(axis, "figure", None) is figure:
+            return axis
     except Exception:
-        return axes[0]
+        pass
+    return axes[0]
 
 
 def current_theme_colors(axis: Any = None) -> Dict[str, str]:

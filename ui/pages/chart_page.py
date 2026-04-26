@@ -2456,7 +2456,7 @@ class ChartPage(QWidget):
         if extension is None:
             return
         plot_context = self._base_style_plot_context(selected_curve=target_curve)
-        invoke_plot_extension_handler(extension, plot_context, dict(options or {}))
+        extension.handler(plot_context, dict(options or {}))
         patch = dict(plot_context.curve_style_patches.get(self._curve_identity(target_curve), {}) or {})
         if not patch:
             return
@@ -2467,7 +2467,7 @@ class ChartPage(QWidget):
         if extension is None:
             return
         plot_context = self._base_style_plot_context(selected_curve=self._selected_curve())
-        invoke_plot_extension_handler(extension, plot_context, dict(options or {}))
+        extension.handler(plot_context, dict(options or {}))
         payload = dict(plot_context.figure_state_patch or {})
         if plot_context.plot_style_patch:
             payload = _merge_nested_mapping(payload, dict(plot_context.plot_style_patch or {}))
@@ -3153,32 +3153,6 @@ class ChartPage(QWidget):
                 else:
                     axis.plot(x_values, y_values, **plot_kwargs)
 
-        for applied in list(self._applied_plot_extensions):
-            type_id = str(applied.get("type") or "")
-            extension = extension_registry.get_plot(type_id)
-            if extension is None:
-                continue
-            target_curve = self._resolve_plot_extension_curve(applied.get("curve_identity"))
-            try:
-                plot_context.clear_style_patches()
-                plot_context.phase = "after_plot"
-                plot_context.axis = axis
-                plot_context.selected_series = (
-                    self._plot_context_series_entry(
-                        target_curve,
-                        style_payload=effective_curve_style_payloads.get(self._curve_identity(target_curve), {}),
-                    )
-                    if target_curve is not None
-                    else None
-                )
-                plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
-                invoke_plot_extension_handler(extension, plot_context, dict(applied.get("options") or {}))
-            except Exception:
-                continue
-            plot_context.refresh_axes()
-
-        axis = plot_context.axis or axis
-
         legend = None
         if visible_series and not plot_context.skip_default_plot and axis is not None and not plot_context.skip_default_formatting:
             legend_kwargs: Dict[str, Any] = {
@@ -3236,6 +3210,32 @@ class ChartPage(QWidget):
                 for text in legend.get_texts():
                     self._apply_text_style(text, font_family=state.font_family, font_size=state.legend_font_size, color=fg)
                 self._apply_text_style(legend.get_title(), font_family=state.font_family, font_size=state.legend_font_size, color=fg)
+
+        for applied in list(self._applied_plot_extensions):
+            type_id = str(applied.get("type") or "")
+            extension = extension_registry.get_plot(type_id)
+            if extension is None:
+                continue
+            target_curve = self._resolve_plot_extension_curve(applied.get("curve_identity"))
+            try:
+                plot_context.clear_style_patches()
+                plot_context.phase = "after_plot"
+                plot_context.axis = axis
+                plot_context.selected_series = (
+                    self._plot_context_series_entry(
+                        target_curve,
+                        style_payload=effective_curve_style_payloads.get(self._curve_identity(target_curve), {}),
+                    )
+                    if target_curve is not None
+                    else None
+                )
+                plot_context.selected_series_identity = self._curve_identity(target_curve) if target_curve is not None else applied.get("curve_identity")
+                invoke_plot_extension_handler(extension, plot_context, dict(applied.get("options") or {}))
+            except Exception:
+                continue
+            plot_context.refresh_axes()
+
+        axis = plot_context.axis or axis
 
         if not plot_context.skip_default_layout:
             self._apply_figure_layout(state)

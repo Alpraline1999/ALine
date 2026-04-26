@@ -3,7 +3,7 @@ from __future__ import annotations
 from core.extension_api import ExtensionConfigField, PlotExtension
 from extensions.plot._runtime import current_axis, current_theme_colors
 from processing.data_engine import align_lines_to_common_x
-from processing.extension_tools import line_payloads_from_lines, normalize_lines
+from processing.extension_tools import line_xy, normalize_lines
 
 
 def _as_float(value, default):
@@ -22,14 +22,13 @@ def draw_dual_curve_band(lines, params):
     if len(candidates) < 2:
         return
 
-    aligned_lines, warnings = align_lines_to_common_x(line_payloads_from_lines(candidates), params)
+    aligned_lines, warnings = align_lines_to_common_x(candidates, params)
     if len(aligned_lines) < 2:
         return
 
     first, second = aligned_lines[:2]
-    x_values = list(first.get("x", []))
-    first_y = list(first.get("y", []))
-    second_y = list(second.get("y", []))
+    x_values, first_y = line_xy(first)
+    _second_x, second_y = line_xy(second)
     if not x_values:
         return
 

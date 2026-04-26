@@ -796,12 +796,13 @@ class TestDataEngine(unittest.TestCase):
 
     def test_crop_extension_ignores_empty_bounds(self):
         from extensions.processing.crop import crop_handler
+        from processing.extension_tools import line_from_xy, line_xy
 
         handler = crop_handler
         xs = [0.0, 1.0, 2.0, 3.0]
         ys = [2.0, 3.0, 4.0, 5.0]
 
-        nx, ny = handler([[xs, ys]], {"x_min": None, "x_max": ""})
+        nx, ny = line_xy(handler([line_from_xy(xs, ys)], {"x_min": None, "x_max": ""}))
 
         self.assertEqual(nx, xs)
         self.assertEqual(ny, ys)
@@ -994,11 +995,12 @@ class TestDataEngine(unittest.TestCase):
     def test_custom_processing_extension_executes(self):
         from core.extension_api import ProcessingExtension, extension_registry
         from processing.data_engine import apply_operation
+        from processing.extension_tools import line_from_xy, line_xy
 
         def _scale(lines, params):
-            xs, ys = lines[0] if lines else ([], [])
+            xs, ys = line_xy(lines[0]) if lines else ([], [])
             factor = float(params.get("factor", 1.0))
-            return [list(xs), [value * factor for value in ys]]
+            return line_from_xy(list(xs), [value * factor for value in ys])
 
         extension_registry.register_processing(
             ProcessingExtension(type="test_scale", name="测试缩放", handler=_scale)
@@ -1063,21 +1065,17 @@ class TestDataEngine(unittest.TestCase):
     def test_custom_processing_extension_receives_lines(self):
         from core.extension_api import ProcessingExtension, extension_registry
         from processing.data_engine import align_lines_to_common_x, apply_pipeline_to_lines
+        from processing.extension_tools import line_from_xy, line_xy
 
         def _mean(lines, params):
-            aligned_lines, warnings = align_lines_to_common_x(
-                [
-                    {"name": f"line_{index + 1}", "x": list(line[0]), "y": list(line[1])}
-                    for index, line in enumerate(lines or [])
-                ],
-                params,
-            )
-            point_count = len(aligned_lines[0].get("x", [])) if aligned_lines else 0
+            aligned_lines, warnings = align_lines_to_common_x(lines or [], params)
+            primary_x, _primary_y = line_xy(aligned_lines[0]) if aligned_lines else ([], [])
+            point_count = len(primary_x)
             averaged = []
             for index in range(point_count):
-                averaged.append(sum(line["y"][index] for line in aligned_lines) / len(aligned_lines))
+                averaged.append(sum(line_xy(line)[1][index] for line in aligned_lines) / len(aligned_lines))
             self.assertTrue(warnings)
-            return [list(aligned_lines[0].get("x", [])), averaged]
+            return line_from_xy(primary_x, averaged)
 
         extension_registry.register_processing(
             ProcessingExtension(
@@ -1261,9 +1259,10 @@ class TestAnalysisEngine(unittest.TestCase):
     def test_custom_analysis_extension_executes(self):
         from core.analysis_engine import run_analysis
         from core.extension_api import AnalysisExtension, extension_registry
+        from processing.extension_tools import line_xy
 
         def _span(lines, params):
-            values = list(lines[0][1] if lines else [])
+            values = list(line_xy(lines[0])[1] if lines else [])
             return {
                 "analysis_type": "test_span",
                 "span": (max(values) - min(values)) if values else 0.0,
@@ -1323,14 +1322,15 @@ class TestAnalysisEngine(unittest.TestCase):
             path.write_text(textwrap.dedent(
                 """
                 from core.extension_api import AnalysisExtension, ProcessingExtension
+                from processing.extension_tools import line_from_xy, line_xy
 
                 def _scale(lines, params):
-                    xs, ys = lines[0] if lines else ([], [])
+                    xs, ys = line_xy(lines[0]) if lines else ([], [])
                     factor = float(params.get('factor', 1.0))
-                    return [list(xs), [value * factor for value in ys]]
+                    return line_from_xy(list(xs), [value * factor for value in ys])
 
                 def _span(lines, params):
-                    values = list(lines[0][1] if lines else [])
+                    values = list(line_xy(lines[0])[1] if lines else [])
                     return {
                         'analysis_type': 'dir_span',
                         'span': (max(values) - min(values)) if values else 0.0,
@@ -1364,11 +1364,12 @@ class TestAnalysisEngine(unittest.TestCase):
             path.write_text(textwrap.dedent(
                 """
                 from core.extension_api import ProcessingExtension
+                from processing.extension_tools import line_from_xy, line_xy
 
                 def _shift(lines, params):
-                    xs, ys = lines[0] if lines else ([], [])
+                    xs, ys = line_xy(lines[0]) if lines else ([], [])
                     offset = float(params.get('offset', 0.0))
-                    return [list(xs), [value + offset for value in ys]]
+                    return line_from_xy(list(xs), [value + offset for value in ys])
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1403,10 +1404,11 @@ class TestAnalysisEngine(unittest.TestCase):
                 builtin_path.write_text(textwrap.dedent(
                     """
                     from core.extension_api import ProcessingExtension
+                    from processing.extension_tools import line_from_xy, line_xy
 
                     def _builtin(lines, params):
-                        xs, ys = lines[0] if lines else ([], [])
-                        return [list(xs), [value + 1 for value in ys]]
+                        xs, ys = line_xy(lines[0]) if lines else ([], [])
+                        return line_from_xy(list(xs), [value + 1 for value in ys])
 
                     def register_extensions(registry):
                         registry.register_processing(
@@ -1417,10 +1419,11 @@ class TestAnalysisEngine(unittest.TestCase):
                 external_path.write_text(textwrap.dedent(
                     """
                     from core.extension_api import AnalysisExtension, ProcessingExtension
+                    from processing.extension_tools import line_from_xy, line_xy
 
                     def _external(lines, params):
-                        xs, ys = lines[0] if lines else ([], [])
-                        return [list(xs), [value + 2 for value in ys]]
+                        xs, ys = line_xy(lines[0]) if lines else ([], [])
+                        return line_from_xy(list(xs), [value + 2 for value in ys])
 
                     def _summary(lines, params):
                         return {'analysis_type': 'external_probe', 'count': len(lines)}
@@ -1454,10 +1457,10 @@ class TestAnalysisEngine(unittest.TestCase):
         registry = ExtensionRegistry()
 
         def _first(lines, params):
-            return lines[0] if lines else [[], []]
+            return lines[0] if lines else []
 
         def _second(lines, params):
-            return lines[0] if lines else [[], []]
+            return lines[0] if lines else []
 
         registry.register_processing(ProcessingExtension(type="name_probe_a", name="重复名称", handler=_first))
         with self.assertRaisesRegex(ValueError, "重复的 processing 扩展 name: 重复名称"):
@@ -1480,10 +1483,11 @@ class TestAnalysisEngine(unittest.TestCase):
                 (Path(builtin_dir) / "builtin_enabled.py").write_text(textwrap.dedent(
                     """
                     from core.extension_api import ProcessingExtension
+                    from processing.extension_tools import line_from_xy, line_xy
 
                     def _enabled(lines, params):
-                        xs, ys = lines[0] if lines else ([], [])
-                        return [list(xs), [value + 1 for value in ys]]
+                        xs, ys = line_xy(lines[0]) if lines else ([], [])
+                        return line_from_xy(list(xs), [value + 1 for value in ys])
 
                     def register_extensions(registry):
                         registry.register_processing(
@@ -1494,10 +1498,11 @@ class TestAnalysisEngine(unittest.TestCase):
                 (Path(builtin_dir) / "builtin_disabled.py").write_text(textwrap.dedent(
                     """
                     from core.extension_api import ProcessingExtension
+                    from processing.extension_tools import line_from_xy, line_xy
 
                     def _disabled(lines, params):
-                        xs, ys = lines[0] if lines else ([], [])
-                        return [list(xs), [value + 2 for value in ys]]
+                        xs, ys = line_xy(lines[0]) if lines else ([], [])
+                        return line_from_xy(list(xs), [value + 2 for value in ys])
 
                     def register_extensions(registry):
                         registry.register_processing(
@@ -1553,7 +1558,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 from core.extension_api import ProcessingExtension
 
                 def _noop(lines, params):
-                    return lines[0] if lines else [[], []]
+                    return lines[0] if lines else []
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1592,7 +1597,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 from core.extension_api import ProcessingExtension
 
                 def _noop(lines, params):
-                    return lines[0] if lines else [[], []]
+                    return lines[0] if lines else []
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1639,7 +1644,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 from core.extension_api import ProcessingExtension
 
                 def _noop(lines, params):
-                    return lines[0] if lines else [[], []]
+                    return lines[0] if lines else []
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1736,7 +1741,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 from core.extension_api import ProcessingExtension
 
                 def _first(lines, params):
-                    return lines[0] if lines else [[], []]
+                    return lines[0] if lines else []
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1754,7 +1759,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 from core.extension_api import ProcessingExtension
 
                 def _second(lines, params):
-                    return lines[0] if lines else [[], []]
+                    return lines[0] if lines else []
 
                 def register_extensions(registry):
                     registry.register_processing(
@@ -1775,7 +1780,7 @@ class TestAnalysisEngine(unittest.TestCase):
         from core.extension_api import ProcessingExtension, extension_registry
 
         def _noop(lines, params):
-            return lines[0] if lines else [[], []]
+            return lines[0] if lines else []
 
         with self.assertRaisesRegex(ValueError, "x.x.x"):
             extension_registry.register_processing(
@@ -1893,11 +1898,81 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(error_result["name2"], "cmp")
         self.assertEqual(len(error_result["error_y"]), 3)
 
+    def test_line_protocol_uses_point_list_and_validates_xy_conversion(self):
+        from processing.extension_tools import line_from_xy, line_xy, normalize_line
+
+        line = line_from_xy([0.0, 1.0], [2.0, 3.0])
+
+        self.assertEqual(line, [[0.0, 2.0], [1.0, 3.0]])
+        self.assertEqual(line_xy(line), ([0.0, 1.0], [2.0, 3.0]))
+        with self.assertRaisesRegex(ValueError, "长度必须一致"):
+            line_from_xy([0.0], [1.0, 2.0])
+        with self.assertRaisesRegex(ValueError, "point-list"):
+            normalize_line({"x": [0.0], "y": [1.0]})
+
+    def test_interface_contract_extensions_load_and_execute(self):
+        from core.extension_api import (
+            ExtensionRegistry,
+            PlotExtensionContext,
+            default_extensions_directory,
+            invoke_analysis_extension_handler,
+            invoke_digitize_extension_handler,
+            invoke_plot_extension_handler,
+            invoke_processing_extension_handler,
+        )
+        from processing.extension_tools import line_xy
+
+        registry = ExtensionRegistry()
+        report = registry.load_from_directory(default_extensions_directory())
+
+        self.assertEqual(report["errors"], [])
+        processing = registry.get_processing("interface_contract_processing")
+        analysis = registry.get_analysis("interface_contract_analysis")
+        plot = registry.get_plot("interface_contract_plot")
+        digitize = registry.get_digitize("interface_contract_digitize")
+        self.assertIsNotNone(processing)
+        self.assertIsNotNone(analysis)
+        self.assertIsNotNone(plot)
+        self.assertIsNotNone(digitize)
+
+        source = [{"x": [0.0, 1.0], "y": [2.0, 4.0], "name": "demo"}]
+        processed_line = invoke_processing_extension_handler(processing.handler, source, {"y_scale": 2.0})
+        self.assertEqual(line_xy(processed_line), ([0.0, 1.0], [4.0, 8.0]))
+
+        analysis_result = invoke_analysis_extension_handler(analysis.handler, source, {"precision": 2})
+        self.assertEqual(analysis_result["analysis_type"], "interface_contract_analysis")
+        self.assertEqual(analysis_result["line_count"], 1)
+        self.assertIn("tables", analysis_result)
+
+        import matplotlib.pyplot as plt
+
+        figure, axis = plt.subplots()
+        try:
+            context = PlotExtensionContext(
+                figure=figure,
+                canvas=object(),
+                axis=axis,
+                axes=[axis],
+                visible_series=source,
+                plotted_series=source,
+                phase="after_plot",
+                figure_state={},
+                plot_style_extras={},
+                theme_colors={},
+            )
+            invoke_plot_extension_handler(plot, context, {"label": "接口"})
+            self.assertGreaterEqual(len(axis.collections), 1)
+        finally:
+            plt.close(figure)
+
+        digitized_line = invoke_digitize_extension_handler(digitize.handler, "demo.png", {"point_count": 2, "spacing": 5})
+        self.assertEqual(line_xy(digitized_line), ([10.0, 15.0], [10.0, 15.0]))
+
     def test_build_extension_entry_exposes_normalized_metadata_and_resolved_options(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, build_extension_entry
 
         def _noop(lines, params):
-            return lines[0] if lines else [[], []]
+            return lines[0] if lines else []
 
         entry = build_extension_entry(
             ProcessingExtension(
@@ -1965,7 +2040,7 @@ class TestAnalysisEngine(unittest.TestCase):
                 ProcessingExtension(
                     type="legacy_lines_all",
                     name="Legacy All",
-                    handler=lambda lines, params: (lines[0] if lines else [[], []]),
+                    handler=lambda lines, params: (lines[0] if lines else []),
                     default_options={"lines": {"number": -1, "lines_list": "all"}},
                 )
             )
@@ -1975,7 +2050,7 @@ class TestAnalysisEngine(unittest.TestCase):
 
         def _digitize(figure, params):
             del figure, params
-            return [[1.0], [2.0]]
+            return [[1.0, 2.0]]
 
         registry = ExtensionRegistry()
         registry.register_digitize(
@@ -2004,7 +2079,7 @@ class TestAnalysisEngine(unittest.TestCase):
             DigitizeExtension(
                 type="digitize_interactive_probe",
                 name="数字化交互探针",
-                handler=lambda figure, params: [[], []],
+                handler=lambda figure, params: [],
                 source_kind="third_party_plugin",
                 config_fields=[
                     ExtensionConfigField(key="sampled_color", field_type="pickcolor", default=None),
@@ -3112,7 +3187,7 @@ class TestRenderReport(unittest.TestCase):
                 name="声明占位符探针",
                 handler=lambda lines, params: {"analysis_type": "declared_placeholder_probe", "dominant_frequency": 9.9},
                 report_placeholders=[
-                    {"key": "dominant_frequency", "label": "主频", "description": "主频字段"},
+                    {"token": "{{dominant_frequency}}", "label": "主频", "description": "主频字段"},
                 ],
             )
         )

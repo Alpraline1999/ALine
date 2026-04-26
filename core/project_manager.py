@@ -2000,8 +2000,8 @@ class ProjectManager:
         source_folder, source_changed = self._ensure_group_folder(p, "source_files", None, 0)
         ds_folder, ds_changed = self._ensure_group_folder(p, "datasets", None, 1)
         picture_folder, picture_changed = self._ensure_group_folder(p, "pictures", None, 2)
-        analysis_folder, analysis_changed = self._ensure_group_folder(p, "analysis_result_group", None, 3)
-        img_folder, img_changed = self._ensure_group_folder(p, "images", None, 4)
+        img_folder, img_changed = self._ensure_group_folder(p, "images", None, 3)
+        analysis_folder, analysis_changed = self._ensure_group_folder(p, "analysis_result_group", None, 4)
         changed = changed or source_changed or ds_changed or picture_changed or img_changed
         changed = changed or analysis_changed
         changed = self._migrate_project_assets_to_global(p) or changed

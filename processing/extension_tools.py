@@ -1,26 +1,35 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from processing.smoother import resample_uniform, resample_uniform_spacing
 
 
 BUILTIN_EXTENSION_VERSION = "0.1.0"
 
-Line = List[List[float]]
-SeriesInput = Dict[str, Any]
+Point = List[float]
+Line = List[Point]
 XY = Tuple[List[float], List[float]]
 
 
-def normalize_line(raw: Any) -> Line:
+def _normalize_point(raw: Any, index: int) -> Point:
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:
-        raise ValueError("line 必须是 [x, y]")
-    xs = list(raw[0] or [])
-    ys = list(raw[1] or [])
-    if len(xs) != len(ys):
-        raise ValueError("line 中 x 与 y 长度必须一致")
-    return [xs, ys]
+        raise ValueError(f"line 第 {index + 1} 个点必须是 [x, y]")
+    try:
+        x_value = float(raw[0])
+        y_value = float(raw[1])
+    except (TypeError, ValueError):
+        raise ValueError(f"line 第 {index + 1} 个点包含非数值坐标") from None
+    if not math.isfinite(x_value) or not math.isfinite(y_value):
+        raise ValueError(f"line 第 {index + 1} 个点包含无效坐标")
+    return [x_value, y_value]
+
+
+def normalize_line(raw: Any) -> Line:
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("line 必须是 point-list，即 [[x, y], ...]")
+    return [_normalize_point(point, index) for index, point in enumerate(list(raw))]
 
 
 def normalize_lines(raw: Any) -> List[Line]:
@@ -33,18 +42,18 @@ def line_from_xy(xs: List[float], ys: List[float]) -> Line:
     x_values = list(xs or [])
     y_values = list(ys or [])
     if len(x_values) != len(y_values):
-        raise ValueError("line 中 x 与 y 长度必须一致")
-    return [x_values, y_values]
+        raise ValueError("x_list 与 y_list 长度必须一致，无法转换为 line")
+    return normalize_line([[x_value, y_value] for x_value, y_value in zip(x_values, y_values)])
 
 
 def line_xy(line: Any) -> XY:
     normalized = normalize_line(line)
-    return list(normalized[0]), list(normalized[1])
+    return [point[0] for point in normalized], [point[1] for point in normalized]
 
 
 def primary_line(lines: Any) -> Line:
     normalized = normalize_lines(lines)
-    return normalized[0] if normalized else [[], []]
+    return normalized[0] if normalized else []
 
 
 def series_payload_to_line(item: Any) -> Line:
@@ -55,14 +64,6 @@ def series_payload_to_line(item: Any) -> Line:
 
 def series_payloads_to_lines(raw: Any) -> List[Line]:
     return [series_payload_to_line(item) for item in list(raw or [])]
-
-
-def line_payloads_from_lines(raw: Any) -> List[SeriesInput]:
-    payloads: List[SeriesInput] = []
-    for index, line in enumerate(normalize_lines(raw), start=1):
-        xs, ys = line_xy(line)
-        payloads.append({"name": f"line_{index}", "x": xs, "y": ys})
-    return payloads
 
 
 def _sorted_unique_xy(xs: List[float], ys: List[float]) -> XY:
@@ -134,7 +135,7 @@ def crop_xy(line: Any, params: Optional[Dict[str, Any]] = None) -> Line:
     except ImportError:
         pairs = [(x, y) for x, y in zip(xs, ys) if x_min <= x <= x_max]
         if not pairs:
-            return [[], []]
+            return []
         nx, ny = zip(*pairs)
         return line_from_xy(list(nx), list(ny))
 
