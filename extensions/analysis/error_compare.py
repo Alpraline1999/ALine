@@ -4,7 +4,7 @@ import math
 from typing import Any, Dict, List
 
 from core.extension_api import AnalysisExtension
-from processing.extension_tools import line_xy, normalize_lines
+from processing.extension_tools import line_from_xy, line_xy, normalize_lines
 
 
 VERSION = "0.1.0"
@@ -53,6 +53,13 @@ def _handler(lines, params):
         x2,
         y2,
     )
+    error_line = line_from_xy(result.get("error_x", []), result.get("error_y", []))
+    result["lines"] = [
+        {"line_name": "误差曲线", "line": error_line},
+    ]
+    result["plot_series"] = [
+        {"name": "误差", "line": "误差曲线", "color": "#D13438"},
+    ]
     result["analysis_type"] = "error_compare"
     return result
 

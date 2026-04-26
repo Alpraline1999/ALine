@@ -3,7 +3,7 @@ import json
 from typing import Protocol, cast
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QSizePolicy, QSplitter, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon as FIF, FluentWindow, NavigationItemPosition,
     NavigationToolButton,
@@ -112,7 +112,9 @@ class _SharedTreePanel(QWidget):
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(2)
 
-        left_group = QHBoxLayout()
+        left_group_container = QWidget(self)
+        left_group_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        left_group = QHBoxLayout(left_group_container)
         left_group.setContentsMargins(0, 0, 0, 0)
         left_group.setSpacing(2)
 
@@ -132,8 +134,7 @@ class _SharedTreePanel(QWidget):
         self.close_project_btn.setToolTip("关闭当前项目")
         left_group.addWidget(self.close_project_btn)
 
-        toolbar.addLayout(left_group)
-        toolbar.addStretch(1)
+        toolbar.addWidget(left_group_container, 1)
 
         # 中间分隔线
         self._toolbar_separator = QFrame(self)
@@ -141,11 +142,12 @@ class _SharedTreePanel(QWidget):
         self._toolbar_separator.setFixedWidth(2)
         toolbar.addWidget(self._toolbar_separator, 0, Qt.AlignmentFlag.AlignCenter)
 
-        toolbar.addStretch(1)
-
-        right_group = QHBoxLayout()
+        right_group_container = QWidget(self)
+        right_group_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        right_group = QHBoxLayout(right_group_container)
         right_group.setContentsMargins(0, 0, 0, 0)
         right_group.setSpacing(2)
+        right_group.addStretch(1)
         self._toolbar_right_group = right_group
 
         self.tree_expand_toggle_btn = ToolButton(_TREE_EXPAND_ALL_ICON, self)
@@ -155,14 +157,6 @@ class _SharedTreePanel(QWidget):
         self.tree_manage_btn = ToolButton(FIF.ALIGNMENT, self)
         self.tree_manage_btn.setToolTip("项目树管理")
         right_group.addWidget(self.tree_manage_btn)
-
-        self.add_dataset_btn = ToolButton(FIF.DICTIONARY_ADD, self)
-        self.add_dataset_btn.setToolTip("新建数据集")
-        right_group.addWidget(self.add_dataset_btn)
-
-        self.import_file_btn = ToolButton(FIF.DOWNLOAD, self)
-        self.import_file_btn.setToolTip("导入数据文件")
-        right_group.addWidget(self.import_file_btn)
 
         self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
         self.extension_toggle_btn.setToolTip("隐藏扩展面板")
@@ -174,7 +168,7 @@ class _SharedTreePanel(QWidget):
         self.ai_toggle_btn.setToolTip("显示/隐藏 AI 助手")
         self.ai_toggle_btn.hide()
 
-        toolbar.addLayout(right_group)
+        toolbar.addWidget(right_group_container, 1)
 
         layout.addLayout(toolbar)
 
@@ -189,7 +183,6 @@ class _SharedTreePanel(QWidget):
         # 安装 Fluent 风格 Tooltip
         for btn in [self.new_project_btn, self.open_project_btn, self.save_project_btn,
             self.close_project_btn, self.tree_expand_toggle_btn, self.tree_manage_btn,
-            self.add_dataset_btn, self.import_file_btn,
             self.extension_toggle_btn,
                     self.ai_toggle_btn]:
             btn.setFixedSize(32, 32)
@@ -198,7 +191,7 @@ class _SharedTreePanel(QWidget):
         self._sync_tree_expand_toggle_button()
 
     def set_data_actions_visible(self, visible: bool) -> None:
-        """保持兼容接口 — 数据操作按钮在所有业务页都始终可见，此方法保留但不作任何更改。"""
+        """保持兼容接口。共享树顶部已不再提供数据入口按钮。"""
         pass
 
     @staticmethod
@@ -304,8 +297,6 @@ class MainWindow(FluentWindow):
         self._tree_panel.save_project_btn.clicked.connect(self._save_current_project_from_panel)
         self._tree_panel.close_project_btn.clicked.connect(self._close_current_project_from_panel)
         self._tree_panel.tree_manage_btn.clicked.connect(self._open_project_tree_manage_dialog)
-        self._tree_panel.add_dataset_btn.clicked.connect(self.data_page._add_dataset)
-        self._tree_panel.import_file_btn.clicked.connect(self.data_page._import_file)
         self._tree_panel.extension_toggle_btn.clicked.connect(self._toggle_current_page_extension_panel)
 
         self._ai_panel = None

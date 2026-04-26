@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_xy, primary_line
+from processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
 VERSION = "0.1.0"
@@ -104,6 +104,48 @@ def _handler(lines, params):
     )
     result["valleys"] = valleys.get("valleys", [])
     result["valley_count"] = valleys.get("count", 0)
+    peak_points = result.get("peaks", []) or []
+    valley_points = result.get("valleys", []) or []
+    result_lines = []
+    plot_series = []
+    if peak_points:
+        result_lines.append(
+            {
+                "line_name": "波峰点",
+                "line": line_from_xy([point.get("x") for point in peak_points], [point.get("y") for point in peak_points]),
+            }
+        )
+        plot_series.append(
+            {
+                "name": f"波峰 ({len(peak_points)}个)",
+                "line": "波峰点",
+                "kind": "markers",
+                "marker": "^",
+                "size": 50,
+                "color": "#D13438",
+            }
+        )
+    if valley_points:
+        result_lines.append(
+            {
+                "line_name": "波谷点",
+                "line": line_from_xy([point.get("x") for point in valley_points], [point.get("y") for point in valley_points]),
+            }
+        )
+        plot_series.append(
+            {
+                "name": f"波谷 ({len(valley_points)}个)",
+                "line": "波谷点",
+                "kind": "markers",
+                "marker": "v",
+                "size": 50,
+                "color": "#107C10",
+            }
+        )
+    if result_lines:
+        result["lines"] = result_lines
+    if plot_series:
+        result["plot_series"] = plot_series
     result["analysis_type"] = "peak_detect"
     result["distance_mode"] = distance_mode
     result["distance_value"] = distance_value

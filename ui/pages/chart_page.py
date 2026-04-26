@@ -136,7 +136,7 @@ _ICON_SHOW = getattr(FIF, "VIEW", FIF.SEARCH)
 _ICON_HIDE = getattr(FIF, "HIDE", FIF.CANCEL)
 _ICON_EXPORT_TO_PICTURES = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
 _ICON_PLOT_EXTENSION_HELP = getattr(FIF, "INFO", getattr(FIF, "HELP", FIF.SEARCH))
-_PLOT_EXTENSION_TEACHING_TIP_TEXT = "左侧负责选择、配置并应用扩展；右侧只展示扩展说明、参数说明，以及当前图表里已加载的扩展实例。"
+_PLOT_EXTENSION_TEACHING_TIP_TEXT = "左侧负责选择、配置并应用扩展；右侧展示当前扩展状态、参数说明，以及当前图表里已加载的扩展实例。"
 _BASE_CURVE_STYLE_EXTENSION_TYPE = "base_curve_style_controls"
 _BASE_PLOT_STYLE_EXTENSION_TYPE = "base_plot_style_controls"
 
@@ -370,33 +370,45 @@ class ChartPage(QWidget):
         install_fluent_tooltip(self._chart_path_label, delay=300, position=ToolTipPosition.BOTTOM)
         list_layout.addWidget(self._chart_path_label)
 
-        toolbar_row = QHBoxLayout()
+        toolbar_row = QVBoxLayout()
+        toolbar_row.setContentsMargins(0, 0, 0, 0)
+        toolbar_row.setSpacing(6)
+        primary_actions_row = QHBoxLayout()
+        primary_actions_row.setContentsMargins(0, 0, 0, 0)
+        primary_actions_row.setSpacing(8)
         self._btn_clear = PushButton(FIF.DELETE, "清除", left_card)
         self._btn_clear.setToolTip("清除当前画布中的所有曲线")
         self._btn_clear.clicked.connect(self._on_clear_chart)
         apply_button_metrics(self._btn_clear, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        toolbar_row.addWidget(self._btn_clear)
+        primary_actions_row.addWidget(self._btn_clear)
         self._btn_remove = PushButton(FIF.REMOVE, "移除选中", left_card)
         self._btn_remove.setToolTip("移除当前选中的曲线")
         self._btn_remove.clicked.connect(self._on_remove_selected)
         apply_button_metrics(self._btn_remove, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        toolbar_row.addWidget(self._btn_remove)
+        primary_actions_row.addWidget(self._btn_remove)
+        primary_actions_row.addStretch()
+        toolbar_row.addLayout(primary_actions_row)
+
+        secondary_actions_row = QHBoxLayout()
+        secondary_actions_row.setContentsMargins(0, 0, 0, 0)
+        secondary_actions_row.setSpacing(8)
         self._btn_selected_up = ToolButton(FIF.UP, left_card)
         self._btn_selected_up.setToolTip("上移")
         self._btn_selected_up.clicked.connect(self._move_selected_curve_up)
         self._set_square_tool_button(self._btn_selected_up)
-        toolbar_row.addWidget(self._btn_selected_up)
+        secondary_actions_row.addWidget(self._btn_selected_up)
         self._btn_selected_down = ToolButton(FIF.DOWN, left_card)
         self._btn_selected_down.setToolTip("下移")
         self._btn_selected_down.clicked.connect(self._move_selected_curve_down)
         self._set_square_tool_button(self._btn_selected_down)
-        toolbar_row.addWidget(self._btn_selected_down)
+        secondary_actions_row.addWidget(self._btn_selected_down)
         self._btn_toggle_visible = ToolButton(_ICON_HIDE, left_card)
         self._btn_toggle_visible.setToolTip("隐藏当前曲线")
         self._btn_toggle_visible.clicked.connect(self._toggle_selected_visibility)
         self._btn_toggle_visible.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
-        toolbar_row.addWidget(self._btn_toggle_visible)
-        toolbar_row.addStretch()
+        secondary_actions_row.addWidget(self._btn_toggle_visible)
+        secondary_actions_row.addStretch()
+        toolbar_row.addLayout(secondary_actions_row)
         list_layout.addLayout(toolbar_row)
 
         style_section = QWidget(self._chart_left_splitter)
@@ -732,12 +744,6 @@ class ChartPage(QWidget):
         self._plot_extension_status_label.setWordWrap(True)
         layout.addWidget(self._plot_extension_status_label)
 
-        layout.addWidget(make_section_label("扩展说明", card))
-        self._plot_extension_description_label = CaptionLabel("在左侧选择扩展后，这里会显示扩展说明。", card)
-        self._plot_extension_description_label.setWordWrap(True)
-        layout.addWidget(self._plot_extension_description_label)
-
-        layout.addWidget(make_hsep(card))
         layout.addWidget(make_section_label("参数说明", card))
         self._plot_extension_config_help_area = SmoothScrollArea(card)
         self._plot_extension_config_help_area.setWidgetResizable(True)
@@ -840,12 +846,11 @@ class ChartPage(QWidget):
 
     def _update_plot_extension_info_panel(self, type_id: Optional[str]) -> None:
         entry = self._entry_for_plot_extension_type(type_id)
-        if not hasattr(self, "_plot_extension_description_label"):
+        if not hasattr(self, "_plot_extension_config_help_label"):
             return
         if entry is None:
             if hasattr(self, "_plot_extension_status_label"):
                 self._plot_extension_status_label.setText("未选择扩展")
-            self._plot_extension_description_label.setText("在左侧选择扩展后，这里会显示扩展说明。")
             self._plot_extension_config_help_label.setText("保留 {} 使用默认参数。")
             return
         if hasattr(self, "_plot_extension_status_label"):
@@ -853,7 +858,6 @@ class ChartPage(QWidget):
                 f"当前扩展: {entry.get('name') or entry.get('type') or '绘图扩展'} · "
                 f"{entry.get('origin_label') or entry.get('source_label') or '内置'} · v{entry.get('version') or '0.1.0'}"
             )
-        self._plot_extension_description_label.setText(str(entry.get("description") or "暂无说明").strip() or "暂无说明")
         self._plot_extension_config_help_label.setText(self._plot_extension_help_text(entry))
 
     def _on_plot_extension_type_changed(self, type_id: str) -> None:

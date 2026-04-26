@@ -14,6 +14,7 @@ class ExtensionSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     external_extensions_dir: str = ""
+    external_extensions_dirs: list[str] = Field(default_factory=list)
     load_builtin_extensions: bool = True
     disabled_builtin_extensions: list[str] = Field(default_factory=list)
     load_external_extensions: bool = True
@@ -62,22 +63,52 @@ def _normalize_extension_directory(directory: str | Path | None) -> Path:
     return path.resolve(strict=False)
 
 
-def get_external_extensions_directory() -> Path:
+def _normalize_extension_directories(directories: Iterable[str | Path] | None) -> list[Path]:
+    normalized: list[Path] = []
+    seen: set[str] = set()
+    raw_items = list(directories or [])
+    if not raw_items:
+        return [default_external_extensions_directory()]
+
+    for item in raw_items:
+        path = _normalize_extension_directory(item)
+        marker = str(path)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        normalized.append(path)
+
+    return normalized or [default_external_extensions_directory()]
+
+
+def get_external_extensions_directories() -> list[Path]:
     settings = ExtensionSettings.load()
-    configured = settings.external_extensions_dir.strip()
+    configured = list(settings.external_extensions_dirs or [])
+    if not configured and settings.external_extensions_dir.strip():
+        configured = [settings.external_extensions_dir.strip()]
     try:
-        return _normalize_extension_directory(configured)
+        return _normalize_extension_directories(configured)
     except ValueError:
-        return default_external_extensions_directory()
+        return [default_external_extensions_directory()]
+
+
+def get_external_extensions_directory() -> Path:
+    return get_external_extensions_directories()[0]
+
+
+def set_external_extensions_directories(directories: Iterable[str | Path] | None) -> list[Path]:
+    normalized = _normalize_extension_directories(directories)
+    for path in normalized:
+        path.mkdir(parents=True, exist_ok=True)
+    settings = ExtensionSettings.load()
+    settings.external_extensions_dirs = [str(path) for path in normalized]
+    settings.external_extensions_dir = str(normalized[0]) if normalized else ""
+    settings.save()
+    return normalized
 
 
 def set_external_extensions_directory(directory: str | Path | None) -> Path:
-    normalized = _normalize_extension_directory(directory)
-    normalized.mkdir(parents=True, exist_ok=True)
-    settings = ExtensionSettings.load()
-    settings.external_extensions_dir = str(normalized)
-    settings.save()
-    return normalized
+    return set_external_extensions_directories([directory])[0]
 
 
 def get_external_extension_settings() -> tuple[bool, list[str]]:

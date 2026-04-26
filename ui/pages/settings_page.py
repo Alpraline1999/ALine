@@ -1,13 +1,15 @@
 from typing import Literal, cast
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
-                               QFileDialog, QFrame, QFormLayout, QKeySequenceEdit)
+                               QFrame, QFormLayout, QKeySequenceEdit)
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     BodyLabel, SubtitleLabel, TitleLabel, SmoothScrollArea,
     LineEdit, PrimaryPushButton, InfoBar, InfoBarPosition, PlainTextEdit,
-    CheckBox, SettingCard, SettingCardGroup, ExpandGroupSettingCard,
+    CheckBox, FolderListSettingCard, SettingCard, SettingCardGroup, ExpandGroupSettingCard,
+    SwitchSettingCard,
     FluentIcon as FIF)
+from qfluentwidgets.common.config import ConfigItem, qconfig
 
 from ui.theme import (
     accent_color,
@@ -45,7 +47,28 @@ from core.ai.providers import (
 )
 
 
-_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 2700
+_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 8100
+
+
+class _MutableFolderListSettingCard(FolderListSettingCard):
+
+    def __init__(self, title: str, content: str | None, folders: list[str], *, directory: str, parent: QWidget | None = None):
+        self._config_item = ConfigItem("SettingsPage", "externalExtensionDirs", list(folders or []))
+        super().__init__(self._config_item, title, content or "", directory=directory, parent=parent)
+
+    def setFolders(self, folders: list[str]) -> None:
+        normalized = [str(folder).strip() for folder in folders if str(folder).strip()]
+        self.folders = normalized
+        qconfig.set(self.configItem, list(self.folders))
+        while self.viewLayout.count():
+            item = self.viewLayout.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.deleteLater()
+        add_folder_item = getattr(self, "_FolderListSettingCard__addFolderItem")
+        for folder in self.folders:
+            add_folder_item(folder)
+        self._adjustViewSize()
 
 
 class SettingsPage(QWidget):
@@ -68,12 +91,16 @@ class SettingsPage(QWidget):
         self._tree_display_mode_combo = None
         self._tree_display_mode_keys = ["wrap", "elide"]
         self._page_tree_focus_mode_label = None
+        self._page_tree_focus_mode_card = None
         self._page_tree_focus_mode_checkbox = None
         self._page_tree_focus_mode_hint = None
         self._appearance_title = None
         self._extension_card = None
         self._extension_title = None
         self._extension_hint = None
+        self._builtin_section_hint = None
+        self._external_section_hint = None
+        self._external_extensions_dirs_card = None
         self._external_extensions_dir_label = None
         self._external_extensions_dir_edit = None
         self._browse_external_extensions_dir_btn = None
@@ -101,6 +128,7 @@ class SettingsPage(QWidget):
         self._appearance_card = None
         self._lang_card = None
         self._shortcuts_card = None
+        self._shortcuts_editor_card = None
         self.theme_combo = None
         self._shortcut_filter_edit = None
         self._shortcut_edits: dict[str, QKeySequenceEdit] = {}
@@ -272,20 +300,20 @@ class SettingsPage(QWidget):
         self._attach_setting_card_control(tree_mode_card, self._tree_display_mode_combo)
         appearance_group.addSettingCard(tree_mode_card)
 
-        focus_mode_card = SettingCard(
+        focus_mode_card = SwitchSettingCard(
             FIF.INFO,
             "项目树页面专注模式",
             "开启后，功能页中的共享项目树只显示当前页面直接相关的节点。",
-            appearance_group,
+            parent=appearance_group,
         )
+        self._page_tree_focus_mode_card = focus_mode_card
+        self._page_tree_focus_mode_checkbox = focus_mode_card
         self._page_tree_focus_mode_label = focus_mode_card.titleLabel
         self._page_tree_focus_mode_label.setStyleSheet(body_text_style_sheet())
         self._page_tree_focus_mode_hint = focus_mode_card.contentLabel
         self._page_tree_focus_mode_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        self._page_tree_focus_mode_checkbox = CheckBox("仅显示当前功能页相关节点", focus_mode_card)
-        self._page_tree_focus_mode_checkbox.setChecked(is_page_tree_focus_mode_enabled())
-        self._page_tree_focus_mode_checkbox.stateChanged.connect(self._on_page_tree_focus_mode_changed)
-        self._attach_setting_card_control(focus_mode_card, self._page_tree_focus_mode_checkbox)
+        focus_mode_card.setChecked(is_page_tree_focus_mode_enabled())
+        focus_mode_card.checkedChanged.connect(self._on_page_tree_focus_mode_changed)
         appearance_group.addSettingCard(focus_mode_card)
 
         onboarding_card = SettingCard(
@@ -310,7 +338,7 @@ class SettingsPage(QWidget):
         self._extension_card = ExpandGroupSettingCard(
             FIF.DOWNLOAD,
             "扩展管理",
-            "内置扩展和外部扩展分块管理；两类扩展分别按绘图/处理/分析/数字化分段显示，并在保存后一起重载。",
+            "扩展按来源分块管理；各来源分别按绘图/处理/分析/数字化分段显示，并在保存后一起重载。",
             extension_group,
         )
         self._extension_card.setExpand(True)
@@ -321,15 +349,12 @@ class SettingsPage(QWidget):
         builtin_layout = QVBoxLayout(builtin_section)
         builtin_layout.setContentsMargins(4, 4, 4, 4)
         builtin_layout.setSpacing(8)
-        builtin_section_label = BodyLabel("内置扩展", builtin_section)
-        builtin_section_label.setStyleSheet(body_text_style_sheet())
-        builtin_layout.addWidget(builtin_section_label)
-        builtin_hint = BodyLabel("管理仓库自带扩展的总开关和逐项启用状态。", builtin_section)
-        builtin_hint.setWordWrap(True)
-        builtin_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        builtin_layout.addWidget(builtin_hint)
+        self._builtin_section_hint = BodyLabel("管理仓库自带扩展的总开关和逐项启用状态。", builtin_section)
+        self._builtin_section_hint.setWordWrap(True)
+        self._builtin_section_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        builtin_layout.addWidget(self._builtin_section_hint)
         builtin_toggle_row = QHBoxLayout()
-        self._builtin_extensions_enabled_checkbox = CheckBox("启用内置扩展", builtin_section)
+        self._builtin_extensions_enabled_checkbox = CheckBox("启用仓库自带项", builtin_section)
         self._builtin_extensions_enabled_checkbox.stateChanged.connect(self._on_builtin_extensions_enabled_changed)
         builtin_toggle_row.addWidget(self._builtin_extensions_enabled_checkbox)
         builtin_toggle_row.addStretch(1)
@@ -347,31 +372,25 @@ class SettingsPage(QWidget):
         external_layout = QVBoxLayout(external_section)
         external_layout.setContentsMargins(4, 4, 4, 4)
         external_layout.setSpacing(8)
-        external_section_label = BodyLabel("外部扩展", external_section)
-        external_section_label.setStyleSheet(body_text_style_sheet())
-        external_layout.addWidget(external_section_label)
-        external_hint = BodyLabel("单独管理外部扩展目录、扫描结果和逐项启用状态。", external_section)
-        external_hint.setWordWrap(True)
-        external_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        external_layout.addWidget(external_hint)
-        external_dir_row = QHBoxLayout()
-        self._external_extensions_dir_label = BodyLabel("外部扩展目录", external_section)
-        self._external_extensions_dir_label.setStyleSheet(body_text_style_sheet())
-        external_dir_row.addWidget(self._external_extensions_dir_label)
-        self._external_extensions_dir_edit = LineEdit(external_section)
-        self._external_extensions_dir_edit.setPlaceholderText("~/.config/aline/extensions")
-        external_dir_row.addWidget(self._external_extensions_dir_edit, 1)
-        self._browse_external_extensions_dir_btn = PushButton("浏览", external_section)
-        self._browse_external_extensions_dir_btn.clicked.connect(self._choose_external_extensions_directory)
-        external_dir_row.addWidget(self._browse_external_extensions_dir_btn)
-        external_layout.addLayout(external_dir_row)
+        self._external_section_hint = BodyLabel("单独管理外部目录、扫描结果和逐项启用状态。", external_section)
+        self._external_section_hint.setWordWrap(True)
+        self._external_section_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        external_layout.addWidget(self._external_section_hint)
+        self._external_extensions_dirs_card = _MutableFolderListSettingCard(
+            "扩展目录",
+            "可添加多个文件夹；保存后会统一扫描并重载。",
+            [],
+            directory="~/.config/aline/extensions",
+            parent=external_section,
+        )
+        external_layout.addWidget(self._external_extensions_dirs_card)
 
         source_toggle_row = QHBoxLayout()
-        self._external_extensions_enabled_checkbox = CheckBox("启用外部扩展", external_section)
+        self._external_extensions_enabled_checkbox = CheckBox("启用目录来源", external_section)
         self._external_extensions_enabled_checkbox.stateChanged.connect(self._on_external_extensions_enabled_changed)
         source_toggle_row.addWidget(self._external_extensions_enabled_checkbox)
 
-        self._refresh_external_extensions_btn = PushButton("刷新外部扩展", external_section)
+        self._refresh_external_extensions_btn = PushButton("刷新目录扫描", external_section)
         self._refresh_external_extensions_btn.clicked.connect(self._refresh_external_extension_specs)
         source_toggle_row.addWidget(self._refresh_external_extensions_btn)
         source_toggle_row.addStretch(1)
@@ -441,17 +460,6 @@ class SettingsPage(QWidget):
         self._shortcuts_title = self._shortcuts_card.titleLabel
         self._shortcuts_title.setStyleSheet(card_title_style_sheet(font_size=18))
 
-        filter_card = SettingCard(FIF.FILTER, "筛选", "按动作名称、分类或关键词筛选快捷键。", self._shortcuts_card)
-        self._shortcut_filter_edit = LineEdit(filter_card)
-        self._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如“分析”或“导出”")
-        self._shortcut_filter_edit.setClearButtonEnabled(True)
-        self._shortcut_filter_edit.setToolTip("按动作名称、分类或关键词筛选快捷键")
-        self._shortcut_filter_edit.textChanged.connect(self._filter_shortcut_rows)
-        self._apply_shortcut_filter_style()
-        self._shortcut_filter_edit.setMinimumWidth(280)
-        self._attach_setting_card_control(filter_card, self._shortcut_filter_edit)
-        self._shortcuts_card.addSettingCard(filter_card)
-
         sc_content = QWidget(self._shortcuts_card)
         sc_form = QFormLayout(sc_content)
         sc_form.setSpacing(6)
@@ -506,7 +514,21 @@ class SettingsPage(QWidget):
             "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击“应用快捷键”保存。",
             self._shortcuts_card,
         )
+        self._shortcuts_editor_card = shortcuts_editor_card
         shortcuts_editor_card.setExpand(True)
+        filter_container = QWidget(shortcuts_editor_card)
+        filter_layout = QVBoxLayout(filter_container)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        filter_layout.setSpacing(6)
+        self._shortcut_filter_edit = LineEdit(filter_container)
+        self._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如“分析”或“导出”")
+        self._shortcut_filter_edit.setClearButtonEnabled(True)
+        self._shortcut_filter_edit.setToolTip("按动作名称、分类或关键词筛选快捷键")
+        self._shortcut_filter_edit.textChanged.connect(self._filter_shortcut_rows)
+        self._apply_shortcut_filter_style()
+        self._shortcut_filter_edit.setMinimumWidth(280)
+        filter_layout.addWidget(self._shortcut_filter_edit)
+        shortcuts_editor_card.addGroupWidget(filter_container)
         shortcuts_editor_card.addGroupWidget(sc_content)
         shortcuts_editor_card.addGroupWidget(btn_container)
         self._shortcuts_card.addSettingCard(shortcuts_editor_card)
@@ -974,7 +996,7 @@ class SettingsPage(QWidget):
         from core.extension_settings import (
             get_builtin_extension_settings,
             get_external_extension_settings,
-            get_external_extensions_directory,
+            get_external_extensions_directories,
         )
 
         load_builtin, disabled_extension_ids = get_builtin_extension_settings()
@@ -987,8 +1009,8 @@ class SettingsPage(QWidget):
             self._external_extensions_enabled_checkbox.blockSignals(True)
             self._external_extensions_enabled_checkbox.setChecked(load_external)
             self._external_extensions_enabled_checkbox.blockSignals(False)
-        if self._external_extensions_dir_edit is not None:
-            self._external_extensions_dir_edit.setText(str(get_external_extensions_directory()))
+        if self._external_extensions_dirs_card is not None:
+            self._external_extensions_dirs_card.setFolders([str(path) for path in get_external_extensions_directories()])
         self._rebuild_builtin_extension_options(
             list_builtin_extension_specs(),
             list_external_extension_specs(),
@@ -1031,8 +1053,8 @@ class SettingsPage(QWidget):
 
         disabled_builtin_ids = [spec_id for spec_id, checkbox in self._builtin_extension_checkboxes.items() if not checkbox.isChecked()]
         disabled_external_ids = [spec_id for spec_id, checkbox in self._external_extension_checkboxes.items() if not checkbox.isChecked()]
-        external_dir = self._external_extensions_dir_edit.text().strip() if self._external_extensions_dir_edit is not None else ""
-        external_specs = list_external_extension_specs(external_dir or None)
+        external_dirs = self._current_external_extensions_directories()
+        external_specs = list_external_extension_specs(external_dirs or None)
         self._rebuild_builtin_extension_options(
             self._extension_specs_by_source.get("builtin", []),
             external_specs,
@@ -1043,23 +1065,22 @@ class SettingsPage(QWidget):
         self._on_external_extensions_enabled_changed()
         InfoBar.success(
             "已刷新",
-            f"检测到 {len(external_specs)} 个外部扩展文件",
+            f"检测到 {len(external_specs)} 个扩展文件",
             parent=self._notification_parent(),
             position=InfoBarPosition.TOP,
         )
 
-    def _choose_external_extensions_directory(self) -> None:
-        current_path = self._external_extensions_dir_edit.text().strip() if self._external_extensions_dir_edit is not None else ""
-        chosen = QFileDialog.getExistingDirectory(self, "选择外部扩展目录", current_path or "")
-        if chosen and self._external_extensions_dir_edit is not None:
-            self._external_extensions_dir_edit.setText(chosen)
+    def _current_external_extensions_directories(self) -> list[str]:
+        if self._external_extensions_dirs_card is None:
+            return []
+        return [str(folder).strip() for folder in list(self._external_extensions_dirs_card.folders) if str(folder).strip()]
 
     def _save_extension_settings(self) -> None:
         from core.extension_api import reload_configured_extensions
         from core.extension_settings import (
             set_builtin_extension_settings,
             set_external_extension_settings,
-            set_external_extensions_directory,
+            set_external_extensions_directories,
         )
 
         load_builtin = bool(
@@ -1079,9 +1100,9 @@ class SettingsPage(QWidget):
             if not checkbox.isChecked()
         ]
 
-        external_dir = self._external_extensions_dir_edit.text().strip() if self._external_extensions_dir_edit is not None else ""
+        external_dirs = self._current_external_extensions_directories()
         try:
-            set_external_extensions_directory(external_dir)
+            set_external_extensions_directories(external_dirs)
         except ValueError as exc:
             InfoBar.error("扩展设置保存失败", str(exc), parent=self._notification_parent(), position=InfoBarPosition.TOP)
             return

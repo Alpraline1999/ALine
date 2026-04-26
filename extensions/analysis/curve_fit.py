@@ -5,7 +5,7 @@ import warnings
 from typing import Any, Dict, List, Optional
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_xy, primary_line
+from processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
 VERSION = "0.1.0"
@@ -109,6 +109,13 @@ def _handler(lines, params):
         str(params.get("model", "linear") or "linear"),
         parse_optional_json_list(params.get("p0")),
     )
+    fit_line = line_from_xy(result.get("fit_x", []), result.get("fit_y", []))
+    result["lines"] = [
+        {"line_name": "拟合曲线", "line": fit_line},
+    ]
+    result["plot_series"] = [
+        {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438"},
+    ]
     result["analysis_type"] = "curve_fit"
     return result
 

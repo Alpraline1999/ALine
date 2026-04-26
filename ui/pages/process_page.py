@@ -159,13 +159,19 @@ class ProcessPage(QWidget):
             return
         if getattr(self, "_selected_input_splitter_user_resized", False):
             return
-        total_height = self._selected_input_splitter.height()
+        try:
+            total_height = self._selected_input_splitter.height()
+        except RuntimeError:
+            return
         if total_height <= 0:
             return
         upper = max(1, int(total_height * 0.4))
         lower = max(1, total_height - upper)
-        with QSignalBlocker(self._selected_input_splitter):
-            self._selected_input_splitter.setSizes([upper, lower])
+        try:
+            with QSignalBlocker(self._selected_input_splitter):
+                self._selected_input_splitter.setSizes([upper, lower])
+        except RuntimeError:
+            return
 
     def _on_selected_input_splitter_moved(self, _pos: int, _index: int) -> None:
         self._selected_input_splitter_user_resized = True

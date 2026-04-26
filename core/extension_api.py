@@ -1480,11 +1480,39 @@ def builtin_extension_files(base_dir: str | Path | None = None) -> List[Path]:
     return [path for path in _extension_python_files(directory) if not path.name.endswith("_demo.py")]
 
 
-def external_extension_files(directory: str | Path | None = None) -> List[Path]:
-    from core.extension_settings import get_external_extensions_directory
+def _normalize_external_directory_inputs(directory: str | Path | Iterable[str | Path] | None) -> List[Path]:
+    from core.extension_settings import get_external_extensions_directories
 
-    target = Path(directory) if directory is not None else get_external_extensions_directory()
-    return _extension_python_files(target)
+    if directory is None:
+        candidates = get_external_extensions_directories()
+    elif isinstance(directory, (str, Path)):
+        candidates = [Path(directory)]
+    else:
+        candidates = [Path(item) for item in directory]
+
+    resolved: List[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        target = Path(candidate).expanduser().resolve(strict=False)
+        marker = str(target)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        resolved.append(target)
+    return resolved
+
+
+def external_extension_files(directory: str | Path | Iterable[str | Path] | None = None) -> List[Path]:
+    files: List[Path] = []
+    seen: set[str] = set()
+    for target in _normalize_external_directory_inputs(directory):
+        for path in _extension_python_files(target):
+            marker = str(path.expanduser().resolve(strict=False))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            files.append(path)
+    return files
 
 
 def configured_builtin_extension_files(
@@ -1509,7 +1537,7 @@ def configured_builtin_extension_files(
 
 
 def configured_external_extension_files(
-    directory: str | Path | None = None,
+    directory: str | Path | Iterable[str | Path] | None = None,
     *,
     load_external: Optional[bool] = None,
     disabled_extension_ids: Optional[Iterable[str]] = None,
@@ -1595,7 +1623,7 @@ def list_builtin_extension_specs(base_dir: str | Path | None = None) -> List[Dic
     )
 
 
-def list_external_extension_specs(directory: str | Path | None = None) -> List[Dict[str, Any]]:
+def list_external_extension_specs(directory: str | Path | Iterable[str | Path] | None = None) -> List[Dict[str, Any]]:
     from core.extension_settings import get_external_extension_settings
 
     load_external, disabled_extension_ids = get_external_extension_settings()
@@ -1610,9 +1638,9 @@ def list_external_extension_specs(directory: str | Path | None = None) -> List[D
 
 def configured_extension_directories(
     base_dir: str | Path | None = None,
-    external_dir: str | Path | None = None,
+    external_dir: str | Path | Iterable[str | Path] | None = None,
 ) -> List[Path]:
-    from core.extension_settings import get_builtin_extension_settings, get_external_extension_settings, get_external_extensions_directory
+    from core.extension_settings import get_builtin_extension_settings, get_external_extension_settings
 
     load_builtin, _disabled_extension_ids = get_builtin_extension_settings()
     load_external, _disabled_external_ids = get_external_extension_settings()
@@ -1620,7 +1648,7 @@ def configured_extension_directories(
     if load_builtin:
         directories.append(default_extensions_directory(base_dir))
     if load_external:
-        directories.append(Path(external_dir) if external_dir is not None else get_external_extensions_directory())
+        directories.extend(_normalize_external_directory_inputs(external_dir))
 
     resolved: List[Path] = []
     seen: set[str] = set()
@@ -1645,7 +1673,7 @@ def reload_builtin_extensions(directory: str | Path | None = None) -> Dict[str, 
 
 def load_configured_extensions(
     base_dir: str | Path | None = None,
-    external_dir: str | Path | None = None,
+    external_dir: str | Path | Iterable[str | Path] | None = None,
 ) -> Dict[str, List[str]]:
     builtin_files = configured_builtin_extension_files(base_dir)
     external_files = configured_external_extension_files(external_dir)

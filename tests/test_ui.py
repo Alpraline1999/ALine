@@ -1613,7 +1613,7 @@ class TestSettingsPage(unittest.TestCase):
     def test_extension_controls_exist(self):
         self.assertIsNotNone(self.page._builtin_extensions_enabled_checkbox)
         self.assertIsNotNone(self.page._external_extensions_enabled_checkbox)
-        self.assertIsNotNone(self.page._external_extensions_dir_edit)
+        self.assertIsNotNone(self.page._external_extensions_dirs_card)
         self.assertIsNotNone(self.page._refresh_external_extensions_btn)
         self.assertIsNotNone(self.page._extension_tabs)
         self.assertIsNotNone(self.page._external_extension_tabs)
@@ -1664,11 +1664,19 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._extension_hint.styleSheet(), placeholder_text_style_sheet(font_size=11))
 
     def test_settings_page_uses_setting_card_containers(self):
-        from qfluentwidgets import ExpandGroupSettingCard, SettingCardGroup
+        from qfluentwidgets import ExpandGroupSettingCard, FolderListSettingCard, SettingCardGroup, SwitchSettingCard
 
         self.assertIsInstance(self.page._appearance_card, SettingCardGroup)
         self.assertIsInstance(self.page._extension_card, ExpandGroupSettingCard)
         self.assertIsInstance(self.page._shortcuts_card, SettingCardGroup)
+        self.assertIsInstance(self.page._page_tree_focus_mode_card, SwitchSettingCard)
+        self.assertIsInstance(self.page._external_extensions_dirs_card, FolderListSettingCard)
+
+    def test_shortcut_filter_field_is_nested_in_mapping_card(self):
+        parent = self.page._shortcut_filter_edit.parentWidget()
+        while parent is not None and parent is not self.page._shortcuts_editor_card:
+            parent = parent.parentWidget()
+        self.assertIs(parent, self.page._shortcuts_editor_card)
 
     def test_settings_title_label_is_removed(self):
         self.assertIsNone(self.page._title_label)
@@ -1696,7 +1704,7 @@ class TestSettingsPage(unittest.TestCase):
         try:
             with mock.patch("core.ui_preferences._CONFIG_PATH", Path("/nonexistent/aline_ui_preferences_focus.json")):
                 temp_page = SettingsPage()
-            self.assertFalse(temp_page._page_tree_focus_mode_checkbox.isChecked())
+            self.assertFalse(temp_page._page_tree_focus_mode_card.isChecked())
         finally:
             if temp_page is not None:
                 temp_page.deleteLater()
@@ -1775,7 +1783,7 @@ class TestSettingsPage(unittest.TestCase):
         from qfluentwidgets import SmoothScrollArea
         from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_MAX_HEIGHT
 
-        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 2700)
+        self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 8100)
         self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
 
@@ -1838,6 +1846,7 @@ class TestSettingsPage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "extension_settings.json"
             external_dir = Path(temp_dir) / "external_extensions"
+            second_external_dir = Path(temp_dir) / "external_extensions_b"
             builtin_specs = [
                 {
                     "id": "plot_reference_line",
@@ -1884,7 +1893,7 @@ class TestSettingsPage(unittest.TestCase):
                     self.page._external_extension_checkboxes["external_plot_reference_line"].text(),
                     "外部圆角",
                 )
-                self.page._external_extensions_dir_edit.setText(str(external_dir))
+                self.page._external_extensions_dirs_card.setFolders([str(external_dir), str(second_external_dir)])
                 self.page._builtin_extension_checkboxes["plot_reference_line"].setChecked(False)
                 self.page._external_extension_checkboxes["external_plot_reference_line"].setChecked(False)
                 self.page._external_extensions_enabled_checkbox.setChecked(False)
@@ -1896,6 +1905,7 @@ class TestSettingsPage(unittest.TestCase):
             self.assertIn("plot_reference_line", config_text)
             self.assertIn("external_plot_reference_line", config_text)
             self.assertIn(str(external_dir), config_text)
+            self.assertIn(str(second_external_dir), config_text)
             self.assertIn('"load_external_extensions": false', config_text)
             reload_mock.assert_called_once()
 
@@ -5358,6 +5368,26 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._btn_clear.text(), "清除")
         self.assertEqual(self.page._btn_remove.text(), "移除选中")
 
+    def test_selected_curve_actions_do_not_overlap_in_left_panel(self):
+        self.page.resize(1280, 820)
+        self.page.show()
+        QApplication.processEvents()
+
+        action_buttons = [
+            self.page._btn_clear,
+            self.page._btn_remove,
+            self.page._btn_selected_up,
+            self.page._btn_selected_down,
+            self.page._btn_toggle_visible,
+        ]
+        for index, button in enumerate(action_buttons):
+            for other in action_buttons[index + 1:]:
+                self.assertFalse(button.geometry().intersects(other.geometry()))
+
+    def test_plot_extension_side_panel_omits_description_section(self):
+        self.assertFalse(hasattr(self.page, "_plot_extension_description_label"))
+        self.assertEqual(self.page._plot_extension_config_help_label.text(), "保留 {} 使用默认参数。")
+
     def test_chart_left_panel_uses_vertical_splitter(self):
         self.page.resize(1280, 820)
         self.page.show()
@@ -7257,6 +7287,33 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIsNotNone(data_file)
         self.assertEqual(data_file.series[0].name, "拟合曲线A")
 
+    def test_peak_detect_result_can_export_series_with_export_plan(self):
+        from models.schemas import DataSeries
+
+        target = DataSeries(
+            name="oscillation_export",
+            x=[0.0, 1.0, 2.0, 3.0, 4.0],
+            y=[0.0, 2.0, 0.0, -1.5, 0.0],
+        )
+        self.df.series.append(target)
+
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("peak_detect"))
+        self.page.on_tree_node_activated("series", target.id)
+        self.page._run_analysis()
+
+        with mock.patch(
+            "ui.pages.analysis_page.choose_data_export_plan",
+            return_value=self._analysis_export_plan("峰值点A"),
+        ):
+            self.page._export_result_series()
+
+        data_file = next((item for item in self.p.data_files if item.name == "峰值点A.analysis"), None)
+        self.assertIsNotNone(data_file)
+        exported_series = data_file.series[0]
+        self.assertEqual(exported_series.name, "峰值点A")
+        self.assertEqual(exported_series.x, [1.0])
+        self.assertEqual(exported_series.y, [2.0])
+
     def test_export_result_series_uses_current_tab_result(self):
         from models.schemas import DataSeries
 
@@ -8571,18 +8628,12 @@ class TestMainWindow(unittest.TestCase):
     def test_tree_panel_exists(self):
         self.assertIsNotNone(self.win._tree_panel)
 
-    def test_tree_toolbar_separator_stays_centered(self):
-        self.win.resize(1400, 900)
-        self.win.show()
-        QApplication.processEvents()
+    def test_tree_toolbar_keeps_vertical_separator(self):
+        from PySide6.QtWidgets import QFrame
 
         separator = self.win._tree_panel._toolbar_separator
-        center_x = separator.geometry().center().x()
-        panel_center_x = self.win._tree_panel.rect().center().x()
-
-        self.assertLess(abs(center_x - panel_center_x), 32)
-        self.assertLessEqual(self.win._tree_panel.close_project_btn.geometry().right(), separator.geometry().left())
-        self.assertGreater(self.win._tree_panel.tree_manage_btn.geometry().left(), separator.geometry().right())
+        self.assertEqual(separator.frameShape(), QFrame.Shape.VLine)
+        self.assertGreaterEqual(separator.maximumWidth(), 2)
 
     def test_tree_panel_has_project_action_buttons(self):
         self.assertIsNotNone(self.win._tree_panel.new_project_btn)
@@ -8975,24 +9026,23 @@ class TestMainWindow(unittest.TestCase):
             self.win._on_tree_node_selected("data_file", node.id)
 
     def test_tree_panel_data_actions_visible_only_on_data_page(self):
-        # I-1: data action buttons are always visible regardless of which page is active
+        # 顶部共享树工具条仅保留项目与树管理操作，不再提供数据入口按钮。
         self.win.switchTo(self.win.data_page)
         self.assertFalse(self.win._tree_panel.new_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.open_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.save_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.close_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.tree_manage_btn.isHidden())
-        self.assertFalse(self.win._tree_panel.add_dataset_btn.isHidden())
-        self.assertFalse(self.win._tree_panel.import_file_btn.isHidden())
+        self.assertFalse(hasattr(self.win._tree_panel, "add_dataset_btn"))
+        self.assertFalse(hasattr(self.win._tree_panel, "import_file_btn"))
         self.win.switchTo(self.win.process_page)
         self.assertFalse(self.win._tree_panel.new_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.open_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.save_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.close_project_btn.isHidden())
         self.assertFalse(self.win._tree_panel.tree_manage_btn.isHidden())
-        # Data buttons remain visible on all pages (I-1 consolidation)
-        self.assertFalse(self.win._tree_panel.add_dataset_btn.isHidden())
-        self.assertFalse(self.win._tree_panel.import_file_btn.isHidden())
+        self.assertFalse(hasattr(self.win._tree_panel, "add_dataset_btn"))
+        self.assertFalse(hasattr(self.win._tree_panel, "import_file_btn"))
 
     def test_project_tree_manage_button_opens_dialog(self):
         with mock.patch("ui.main_window.ProjectTreeManageDialog") as dialog_cls:
@@ -9105,17 +9155,9 @@ class TestMainWindow(unittest.TestCase):
         load_mock.assert_called_once_with("fake-img-id")
         add_curve_mock.assert_called_once_with()
 
-    def test_tree_panel_uses_updated_dataset_action_icons(self):
-        from qfluentwidgets import FluentIcon as FIF
-
-        self.assertEqual(
-            self.win._tree_panel.add_dataset_btn.icon().pixmap(20, 20).toImage(),
-            FIF.DICTIONARY_ADD.icon().pixmap(20, 20).toImage(),
-        )
-        self.assertEqual(
-            self.win._tree_panel.import_file_btn.icon().pixmap(20, 20).toImage(),
-            FIF.DOWNLOAD.icon().pixmap(20, 20).toImage(),
-        )
+    def test_tree_panel_removes_top_data_action_buttons(self):
+        self.assertFalse(hasattr(self.win._tree_panel, "add_dataset_btn"))
+        self.assertFalse(hasattr(self.win._tree_panel, "import_file_btn"))
 
     def test_tree_node_activated_curve_export_routes_to_digitize_export(self):
         with mock.patch.object(self.win.digitize_page, "load_curve_by_id") as load_mock, \

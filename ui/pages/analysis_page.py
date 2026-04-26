@@ -62,7 +62,7 @@ from core.extension_api import (
 )
 from core.global_assets import global_assets
 from core.project_manager import project_manager
-from processing.extension_tools import line_xy, normalize_line
+from processing.extension_tools import line_from_xy, line_xy, normalize_line
 
 try:
     import matplotlib
@@ -2389,7 +2389,7 @@ class AnalysisPage(QWidget):
         analysis_type = result.get("analysis_type", "analysis")
         result_lines = self._analysis_result_lines(result)
         line_lookup = {item["line_name"]: item["line"] for item in result_lines}
-        custom_series = list(result.get("_plot_series", []) or [])
+        custom_series = list(result.get("plot_series", []) or result.get("_plot_series", []) or [])
         if custom_series:
             first_series = dict(custom_series[0])
             resolved_line = self._resolve_analysis_series_line(first_series, line_lookup)
@@ -2972,9 +2972,13 @@ class AnalysisPage(QWidget):
         if analysis.analysis_type == "curve_fit":
             result.setdefault("fit_x", list(series.x))
             result.setdefault("fit_y", list(series.y))
+            result.setdefault("lines", [{"line_name": "拟合曲线", "line": line_from_xy(series.x, series.y)}])
+            result.setdefault("plot_series", [{"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438"}])
         elif analysis.analysis_type == "error_compare":
             result.setdefault("error_x", list(series.x))
             result.setdefault("error_y", list(series.y))
+            result.setdefault("lines", [{"line_name": "误差曲线", "line": line_from_xy(series.x, series.y)}])
+            result.setdefault("plot_series", [{"name": "误差", "line": "误差曲线", "color": "#D13438"}])
         return result
 
     def _rehydrate_saved_result(self, analysis) -> None:

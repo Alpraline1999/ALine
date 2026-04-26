@@ -1131,6 +1131,15 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertIn("fit_y", r)
         self.assertEqual(len(r["fit_x"]), 300)
 
+    def test_curve_fit_extension_handler_returns_structured_line(self):
+        from extensions.analysis.curve_fit import _handler
+
+        result = _handler([[[0.0, 1.0], [1.0, 3.0], [2.0, 5.0], [3.0, 7.0]]], {"model": "linear"})
+
+        self.assertEqual(result["lines"][0]["line_name"], "拟合曲线")
+        self.assertEqual(result["plot_series"][0]["line"], "拟合曲线")
+        self.assertGreater(len(result["lines"][0]["line"]), 10)
+
     def test_fit_poly2(self):
         from core.analysis_engine import fit_curve
         xs = [float(i) for i in range(20)]
@@ -1197,6 +1206,16 @@ class TestAnalysisEngine(unittest.TestCase):
         ys = [1.0] * 10  # flat signal
         r = detect_peaks(xs, ys, min_height=2.0)
         self.assertEqual(r["count"], 0)
+
+    def test_peak_detect_extension_handler_returns_peak_lines(self):
+        from extensions.analysis.peak_detect import _handler
+
+        result = _handler([[[0.0, 0.0], [1.0, 2.0], [2.0, 0.0], [3.0, -1.5], [4.0, 0.0]]], {})
+
+        names = [item["line_name"] for item in result.get("lines", [])]
+        self.assertIn("波峰点", names)
+        self.assertIn("波谷点", names)
+        self.assertEqual(result["plot_series"][0]["line"], "波峰点")
 
     def test_compute_statistics(self):
         from core.analysis_engine import compute_statistics
@@ -1729,6 +1748,55 @@ class TestAnalysisEngine(unittest.TestCase):
                 self.assertEqual(
                     {item["id"]: item["enabled"] for item in specs},
                     {"external_disabled": False, "external_enabled": True},
+                )
+
+    def test_configured_external_extension_files_scan_multiple_saved_directories(self):
+        from core.extension_api import configured_external_extension_files, list_external_extension_specs
+        from core.extension_settings import set_external_extension_settings, set_external_extensions_directories
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "extension_settings.json"
+            external_dir_a = Path(temp_dir) / "external_a"
+            external_dir_b = Path(temp_dir) / "external_b"
+            external_dir_a.mkdir()
+            external_dir_b.mkdir()
+            (external_dir_a / "external_alpha.py").write_text(textwrap.dedent(
+                """
+                from core.extension_api import PlotExtension
+
+                def _plot(lines, params):
+                    return None
+
+                def register_extensions(registry):
+                    registry.register_plot(
+                        PlotExtension(type='external_alpha', name='外部 Alpha', handler=_plot)
+                    )
+                """
+            ), encoding="utf-8")
+            (external_dir_b / "external_beta.py").write_text(textwrap.dedent(
+                """
+                from core.extension_api import PlotExtension
+
+                def _plot(lines, params):
+                    return None
+
+                def register_extensions(registry):
+                    registry.register_plot(
+                        PlotExtension(type='external_beta', name='外部 Beta', handler=_plot)
+                    )
+                """
+            ), encoding="utf-8")
+
+            with mock.patch("core.extension_settings._CONFIG_PATH", config_path):
+                set_external_extensions_directories([external_dir_a, external_dir_b])
+                set_external_extension_settings(True, [])
+                files = configured_external_extension_files()
+                specs = list_external_extension_specs()
+
+                self.assertEqual({path.stem for path in files}, {"external_alpha", "external_beta"})
+                self.assertEqual(
+                    {item["id"]: item["enabled"] for item in specs},
+                    {"external_alpha": True, "external_beta": True},
                 )
 
     def test_reload_builtin_extensions_replaces_previous_registry_entries(self):
@@ -2787,6 +2855,37 @@ class TestMainEntry(unittest.TestCase):
         with mock.patch("main.sys.platform", "linux"):
             _configure_linux_environment(env)
         self.assertEqual(env.get("QT_IM_MODULE"), "fcitx")
+
+    def test_configure_linux_environment_adds_qt_plugin_path_for_input_contexts(self):
+        from main import _configure_linux_environment
+        import unittest.mock as mock
+
+        env = {"QT_IM_MODULE": "fcitx"}
+        roots = [
+            Path(__file__).resolve().parents[1] / ".venv" / "lib" / "python3.12" / "site-packages" / "PySide6" / "Qt" / "plugins",
+            Path("/usr/lib/x86_64-linux-gnu/qt6/plugins"),
+        ]
+        with mock.patch("main.sys.platform", "linux"), \
+             mock.patch("main._candidate_qt_plugin_roots", return_value=roots), \
+             mock.patch("main._platforminputcontext_modules", return_value={"fcitx", "ibus"}):
+            _configure_linux_environment(env)
+
+        self.assertEqual(env.get("QT_IM_MODULE"), "fcitx")
+        self.assertIn(str(roots[0]), env.get("QT_PLUGIN_PATH", ""))
+        self.assertIn("/usr/lib/x86_64-linux-gnu/qt6/plugins", env.get("QT_PLUGIN_PATH", ""))
+
+    def test_configure_linux_environment_falls_back_to_available_input_context(self):
+        from main import _configure_linux_environment
+        import unittest.mock as mock
+
+        env = {"QT_IM_MODULE": "fcitx"}
+        roots = [Path("/usr/lib/x86_64-linux-gnu/qt6/plugins")]
+        with mock.patch("main.sys.platform", "linux"), \
+             mock.patch("main._candidate_qt_plugin_roots", return_value=roots), \
+             mock.patch("main._platforminputcontext_modules", return_value={"ibus"}):
+            _configure_linux_environment(env)
+
+        self.assertEqual(env.get("QT_IM_MODULE"), "ibus")
 
 
 # ══════════════════════════════════════════════════════════════════
