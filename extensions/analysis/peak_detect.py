@@ -159,16 +159,6 @@ def _handler(lines, params):
                 ),
             }
         )
-        plot_series.append(
-            {
-                "name": f"峰谷 ({len(merged_points)}个)",
-                "line": "峰谷点",
-                "kind": "markers",
-                "marker": "o",
-                "size": 42,
-                "color": "#605E5C",
-            }
-        )
     if peak_points:
         result_lines.append(
             {
