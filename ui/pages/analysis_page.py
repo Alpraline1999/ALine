@@ -1299,31 +1299,34 @@ class AnalysisPage(QWidget):
         self._figure = view.get("figure")
         self._canvas = view.get("canvas")
         self._summary_table = view.get("summary_table")
-        result = view.get("result")
+        result = view.get("result") if isinstance(view.get("result"), dict) else {}
+        current_view = self._analysis_tab_views.get("current") if hasattr(self, "_analysis_tab_views") else None
+        is_current_view = view is current_view
         params = view.get("params") if isinstance(view.get("params"), dict) else {}
-        input_refs = params.get("input_refs") if isinstance(params, dict) else None
-        active_input_refs = params.get("active_input_refs") if isinstance(params, dict) else None
         analysis_type = view.get("analysis_type") or result.get("analysis_type", "curve_fit")
-        if analysis_type in self._analysis_type_ids:
-            self._type_combo.setCurrentIndex(self._analysis_type_ids.index(analysis_type))
-        self._restore_analysis_params(view.get("params") or {})
-        source_inputs = input_refs if isinstance(input_refs, list) else (view.get("inputs") or [])
-        self._selected_inputs = [dict(item) for item in source_inputs if isinstance(item, dict)]
-        active_inputs = active_input_refs if isinstance(active_input_refs, list) else (view.get("inputs") or [])
-        selected_ids = {
-            str(item.get("node_id"))
-            for item in active_inputs
-            if isinstance(item, dict) and item.get("node_id")
-        }
-        current_node_id = next(
-            (
+        if is_current_view:
+            input_refs = params.get("input_refs") if isinstance(params, dict) else None
+            active_input_refs = params.get("active_input_refs") if isinstance(params, dict) else None
+            if analysis_type in self._analysis_type_ids:
+                self._type_combo.setCurrentIndex(self._analysis_type_ids.index(analysis_type))
+            self._restore_analysis_params(view.get("params") or {})
+            source_inputs = input_refs if isinstance(input_refs, list) else (view.get("inputs") or [])
+            self._selected_inputs = [dict(item) for item in source_inputs if isinstance(item, dict)]
+            active_inputs = active_input_refs if isinstance(active_input_refs, list) else (view.get("inputs") or [])
+            selected_ids = {
                 str(item.get("node_id"))
                 for item in active_inputs
                 if isinstance(item, dict) and item.get("node_id")
-            ),
-            None,
-        )
-        self._rebuild_input_list(selected_ids, current_node_id)
+            }
+            current_node_id = next(
+                (
+                    str(item.get("node_id"))
+                    for item in active_inputs
+                    if isinstance(item, dict) and item.get("node_id")
+                ),
+                None,
+            )
+            self._rebuild_input_list(selected_ids, current_node_id)
         self._result = dict(result) if isinstance(result, dict) else None
         if isinstance(result, dict) and result:
             self._set_analysis_status(f"当前结果: {view.get('analysis_name') or self._analysis_type_label(analysis_type)}")

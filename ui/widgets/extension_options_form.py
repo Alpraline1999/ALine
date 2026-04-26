@@ -33,6 +33,7 @@ from qfluentwidgets import (
 )
 
 from core.global_assets import global_assets
+from core.extension_settings import get_extension_number_decimals
 from core.extension_api import (
     extension_lines_picker_visible,
     extension_lines_support_text,
@@ -1244,7 +1245,9 @@ class ExtensionOptionsForm(QWidget):
         placeholder = str(field.get("placeholder") or "").strip()
         min_value = float(field.get("min_value", -999999999.0) or -999999999.0)
         max_value = float(field.get("max_value", 999999999.0) or 999999999.0)
-        decimals = max(0, min(12, int(field.get("decimals", 12) or 12)))
+        raw_decimals = field.get("decimals")
+        decimals = get_extension_number_decimals() if raw_decimals in (None, "") else int(raw_decimals)
+        decimals = max(0, min(12, decimals))
         step = float(field.get("step", 0.1) or 0.1)
         allow_empty = field.get("default") in (None, "")
         sentinel = min_value - max(abs(step), 1.0) if allow_empty else min_value

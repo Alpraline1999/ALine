@@ -1215,11 +1215,27 @@ class TestAnalysisEngine(unittest.TestCase):
         result = _handler([[[0.0, 0.0], [1.0, 2.0], [2.0, 0.0], [3.0, -1.5], [4.0, 0.0]]], {})
 
         names = [item["line_name"] for item in result.get("lines", [])]
+        self.assertIn("峰谷点", names)
         self.assertIn("波峰点", names)
         self.assertIn("波谷点", names)
-        self.assertTrue(any(item.get("line") == "波峰点" for item in result.get("_plot_series", [])))
-        self.assertEqual([section["title"] for section in result.get("table_sections", [])], ["波峰列表", "波谷列表"])
+        self.assertTrue(any(item.get("line") == "峰谷点" for item in result.get("_plot_series", [])))
+        self.assertEqual([section["title"] for section in result.get("table_sections", [])], ["峰谷列表"])
+        self.assertEqual(result["table_sections"][0]["headers"], ["序号", "类型", "X", "Y"])
         self.assertEqual(result["summary_items"][0]["label"], "波峰数量")
+
+    def test_run_analysis_peak_detect_fallback_returns_merged_points_table(self):
+        from core.analysis_engine import run_analysis
+        from core.extension_api import extension_registry
+
+        with mock.patch.object(extension_registry, "get_analysis", return_value=None):
+            result = run_analysis(
+                "peak_detect",
+                [{"x": [0.0, 1.0, 2.0, 3.0, 4.0], "y": [0.0, 2.0, 0.0, -1.5, 0.0], "name": "demo"}],
+                {},
+            )
+
+        self.assertEqual(result["table_sections"][0]["title"], "峰谷列表")
+        self.assertIn("峰谷点", [item["line_name"] for item in result.get("lines", [])])
 
     def test_error_compare_extension_handler_returns_structured_line(self):
         from extensions.analysis.error_compare import _handler

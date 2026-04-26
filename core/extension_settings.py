@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 _CONFIG_PATH = Path.home() / ".config" / "aline" / "extension_settings.json"
+_EXTENSION_NUMBER_DECIMALS_DEFAULT = 6
+_EXTENSION_NUMBER_DECIMALS_MIN = 0
+_EXTENSION_NUMBER_DECIMALS_MAX = 12
 
 
 class ExtensionSettings(BaseModel):
@@ -19,6 +22,7 @@ class ExtensionSettings(BaseModel):
     disabled_builtin_extensions: list[str] = Field(default_factory=list)
     load_external_extensions: bool = True
     disabled_external_extensions: list[str] = Field(default_factory=list)
+    number_decimals: int = _EXTENSION_NUMBER_DECIMALS_DEFAULT
 
     @classmethod
     def load(cls) -> "ExtensionSettings":
@@ -53,6 +57,14 @@ def _normalize_builtin_extension_ids(extension_ids: Iterable[str] | None) -> lis
 
 def _normalize_external_extension_ids(extension_ids: Iterable[str] | None) -> list[str]:
     return _normalize_builtin_extension_ids(extension_ids)
+
+
+def _normalize_extension_number_decimals(value: int | None) -> int:
+    try:
+        numeric = int(_EXTENSION_NUMBER_DECIMALS_DEFAULT if value is None else value)
+    except (TypeError, ValueError):
+        numeric = _EXTENSION_NUMBER_DECIMALS_DEFAULT
+    return max(_EXTENSION_NUMBER_DECIMALS_MIN, min(_EXTENSION_NUMBER_DECIMALS_MAX, numeric))
 
 
 def _normalize_extension_directory(directory: str | Path | None) -> Path:
@@ -114,6 +126,18 @@ def set_external_extensions_directory(directory: str | Path | None) -> Path:
 def get_external_extension_settings() -> tuple[bool, list[str]]:
     settings = ExtensionSettings.load()
     return bool(settings.load_external_extensions), _normalize_external_extension_ids(settings.disabled_external_extensions)
+
+
+def get_extension_number_decimals() -> int:
+    settings = ExtensionSettings.load()
+    return _normalize_extension_number_decimals(settings.number_decimals)
+
+
+def set_extension_number_decimals(decimals: int | None) -> ExtensionSettings:
+    settings = ExtensionSettings.load()
+    settings.number_decimals = _normalize_extension_number_decimals(decimals)
+    settings.save()
+    return settings
 
 
 def set_external_extension_settings(load_external: bool, disabled_extension_ids: Iterable[str] | None = None) -> ExtensionSettings:

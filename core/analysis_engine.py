@@ -480,25 +480,22 @@ def run_analysis(
             )
         peak_points = list(result.get("peaks", []) or [])
         valley_points = list(result.get("valleys", []) or [])
-        table_sections: List[Dict[str, Any]] = []
-        if peak_points:
-            table_sections.append(
+        merged_points = [
+            {"type": "波峰", "x": point.get("x"), "y": point.get("y")}
+            for point in peak_points
+        ] + [
+            {"type": "波谷", "x": point.get("x"), "y": point.get("y")}
+            for point in valley_points
+        ]
+        merged_points.sort(key=lambda item: (float("inf") if item.get("x") is None else item.get("x"), item.get("type") != "波峰"))
+        if merged_points:
+            result["table_sections"] = [
                 {
-                    "title": "波峰列表",
-                    "headers": ["序号", "X", "Y"],
-                    "rows": [[index + 1, point.get("x"), point.get("y")] for index, point in enumerate(peak_points)],
+                    "title": "峰谷列表",
+                    "headers": ["序号", "类型", "X", "Y"],
+                    "rows": [[index + 1, item.get("type"), item.get("x"), item.get("y")] for index, item in enumerate(merged_points)],
                 }
-            )
-        if valley_points:
-            table_sections.append(
-                {
-                    "title": "波谷列表",
-                    "headers": ["序号", "X", "Y"],
-                    "rows": [[index + 1, point.get("x"), point.get("y")] for index, point in enumerate(valley_points)],
-                }
-            )
-        if table_sections:
-            result["table_sections"] = table_sections
+            ]
         plot_series: List[Dict[str, Any]] = [
             {
                 "name": result.get("source_name") or "原始数据",
@@ -509,6 +506,31 @@ def run_analysis(
             }
         ]
         result_lines: List[Dict[str, Any]] = []
+        if merged_points:
+            merged_line_points = [
+                (float(item["x"]), float(item["y"]))
+                for item in merged_points
+                if item.get("x") is not None and item.get("y") is not None
+            ]
+            result_lines.append(
+                {
+                    "line_name": "峰谷点",
+                    "line": line_from_xy(
+                        [point[0] for point in merged_line_points],
+                        [point[1] for point in merged_line_points],
+                    ),
+                }
+            )
+            plot_series.append(
+                {
+                    "name": f"峰谷 ({len(merged_points)}个)",
+                    "line": "峰谷点",
+                    "kind": "markers",
+                    "marker": "o",
+                    "size": 42,
+                    "color": "#605E5C",
+                }
+            )
         if peak_points:
             result_lines.append(
                 {

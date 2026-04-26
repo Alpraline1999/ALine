@@ -1788,6 +1788,7 @@ class TestSettingsPage(unittest.TestCase):
                 temp_page.deleteLater()
 
     def test_extension_management_tabs_cap_height_and_use_scrollable_option_area(self):
+        from PySide6.QtCore import Qt
         from qfluentwidgets import SmoothScrollArea
         from ui.pages.settings_page import (
             _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
@@ -1811,6 +1812,8 @@ class TestSettingsPage(unittest.TestCase):
 
         self.assertGreaterEqual(len(builtin_scroll_areas), 4)
         self.assertGreaterEqual(len(external_scroll_areas), 4)
+        for layout in [*self.page._extension_option_layouts.values(), *self.page._external_extension_option_layouts.values()]:
+            self.assertTrue(bool(layout.alignment() & Qt.AlignmentFlag.AlignTop))
 
     def test_extension_status_summary_is_rendered_in_settings_page(self):
         from ui.theme import warning_color
@@ -1916,10 +1919,12 @@ class TestSettingsPage(unittest.TestCase):
                     self.page._external_extension_checkboxes["external_plot_reference_line"].text(),
                     "外部圆角",
                 )
+                self.assertEqual(self.page._external_extension_number_decimals_slider.value(), 6)
                 self.page._external_extensions_dirs_card.setFolders([str(external_dir), str(second_external_dir)])
                 self.page._builtin_extension_checkboxes["plot_reference_line"].setChecked(False)
                 self.page._external_extension_checkboxes["external_plot_reference_line"].setChecked(False)
                 self.page._external_extensions_enabled_checkbox.setChecked(False)
+                self.page._external_extension_number_decimals_slider.setValue(4)
                 self.page._save_extension_settings()
 
             self.assertEqual(received, [True])
@@ -1930,6 +1935,8 @@ class TestSettingsPage(unittest.TestCase):
             self.assertIn(str(external_dir), config_text)
             self.assertIn(str(second_external_dir), config_text)
             self.assertIn('"load_external_extensions": false', config_text)
+            self.assertIn('"number_decimals": 4', config_text)
+            self.assertEqual(self.page._external_extension_number_decimals_slider.value(), 4)
             reload_mock.assert_called_once()
 
     def test_refresh_external_extension_specs_rebuilds_without_reloading_registry(self):
@@ -2989,6 +2996,7 @@ class TestExtensionOptionsForm(unittest.TestCase):
             self.assertIsNotNone(float_widget)
             self.assertEqual(int_widget.value(), 3)
             self.assertAlmostEqual(float_widget.value(), 1.25)
+            self.assertEqual(float_widget.decimals(), 6)
 
             int_widget.setValue(5)
             float_widget.setValue(2.5)
@@ -2997,6 +3005,27 @@ class TestExtensionOptionsForm(unittest.TestCase):
             self.assertAlmostEqual(form.current_options()["factor"], 2.5)
         finally:
             form.deleteLater()
+
+    def test_number_field_uses_configured_default_decimals(self):
+        from qfluentwidgets import DoubleSpinBox
+        from ui.widgets.extension_options_form import ExtensionOptionsForm
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "extension_settings.json"
+            config_path.write_text('{"number_decimals": 4}', encoding="utf-8")
+
+            with mock.patch("core.extension_settings._CONFIG_PATH", config_path):
+                form = ExtensionOptionsForm()
+                try:
+                    form.set_fields([
+                        {"key": "factor", "label": "倍率", "field_type": "number", "default": 1.0}
+                    ])
+
+                    float_widget = form.findChild(DoubleSpinBox)
+                    self.assertIsNotNone(float_widget)
+                    self.assertEqual(float_widget.decimals(), 4)
+                finally:
+                    form.deleteLater()
 
     def test_lines_button_uses_reduced_min_width(self):
         from qfluentwidgets import PushButton
@@ -8017,7 +8046,11 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(self.page._analysis_tabs.count(), 3)
         titles = [self.page._analysis_tabs.tabText(i) for i in range(self.page._analysis_tabs.count())]
         self.assertIn("拟合结果A", titles)
-        summary_labels = [self.page._summary_table.item(row, 0).text() for row in range(self.page._summary_table.rowCount())]
+        active_key = self.page._analysis_tab_key_for_index(self.page._analysis_tabs.currentIndex())
+        self.assertIsNotNone(active_key)
+        view = self.page._analysis_tab_views[active_key]
+        summary_table = view["detail_summary_table"] or self.page._summary_table
+        summary_labels = [summary_table.item(row, 0).text() for row in range(summary_table.rowCount())]
         self.assertIn("R²", summary_labels)
 
     def test_selecting_series_does_not_auto_restore_saved_results_in_tabs(self):
@@ -8037,6 +8070,29 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(self.page._analysis_tabs.count(), 2)
         self.assertNotIn("拟合结果A", titles)
         self.assertNotIn("拟合结果B", titles)
+
+    def test_temporary_result_tab_keeps_its_own_inputs_without_overwriting_current_selection(self):
+        from models.schemas import DataSeries
+
+        other = DataSeries(name="s2", x=[10.0, 11.0], y=[20.0, 21.0])
+        self.df.series.append(other)
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+
+        temp_view = self.page._analysis_tab_views[self.page._analysis_tab_keys[1]]
+        self.assertEqual([item["node_id"] for item in temp_view["inputs"]], [self.s.id])
+
+        self.page._analysis_tabs.setCurrentIndex(0)
+        self.page.on_tree_node_activated("series", other.id)
+        current_ids = [item["node_id"] for item in self.page._selected_inputs]
+        self.assertEqual(current_ids, [self.s.id, other.id])
+
+        self.page._analysis_tabs.setCurrentIndex(1)
+
+        self.assertEqual([item["node_id"] for item in self.page._selected_inputs], current_ids)
+        self.assertEqual(self.page._input_list.count(), 2)
+        self.assertEqual([item["node_id"] for item in temp_view["inputs"]], [self.s.id])
 
     def test_analysis_result_tabs_are_closable(self):
         from qfluentwidgets import TabCloseButtonDisplayMode
@@ -8058,7 +8114,7 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(self.page._analysis_tabs.count(), 2)
         self.assertNotIn(closing_title, titles)
 
-    def test_peak_detect_uses_unified_vertical_detail_tables(self):
+    def test_peak_detect_uses_merged_detail_table_and_combined_line(self):
         from PySide6.QtWidgets import QApplication
         from PySide6.QtWidgets import QAbstractItemView
         from PySide6.QtWidgets import QTableWidgetSelectionRange
@@ -8087,26 +8143,24 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIn("波峰数量", meta_labels)
         self.assertIn("波谷数量", meta_labels)
 
-        self.assertEqual(len(view["detail_tables"]), 2)
+        self.assertEqual(len(view["detail_tables"]), 1)
         peak_points_table = view["detail_tables"][0]
-        valley_points_table = view["detail_tables"][1]
         peak_headers = [peak_points_table.horizontalHeaderItem(i).text() for i in range(peak_points_table.columnCount())]
-        valley_headers = [valley_points_table.horizontalHeaderItem(i).text() for i in range(valley_points_table.columnCount())]
-        self.assertEqual(peak_headers, ["序号", "X", "Y"])
-        self.assertEqual(valley_headers, ["序号", "X", "Y"])
-        self.assertGreaterEqual(peak_points_table.rowCount(), 1)
-        self.assertGreaterEqual(valley_points_table.rowCount(), 1)
+        self.assertEqual(peak_headers, ["序号", "类型", "X", "Y"])
+        self.assertEqual(peak_points_table.rowCount(), 2)
         self.assertEqual(detail_summary_table.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
         self.assertEqual(peak_points_table.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
         self.assertEqual(peak_points_table.item(0, 0).text(), "1")
-        self.assertEqual(peak_points_table.item(0, 1).text(), "1")
-        self.assertEqual(valley_points_table.item(0, 0).text(), "1")
-        self.assertEqual(valley_points_table.item(0, 1).text(), "3")
+        self.assertEqual(peak_points_table.item(0, 1).text(), "波峰")
+        self.assertEqual(peak_points_table.item(0, 2).text(), "1")
+        self.assertEqual(peak_points_table.item(1, 0).text(), "2")
+        self.assertEqual(peak_points_table.item(1, 1).text(), "波谷")
+        self.assertEqual(peak_points_table.item(1, 2).text(), "3")
         self.assertLess(view["details_layout"].indexOf(detail_summary_table), view["details_layout"].indexOf(peak_points_table))
-        self.assertLess(view["details_layout"].indexOf(peak_points_table), view["details_layout"].indexOf(valley_points_table))
+        self.assertIn("峰谷点", [item["line_name"] for item in self.page._result.get("lines", [])])
 
         peak_points_table.setRangeSelected(
-            QTableWidgetSelectionRange(0, 0, 0, 2),
+            QTableWidgetSelectionRange(0, 0, 0, 3),
             True,
         )
         peak_points_table.copy_selection_to_clipboard()
