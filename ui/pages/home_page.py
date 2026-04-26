@@ -136,26 +136,16 @@ class _HomeBannerWidget(QWidget):
         self._hero_title = None
         self._hero_subtitle = None
         self._hero_hint = None
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(_HOME_CONTENT_MARGIN, 24, _HOME_CONTENT_MARGIN, 20)
-        layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self._layout = layout
+        self._hero_hint_max_width = 760
 
         self._hero_title = LargeTitleLabel("ALine", self)
-        layout.addWidget(self._hero_title, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 
-        self._hero_subtitle = SubtitleLabel("科研数据管理与可视化工作台", self)
-        layout.addWidget(self._hero_subtitle, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._hero_subtitle = SubtitleLabel("一站式科研数据管理与可视化工作台", self)
 
-        self._hero_hint = BodyLabel("项目、数据、绘图和分析结果在同一工作台内流转。", self)
-        self._hero_hint.setWordWrap(True)
-        self._hero_hint.setMaximumWidth(760)
+        self._hero_hint = QLabel("项目、数据、绘图和分析结果在同一工作台内流转。", self)
+        self._hero_hint.setWordWrap(False)
+        self._hero_hint.setMaximumWidth(self._hero_hint_max_width)
         self._hero_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._hero_hint, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-
-        layout.addStretch(1)
 
         self._link_card_view = _HomeLinkCardView(self)
         self._link_cards.append(
@@ -174,21 +164,24 @@ class _HomeBannerWidget(QWidget):
                 "https://example.com",
             )
         )
-        layout.addWidget(
-            self._link_card_view,
-            0,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+        self._link_cards.append(
+            self._link_card_view.addCard(
+                self._card_icon_path,
+                "扩展社区",
+                "预留扩展社区入口，后续替换为正式社区。",
+                "https://example.com",
+            )
         )
         self.update_theme()
-        self._update_hero_hint_height()
+        self._layout_banner_children()
 
     def _update_hero_hint_height(self) -> None:
         if self._hero_hint is None:
             return
 
-        margins = self._layout.contentsMargins()
-        available_width = max(1, self.width() - margins.left() - margins.right())
-        available_width = min(available_width, self._hero_hint.maximumWidth())
+        available_width = max(1, self.width() - _HOME_CONTENT_MARGIN * 2)
+        available_width = min(available_width, self._hero_hint_max_width)
+        self._hero_hint.setFixedWidth(available_width)
         text_rect = self._hero_hint.fontMetrics().boundingRect(
             0,
             0,
@@ -197,12 +190,33 @@ class _HomeBannerWidget(QWidget):
             Qt.TextFlag.TextWordWrap,
             self._hero_hint.text(),
         )
-        self._hero_hint.setMinimumHeight(max(text_rect.height() + 4, self._hero_hint.minimumSizeHint().height()))
-        self._hero_hint.updateGeometry()
+        self._hero_hint.setFixedHeight(max(text_rect.height() + 4, self._hero_hint.fontMetrics().height() + 4))
+
+    def _layout_banner_children(self) -> None:
+        if self._hero_title is None or self._hero_subtitle is None or self._hero_hint is None or self._link_card_view is None:
+            return
+
+        left = _HOME_CONTENT_MARGIN
+        top = 24
+        self._update_hero_hint_height()
+
+        title_size = self._hero_title.sizeHint()
+        self._hero_title.setGeometry(left, top, title_size.width(), title_size.height())
+
+        subtitle_size = self._hero_subtitle.sizeHint()
+        subtitle_top = self._hero_title.geometry().bottom() + 7
+        self._hero_subtitle.setGeometry(left, subtitle_top, subtitle_size.width(), subtitle_size.height())
+
+        hint_top = self._hero_subtitle.geometry().bottom() + 7
+        self._hero_hint.setGeometry(left, hint_top, self._hero_hint.width(), self._hero_hint.height())
+
+        card_top = max(self._hero_hint.geometry().bottom() + 18, self.height() - 20 - _HOME_LINK_CARD_HEIGHT)
+        card_width = max(1, self.width() - _HOME_CONTENT_MARGIN * 2)
+        self._link_card_view.setGeometry(left, card_top, card_width, _HOME_LINK_CARD_HEIGHT)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._update_hero_hint_height()
+        self._layout_banner_children()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -257,6 +271,7 @@ class _HomeBannerWidget(QWidget):
             self._update_hero_hint_height()
         if self._link_card_view is not None:
             self._link_card_view.update_theme()
+        self._layout_banner_children()
         self.update()
 
 

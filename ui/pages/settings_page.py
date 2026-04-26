@@ -349,7 +349,7 @@ class SettingsPage(QWidget):
         self._builtin_extension_card = ExpandGroupSettingCard(
             FIF.DOWNLOAD,
             "内置扩展",
-            "管理仓库自带扩展的总开关和逐项启用状态。",
+            "管理内置扩展的总开关和逐项启用状态。",
             extension_group,
         )
         self._builtin_extension_card.setExpand(True)
@@ -361,12 +361,8 @@ class SettingsPage(QWidget):
         builtin_layout = QVBoxLayout(builtin_section)
         builtin_layout.setContentsMargins(4, 4, 4, 4)
         builtin_layout.setSpacing(8)
-        self._builtin_section_hint = BodyLabel("管理仓库自带扩展的总开关和逐项启用状态。", builtin_section)
-        self._builtin_section_hint.setWordWrap(True)
-        self._builtin_section_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        builtin_layout.addWidget(self._builtin_section_hint)
         builtin_toggle_row = QHBoxLayout()
-        self._builtin_extensions_enabled_checkbox = CheckBox("启用仓库自带项", builtin_section)
+        self._builtin_extensions_enabled_checkbox = CheckBox("启用内置扩展", builtin_section)
         self._builtin_extensions_enabled_checkbox.stateChanged.connect(self._on_builtin_extensions_enabled_changed)
         builtin_toggle_row.addWidget(self._builtin_extensions_enabled_checkbox)
         builtin_toggle_row.addStretch(1)
@@ -384,7 +380,7 @@ class SettingsPage(QWidget):
         self._external_extension_card = ExpandGroupSettingCard(
             FIF.FOLDER,
             "外部扩展",
-            "单独管理外部目录、扫描结果和逐项启用状态。",
+            "单独管理外部扩展目录、扫描结果和逐项启用状态。",
             extension_group,
         )
         self._external_extension_card.setExpand(True)
@@ -393,12 +389,8 @@ class SettingsPage(QWidget):
         external_layout = QVBoxLayout(external_section)
         external_layout.setContentsMargins(4, 4, 4, 4)
         external_layout.setSpacing(8)
-        self._external_section_hint = BodyLabel("单独管理外部目录、扫描结果和逐项启用状态。", external_section)
-        self._external_section_hint.setWordWrap(True)
-        self._external_section_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        external_layout.addWidget(self._external_section_hint)
         self._external_extensions_dirs_card = _MutableFolderListSettingCard(
-            "扩展目录",
+            "外部扩展目录",
             "可添加多个文件夹；保存后会统一扫描并重载。",
             [],
             directory="~/.config/aline/extensions",
@@ -407,11 +399,11 @@ class SettingsPage(QWidget):
         external_layout.addWidget(self._external_extensions_dirs_card)
 
         source_toggle_row = QHBoxLayout()
-        self._external_extensions_enabled_checkbox = CheckBox("启用目录来源", external_section)
+        self._external_extensions_enabled_checkbox = CheckBox("启用外部扩展", external_section)
         self._external_extensions_enabled_checkbox.stateChanged.connect(self._on_external_extensions_enabled_changed)
         source_toggle_row.addWidget(self._external_extensions_enabled_checkbox)
 
-        self._refresh_external_extensions_btn = PushButton("刷新目录扫描", external_section)
+        self._refresh_external_extensions_btn = PushButton("刷新外部扩展扫描", external_section)
         self._refresh_external_extensions_btn.clicked.connect(self._refresh_external_extension_specs)
         source_toggle_row.addWidget(self._refresh_external_extensions_btn)
         source_toggle_row.addStretch(1)
