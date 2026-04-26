@@ -377,6 +377,28 @@ class SettingsPage(QWidget):
         extension_group.addSettingCard(self._extension_actions_card)
         layout.addWidget(extension_group)
 
+        self._external_extension_number_decimals_card = SettingCard(
+            FIF.INFO,
+            "浮点参数显示小数位",
+            "控制扩展 number 参数使用 DoubleSpinBox 时默认显示的小数位数。",
+            self._external_extension_card,
+        )
+        decimals_slider = Slider(Qt.Orientation.Horizontal, self._external_extension_number_decimals_card)
+        decimals_slider.setRange(0, 12)
+        decimals_slider.setSingleStep(1)
+        decimals_slider.setPageStep(1)
+        decimals_slider.setMinimumWidth(132)
+        decimals_slider.valueChanged.connect(self._on_external_extension_number_decimals_changed)
+        self._external_extension_number_decimals_slider = decimals_slider
+        decimals_value = BodyLabel("6", self._external_extension_number_decimals_card)
+        decimals_value.setStyleSheet(secondary_text_style_sheet(font_size=12))
+        decimals_value.setMinimumWidth(24)
+        self._external_extension_number_decimals_value_label = decimals_value
+        decimals_row = self._build_setting_card_row(self._external_extension_number_decimals_card, decimals_slider, decimals_value)
+        decimals_row.layout().setStretch(0, 1)
+        self._attach_setting_card_control(self._external_extension_number_decimals_card, decimals_row)
+        layout.addWidget(self._external_extension_number_decimals_card)
+
         self._builtin_extension_card = CardWidget(content)
         builtin_layout = QVBoxLayout(self._builtin_extension_card)
         self._apply_card_layout_metrics(builtin_layout)
@@ -434,28 +456,6 @@ class SettingsPage(QWidget):
             parent=self._external_extension_card,
         )
         external_layout.addWidget(self._external_extensions_dirs_card)
-
-        self._external_extension_number_decimals_card = SettingCard(
-            FIF.INFO,
-            "浮点参数显示小数位",
-            "控制扩展 number 参数使用 DoubleSpinBox 时默认显示的小数位数。",
-            self._external_extension_card,
-        )
-        decimals_slider = Slider(Qt.Orientation.Horizontal, self._external_extension_number_decimals_card)
-        decimals_slider.setRange(0, 12)
-        decimals_slider.setSingleStep(1)
-        decimals_slider.setPageStep(1)
-        decimals_slider.setMinimumWidth(132)
-        decimals_slider.valueChanged.connect(self._on_external_extension_number_decimals_changed)
-        self._external_extension_number_decimals_slider = decimals_slider
-        decimals_value = BodyLabel("6", self._external_extension_number_decimals_card)
-        decimals_value.setStyleSheet(secondary_text_style_sheet(font_size=12))
-        decimals_value.setMinimumWidth(24)
-        self._external_extension_number_decimals_value_label = decimals_value
-        decimals_row = self._build_setting_card_row(self._external_extension_number_decimals_card, decimals_slider, decimals_value)
-        decimals_row.layout().setStretch(0, 1)
-        self._attach_setting_card_control(self._external_extension_number_decimals_card, decimals_row)
-        external_layout.addWidget(self._external_extension_number_decimals_card)
 
         refresh_row = QWidget(self._external_extension_card)
         refresh_layout = QHBoxLayout(refresh_row)
