@@ -11,6 +11,7 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.extension_api import extension_registry, invoke_analysis_extension_handler
+from processing.extension_tools import line_from_xy
 
 # ─────────────────────────────────────────────────────────────
 # 曲线拟合
@@ -406,6 +407,36 @@ def run_analysis(
         result = fit_curve(first["x"], first["y"], model, params.get("p0"))
         result["analysis_type"] = "curve_fit"
         result["source_name"] = first.get("name", "")
+        result["summary_items"] = [
+            {"label": "模型", "value": result.get("model", "")},
+            {"label": "方程", "value": result.get("equation", "")},
+            {"label": "R²", "value": result.get("r2")},
+            {"label": "数据源", "value": result.get("source_name", "")},
+        ]
+        param_names = list(result.get("param_names", []) or [])
+        param_values = list(result.get("params", []) or [])
+        if param_names and param_values:
+            result["table_sections"] = [
+                {
+                    "title": "拟合参数",
+                    "headers": ["参数", "值"],
+                    "rows": [[name, value] for name, value in zip(param_names, param_values)],
+                }
+            ]
+        result["lines"] = [
+            {"line_name": "拟合曲线", "line": line_from_xy(result.get("fit_x", []), result.get("fit_y", []))},
+        ]
+        result["_plot_series"] = [
+            {
+                "name": result.get("source_name") or "原始数据",
+                "line": line_from_xy(first["x"], first["y"]),
+                "kind": "scatter",
+                "color": "#888888",
+                "alpha": 0.7,
+                "size": 15,
+            },
+            {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438", "line_width": 2.0},
+        ]
         return result
     if analysis_type == "peak_detect":
         if not normalized_inputs:
@@ -431,6 +462,90 @@ def run_analysis(
         result["valley_count"] = valleys.get("count", 0)
         result["analysis_type"] = "peak_detect"
         result["source_name"] = first.get("name", "")
+        distance_mode = "x_distance" if params.get("min_distance_x") not in (None, "") else "points"
+        distance_value = params.get("min_distance_x") if distance_mode == "x_distance" else params.get("min_distance", 1)
+        result["distance_mode"] = distance_mode
+        result["distance_value"] = distance_value
+        result["summary_items"] = [
+            {"label": "波峰数量", "value": result.get("count", 0)},
+            {"label": "波谷数量", "value": result.get("valley_count", 0)},
+            {"label": "数据源", "value": result.get("source_name", "")},
+        ]
+        if distance_value not in (None, ""):
+            result["summary_items"].append(
+                {
+                    "label": "最小间距",
+                    "value": f"{distance_value}（{'X 值间距' if distance_mode == 'x_distance' else '采样点数'}）",
+                }
+            )
+        peak_points = list(result.get("peaks", []) or [])
+        valley_points = list(result.get("valleys", []) or [])
+        table_sections: List[Dict[str, Any]] = []
+        if peak_points:
+            table_sections.append(
+                {
+                    "title": "波峰列表",
+                    "headers": ["序号", "X", "Y"],
+                    "rows": [[index + 1, point.get("x"), point.get("y")] for index, point in enumerate(peak_points)],
+                }
+            )
+        if valley_points:
+            table_sections.append(
+                {
+                    "title": "波谷列表",
+                    "headers": ["序号", "X", "Y"],
+                    "rows": [[index + 1, point.get("x"), point.get("y")] for index, point in enumerate(valley_points)],
+                }
+            )
+        if table_sections:
+            result["table_sections"] = table_sections
+        plot_series: List[Dict[str, Any]] = [
+            {
+                "name": result.get("source_name") or "原始数据",
+                "line": line_from_xy(first["x"], first["y"]),
+                "kind": "line",
+                "color": "#0078D4",
+                "line_width": 1.4,
+            }
+        ]
+        result_lines: List[Dict[str, Any]] = []
+        if peak_points:
+            result_lines.append(
+                {
+                    "line_name": "波峰点",
+                    "line": line_from_xy([point.get("x") for point in peak_points], [point.get("y") for point in peak_points]),
+                }
+            )
+            plot_series.append(
+                {
+                    "name": f"波峰 ({len(peak_points)}个)",
+                    "line": "波峰点",
+                    "kind": "markers",
+                    "marker": "^",
+                    "size": 50,
+                    "color": "#D13438",
+                }
+            )
+        if valley_points:
+            result_lines.append(
+                {
+                    "line_name": "波谷点",
+                    "line": line_from_xy([point.get("x") for point in valley_points], [point.get("y") for point in valley_points]),
+                }
+            )
+            plot_series.append(
+                {
+                    "name": f"波谷 ({len(valley_points)}个)",
+                    "line": "波谷点",
+                    "kind": "markers",
+                    "marker": "v",
+                    "size": 50,
+                    "color": "#107C10",
+                }
+            )
+        if result_lines:
+            result["lines"] = result_lines
+        result["_plot_series"] = plot_series
         return result
     if analysis_type == "statistics":
         if not normalized_inputs:
@@ -439,6 +554,36 @@ def run_analysis(
         result = compute_statistics(first["x"], first["y"])
         result["analysis_type"] = "statistics"
         result["source_name"] = first.get("name", "")
+        result["summary_items"] = [
+            {"label": "样本数 N", "value": result.get("n", 0)},
+            {"label": "X 均值", "value": result.get("x_mean", 0)},
+            {"label": "X 标准差", "value": result.get("x_std", 0)},
+            {"label": "X 范围", "value": f"[{result.get('x_min', 0):.4g}, {result.get('x_max', 0):.4g}]"},
+            {"label": "Y 均值", "value": result.get("y_mean", 0)},
+            {"label": "Y 标准差", "value": result.get("y_std", 0)},
+            {"label": "Y 范围", "value": f"[{result.get('y_min', 0):.4g}, {result.get('y_max', 0):.4g}]"},
+            {"label": "Y 中位数", "value": result.get("y_median", 0)},
+            {"label": "Y 四分位", "value": f"Q1={result.get('y_p25', 0):.4g}, Q3={result.get('y_p75', 0):.4g}"},
+        ]
+        if first["x"]:
+            mean = float(result.get("y_mean", 0.0))
+            result["_plot_series"] = [
+                {
+                    "name": result.get("source_name") or "原始数据",
+                    "line": line_from_xy(first["x"], first["y"]),
+                    "kind": "line",
+                    "color": "#0078D4",
+                    "line_width": 1.4,
+                },
+                {
+                    "name": f"均值={mean:.4g}",
+                    "line": line_from_xy([first["x"][0], first["x"][-1]], [mean, mean]),
+                    "kind": "line",
+                    "color": "#D13438",
+                    "line_width": 1.0,
+                    "line_style": "--",
+                },
+            ]
         return result
     if analysis_type == "correlation":
         if len(normalized_inputs) < 2:
@@ -448,6 +593,28 @@ def run_analysis(
         result["analysis_type"] = "correlation"
         result["name1"] = first.get("name", "")
         result["name2"] = second.get("name", "")
+        result["summary_items"] = [
+            {"label": "方法", "value": result.get("method", "")},
+            {"label": "相关系数 r", "value": result.get("r", 0)},
+            {"label": "数据", "value": f"{result.get('name1', '')} vs {result.get('name2', '')}"},
+        ]
+        if result.get("p_value") is not None:
+            result["summary_items"].append({"label": "p 值", "value": result.get("p_value")})
+        point_count = min(len(first["y"]), len(second["y"]))
+        if point_count:
+            result["_plot_series"] = [
+                {
+                    "name": f"{result.get('name1', '数据1')} vs {result.get('name2', '数据2')}",
+                    "line": line_from_xy(first["y"][:point_count], second["y"][:point_count]),
+                    "kind": "scatter",
+                    "color": "#0078D4",
+                    "alpha": 0.7,
+                    "size": 15,
+                }
+            ]
+            result["x_label"] = result.get("name1", "")
+            result["y_label"] = result.get("name2", "")
+            result["plot_title"] = f"r = {result.get('r', 0):.4f}"
         return result
     if analysis_type == "error_compare":
         if len(normalized_inputs) < 2:
@@ -456,6 +623,23 @@ def run_analysis(
         result = compute_error_metrics(first["x"], first["y"], second["x"], second["y"])
         result["name1"] = first.get("name", "")
         result["name2"] = second.get("name", "")
+        result["summary_items"] = [
+            {"label": "数据", "value": f"{result.get('name1', '')} vs {result.get('name2', '')}"},
+            {"label": "MAE", "value": result.get("mae", 0)},
+            {"label": "RMSE", "value": result.get("rmse", 0)},
+            {"label": "平均误差", "value": result.get("mean_error", 0)},
+            {"label": "最大绝对误差", "value": result.get("max_abs_error", 0)},
+        ]
+        if result.get("relative_mae") is not None:
+            result["summary_items"].append({"label": "相对平均误差", "value": result.get("relative_mae")})
+        result["lines"] = [
+            {"line_name": "误差曲线", "line": line_from_xy(result.get("error_x", []), result.get("error_y", []))},
+        ]
+        result["_plot_series"] = [
+            {"name": "误差", "line": "误差曲线", "color": "#D13438", "line_width": 1.5}
+        ]
+        result["x_label"] = result.get("name1", "")
+        result["y_label"] = "误差"
         return result
     raise ValueError(f"未知分析类型: {analysis_type}")
 

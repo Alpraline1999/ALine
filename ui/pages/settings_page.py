@@ -48,6 +48,7 @@ from core.ai.providers import (
 
 
 _EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 60750
+_EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER = 3
 
 
 class _MutableFolderListSettingCard(FolderListSettingCard):
@@ -261,6 +262,7 @@ class SettingsPage(QWidget):
             option_layouts[category] = options_layout
 
             tabs.addTab(page, label, route_key=category)
+        tabs.setMinimumHeight(max(tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER, tabs.navigationWidget.sizeHint().height()))
         return tabs
 
     def _build_general_tab(self) -> QWidget:
@@ -978,6 +980,18 @@ class SettingsPage(QWidget):
                 install_fluent_tooltip(checkbox, delay=400)
                 self._register_extension_checkbox("external", spec_id, checkbox)
                 layout.addWidget(checkbox)
+        self._refresh_extension_category_tab_heights()
+
+    def _refresh_extension_category_tab_heights(self) -> None:
+        for tabs in (self._extension_tabs, self._external_extension_tabs):
+            if tabs is None:
+                continue
+            tabs.setMinimumHeight(
+                max(
+                    tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                    tabs.navigationWidget.sizeHint().height(),
+                )
+            )
 
     def _on_builtin_extensions_enabled_changed(self, *_args) -> None:
         enabled = bool(

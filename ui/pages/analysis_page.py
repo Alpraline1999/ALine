@@ -26,7 +26,7 @@ from qfluentwidgets import (
 )
 
 from ui.matplotlib_fonts import configure_matplotlib_cjk
-from ui.dialogs.fluent_dialogs import TextInputDialog
+from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.dialogs.export_flow import (
     DataCreateTargetOption,
     choose_analysis_result_save_plan,
@@ -451,23 +451,26 @@ class AnalysisPage(QWidget):
         result_actions = QHBoxLayout()
         result_actions.setContentsMargins(0, 0, 0, 0)
         result_actions.setSpacing(6)
+        self._analysis_result_actions_layout = result_actions
         self._save_result_btn = PushButton(FIF.SAVE, "保存分析结果")
         self._save_result_btn.clicked.connect(self._save_result)
         apply_button_metrics(self._save_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        result_actions.addWidget(self._save_result_btn)
+        self._save_result_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        result_actions.addWidget(self._save_result_btn, 1)
 
         self._export_result_btn = PushButton(FIF.SHARE, "导出结果曲线")
         self._export_result_btn.clicked.connect(self._export_result_series)
         self._export_result_btn.hide()
         self._export_result_btn.setEnabled(False)
         apply_button_metrics(self._export_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        result_actions.addWidget(self._export_result_btn)
+        self._export_result_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        result_actions.addWidget(self._export_result_btn, 1)
 
         self._generate_report_btn = PushButton(FIF.DOCUMENT, "生成报告")
         self._generate_report_btn.clicked.connect(self._on_generate_report)
         apply_button_metrics(self._generate_report_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
-        result_actions.addWidget(self._generate_report_btn)
-        result_actions.addStretch(1)
+        self._generate_report_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        result_actions.addWidget(self._generate_report_btn, 1)
 
         result_layout.addLayout(result_actions)
 
@@ -621,40 +624,6 @@ class AnalysisPage(QWidget):
         self._configure_result_table(summary_table, ["数据类型", "结果"])
         summary_stack.addWidget(summary_table)
 
-        peak_summary_widget = QWidget(summary_stack)
-        peak_summary_layout = QHBoxLayout(peak_summary_widget)
-        peak_summary_layout.setContentsMargins(0, 0, 0, 0)
-        peak_summary_layout.setSpacing(6)
-        peak_meta_panel = QWidget(peak_summary_widget)
-        peak_meta_layout = QVBoxLayout(peak_meta_panel)
-        peak_meta_layout.setContentsMargins(0, 0, 0, 0)
-        peak_meta_layout.setSpacing(6)
-        peak_meta_layout.addWidget(make_section_label("摘要信息", peak_meta_panel))
-        peak_meta_table = _SelectableResultTable(peak_meta_panel)
-        self._configure_result_table(peak_meta_table, ["项目", "结果"])
-        peak_meta_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        peak_meta_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        peak_meta_layout.addWidget(peak_meta_table)
-        peak_summary_layout.addWidget(peak_meta_panel, stretch=2)
-
-        peak_points_panel = QWidget(peak_summary_widget)
-        peak_points_layout = QVBoxLayout(peak_points_panel)
-        peak_points_layout.setContentsMargins(0, 0, 0, 0)
-        peak_points_layout.setSpacing(6)
-        peak_points_layout.addWidget(make_section_label("峰谷明细", peak_points_panel))
-        peak_points_table = _SelectableResultTable(peak_points_panel)
-        self._configure_result_table(peak_points_table, ["波峰序号", "波峰 X", "波峰 Y", "波谷序号", "波谷 X", "波谷 Y"])
-        peak_points_header = peak_points_table.horizontalHeader()
-        peak_points_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        peak_points_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        peak_points_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        peak_points_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        peak_points_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        peak_points_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        peak_points_layout.addWidget(peak_points_table, stretch=1)
-        peak_summary_layout.addWidget(peak_points_panel, stretch=5)
-        summary_stack.addWidget(peak_summary_widget)
-
         details_scroll = QScrollArea(summary_stack)
         details_scroll.setFrameShape(QFrame.Shape.NoFrame)
         details_scroll.setWidgetResizable(True)
@@ -683,11 +652,6 @@ class AnalysisPage(QWidget):
             "empty_preview_label": empty_preview_label,
             "summary_stack": summary_stack,
             "summary_table": summary_table,
-            "peak_summary_widget": peak_summary_widget,
-            "peak_meta_panel": peak_meta_panel,
-            "peak_meta_table": peak_meta_table,
-            "peak_points_panel": peak_points_panel,
-            "peak_points_table": peak_points_table,
             "details_scroll": details_scroll,
             "details_container": details_container,
             "details_layout": details_layout,
@@ -704,8 +668,6 @@ class AnalysisPage(QWidget):
         }
         view_ref["view"] = view
         self._set_summary_rows(summary_table, [("状态", "（运行分析后显示结果）")])
-        self._set_summary_rows(peak_meta_table, [("状态", "（运行峰谷检测后显示结果）")])
-        self._set_peak_points_rows(peak_points_table, [], [])
         self._sync_analysis_preview_nav_toggle_states(view)
         return view
 
@@ -783,36 +745,6 @@ class AnalysisPage(QWidget):
         self._flatten_json_summary(rows, value)
         return rows or [("结果", self._format_summary_value(value))]
 
-    def _peak_summary_rows(self, r: dict) -> List[tuple[str, str]]:
-        distance_mode = "X 值间距" if r.get("distance_mode") == "x_distance" else "采样点数"
-        distance_value = r.get("distance_value")
-        rows = [
-            ("波峰数量", str(r.get("count", 0))),
-            ("波谷数量", str(r.get("valley_count", 0))),
-            ("数据源", str(r.get("source_name", "-"))),
-        ]
-        if distance_value not in (None, ""):
-            rows.append(("最小间距", f"{distance_value}（{distance_mode}）"))
-        return rows
-
-    def _set_peak_points_rows(self, table: TableWidget, peaks: List[dict], valleys: List[dict]) -> None:
-        row_count = max(len(peaks), len(valleys))
-        table.setRowCount(row_count)
-        for row_idx in range(row_count):
-            peak = peaks[row_idx] if row_idx < len(peaks) else None
-            valley = valleys[row_idx] if row_idx < len(valleys) else None
-            values = [
-                self._format_summary_value(None if peak is None else row_idx + 1),
-                self._format_summary_value(None if peak is None else peak.get("x")),
-                self._format_summary_value(None if peak is None else peak.get("y")),
-                self._format_summary_value(None if valley is None else row_idx + 1),
-                self._format_summary_value(None if valley is None else valley.get("x")),
-                self._format_summary_value(None if valley is None else valley.get("y")),
-            ]
-            for col_idx, value in enumerate(values):
-                table.setItem(row_idx, col_idx, QTableWidgetItem(value))
-        table.resizeRowsToContents()
-
     def _set_result_table_rows(self, table: TableWidget, rows: List[List[Any]]) -> None:
         table.setRowCount(len(rows))
         for row_idx, values in enumerate(rows):
@@ -885,7 +817,7 @@ class AnalysisPage(QWidget):
         return sections
 
     def _normalize_analysis_output(self, t: str, selected: list, r: dict) -> Dict[str, Any]:
-        # 允许分析扩展输出四类结构化内容：summary_items、lines + _plot_series、table_sections、text_sections。
+        del selected
         plot = {
             "series": [],
             "x_label": str(r.get("x_label") or "").strip() or None,
@@ -901,118 +833,6 @@ class AnalysisPage(QWidget):
             "preferred_summary_widget": "summary",
         }
 
-        if t == "curve_fit" and selected:
-            xs, ys, name = selected[0]
-            plot["series"] = [
-                {"kind": "scatter", "x": xs, "y": ys, "label": name, "color": "#888888", "alpha": 0.7, "size": 15},
-            ]
-            if "fit_x" in r and "fit_y" in r:
-                plot["series"].append(
-                    {
-                        "kind": "line",
-                        "x": list(r.get("fit_x", []) or []),
-                        "y": list(r.get("fit_y", []) or []),
-                        "label": f"拟合 R²={r.get('r2', 0):.4f}",
-                        "color": "#D13438",
-                        "line_width": 2.0,
-                    }
-                )
-            normalized["summary_items"] = self._summary_rows(t, r)
-            return normalized
-
-        if t == "peak_detect" and selected:
-            xs, ys, name = selected[0]
-            peaks = list(r.get("peaks", []) or [])
-            valleys = list(r.get("valleys", []) or [])
-            plot["series"] = [
-                {"kind": "line", "x": xs, "y": ys, "label": name, "color": "#0078D4", "line_width": 1.4},
-                {
-                    "kind": "markers",
-                    "x": [point.get("x") for point in peaks],
-                    "y": [point.get("y") for point in peaks],
-                    "label": f"波峰 ({len(peaks)}个)",
-                    "color": "#D13438",
-                    "marker": "^",
-                    "size": 50,
-                },
-                {
-                    "kind": "markers",
-                    "x": [point.get("x") for point in valleys],
-                    "y": [point.get("y") for point in valleys],
-                    "label": f"波谷 ({len(valleys)}个)",
-                    "color": "#107C10",
-                    "marker": "v",
-                    "size": 50,
-                },
-            ]
-            normalized["summary_items"] = self._peak_summary_rows(r)
-            normalized["tables"] = [
-                {
-                    "title": "峰谷明细",
-                    "headers": ["波峰序号", "波峰 X", "波峰 Y", "波谷序号", "波谷 X", "波谷 Y"],
-                    "rows": [
-                        [
-                            row_index + 1 if row_index < len(peaks) else None,
-                            peaks[row_index].get("x") if row_index < len(peaks) else None,
-                            peaks[row_index].get("y") if row_index < len(peaks) else None,
-                            row_index + 1 if row_index < len(valleys) else None,
-                            valleys[row_index].get("x") if row_index < len(valleys) else None,
-                            valleys[row_index].get("y") if row_index < len(valleys) else None,
-                        ]
-                        for row_index in range(max(len(peaks), len(valleys)))
-                    ],
-                }
-            ]
-            normalized["preferred_summary_widget"] = "details"
-            return normalized
-
-        if t == "correlation" and len(selected) >= 2:
-            _xs1, ys1, n1 = selected[0]
-            _xs2, ys2, n2 = selected[1]
-            nn = min(len(ys1), len(ys2))
-            plot["series"] = [
-                {"kind": "scatter", "x": ys1[:nn], "y": ys2[:nn], "color": "#0078D4", "alpha": 0.7, "size": 15},
-            ]
-            plot["x_label"] = n1
-            plot["y_label"] = n2
-            plot["title"] = f"r = {r.get('r', 0):.4f}"
-            normalized["summary_items"] = self._summary_rows(t, r)
-            return normalized
-
-        if t == "error_compare" and len(selected) >= 2:
-            plot["series"] = [
-                {
-                    "kind": "line",
-                    "x": list(r.get("error_x", []) or []),
-                    "y": list(r.get("error_y", []) or []),
-                    "label": "误差",
-                    "color": "#D13438",
-                    "line_width": 1.5,
-                }
-            ]
-            plot["x_label"] = selected[0][2]
-            plot["y_label"] = "误差"
-            normalized["summary_items"] = self._summary_rows(t, r)
-            return normalized
-
-        if t == "statistics" and selected:
-            xs, ys, name = selected[0]
-            mean = r.get("y_mean", 0)
-            plot["series"] = [
-                {"kind": "line", "x": xs, "y": ys, "label": name, "color": "#0078D4", "line_width": 1.4},
-                {
-                    "kind": "line",
-                    "x": [xs[0], xs[-1]] if xs else [],
-                    "y": [mean, mean] if xs else [],
-                    "label": f"均值={mean:.4g}",
-                    "color": "#D13438",
-                    "line_width": 1.0,
-                    "line_style": "--",
-                },
-            ]
-            normalized["summary_items"] = self._summary_rows(t, r)
-            return normalized
-
         result_lines = self._analysis_result_lines(r)
         line_lookup = {item["line_name"]: item["line"] for item in result_lines}
         custom_series = list(r.get("_plot_series", []) or r.get("plot_series", []) or [])
@@ -1025,7 +845,7 @@ class AnalysisPage(QWidget):
             xs, ys = line_xy(resolved_line)
             plot["series"].append(
                 {
-                    "kind": str(series.get("kind") or series.get("mode") or "line"),
+                    "kind": str(series.get("kind") or series.get("mode") or series.get("plot_type") or "line"),
                     "x": xs,
                     "y": ys,
                     "label": str(series.get("name") or series.get("line") or f"结果曲线 {index + 1}"),
@@ -1038,6 +858,24 @@ class AnalysisPage(QWidget):
                 }
             )
 
+        if not plot["series"]:
+            for index, item in enumerate(result_lines, start=1):
+                xs, ys = line_xy(item["line"])
+                plot["series"].append(
+                    {
+                        "kind": "line",
+                        "x": xs,
+                        "y": ys,
+                        "label": str(item.get("line_name") or f"结果曲线 {index}"),
+                        "color": "#0078D4",
+                        "line_width": 1.6,
+                        "line_style": "-",
+                        "marker": "",
+                        "size": 24.0,
+                        "alpha": 1.0,
+                    }
+                )
+
         structured_keys = {
             "summary_items",
             "lines",
@@ -1049,6 +887,9 @@ class AnalysisPage(QWidget):
             "text_sections",
             "text",
             "markdown",
+            "plot_title",
+            "x_label",
+            "y_label",
         }
         summary_payload = {
             key: value
@@ -1115,14 +956,6 @@ class AnalysisPage(QWidget):
             headers = [str(header) for header in list(section.get("headers") or [])]
             self._configure_result_table(table, headers)
             self._set_result_table_rows(table, [list(row) for row in list(section.get("rows") or [])])
-            if headers == ["波峰序号", "波峰 X", "波峰 Y", "波谷序号", "波谷 X", "波谷 Y"]:
-                header = table.horizontalHeader()
-                header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-                header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-                header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-                header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-                header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-                header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
             details_layout.addWidget(table)
             view["detail_tables"].append(table)
 
@@ -1192,9 +1025,14 @@ class AnalysisPage(QWidget):
         type_id = analysis_type or self._current_analysis_type()
         if extension_registry.get_analysis(type_id) is None:
             return {}
+        lines_number = extension_lines_number(extension_registry.get_analysis(type_id))
         fallback_options = dict(self._analysis_extension_options.get(type_id, {}))
+        if self._extension_uses_current_input(lines_number):
+            fallback_options.pop("lines_list", None)
         if not fallback_options:
             fallback_options = self._default_extension_analysis_options(type_id)
+        if self._extension_uses_current_input(lines_number):
+            fallback_options.pop("lines_list", None)
         if type_id == self._current_analysis_type():
             try:
                 options = self._parse_extension_analysis_options_text()
@@ -1202,6 +1040,8 @@ class AnalysisPage(QWidget):
                 if raise_on_error:
                     raise
                 return dict(fallback_options)
+            if self._extension_uses_current_input(lines_number):
+                options.pop("lines_list", None)
             if not options and fallback_options:
                 self._analysis_extension_options[type_id] = dict(fallback_options)
                 return dict(fallback_options)
@@ -1495,11 +1335,7 @@ class AnalysisPage(QWidget):
     def _refresh_result_action_buttons(self) -> None:
         if not hasattr(self, "_export_result_btn") or self._export_result_btn is None:
             return
-        result = dict(self._result or {}) if isinstance(self._result, dict) else {}
-        if not result:
-            active_view = self._active_analysis_view()
-            if isinstance(active_view, dict):
-                result = dict(active_view.get("result") or {})
+        result = self._current_analysis_result_payload()
         has_lines = bool(result and self._analysis_result_lines(result))
         self._export_result_btn.setVisible(has_lines)
         self._export_result_btn.setEnabled(has_lines)
@@ -1840,6 +1676,13 @@ class AnalysisPage(QWidget):
             return int(value)
         except Exception:
             return default
+
+    @staticmethod
+    def _extension_uses_current_input(lines_number: Optional[tuple[int, int]]) -> bool:
+        if lines_number is None:
+            return True
+        _lower, upper = lines_number
+        return upper in {0, 1}
 
     def _resolve_extension_input_payloads(self, analysis_type: str, options: Optional[Dict[str, Any]] = None) -> List[dict]:
         extension = extension_registry.get_analysis(analysis_type)
@@ -2263,56 +2106,6 @@ class AnalysisPage(QWidget):
             return
         self._sync_analysis_preview_nav_toggle_states(view)
 
-    def _summary_rows(self, t: str, r: dict) -> List[tuple[str, str]]:
-        if t == "curve_fit":
-            params = r.get("params", [])
-            names = r.get("param_names", [])
-            param_str = "  ".join(f"{n}={v:.4g}" for n, v in zip(names, params))
-            return [
-                ("模型", str(r.get("model", ""))),
-                ("方程", str(r.get("equation", ""))),
-                ("参数", param_str or "-"),
-                ("R²", f"{r.get('r2', float('nan')):.6f}"),
-            ]
-        elif t == "peak_detect":
-            return self._peak_summary_rows(r)
-        elif t == "statistics":
-            return [
-                ("样本数 N", str(r.get("n", 0))),
-                ("X 均值", f"{r.get('x_mean', 0):.4g}"),
-                ("X 标准差", f"{r.get('x_std', 0):.4g}"),
-                ("X 范围", f"[{r.get('x_min', 0):.4g}, {r.get('x_max', 0):.4g}]"),
-                ("Y 均值", f"{r.get('y_mean', 0):.4g}"),
-                ("Y 标准差", f"{r.get('y_std', 0):.4g}"),
-                ("Y 范围", f"[{r.get('y_min', 0):.4g}, {r.get('y_max', 0):.4g}]"),
-                ("Y 中位数", f"{r.get('y_median', 0):.4g}"),
-                ("Y 四分位", f"Q1={r.get('y_p25', 0):.4g}, Q3={r.get('y_p75', 0):.4g}"),
-            ]
-        elif t == "correlation":
-            p = r.get("p_value")
-            rows = [
-                ("方法", str(r.get("method", ""))),
-                ("相关系数 r", f"{r.get('r', 0):.6f}"),
-                ("数据", f"{r.get('name1', '')} vs {r.get('name2', '')}"),
-            ]
-            if p is not None:
-                rows.append(("p 值", f"{p:.4g}"))
-            return rows
-        elif t == "error_compare":
-            rel = r.get("relative_mae")
-            rows = [
-                ("数据", f"{r.get('name1', '')} vs {r.get('name2', '')}"),
-                ("MAE", f"{r.get('mae', 0):.6f}"),
-                ("RMSE", f"{r.get('rmse', 0):.6f}"),
-                ("平均误差", f"{r.get('mean_error', 0):.6f}"),
-                ("最大绝对误差", f"{r.get('max_abs_error', 0):.6f}"),
-            ]
-            if rel is not None:
-                rows.append(("相对平均误差", f"{rel:.6f}"))
-            return rows
-        else:
-            return self._json_summary_rows(r)
-
     def _write_summary(self, analysis_type: str, result: Dict[str, Any]) -> None:
         view = self._active_analysis_view() or self._analysis_tab_views.get("current")
         table = self._summary_table if self._summary_table is not None else (view.get("summary_table") if isinstance(view, dict) else None)
@@ -2399,37 +2192,61 @@ class AnalysisPage(QWidget):
         folder = project_manager.add_folder("分析结果", parent_id=dataset_root.id)
         return folder.id if folder is not None else None
 
-    def _build_analysis_output_series(self, export_name: str) -> Optional[DataSeries]:
-        result = dict(self._result or {})
-        if not result:
-            active_view = self._active_analysis_view()
-            if isinstance(active_view, dict):
-                result = dict(active_view.get("result") or {})
-        if not result:
-            return None
+    def _current_analysis_result_payload(self) -> Dict[str, Any]:
+        result = dict(self._result or {}) if isinstance(self._result, dict) else {}
+        if result:
+            return result
+        active_view = self._active_analysis_view()
+        if isinstance(active_view, dict):
+            return dict(active_view.get("result") or {})
+        return {}
+
+    def _analysis_output_series_options(self) -> List[Dict[str, Any]]:
+        result = self._current_analysis_result_payload()
         result_lines = self._analysis_result_lines(result)
-        line_lookup = {item["line_name"]: item["line"] for item in result_lines}
+        if not result_lines:
+            return []
+
+        labels_by_line: Dict[str, str] = {}
         custom_series = list(result.get("_plot_series", []) or result.get("plot_series", []) or [])
-        if custom_series:
-            first_series = dict(custom_series[0])
-            resolved_line = self._resolve_analysis_series_line(first_series, line_lookup)
-            if resolved_line is not None:
-                xs, ys = line_xy(resolved_line)
-                return DataSeries(
-                    name=export_name,
-                    x=xs,
-                    y=ys,
-                    source="computed",
-                )
-        if result_lines:
-            xs, ys = line_xy(result_lines[0]["line"])
-            return DataSeries(
-                name=export_name,
-                x=xs,
-                y=ys,
-                source="computed",
+        for series in custom_series:
+            if not isinstance(series, dict):
+                continue
+            line_name = series.get("line")
+            if not isinstance(line_name, str) or not line_name.strip():
+                continue
+            label = str(series.get("name") or line_name).strip() or line_name
+            labels_by_line.setdefault(line_name.strip(), label)
+
+        options: List[Dict[str, Any]] = []
+        used_labels: Set[str] = set()
+        for index, item in enumerate(result_lines, start=1):
+            line_name = str(item.get("line_name") or f"结果曲线 {index}")
+            label = labels_by_line.get(line_name, line_name)
+            if label in used_labels:
+                label = f"{label}（{line_name}）" if label != line_name else f"{label} #{index}"
+            used_labels.add(label)
+            xs, ys = line_xy(item["line"])
+            options.append(
+                {
+                    "line_name": line_name,
+                    "label": label,
+                    "series": DataSeries(name=label, x=xs, y=ys, source="computed"),
+                }
             )
-        return None
+        return options
+
+    def _build_analysis_output_series(self, export_name: str) -> Optional[DataSeries]:
+        options = self._analysis_output_series_options()
+        if not options:
+            return None
+        first_series = options[0]["series"]
+        return DataSeries(
+            name=export_name,
+            x=list(first_series.x),
+            y=list(first_series.y),
+            source="computed",
+        )
 
     def _analysis_export_create_targets(self) -> List[DataCreateTargetOption]:
         return [
@@ -2474,14 +2291,37 @@ class AnalysisPage(QWidget):
         return True
 
     def _export_result_series(self) -> None:
-        if self._result is None:
+        result = self._current_analysis_result_payload()
+        if not result:
             InfoBar.warning("提示", "请先运行分析", parent=self, position=InfoBarPosition.TOP)
             return
-        default_name = self._default_analysis_result_name()
-        series = self._build_analysis_output_series(default_name)
-        if series is None:
+        options = self._analysis_output_series_options()
+        if not options:
             InfoBar.warning("提示", "当前分析结果没有可导出的数据曲线", parent=self, position=InfoBarPosition.TOP)
             return
+        selected_option = options[0]
+        if len(options) > 1:
+            labels = [str(item.get("label") or item.get("line_name") or "结果曲线") for item in options]
+            choice, accepted = SelectionDialog.get_item(
+                self,
+                "导出结果曲线",
+                "选择要导出的结果曲线",
+                labels,
+                current_text=labels[0],
+            )
+            if not accepted:
+                return
+            selected_option = next(
+                (item for item in options if str(item.get("label") or "") == choice),
+                options[0],
+            )
+        selected_series = selected_option["series"]
+        series = DataSeries(
+            name=str(selected_series.name or self._default_analysis_result_name()),
+            x=list(selected_series.x),
+            y=list(selected_series.y),
+            source="computed",
+        )
         self._export_current_series(series, title="导出分析结果")
 
     # ─────────────────────────────────────────────────────────
@@ -2906,18 +2746,26 @@ class AnalysisPage(QWidget):
             "active_input_refs": [dict(item) for item in active_inputs],
         }
         if extension_registry.get_analysis(analysis_type) is not None:
+            extension = extension_registry.get_analysis(analysis_type)
+            lines_number = extension_lines_number(extension)
             _, effective_options = self._effective_extension_analysis_options(
                 analysis_type,
                 self._current_extension_analysis_options(analysis_type),
             )
-            params["extension_options"] = effective_options
+            persisted_options = dict(effective_options)
+            if self._extension_uses_current_input(lines_number):
+                persisted_options.pop("lines_list", None)
+            params["extension_options"] = persisted_options
         return params
 
     def _restore_analysis_params(self, params: Dict[str, Any]) -> None:
         analysis_type = str(params.get("analysis_type", "") or "")
         extension_options = params.get("extension_options")
         if analysis_type and extension_registry.get_analysis(analysis_type) is not None and isinstance(extension_options, dict):
-            self._analysis_extension_options[analysis_type] = dict(extension_options)
+            restored_options = dict(extension_options)
+            if self._extension_uses_current_input(extension_lines_number(extension_registry.get_analysis(analysis_type))):
+                restored_options.pop("lines_list", None)
+            self._analysis_extension_options[analysis_type] = restored_options
             if hasattr(self, "_extension_panel"):
                 self._extension_panel.set_entries(
                     self._analysis_extension_entries(),

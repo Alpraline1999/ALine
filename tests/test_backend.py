@@ -1137,7 +1137,9 @@ class TestAnalysisEngine(unittest.TestCase):
         result = _handler([[[0.0, 1.0], [1.0, 3.0], [2.0, 5.0], [3.0, 7.0]]], {"model": "linear"})
 
         self.assertEqual(result["lines"][0]["line_name"], "拟合曲线")
-        self.assertEqual(result["_plot_series"][0]["line"], "拟合曲线")
+        self.assertEqual(result["_plot_series"][1]["line"], "拟合曲线")
+        self.assertEqual(result["table_sections"][0]["title"], "拟合参数")
+        self.assertEqual(result["summary_items"][0]["label"], "模型")
         self.assertGreater(len(result["lines"][0]["line"]), 10)
 
     def test_fit_poly2(self):
@@ -1215,7 +1217,9 @@ class TestAnalysisEngine(unittest.TestCase):
         names = [item["line_name"] for item in result.get("lines", [])]
         self.assertIn("波峰点", names)
         self.assertIn("波谷点", names)
-        self.assertEqual(result["_plot_series"][0]["line"], "波峰点")
+        self.assertTrue(any(item.get("line") == "波峰点" for item in result.get("_plot_series", [])))
+        self.assertEqual([section["title"] for section in result.get("table_sections", [])], ["波峰列表", "波谷列表"])
+        self.assertEqual(result["summary_items"][0]["label"], "波峰数量")
 
     def test_error_compare_extension_handler_returns_structured_line(self):
         from extensions.analysis.error_compare import _handler
@@ -1230,6 +1234,39 @@ class TestAnalysisEngine(unittest.TestCase):
 
         self.assertEqual(result["lines"][0]["line_name"], "误差曲线")
         self.assertEqual(result["_plot_series"][0]["line"], "误差曲线")
+        self.assertEqual(result["summary_items"][0]["label"], "MAE")
+
+    def test_run_analysis_statistics_fallback_returns_structured_summary(self):
+        from core.analysis_engine import run_analysis
+        from core.extension_api import extension_registry
+
+        with mock.patch.object(extension_registry, "get_analysis", return_value=None):
+            result = run_analysis(
+                "statistics",
+                [{"x": [0.0, 1.0, 2.0], "y": [1.0, 3.0, 5.0], "name": "demo"}],
+                {},
+            )
+
+        self.assertEqual(result["summary_items"][0]["label"], "样本数 N")
+        self.assertEqual(len(result["_plot_series"]), 2)
+
+    def test_run_analysis_correlation_fallback_returns_plot_series(self):
+        from core.analysis_engine import run_analysis
+        from core.extension_api import extension_registry
+
+        with mock.patch.object(extension_registry, "get_analysis", return_value=None):
+            result = run_analysis(
+                "correlation",
+                [
+                    {"x": [0.0, 1.0, 2.0], "y": [1.0, 2.0, 3.0], "name": "left"},
+                    {"x": [0.0, 1.0, 2.0], "y": [2.0, 4.0, 6.0], "name": "right"},
+                ],
+                {},
+            )
+
+        self.assertEqual(result["summary_items"][0]["label"], "方法")
+        self.assertEqual(result["x_label"], "left")
+        self.assertEqual(result["y_label"], "right")
 
     def test_compute_statistics(self):
         from core.analysis_engine import compute_statistics

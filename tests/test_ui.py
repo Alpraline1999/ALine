@@ -1789,11 +1789,22 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_extension_management_tabs_cap_height_and_use_scrollable_option_area(self):
         from qfluentwidgets import SmoothScrollArea
-        from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_MAX_HEIGHT
+        from ui.pages.settings_page import (
+            _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+            _EXTENSION_CATEGORY_TABS_MAX_HEIGHT,
+        )
 
         self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 60750)
         self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
+        self.assertEqual(
+            self.page._extension_tabs.minimumHeight(),
+            self.page._extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+        )
+        self.assertEqual(
+            self.page._external_extension_tabs.minimumHeight(),
+            self.page._external_extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+        )
 
         builtin_scroll_areas = self.page._extension_tabs.findChildren(SmoothScrollArea)
         external_scroll_areas = self.page._external_extension_tabs.findChildren(SmoothScrollArea)
@@ -7296,11 +7307,13 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertFalse(self.page._export_result_btn.isHidden())
         self.assertTrue(self.page._export_result_btn.isEnabled())
 
-        with mock.patch(
+        with mock.patch("ui.pages.analysis_page.SelectionDialog.get_item") as choose_curve, mock.patch(
             "ui.pages.analysis_page.choose_data_export_plan",
             return_value=self._analysis_export_plan("拟合曲线A"),
         ):
             self.page._export_result_series()
+
+        choose_curve.assert_not_called()
 
         data_file = next((item for item in self.p.data_files if item.name == "拟合曲线A.analysis"), None)
         self.assertIsNotNone(data_file)
@@ -7324,10 +7337,15 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertTrue(self.page._export_result_btn.isEnabled())
 
         with mock.patch(
+            "ui.pages.analysis_page.SelectionDialog.get_item",
+            return_value=("波峰 (1个)", True),
+        ) as choose_curve, mock.patch(
             "ui.pages.analysis_page.choose_data_export_plan",
             return_value=self._analysis_export_plan("峰值点A"),
         ):
             self.page._export_result_series()
+
+        choose_curve.assert_called_once()
 
         data_file = next((item for item in self.p.data_files if item.name == "峰值点A.analysis"), None)
         self.assertIsNotNone(data_file)
@@ -7529,10 +7547,54 @@ class TestAnalysisPage(unittest.TestCase):
             self.assertEqual(self.page._result["scale"], 6)
             self.assertEqual(
                 self.page._current_analysis_params()["extension_options"],
-                {"scale": 6, "lines_list": [1]},
+                {"scale": 6},
             )
         finally:
             extension_registry.unregister_analysis("ui_span_left_json")
+            self.page._refresh_analysis_type_choices()
+
+    def test_single_line_analysis_extension_tracks_current_selected_input_after_run(self):
+        from models.schemas import DataSeries
+        from core.extension_api import AnalysisExtension, extension_registry
+
+        other = DataSeries(name="s2", x=[10.0, 11.0], y=[20.0, 21.0])
+        self.df.series.append(other)
+
+        extension_registry.register_analysis(
+            AnalysisExtension(
+                type="ui_single_current_line",
+                name="UI 单曲线当前项",
+                handler=lambda lines, params: {
+                    "analysis_type": "ui_single_current_line",
+                    "point_count": len(lines[0]) if lines else 0,
+                    "line_refs": list(params.get("lines_list") or []),
+                },
+                lines_number=(1, 1),
+            )
+        )
+        try:
+            self.page._refresh_analysis_type_choices()
+            self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("ui_single_current_line"))
+            self.page.on_tree_node_activated("series", self.s.id)
+            self.page.on_tree_node_activated("series", other.id)
+
+            self.page._run_analysis()
+            self.assertEqual(self.page._result["source_name"], self.s.name)
+            self.assertEqual(self.page._result["line_refs"], [1])
+
+            target_item = self.page._input_list.item(1)
+            self.assertIsNotNone(target_item)
+            self.page._on_input_list_item_clicked(target_item)
+
+            current_view = self.page._analysis_tab_views["current"]
+            self.assertEqual([series[2] for series in current_view["selected"]], [other.name])
+
+            self.page._run_analysis()
+
+            self.assertEqual(self.page._result["source_name"], other.name)
+            self.assertEqual(self.page._result["line_refs"], [2])
+        finally:
+            extension_registry.unregister_analysis("ui_single_current_line")
             self.page._refresh_analysis_type_choices()
 
     def test_builtin_curve_fit_uses_generic_schema_editor(self):
@@ -7996,10 +8058,9 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(self.page._analysis_tabs.count(), 2)
         self.assertNotIn(closing_title, titles)
 
-    def test_peak_detect_uses_specialized_four_column_summary(self):
+    def test_peak_detect_uses_unified_vertical_detail_tables(self):
         from PySide6.QtWidgets import QApplication
         from PySide6.QtWidgets import QAbstractItemView
-        from PySide6.QtWidgets import QHeaderView
         from PySide6.QtWidgets import QTableWidgetSelectionRange
 
         from models.schemas import DataSeries
@@ -8026,18 +8087,23 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIn("波峰数量", meta_labels)
         self.assertIn("波谷数量", meta_labels)
 
+        self.assertEqual(len(view["detail_tables"]), 2)
         peak_points_table = view["detail_tables"][0]
-        headers = [peak_points_table.horizontalHeaderItem(i).text() for i in range(peak_points_table.columnCount())]
-        self.assertEqual(headers, ["波峰序号", "波峰 X", "波峰 Y", "波谷序号", "波谷 X", "波谷 Y"])
+        valley_points_table = view["detail_tables"][1]
+        peak_headers = [peak_points_table.horizontalHeaderItem(i).text() for i in range(peak_points_table.columnCount())]
+        valley_headers = [valley_points_table.horizontalHeaderItem(i).text() for i in range(valley_points_table.columnCount())]
+        self.assertEqual(peak_headers, ["序号", "X", "Y"])
+        self.assertEqual(valley_headers, ["序号", "X", "Y"])
         self.assertGreaterEqual(peak_points_table.rowCount(), 1)
+        self.assertGreaterEqual(valley_points_table.rowCount(), 1)
         self.assertEqual(detail_summary_table.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
         self.assertEqual(peak_points_table.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.assertEqual(peak_points_table.horizontalHeader().sectionResizeMode(0), QHeaderView.ResizeMode.ResizeToContents)
-        self.assertEqual(peak_points_table.horizontalHeader().sectionResizeMode(3), QHeaderView.ResizeMode.ResizeToContents)
         self.assertEqual(peak_points_table.item(0, 0).text(), "1")
         self.assertEqual(peak_points_table.item(0, 1).text(), "1")
-        self.assertEqual(peak_points_table.item(0, 3).text(), "1")
-        self.assertEqual(peak_points_table.item(0, 4).text(), "3")
+        self.assertEqual(valley_points_table.item(0, 0).text(), "1")
+        self.assertEqual(valley_points_table.item(0, 1).text(), "3")
+        self.assertLess(view["details_layout"].indexOf(detail_summary_table), view["details_layout"].indexOf(peak_points_table))
+        self.assertLess(view["details_layout"].indexOf(peak_points_table), view["details_layout"].indexOf(valley_points_table))
 
         peak_points_table.setRangeSelected(
             QTableWidgetSelectionRange(0, 0, 0, 2),
@@ -9907,6 +9973,32 @@ class TestAnalysisPageV3(unittest.TestCase):
         self.assertIsNotNone(self.page._export_result_btn)
         self.assertTrue(self.page._export_result_btn.isHidden())
         self.assertFalse(self.page._export_result_btn.isEnabled())
+
+    def test_analysis_result_actions_fill_width_and_keep_export_in_middle(self):
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QSizePolicy
+
+        self.page.resize(1200, 800)
+        self.page.show()
+        self.page._result = {
+            "lines": [
+                {"line_name": "结果曲线", "line": [[0.0, 1.0], [1.0, 2.0]]},
+            ]
+        }
+        self.page._refresh_result_action_buttons()
+        QApplication.processEvents()
+
+        layout = self.page._analysis_result_actions_layout
+        self.assertIs(layout.itemAt(0).widget(), self.page._save_result_btn)
+        self.assertIs(layout.itemAt(1).widget(), self.page._export_result_btn)
+        self.assertIs(layout.itemAt(2).widget(), self.page._generate_report_btn)
+        self.assertEqual(self.page._save_result_btn.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertEqual(self.page._export_result_btn.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertEqual(self.page._generate_report_btn.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertFalse(self.page._export_result_btn.isHidden())
+        self.assertLess(self.page._save_result_btn.x(), self.page._export_result_btn.x())
+        self.assertLess(self.page._export_result_btn.x(), self.page._generate_report_btn.x())
+        self.assertLess(abs(self.page._save_result_btn.width() - self.page._generate_report_btn.width()), 8)
 
     def test_analysis_selected_input_reorder_preserves_current_indicator(self):
         from models.schemas import DataSeries

@@ -54,11 +54,19 @@ def _handler(lines, params):
         y2,
     )
     error_line = line_from_xy(result.get("error_x", []), result.get("error_y", []))
+    result["summary_items"] = [
+        {"label": "MAE", "value": result.get("mae", 0)},
+        {"label": "RMSE", "value": result.get("rmse", 0)},
+        {"label": "平均误差", "value": result.get("mean_error", 0)},
+        {"label": "最大绝对误差", "value": result.get("max_abs_error", 0)},
+    ]
+    if result.get("relative_mae") is not None:
+        result["summary_items"].append({"label": "相对平均误差", "value": result.get("relative_mae")})
     result["lines"] = [
         {"line_name": "误差曲线", "line": error_line},
     ]
     result["_plot_series"] = [
-        {"name": "误差", "line": "误差曲线", "color": "#D13438"},
+        {"name": "误差", "line": "误差曲线", "color": "#D13438", "line_width": 1.5},
     ]
     result["analysis_type"] = "error_compare"
     return result

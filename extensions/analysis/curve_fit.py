@@ -102,7 +102,8 @@ def fit_curve(
 def _handler(lines, params):
     if not lines:
         raise ValueError("curve_fit 需要至少一条输入数据")
-    xs, ys = line_xy(primary_line(lines))
+    source_line = primary_line(lines)
+    xs, ys = line_xy(source_line)
     result = fit_curve(
         xs,
         ys,
@@ -110,11 +111,34 @@ def _handler(lines, params):
         parse_optional_json_list(params.get("p0")),
     )
     fit_line = line_from_xy(result.get("fit_x", []), result.get("fit_y", []))
+    result["summary_items"] = [
+        {"label": "模型", "value": result.get("model", "")},
+        {"label": "方程", "value": result.get("equation", "")},
+        {"label": "R²", "value": result.get("r2")},
+    ]
+    param_names = list(result.get("param_names", []) or [])
+    param_values = list(result.get("params", []) or [])
+    if param_names and param_values:
+        result["table_sections"] = [
+            {
+                "title": "拟合参数",
+                "headers": ["参数", "值"],
+                "rows": [[name, value] for name, value in zip(param_names, param_values)],
+            }
+        ]
     result["lines"] = [
         {"line_name": "拟合曲线", "line": fit_line},
     ]
     result["_plot_series"] = [
-        {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438"},
+        {
+            "name": "原始数据",
+            "line": source_line,
+            "kind": "scatter",
+            "color": "#888888",
+            "alpha": 0.7,
+            "size": 15,
+        },
+        {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438", "line_width": 2.0},
     ]
     result["analysis_type"] = "curve_fit"
     return result

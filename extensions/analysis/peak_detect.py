@@ -83,7 +83,8 @@ def detect_valleys(
 def _handler(lines, params):
     if not lines:
         raise ValueError("peak_detect 需要至少一条输入数据")
-    xs, ys = line_xy(primary_line(lines))
+    source_line = primary_line(lines)
+    xs, ys = line_xy(source_line)
     distance_mode = "x_distance" if params.get("min_distance_x") not in (None, "") else "points"
     distance_value = params.get("min_distance_x") if distance_mode == "x_distance" else params.get("min_distance", 1)
     result = detect_peaks(
@@ -106,8 +107,46 @@ def _handler(lines, params):
     result["valley_count"] = valleys.get("count", 0)
     peak_points = result.get("peaks", []) or []
     valley_points = result.get("valleys", []) or []
+    result["summary_items"] = [
+        {"label": "波峰数量", "value": result.get("count", 0)},
+        {"label": "波谷数量", "value": result.get("valley_count", 0)},
+    ]
+    if distance_value not in (None, ""):
+        result["summary_items"].append(
+            {
+                "label": "最小间距",
+                "value": f"{distance_value}（{'X 值间距' if distance_mode == 'x_distance' else '采样点数'}）",
+            }
+        )
+    table_sections = []
+    if peak_points:
+        table_sections.append(
+            {
+                "title": "波峰列表",
+                "headers": ["序号", "X", "Y"],
+                "rows": [[index + 1, point.get("x"), point.get("y")] for index, point in enumerate(peak_points)],
+            }
+        )
+    if valley_points:
+        table_sections.append(
+            {
+                "title": "波谷列表",
+                "headers": ["序号", "X", "Y"],
+                "rows": [[index + 1, point.get("x"), point.get("y")] for index, point in enumerate(valley_points)],
+            }
+        )
+    if table_sections:
+        result["table_sections"] = table_sections
     result_lines = []
-    plot_series = []
+    plot_series = [
+        {
+            "name": "原始数据",
+            "line": source_line,
+            "kind": "line",
+            "color": "#0078D4",
+            "line_width": 1.4,
+        }
+    ]
     if peak_points:
         result_lines.append(
             {
