@@ -86,6 +86,9 @@ class SettingsPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._qt_deleted = False
+        self.destroyed.connect(self._mark_qt_deleted)
+        self._ai_hidden_frontend_initialized = False
         self._extension_height_watch_targets: list[QWidget] = []
         self._extension_height_refresh_pending = False
         self._title_label = None
@@ -156,6 +159,16 @@ class SettingsPage(QWidget):
         )
         self.setup_ui()
 
+    def _mark_qt_deleted(self, *_args) -> None:
+        self._qt_deleted = True
+
+    def __getattr__(self, name: str):
+        if name.startswith("_ai_") or name in {"_hidden_ai_tab", "_tmpl_card", "_tmpl_list"}:
+            self._ensure_hidden_ai_frontend()
+            if name in self.__dict__:
+                return self.__dict__[name]
+        raise AttributeError(f"{type(self).__name__!s} object has no attribute {name!r}")
+
     @staticmethod
     def _tab_content_margins() -> tuple[int, int, int, int]:
         return (14, 12, 14, 12)
@@ -171,19 +184,25 @@ class SettingsPage(QWidget):
         tabs.addTab(self._build_general_tab(), "常规")
         tabs.addTab(self._build_extensions_tab(), "扩展")
         tabs.addTab(self._build_shortcuts_tab(), "快捷键")
-        self._hidden_ai_tab = self._build_ai_tab()
-        self._hidden_ai_tab.hide()
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.addWidget(tabs)
 
-        self._load_ai_config()
         self._load_extension_settings()
         self._schedule_extension_category_tab_heights_refresh()
-        self._refresh_ai_tools_panel()
         self._install_tooltip_filters()
         self._click_away_focus_commit = install_click_away_focus_commit(self)
+
+    def _ensure_hidden_ai_frontend(self) -> None:
+        if self._qt_deleted or self._ai_hidden_frontend_initialized:
+            return
+        self._ai_hidden_frontend_initialized = True
+        hidden_tab = self._build_ai_tab()
+        hidden_tab.hide()
+        self.__dict__["_hidden_ai_tab"] = hidden_tab
+        self._load_ai_config()
+        self._refresh_ai_tools_panel()
 
     def _install_tooltip_filters(self) -> None:
         for widget in self.findChildren(QWidget):
@@ -219,6 +238,8 @@ class SettingsPage(QWidget):
         widget.installEventFilter(self)
 
     def _schedule_extension_category_tab_heights_refresh(self) -> None:
+        if self._qt_deleted:
+            return
         if self._extension_height_refresh_pending:
             return
         self._extension_height_refresh_pending = True
@@ -603,7 +624,7 @@ class SettingsPage(QWidget):
         return outer
 
     def _build_ai_tab(self) -> QWidget:
-        outer = SmoothScrollArea()
+        outer = SmoothScrollArea(self)
         outer.setWidgetResizable(True)
         outer.setFrameShape(QFrame.Shape.NoFrame)
         outer.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
@@ -909,16 +930,21 @@ class SettingsPage(QWidget):
                 ss = lbl.styleSheet()
                 if 'font-size: 11px' in ss:
                     lbl.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        if hasattr(self, "_ai_provider_hint") and self._ai_provider_hint is not None:
-            self._ai_provider_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        if hasattr(self, "_ai_tools_project_label") and self._ai_tools_project_label is not None:
-            self._ai_tools_project_label.setStyleSheet(body_text_style_sheet())
-        if hasattr(self, "_ai_tools_summary_label") and self._ai_tools_summary_label is not None:
-            self._ai_tools_summary_label.setStyleSheet(secondary_text_style_sheet())
-        if hasattr(self, "_ai_tool_detail_name") and self._ai_tool_detail_name is not None:
-            self._ai_tool_detail_name.setStyleSheet(f"{body_text_style_sheet()} font-weight: bold;")
-        if hasattr(self, "_ai_tool_detail_type") and self._ai_tool_detail_type is not None:
-            self._ai_tool_detail_type.setStyleSheet(secondary_text_style_sheet())
+        ai_provider_hint = self.__dict__.get("_ai_provider_hint")
+        if ai_provider_hint is not None:
+            ai_provider_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        ai_tools_project_label = self.__dict__.get("_ai_tools_project_label")
+        if ai_tools_project_label is not None:
+            ai_tools_project_label.setStyleSheet(body_text_style_sheet())
+        ai_tools_summary_label = self.__dict__.get("_ai_tools_summary_label")
+        if ai_tools_summary_label is not None:
+            ai_tools_summary_label.setStyleSheet(secondary_text_style_sheet())
+        ai_tool_detail_name = self.__dict__.get("_ai_tool_detail_name")
+        if ai_tool_detail_name is not None:
+            ai_tool_detail_name.setStyleSheet(f"{body_text_style_sheet()} font-weight: bold;")
+        ai_tool_detail_type = self.__dict__.get("_ai_tool_detail_type")
+        if ai_tool_detail_type is not None:
+            ai_tool_detail_type.setStyleSheet(secondary_text_style_sheet())
 
     def _current_tree_display_mode(self) -> TreeNameDisplayMode:
         if self._tree_display_mode_combo is None:
@@ -1040,18 +1066,24 @@ class SettingsPage(QWidget):
         self._schedule_extension_category_tab_heights_refresh()
 
     def _refresh_extension_category_tab_heights(self) -> None:
+        if self._qt_deleted:
+            self._extension_height_refresh_pending = False
+            return
         self._extension_height_refresh_pending = False
         for tabs in (self._extension_tabs, self._external_extension_tabs):
             if tabs is None:
                 continue
-            tabs.adjustSize()
-            tabs.updateGeometry()
-            tabs.setMinimumHeight(
-                max(
-                    tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
-                    tabs.navigationWidget.sizeHint().height(),
+            try:
+                tabs.adjustSize()
+                tabs.updateGeometry()
+                tabs.setMinimumHeight(
+                    max(
+                        tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                        tabs.navigationWidget.sizeHint().height(),
+                    )
                 )
-            )
+            except RuntimeError:
+                continue
 
     def _on_builtin_extensions_enabled_changed(self, *_args) -> None:
         enabled = bool(
@@ -1227,7 +1259,10 @@ class SettingsPage(QWidget):
     # ── AI 配置方法 ──────────────────────────────────────────
 
     def _current_provider_key(self) -> str:
-        idx = self._ai_provider_combo.currentIndex()
+        ai_provider_combo = self.__dict__.get("_ai_provider_combo")
+        if ai_provider_combo is None:
+            return self._active_provider_key
+        idx = ai_provider_combo.currentIndex()
         if 0 <= idx < len(self._provider_keys):
             return self._provider_keys[idx]
         return self._active_provider_key
@@ -1397,7 +1432,6 @@ class SettingsPage(QWidget):
     def refresh_templates(self) -> None:
         """报告模板已迁入分析页；保留空实现以兼容旧调用。"""
         self._tmpl_list.clear()
-        self._refresh_ai_tools_panel()
 
     def _refresh_ai_tools_panel(self) -> None:
         from ai.command_layer import COMMANDS

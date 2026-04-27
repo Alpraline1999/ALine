@@ -1086,8 +1086,10 @@ class AnalysisPage(QWidget):
         self._type_combo.addItems(self._analysis_type_labels)
         if current_type in self._analysis_type_ids:
             self._type_combo.setCurrentIndex(self._analysis_type_ids.index(current_type))
-        else:
+        elif self._analysis_type_ids:
             self._type_combo.setCurrentIndex(0)
+        else:
+            self._type_combo.setCurrentIndex(-1)
         self._type_combo.blockSignals(False)
         self._extension_panel.set_entries(
             self._analysis_extension_entries(),
@@ -1767,7 +1769,7 @@ class AnalysisPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _on_type_changed(self, idx: int):
-        t = self._analysis_type_ids[idx] if idx < len(self._analysis_type_ids) else "curve_fit"
+        t = self._analysis_type_ids[idx] if 0 <= idx < len(self._analysis_type_ids) else "curve_fit"
         self._result = None
         uses_extension_form = extension_registry.get_analysis(t) is not None
         self._extension_params_label.setVisible(False)
@@ -2196,12 +2198,14 @@ class AnalysisPage(QWidget):
         return folder.id if folder is not None else None
 
     def _current_analysis_result_payload(self) -> Dict[str, Any]:
+        active_view = self._active_analysis_view()
+        if isinstance(active_view, dict):
+            active_result = dict(active_view.get("result") or {})
+            if active_result:
+                return active_result
         result = dict(self._result or {}) if isinstance(self._result, dict) else {}
         if result:
             return result
-        active_view = self._active_analysis_view()
-        if isinstance(active_view, dict):
-            return dict(active_view.get("result") or {})
         return {}
 
     def _analysis_output_series_options(self) -> List[Dict[str, Any]]:

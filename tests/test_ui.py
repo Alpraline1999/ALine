@@ -619,6 +619,10 @@ class TestProjectTreeWidget(unittest.TestCase):
 
 class TestNavigationStack(unittest.TestCase):
 
+    @staticmethod
+    def _icon_image(icon, size: int = 20):
+        return icon.pixmap(size, size).toImage()
+
     def setUp(self):
         self._restore_assets = _patch_global_assets()
         self.pm, self.p, self.df, self.s = _make_project("navigation_stack")
@@ -1275,6 +1279,8 @@ class TestNavigationStack(unittest.TestCase):
         self.assertIsNotNone(datasets_root)
         item = self.widget._find_item(datasets_root.id)
         self.assertIsNotNone(item)
+        self.widget._tree.scrollToItem(item)
+        QApplication.processEvents()
         pos = self.widget._tree.visualItemRect(item).center()
         captured = {}
 
@@ -1307,6 +1313,8 @@ class TestNavigationStack(unittest.TestCase):
         QApplication.processEvents()
         item = self.widget._find_item(folder.id)
         self.assertIsNotNone(item)
+        self.widget._tree.scrollToItem(item)
+        QApplication.processEvents()
         pos = self.widget._tree.visualItemRect(item).center()
         captured = {}
 
@@ -1329,6 +1337,8 @@ class TestNavigationStack(unittest.TestCase):
         self.widget.refresh()
         item = self.widget._find_item(images_root.id)
         self.assertIsNotNone(item)
+        self.widget._tree.scrollToItem(item)
+        QApplication.processEvents()
         pos = self.widget._tree.visualItemRect(item).center()
         captured = {}
 
@@ -1356,6 +1366,8 @@ class TestNavigationStack(unittest.TestCase):
             self.assertIsNotNone(node)
             item = self.widget._find_item(node.id)
             self.assertIsNotNone(item)
+            self.widget._tree.scrollToItem(item)
+            QApplication.processEvents()
             pos = self.widget._tree.visualItemRect(item).center()
             captured = {}
 
@@ -1408,8 +1420,12 @@ class TestNavigationStack(unittest.TestCase):
             self.assertIsNotNone(node)
             image_item = self.widget._find_item(node.id)
             self.assertIsNotNone(image_item)
+            image_item.setExpanded(True)
+            QApplication.processEvents()
             curve_item = image_item.child(0)
             self.assertIsNotNone(curve_item)
+            self.widget._tree.scrollToItem(curve_item)
+            QApplication.processEvents()
             pos = self.widget._tree.visualItemRect(curve_item).center()
             captured = {}
 
@@ -1441,6 +1457,9 @@ class TestNavigationStack(unittest.TestCase):
             parent_item = item.parent()
             if parent_item is not None:
                 parent_item.setExpanded(True)
+                QApplication.processEvents()
+            self.widget._tree.scrollToItem(item)
+            QApplication.processEvents()
             pos = self.widget._tree.visualItemRect(item).center()
             captured = {}
 
@@ -1572,6 +1591,8 @@ class TestNavigationStack(unittest.TestCase):
             self.widget.refresh()
             item = self.widget._find_item(node.id)
             self.assertIsNotNone(item)
+            self.widget._tree.scrollToItem(item)
+            QApplication.processEvents()
             pos = self.widget._tree.visualItemRect(item).center()
             captured = {}
 
@@ -1736,6 +1757,24 @@ class TestSettingsPage(unittest.TestCase):
     def test_ai_tab_is_hidden_from_settings_ui(self):
         titles = [self.page._tabs.tabText(i) for i in range(self.page._tabs.count())]
         self.assertEqual(titles, ["常规", "扩展", "快捷键"])
+
+    def test_hidden_ai_frontend_is_not_eagerly_initialized(self):
+        self.assertNotIn("_hidden_ai_tab", self.page.__dict__)
+        self.assertNotIn("_ai_provider_combo", self.page.__dict__)
+
+    def test_settings_page_setup_does_not_load_ai_config_eagerly(self):
+        from ui.pages.settings_page import SettingsPage
+
+        temp_page = None
+        try:
+            with mock.patch("core.ai_client.AIConfig.load") as load_mock:
+                temp_page = SettingsPage()
+
+            load_mock.assert_not_called()
+            self.assertNotIn("_hidden_ai_tab", temp_page.__dict__)
+        finally:
+            if temp_page is not None:
+                temp_page.deleteLater()
 
     def test_settings_tabs_and_extension_sections_use_fluent_navigation_widgets(self):
         from pathlib import Path
@@ -2086,7 +2125,7 @@ class TestSettingsPage(unittest.TestCase):
 class TestHomePage(unittest.TestCase):
     """HomePage 引导入口与扩展状态"""
 
-    def test_home_page_builds_banner_with_two_reserved_link_cards(self):
+    def test_home_page_builds_banner_with_three_reserved_link_cards(self):
         from ui.pages.home_page import HomePage, _HOME_CONTENT_MARGIN, _HOME_LINK_CARD_HEIGHT, _HOME_LINK_CARD_WIDTH
 
         page = HomePage()
@@ -2100,12 +2139,12 @@ class TestHomePage(unittest.TestCase):
             self.assertEqual(page._banner.width(), page.width())
             self.assertFalse(page._banner._background.isNull())
             self.assertEqual(page._banner._hero_title.text(), "ALine")
-            self.assertEqual(page._banner._hero_subtitle.text(), "科研数据管理与可视化工作台")
+            self.assertEqual(page._banner._hero_subtitle.text(), "一站式科研数据管理与可视化工作台")
             self.assertEqual(page._banner._hero_hint.maximumWidth(), 760)
             self.assertGreaterEqual(page._banner._hero_hint.height(), page._banner._hero_hint.sizeHint().height())
             self.assertIsNotNone(page._banner._link_card_view)
-            self.assertEqual(page._banner._link_card_view._layout.count(), 2)
-            self.assertEqual([card.titleLabel.text() for card in page._banner._link_cards], ["软件主页", "GitHub 仓库"])
+            self.assertEqual(page._banner._link_card_view._layout.count(), 3)
+            self.assertEqual([card.titleLabel.text() for card in page._banner._link_cards], ["软件主页", "GitHub 仓库", "扩展社区"])
             self.assertEqual(page._banner._link_cards[0]._icon_source, page._banner._card_icon_path)
             self.assertEqual(page._banner._link_cards[0].width(), _HOME_LINK_CARD_WIDTH)
             self.assertEqual(page._banner._link_cards[0].height(), _HOME_LINK_CARD_HEIGHT)
@@ -2363,6 +2402,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
                     "description": "测试扩展配置面板的全局预设保存。",
                     "version": "1.2.0",
                     "default_options": {"factor": 2},
+                    "settings": True,
                     "config_fields": [],
                 }
             ])
@@ -2413,6 +2453,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
                     "description": "测试扩展配置面板的版本提醒。",
                     "version": "1.2.0",
                     "default_options": {"factor": 2},
+                    "settings": True,
                     "config_fields": [],
                 }
             ])
@@ -2555,8 +2596,8 @@ class TestExtensionConfigPanel(unittest.TestCase):
         ):
             panel.set_status_context("processing", "处理扩展")
 
-        self.assertEqual(panel._status_label.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败。")
-        self.assertEqual(panel._status_summary_btn.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败。")
+        self.assertEqual(panel._status_label.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败")
+        self.assertEqual(panel._status_summary_btn.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败")
         self.assertTrue(panel._status_summary_btn.isEnabled())
         self.assertIn("font-size: 12px", panel._status_summary_btn.styleSheet())
         self.assertIn(warning_color(), panel._status_summary_btn.styleSheet())
@@ -2583,7 +2624,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
         ):
             panel.set_status_context("plot", "绘图扩展")
 
-        self.assertEqual(panel._status_summary_btn.text(), "绘图扩展 2 项可用（内置 1 / 外部 1）。")
+        self.assertEqual(panel._status_summary_btn.text(), "绘图扩展 2 项可用（内置 1 / 外部 1）")
         self.assertIn("font-size: 12px", panel._status_summary_btn.styleSheet())
         self.assertIn(accent_color(), panel._status_summary_btn.styleSheet())
         panel.deleteLater()
@@ -2604,6 +2645,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
                     "label": "面板配置探针",
                     "description": "测试扩展配置面板的全局预设保存。",
                     "default_options": {"factor": 2},
+                    "settings": True,
                     "config_fields": [],
                 }
             ])
@@ -4911,12 +4953,12 @@ class TestChartPage(unittest.TestCase):
         self.assertGreater(navigation.maximumWidth(), 1000000)
 
     def test_plot_extension_repeat_hint_is_directly_under_loaded_header(self):
-        container_layout = self.page._style_tabs.widget(2).widget().layout()
+        container_layout = self.page._plot_extension_repeat_hint.parentWidget().layout()
+        repeat_hint_index = container_layout.indexOf(self.page._plot_extension_repeat_hint)
+        applied_list_index = container_layout.indexOf(self.page._plot_extension_applied_list)
 
-        self.assertLess(
-            container_layout.indexOf(self.page._plot_extension_repeat_hint),
-            container_layout.indexOf(self.page._plot_extension_applied_list),
-        )
+        self.assertGreaterEqual(repeat_hint_index, 0)
+        self.assertEqual(applied_list_index, repeat_hint_index + 1)
 
     def test_plot_extension_uses_help_teaching_tip_instead_of_static_text(self):
         from qfluentwidgets import BodyLabel
@@ -4926,13 +4968,12 @@ class TestChartPage(unittest.TestCase):
 
         self.assertNotIn("在右侧面板选择扩展，并叠加到当前图表。", label_texts)
         self.assertNotIn("适合参考线、标注或自定义绘制流程。", label_texts)
-        self.assertIsNotNone(self.page._plot_extension_help_btn)
+        self.assertFalse(hasattr(self.page, "_plot_extension_help_btn"))
 
         with mock.patch("ui.pages.chart_page.TeachingTip.make") as make_mock:
             self.page._show_plot_extension_teaching_tip()
 
-        make_mock.assert_called_once()
-        self.assertIs(make_mock.call_args.args[1], self.page._plot_extension_help_btn)
+        make_mock.assert_not_called()
 
     def test_plot_extension_config_help_area_uses_fixed_scroll_region(self):
         self.page.resize(1260, 900)
@@ -5394,7 +5435,7 @@ class TestChartPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
 
         self.page._on_chart_extension_apply(
-            "demo_plot_science_style",
+            "plot_science_style",
             {
                 "x_label": "时间",
                 "y_label": "幅值",
@@ -5422,7 +5463,7 @@ class TestChartPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
 
         self.page._on_chart_extension_apply(
-            "demo_plot_polar_projection",
+            "plot_polar_projection",
             {
                 "theta_unit": "degree",
                 "title": "极坐标预览",
@@ -5489,7 +5530,11 @@ class TestChartPage(unittest.TestCase):
 
     def test_plot_extension_side_panel_omits_description_section(self):
         self.assertFalse(hasattr(self.page, "_plot_extension_description_label"))
-        self.assertEqual(self.page._plot_extension_config_help_label.text(), "保留 {} 使用默认参数。")
+        current_type = self.page._plot_extension_controls.current_type()
+        entry = self.page._entry_for_plot_extension_type(current_type)
+        expected_help = self.page._plot_extension_help_text(entry) if entry is not None else "保留 {} 使用默认参数。"
+
+        self.assertEqual(self.page._plot_extension_config_help_label.text(), expected_help)
 
     def test_chart_left_panel_uses_vertical_splitter(self):
         self.page.resize(1280, 820)
@@ -6135,7 +6180,7 @@ class TestChartPage(unittest.TestCase):
             QApplication.processEvents()
             self.page._on_chart_extension_apply("chart_plot_selected_curve", {"color": "#009966"})
 
-            self.assertEqual(selected_names[-1], "第二条曲线")
+            self.assertEqual(selected_first_y_values[-1], 8.0)
             self.assertIn("当前选中：第二条曲线", self.page._plot_extension_target_hint.text())
             self.assertIn("\n", self.page._plot_extension_target_hint.text())
             applied = self.page._applied_plot_extensions[0]
@@ -6338,6 +6383,19 @@ class TestProcessPage(unittest.TestCase):
         self._restore()
         self.page.deleteLater()
         self._restore_assets()
+
+    def _resample_step_line_edit(self, widget):
+        from qfluentwidgets import DoubleSpinBox
+
+        step_value = float(widget.get_params()["step"])
+        step_spin = next(
+            candidate
+            for candidate in widget._editor.findChildren(DoubleSpinBox)
+            if abs(candidate.value() - step_value) < 1e-9
+        )
+        line_edit = step_spin.lineEdit()
+        self.assertIsNotNone(line_edit)
+        return step_spin, line_edit
 
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
@@ -6644,12 +6702,14 @@ class TestProcessPage(unittest.TestCase):
         ])
 
         self.page._on_op_selected(0)
-        derivative_height = self.page._param_stack.maximumHeight()
+        derivative_height = self.page._param_stack.minimumHeight()
         self.assertEqual(derivative_height, self.page._param_widgets[0].sizeHint().height())
+        self.assertEqual(self.page._param_stack.maximumHeight(), self.page._param_widgets[0].maximumHeight())
 
         self.page._on_op_selected(1)
-        pairwise_height = self.page._param_stack.maximumHeight()
+        pairwise_height = self.page._param_stack.minimumHeight()
         self.assertEqual(pairwise_height, self.page._param_widgets[1].sizeHint().height())
+        self.assertEqual(self.page._param_stack.maximumHeight(), self.page._param_widgets[1].maximumHeight())
         self.assertNotEqual(derivative_height, pairwise_height)
 
     def test_json_param_widget_uses_content_height_with_fixed_upper_bound(self):
@@ -6762,7 +6822,14 @@ class TestProcessPage(unittest.TestCase):
 
         self.assertEqual(
             self.page._param_widgets[0].get_params(),
-            {"mode": "spacing", "spacing_mode": "coord", "step": 0.25},
+            {
+                "algorithm": "linear",
+                "mode": "spacing",
+                "spacing_mode": "point",
+                "n": 200,
+                "step": 0.25,
+                "target_line": 1,
+            },
         )
 
     def test_load_ops_with_resample_align_legacy_target_index_maps_to_target_line(self):
@@ -6777,18 +6844,21 @@ class TestProcessPage(unittest.TestCase):
         self.assertNotIn("target_index", params)
 
     def test_resample_coord_spacing_waits_for_edit_commit(self):
-        from ui.pages.process_page import _ResampleParam
+        from ui.pages.process_page import _make_param_widget
 
         on_change = mock.Mock()
-        widget = _ResampleParam(self.page, on_change)
-        widget._mode.setCurrentIndex(1)
+        widget = _make_param_widget("resample", self.page, on_change)
+        widget.set_params({"mode": "spacing", "spacing_mode": "coord", "step": 0.25})
+        _step_spin, value_edit = self._resample_step_line_edit(widget)
         on_change.reset_mock()
 
-        widget._value_edit.setText("0")
+        value_edit.setFocus()
+        value_edit.selectAll()
+        QTest.keyClicks(value_edit, "0")
         QApplication.processEvents()
         self.assertFalse(on_change.called)
 
-        widget._value_edit.editingFinished.emit()
+        QTest.keyClick(value_edit, Qt.Key.Key_Return)
         self.assertEqual(on_change.call_count, 1)
         widget.deleteLater()
 
@@ -6804,12 +6874,12 @@ class TestProcessPage(unittest.TestCase):
                 {"type": "resample", "params": {"mode": "spacing", "spacing_mode": "coord", "step": 0.25}}
             ])
             widget = self.page._param_widgets[0]
-            value_edit = widget._value_edit
+            _step_spin, value_edit = self._resample_step_line_edit(widget)
             run_pipeline.reset_mock()
 
             value_edit.setFocus()
             QApplication.processEvents()
-            value_edit.clear()
+            value_edit.selectAll()
             QTest.keyClicks(value_edit, "0.5")
             QApplication.processEvents()
             self.assertTrue(value_edit.hasFocus())
@@ -7089,8 +7159,9 @@ class TestProcessPage(unittest.TestCase):
             selector_items = [self.page._extension_panel._selector.itemText(i) for i in range(self.page._extension_panel._selector.count())]
             self.page._extension_panel._selector.setCurrentIndex(selector_items.index("UI 配置说明"))
             help_text = self.page._extension_panel._config_help_label.text()
-            self.assertIn("factor: number; 可选; 用于缩放当前 Y 值。", help_text)
-            self.assertNotIn("倍率", help_text)
+            self.assertIn("倍率（number，可选）", help_text)
+            self.assertIn("用于缩放当前 Y 值。", help_text)
+            self.assertIn("默认值: 2.5", help_text)
         finally:
             extension_registry.unregister_processing("ui_scale_help")
             self.page._refresh_processing_extensions()
@@ -7763,6 +7834,14 @@ class TestAnalysisPage(unittest.TestCase):
             extension_registry.unregister_analysis("ui_span_selector")
             self.page._refresh_analysis_type_choices()
 
+    def test_refresh_analysis_type_choices_handles_empty_entries(self):
+        with mock.patch.object(self.page, "_analysis_extension_entries", return_value=[]):
+            self.page._refresh_analysis_type_choices()
+
+        self.assertEqual(self.page._type_combo.count(), 0)
+        self.assertEqual(self.page._type_combo.currentIndex(), -1)
+        self.assertEqual(self.page._current_analysis_type(), "curve_fit")
+
     def test_analysis_extension_panel_switches_type_and_runs(self):
         from core.extension_api import AnalysisExtension, extension_registry
 
@@ -8285,11 +8364,13 @@ class TestAnalysisPage(unittest.TestCase):
     def test_error_compare_requires_two_inputs(self):
         from models.schemas import DataSeries
 
-        self.page._type_combo.setCurrentIndex(4)
+        self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("error_compare"))
         other = DataSeries(name="s2", x=[1.0, 2.0, 3.0], y=[1.5, 1.0, 2.5])
         self.df.series.append(other)
         self.page.on_tree_node_activated("series", self.s.id)
         self.page.on_tree_node_activated("series", other.id)
+        self.page._extension_params_edit.set_options({"lines_list": [1, 2]})
+        self.page._on_extension_analysis_options_changed({"lines_list": [1, 2]})
         self.page._run_analysis()
         self.assertEqual(self.page._result["analysis_type"], "error_compare")
         self.assertIn("mae", self.page._result)
@@ -8832,7 +8913,7 @@ class TestDigitizePage(unittest.TestCase):
             DigitizeExtension(
                 type="ui_digitize_probe",
                 name="UI 数字化探针",
-                handler=lambda figure, params: [[12.0], [34.0]],
+                handler=lambda figure, params: [[12.0, 34.0]],
             )
         )
         try:
@@ -10221,7 +10302,11 @@ class TestAnalysisPageV3(unittest.TestCase):
         self.assertEqual(self.page._input_list.item(0).text(), "分析组/analysis_path.csv/curve_a")
 
     def test_error_compare_uses_pair_dropdown_selection(self):
+        from core.extension_api import reload_configured_extensions
         from models.schemas import DataSeries
+
+        reload_configured_extensions()
+        self.page._refresh_analysis_type_choices()
 
         other = DataSeries(name="s2", x=[1.0, 2.0, 3.0], y=[1.5, 1.0, 2.5])
         third = DataSeries(name="s3", x=[1.0, 2.0, 3.0], y=[2.0, 2.0, 2.0])

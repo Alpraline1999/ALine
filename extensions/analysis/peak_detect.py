@@ -126,28 +126,15 @@ def _handler(lines, params):
                 "value": f"{distance_value}（{'X 值间距' if distance_mode == 'x_distance' else '采样点数'}）",
             }
         )
-    if peak_points or valley_points:
-        # 准备表格数据
-        max_count = max(len(peak_points), len(valley_points))
-        rows = []
-        for i in range(max_count):
-            row = []
-            # 波峰信息
-            if i < len(peak_points):
-                row.extend([i + 1, peak_points[i].get("x"), peak_points[i].get("y")])
-            else:
-                row.extend(["", "", ""])
-            # 波谷信息
-            if i < len(valley_points):
-                row.extend([i + 1, valley_points[i].get("x"), valley_points[i].get("y")])
-            else:
-                row.extend(["", "", ""])
-            rows.append(row)
-        
+    if merged_points:
+        rows = [
+            [index + 1, item.get("type"), item.get("x"), item.get("y")]
+            for index, item in enumerate(merged_points)
+        ]
         result["table_sections"] = [
             {
                 "title": "峰谷列表",
-                "headers": ["波峰序号", "波峰X", "波峰Y", "波谷序号", "波谷X", "波谷Y"],
+                "headers": ["序号", "类型", "X", "Y"],
                 "rows": rows,
             }
         ]
@@ -174,6 +161,16 @@ def _handler(lines, params):
                     [point[0] for point in merged_line_points],
                     [point[1] for point in merged_line_points],
                 ),
+            }
+        )
+        plot_series.append(
+            {
+                "name": f"峰谷点 ({len(merged_line_points)}个)",
+                "line": "峰谷点",
+                "kind": "markers",
+                "marker": "o",
+                "size": 42,
+                "color": "#605E5C",
             }
         )
     if peak_points:
