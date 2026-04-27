@@ -215,6 +215,7 @@ class MainWindow(FluentWindow):
         self._page_tree_focus_mode_enabled = is_page_tree_focus_mode_enabled()
         self._tree_panel_user_hidden = False
         self._tree_panel_width = _TREE_PANEL_DEFAULT_WIDTH
+        self._shared_extension_panel_visible = False
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
@@ -294,6 +295,7 @@ class MainWindow(FluentWindow):
         self._tree_panel.extension_toggle_btn.clicked.connect(self._toggle_current_page_extension_panel)
 
         self._ai_panel = None
+        self._set_shared_extension_panel_visible(False)
         self._update_tree_panel_visibility(self.home_page)
 
     def _setup_theme_watcher(self):
@@ -414,6 +416,23 @@ class MainWindow(FluentWindow):
             return False
         return bool(interface.supports_extension_panel_toggle())
 
+    def _extension_panel_pages(self) -> list[_ExtensionPanelPage]:
+        pages: list[_ExtensionPanelPage] = []
+        for interface in (
+            self.chart_page,
+            self.process_page,
+            self.analysis_page,
+            self.digitize_page,
+        ):
+            if self._page_supports_extension_panel(interface):
+                pages.append(cast(_ExtensionPanelPage, interface))
+        return pages
+
+    def _set_shared_extension_panel_visible(self, visible: bool) -> None:
+        self._shared_extension_panel_visible = bool(visible)
+        for extension_page in self._extension_panel_pages():
+            extension_page.set_extension_panel_visible(self._shared_extension_panel_visible)
+
     def _update_extension_panel_toggle_button(self, interface) -> None:
         button = self._tree_panel.extension_toggle_btn
         show_button = self._tree_available_for_interface(interface)
@@ -427,7 +446,9 @@ class MainWindow(FluentWindow):
             button.setToolTip("当前页面没有扩展面板")
             return
         extension_page = cast(_ExtensionPanelPage, interface)
-        visible = bool(extension_page.is_extension_panel_visible())
+        if bool(extension_page.is_extension_panel_visible()) != self._shared_extension_panel_visible:
+            extension_page.set_extension_panel_visible(self._shared_extension_panel_visible)
+        visible = self._shared_extension_panel_visible
         button.setIcon((_EXTENSION_PANEL_HIDE_ICON if visible else _EXTENSION_PANEL_SHOW_ICON).icon())
         button.setToolTip("隐藏扩展面板" if visible else "显示扩展面板")
 
@@ -455,8 +476,7 @@ class MainWindow(FluentWindow):
         current_page = self.stackedWidget.currentWidget()
         if not self._page_supports_extension_panel(current_page):
             return
-        extension_page = cast(_ExtensionPanelPage, current_page)
-        extension_page.set_extension_panel_visible(not extension_page.is_extension_panel_visible())
+        self._set_shared_extension_panel_visible(not self._shared_extension_panel_visible)
         self._update_extension_panel_toggle_button(current_page)
 
     def _open_project_tree_manage_dialog(self) -> None:

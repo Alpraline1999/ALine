@@ -9428,6 +9428,50 @@ class TestMainWindow(unittest.TestCase):
         self.assertFalse(self.win.chart_page.is_extension_panel_visible())
         self.assertTrue(self.win.chart_page._extension_panel.isHidden())
 
+    def test_extension_panel_visibility_is_shared_across_function_pages(self):
+        self.win.switchTo(self.win.chart_page)
+
+        self.win._toggle_current_page_extension_panel()
+
+        for page in (
+            self.win.chart_page,
+            self.win.process_page,
+            self.win.analysis_page,
+            self.win.digitize_page,
+        ):
+            self.assertTrue(page.is_extension_panel_visible())
+
+        self.win.switchTo(self.win.process_page)
+        self.assertFalse(self.win.process_page._extension_panel.isHidden())
+
+        self.win._toggle_current_page_extension_panel()
+
+        for page in (
+            self.win.chart_page,
+            self.win.process_page,
+            self.win.analysis_page,
+            self.win.digitize_page,
+        ):
+            self.assertFalse(page.is_extension_panel_visible())
+
+    def test_tree_panel_extension_toggle_button_state_stays_synced_across_pages(self):
+        button = self.win._tree_panel.extension_toggle_btn
+
+        self.win.switchTo(self.win.chart_page)
+        self.assertEqual(button.toolTip(), "显示扩展面板")
+
+        self.win._toggle_current_page_extension_panel()
+        self.assertEqual(button.toolTip(), "隐藏扩展面板")
+
+        self.win.switchTo(self.win.analysis_page)
+        self.assertEqual(button.toolTip(), "隐藏扩展面板")
+
+        self.win._toggle_current_page_extension_panel()
+        self.assertEqual(button.toolTip(), "显示扩展面板")
+
+        self.win.switchTo(self.win.digitize_page)
+        self.assertEqual(button.toolTip(), "显示扩展面板")
+
     def test_function_tool_panels_use_consistent_width(self):
         from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH
 
