@@ -141,6 +141,7 @@ _PLOT_EXTENSION_TEACHING_TIP_TEXT = "左侧负责选择、配置并应用扩展�
 _TICK_DIRECTION_CHOICES = ["默认", "out", "in", "inout"]
 _LEGEND_ALPHA_DEFAULT = 0.8
 _CANVAS_ALPHA_DEFAULT = 1.0
+_GRID_ALPHA_DEFAULT = 0.7
 _BASE_PLOT_STYLE_EXTRA_KEYS = {
     "tick_params",
     "legend_kwargs",
@@ -764,6 +765,10 @@ class ChartPage(QWidget):
         self._update_alpha_value_label(getattr(self, "_canvas_alpha_value_label", None), value)
         self._on_quick_config_changed()
 
+    def _on_grid_alpha_changed(self, value: int) -> None:
+        self._update_alpha_value_label(getattr(self, "_grid_alpha_value_label", None), value)
+        self._on_quick_config_changed()
+
     def _on_legend_anchor_x_text_changed(self, text: str) -> None:
         self._legend_anchor_x_draft = text.strip()
 
@@ -1178,9 +1183,6 @@ class ChartPage(QWidget):
         self._y_log_cb = CheckBox("Y 对数坐标", page)
         self._y_log_cb.stateChanged.connect(self._on_quick_config_changed)
         axis_flag_row.addWidget(self._y_log_cb)
-        self._grid_cb = CheckBox("显示网格", page)
-        self._grid_cb.stateChanged.connect(self._on_quick_config_changed)
-        axis_flag_row.addWidget(self._grid_cb)
         axis_flag_row.addStretch()
         layout.addLayout(axis_flag_row)
 
@@ -1465,13 +1467,28 @@ class ChartPage(QWidget):
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("网格与边框", page))
 
+        grid_toggle_row = QHBoxLayout()
+        self._grid_cb = CheckBox("显示网格", page)
+        self._grid_cb.stateChanged.connect(self._on_quick_config_changed)
+        grid_toggle_row.addWidget(self._grid_cb)
+        grid_toggle_row.addStretch()
+        layout.addLayout(grid_toggle_row)
+
         grid_style_row = QHBoxLayout()
         grid_style_row.addWidget(self._make_style_form_label("网格透明度:", page))
-        self._grid_alpha_edit = LineEdit(page)
-        self._grid_alpha_edit.setPlaceholderText("0.7")
-        self._connect_line_edit_commit(self._grid_alpha_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._grid_alpha_edit)
-        grid_style_row.addWidget(self._grid_alpha_edit)
+        self._grid_alpha_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._grid_alpha_slider.setRange(0, 100)
+        self._grid_alpha_slider.setSingleStep(1)
+        self._grid_alpha_slider.setPageStep(5)
+        self._grid_alpha_slider.setMinimumWidth(132)
+        self._grid_alpha_slider.setValue(self._alpha_slider_value(_GRID_ALPHA_DEFAULT))
+        grid_style_row.addWidget(self._grid_alpha_slider, 1)
+        self._grid_alpha_value_label = BodyLabel("0.70", page)
+        self._grid_alpha_value_label.setStyleSheet(secondary_text_style_sheet(font_size=12))
+        self._grid_alpha_value_label.setMinimumWidth(40)
+        grid_style_row.addWidget(self._grid_alpha_value_label)
+        self._update_alpha_value_label(self._grid_alpha_value_label, self._grid_alpha_slider.value())
+        self._grid_alpha_slider.valueChanged.connect(self._on_grid_alpha_changed)
         grid_style_row.addStretch()
         layout.addLayout(grid_style_row)
 
@@ -3114,7 +3131,12 @@ class ChartPage(QWidget):
         _set_line_edit_text(self._dpi_edit, state.dpi)
         _set_line_edit_text(self._plot_line_width_edit, state.line_width)
         _set_line_edit_text(self._plot_marker_size_edit, state.marker_size)
-        _set_line_edit_text(self._grid_alpha_edit, state.grid_alpha)
+        self._set_alpha_slider_value(
+            self._grid_alpha_slider,
+            self._grid_alpha_value_label,
+            state.grid_alpha,
+            default_alpha=_GRID_ALPHA_DEFAULT,
+        )
         _set_line_edit_text(self._grid_line_width_edit, state.grid_line_width)
 
         self._errbar_cb.blockSignals(True)
@@ -3242,7 +3264,7 @@ class ChartPage(QWidget):
             x_log=self._x_log_cb.isChecked(),
             y_log=self._y_log_cb.isChecked(),
             grid=self._grid_cb.isChecked(),
-            grid_alpha=_clamp_float(_safe_float_or(self._grid_alpha_edit.text(), self._figure_state.grid_alpha), 0.0, 1.0),
+            grid_alpha=self._alpha_from_slider_value(self._grid_alpha_slider.value()),
             grid_line_width=max(0.0, _safe_float_or(self._grid_line_width_edit.text(), self._figure_state.grid_line_width)),
             legend_pos=self._legend_pos_combo.currentText() or self._figure_state.legend_pos,
             font_size=max(1, _safe_int_or(self._font_size_edit.text(), self._figure_state.font_size)),

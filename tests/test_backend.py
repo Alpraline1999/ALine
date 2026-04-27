@@ -472,6 +472,23 @@ class TestProjectManager(unittest.TestCase):
         self.assertEqual(node.kind, "folder")
         self.assertEqual(node.name, "my_folder")
 
+    def test_add_folder_reinitializes_tree_without_legacy_migration(self):
+        p = self.pm.create_new("test_runtime_tree")
+        p.tree = None
+
+        with mock.patch.object(self.pm, "migrate_to_v2", side_effect=AssertionError("不应再调用旧迁移")):
+            node = self.pm.add_folder("runtime_folder")
+
+        self.assertIsNotNone(node)
+        self.assertIsNotNone(p.tree)
+        root_groups = {
+            getattr(tree_node, "group_type", None)
+            for tree_node in p.tree.nodes
+            if tree_node.kind == "folder" and tree_node.parent_id is None
+        }
+        self.assertIn("datasets", root_groups)
+        self.assertIn("source_files", root_groups)
+
     def test_add_data_file(self):
         from models.schemas import DataFile, DataSeries
         p = self.pm.create_new("test")
@@ -791,6 +808,16 @@ class TestProjectManager(unittest.TestCase):
             path = f.name
         try:
             with self.assertRaisesRegex(ValueError, r"\.aline"):
+                self.pm.open_file(path)
+        finally:
+            os.unlink(path)
+
+    def test_open_rejects_aline_project_without_tree(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".aline", delete=False, encoding="utf-8") as f:
+            json.dump({"id": "legacy", "name": "legacy", "aline_version": "0.3"}, f)
+            path = f.name
+        try:
+            with self.assertRaisesRegex(ValueError, r"tree"):
                 self.pm.open_file(path)
         finally:
             os.unlink(path)

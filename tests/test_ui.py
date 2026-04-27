@@ -5507,7 +5507,6 @@ class TestChartPage(unittest.TestCase):
         self.assertLessEqual(self.page._font_size_edit.maximumWidth(), 96)
         self.assertLessEqual(self.page._figure_width_edit.maximumWidth(), 96)
         self.assertLessEqual(self.page._dpi_edit.maximumWidth(), 96)
-        self.assertLessEqual(self.page._grid_alpha_edit.maximumWidth(), 96)
         self.assertLessEqual(self.page._legend_anchor_x_edit.maximumWidth(), 96)
         self.assertLessEqual(self.page._legend_anchor_y_edit.maximumWidth(), 96)
 
@@ -5523,6 +5522,8 @@ class TestChartPage(unittest.TestCase):
         self.page._style_tabs.setCurrentIndex(1)
         QApplication.processEvents()
         self.assertGreater(self.page._tick_label_top_cb.geometry().top(), self.page._tick_top_cb.geometry().top())
+        self.assertGreater(self.page._grid_cb.geometry().top(), self.page._plot_marker_size_edit.geometry().top())
+        self.assertGreater(self.page._grid_alpha_slider.geometry().top(), self.page._grid_cb.geometry().top())
         self.assertGreater(self.page._legend_face_color_edit.geometry().top(), self.page._legend_edge_color_edit.geometry().top())
         self.assertGreater(self.page._legend_face_alpha_slider.geometry().top(), self.page._legend_face_color_edit.geometry().top())
         self.assertGreater(self.page._canvas_alpha_slider.geometry().top(), self.page._canvas_color_edit.geometry().top())
@@ -5543,7 +5544,7 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._curve_style_template_combo.itemText(0), "无")
 
     def test_grid_alpha_is_clamped_to_valid_range(self):
-        self.page._grid_alpha_edit.setText("5.0")
+        self.page._grid_alpha_slider.setValue(500)
 
         state = self.page._sync_state_from_controls()
 
@@ -9408,6 +9409,11 @@ class TestMainWindow(unittest.TestCase):
         self.assertGreater(
             self.win._tree_panel.tree._tree.topLevelItemCount(), 0
         )
+
+    def test_on_project_opened_skips_legacy_migration_calls(self):
+        with mock.patch("ui.main_window.project_manager.migrate_to_v2", side_effect=AssertionError("不应调用 migrate_to_v2")), \
+             mock.patch("ui.main_window.project_manager.migrate_to_v3", side_effect=AssertionError("不应调用 migrate_to_v3")):
+            self.win._on_project_opened(self.p.name)
 
     def test_tree_root_switches_current_project(self):
         other = self.pm.create_new("mw_other")
