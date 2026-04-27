@@ -1613,9 +1613,13 @@ class TestSettingsPage(unittest.TestCase):
     def test_extension_controls_exist(self):
         self.assertIsNotNone(self.page._builtin_extension_card)
         self.assertIsNotNone(self.page._external_extension_card)
+        self.assertIsNotNone(self.page._extension_other_settings_card)
+        self.assertIsNotNone(self.page._builtin_extension_management_card)
+        self.assertIsNotNone(self.page._external_extension_management_card)
         self.assertIsNotNone(self.page._builtin_extensions_enabled_checkbox)
         self.assertIsNotNone(self.page._external_extensions_enabled_checkbox)
         self.assertIsNotNone(self.page._external_extensions_dirs_card)
+        self.assertIsNotNone(self.page._external_extension_number_decimals_card)
         self.assertIsNotNone(self.page._refresh_external_extensions_btn)
         self.assertIsNotNone(self.page._extension_tabs)
         self.assertIsNotNone(self.page._external_extension_tabs)
@@ -1667,12 +1671,15 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._extension_hint.styleSheet(), placeholder_text_style_sheet(font_size=11))
 
     def test_settings_page_uses_setting_card_containers(self):
-        from qfluentwidgets import CardWidget, FolderListSettingCard, SettingCardGroup, SwitchSettingCard
+        from qfluentwidgets import ExpandGroupSettingCard, FolderListSettingCard, SettingCardGroup, SwitchSettingCard
 
         self.assertIsInstance(self.page._appearance_card, SettingCardGroup)
         self.assertIsInstance(self.page._extension_card, SettingCardGroup)
-        self.assertIsInstance(self.page._builtin_extension_card, CardWidget)
-        self.assertIsInstance(self.page._external_extension_card, CardWidget)
+        self.assertIsInstance(self.page._builtin_extension_card, SettingCardGroup)
+        self.assertIsInstance(self.page._external_extension_card, SettingCardGroup)
+        self.assertIsInstance(self.page._extension_other_settings_card, SettingCardGroup)
+        self.assertIsInstance(self.page._builtin_extension_management_card, ExpandGroupSettingCard)
+        self.assertIsInstance(self.page._external_extension_management_card, ExpandGroupSettingCard)
         self.assertIsInstance(self.page._shortcuts_card, SettingCardGroup)
         self.assertIsInstance(self.page._page_tree_focus_mode_card, SwitchSettingCard)
         self.assertIsInstance(self.page._builtin_extensions_enabled_checkbox, SwitchSettingCard)
@@ -1798,13 +1805,19 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT, 60750)
         self.assertEqual(self.page._extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         self.assertEqual(self.page._external_extension_tabs.maximumHeight(), _EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
-        self.assertEqual(
+        self.assertGreaterEqual(
             self.page._extension_tabs.minimumHeight(),
-            self.page._extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+            max(
+                self.page._extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                self.page._extension_tabs.navigationWidget.sizeHint().height(),
+            ),
         )
-        self.assertEqual(
+        self.assertGreaterEqual(
             self.page._external_extension_tabs.minimumHeight(),
-            self.page._external_extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+            max(
+                self.page._external_extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                self.page._external_extension_tabs.navigationWidget.sizeHint().height(),
+            ),
         )
 
         builtin_scroll_areas = self.page._extension_tabs.findChildren(SmoothScrollArea)
@@ -1814,6 +1827,33 @@ class TestSettingsPage(unittest.TestCase):
         self.assertGreaterEqual(len(external_scroll_areas), 4)
         for layout in [*self.page._extension_option_layouts.values(), *self.page._external_extension_option_layouts.values()]:
             self.assertTrue(bool(layout.alignment() & Qt.AlignmentFlag.AlignTop))
+
+    def test_extension_management_tabs_restore_height_when_extensions_tab_becomes_visible(self):
+        from ui.pages.settings_page import _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER
+
+        self.page._extension_tabs.setMinimumHeight(1)
+        self.page._external_extension_tabs.setMinimumHeight(1)
+
+        self.page.resize(1280, 900)
+        self.page.show()
+        QApplication.processEvents()
+        self.page._tabs.setCurrentIndex(1)
+        QApplication.processEvents()
+
+        self.assertEqual(
+            self.page._extension_tabs.minimumHeight(),
+            max(
+                self.page._extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                self.page._extension_tabs.navigationWidget.sizeHint().height(),
+            ),
+        )
+        self.assertEqual(
+            self.page._external_extension_tabs.minimumHeight(),
+            max(
+                self.page._external_extension_tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                self.page._external_extension_tabs.navigationWidget.sizeHint().height(),
+            ),
+        )
 
     def test_extension_status_summary_is_rendered_in_settings_page(self):
         from ui.theme import warning_color
@@ -1839,8 +1879,13 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._extension_status_summary_btn.text(), "当前扩展状态：3 项可用（内置 2 / 外部 1），1 项失败")
         self.assertTrue(self.page._extension_status_summary_btn.isEnabled())
         self.assertIn(warning_color(), self.page._extension_status_summary_btn.styleSheet())
-        extensions_layout = self.page._tabs.widget(1).widget().layout()
-        self.assertLess(extensions_layout.indexOf(self.page._extension_card), extensions_layout.indexOf(self.page._builtin_extension_card))
+        self.assertFalse(self.page._extension_card.isAncestorOf(self.page._builtin_extension_card))
+        self.assertFalse(self.page._extension_card.isAncestorOf(self.page._external_extension_card))
+        self.assertFalse(self.page._extension_card.isAncestorOf(self.page._extension_other_settings_card))
+        self.assertTrue(self.page._builtin_extension_card.isAncestorOf(self.page._builtin_extension_management_card))
+        self.assertTrue(self.page._external_extension_card.isAncestorOf(self.page._external_extension_management_card))
+        self.assertTrue(self.page._extension_other_settings_card.isAncestorOf(self.page._external_extension_number_decimals_card))
+        self.assertFalse(self.page._external_extension_card.isAncestorOf(self.page._external_extension_number_decimals_card))
 
     def test_save_ai_config_no_crash(self):
         self.page._ai_url_edit.setText("https://api.openai.com/v1")
@@ -5394,10 +5439,12 @@ class TestChartPage(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._chart_list.setCurrentRow(0)
 
-        self.assertTrue(self.page._style_opacity_edit.isEnabled())
-        self.page._style_opacity_edit.setText("1.7")
+        self.assertTrue(self.page._style_opacity_slider.isEnabled())
+        self.page._style_opacity_slider.setValue(70)
+        self.page._style_opacity_slider.setValue(170)
 
         curve_key = self.page._curve_key(self.page._chart_series[0])
+        self.assertEqual(self.page._style_opacity_slider.value(), 100)
         self.assertEqual(self.page._curve_styles[curve_key]["alpha"], 1.0)
 
     def test_style_tabs_hide_add_and_close_buttons(self):
@@ -5461,6 +5508,25 @@ class TestChartPage(unittest.TestCase):
         self.assertLessEqual(self.page._figure_width_edit.maximumWidth(), 96)
         self.assertLessEqual(self.page._dpi_edit.maximumWidth(), 96)
         self.assertLessEqual(self.page._grid_alpha_edit.maximumWidth(), 96)
+        self.assertLessEqual(self.page._legend_anchor_x_edit.maximumWidth(), 96)
+        self.assertLessEqual(self.page._legend_anchor_y_edit.maximumWidth(), 96)
+
+    def test_style_tabs_split_dense_controls_into_multiple_rows(self):
+        self.page.resize(1024, 820)
+        self.page.show()
+        QApplication.processEvents()
+
+        self.page._style_tabs.setCurrentIndex(0)
+        QApplication.processEvents()
+        self.assertGreater(self.page._style_dash_scale_edit.geometry().top(), self.page._style_opacity_slider.geometry().top())
+
+        self.page._style_tabs.setCurrentIndex(1)
+        QApplication.processEvents()
+        self.assertGreater(self.page._tick_label_top_cb.geometry().top(), self.page._tick_top_cb.geometry().top())
+        self.assertGreater(self.page._legend_face_color_edit.geometry().top(), self.page._legend_edge_color_edit.geometry().top())
+        self.assertGreater(self.page._legend_face_alpha_slider.geometry().top(), self.page._legend_face_color_edit.geometry().top())
+        self.assertGreater(self.page._canvas_alpha_slider.geometry().top(), self.page._canvas_color_edit.geometry().top())
+        self.assertGreater(self.page._figure_height_edit.geometry().top(), self.page._figure_width_edit.geometry().top())
 
     def test_plot_actions_keep_only_export_button(self):
         plot_tab = self.page._style_tabs.widget(1)
@@ -5482,6 +5548,203 @@ class TestChartPage(unittest.TestCase):
         state = self.page._sync_state_from_controls()
 
         self.assertEqual(state.grid_alpha, 1.0)
+
+    def test_curve_style_tab_supports_visibility_and_dash_scale(self):
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._chart_list.setCurrentRow(0)
+
+        curve_key = self.page._curve_key(self.page._chart_series[0])
+        self.assertTrue(self.page._style_visible_cb.isEnabled())
+        self.page._style_visible_cb.setChecked(False)
+        self.assertFalse(self.page._chart_series[0]["visible"])
+
+        self.page._style_dash_scale_edit.setText("2.5")
+        self.page._style_dash_scale_edit.editingFinished.emit()
+
+        self.assertAlmostEqual(self.page._curve_styles[curve_key]["dash_scale"], 2.5)
+
+    def test_plot_style_tick_and_spine_controls_apply_extras(self):
+        if self.page._figure is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._tick_bottom_cb.setChecked(False)
+        self.page._tick_left_cb.setChecked(False)
+        self.page._tick_top_cb.setChecked(True)
+        self.page._tick_right_cb.setChecked(True)
+        self.page._tick_label_bottom_cb.setChecked(False)
+        self.page._tick_label_left_cb.setChecked(False)
+        self.page._tick_label_top_cb.setChecked(True)
+        self.page._tick_label_right_cb.setChecked(True)
+        self.page._tick_direction_combo.setCurrentText("in")
+        self.page._tick_length_edit.setText("8")
+        self.page._tick_length_edit.editingFinished.emit()
+        self.page._tick_width_edit.setText("1.5")
+        self.page._tick_width_edit.editingFinished.emit()
+        self.page._legend_frame_cb.setChecked(False)
+
+        extras = self.page._plot_style_extras
+        self.assertFalse(extras["tick_params"]["bottom"])
+        self.assertFalse(extras["tick_params"]["left"])
+        self.assertTrue(extras["tick_params"]["top"])
+        self.assertTrue(extras["tick_params"]["right"])
+        self.assertFalse(extras["tick_params"]["labelbottom"])
+        self.assertFalse(extras["tick_params"]["labelleft"])
+        self.assertTrue(extras["tick_params"]["labelright"])
+        self.assertEqual(extras["tick_params"]["direction"], "in")
+        self.assertAlmostEqual(extras["tick_params"]["length"], 8.0)
+        self.assertAlmostEqual(extras["tick_params"]["width"], 1.5)
+        self.assertFalse(extras["legend_kwargs"]["frameon"])
+
+        self.page._redraw_now()
+
+        axis = self.page._figure.axes[0]
+        legend = axis.get_legend()
+        first_x_tick = axis.xaxis.get_major_ticks()[0]
+        first_y_tick = axis.yaxis.get_major_ticks()[0]
+        self.assertFalse(first_x_tick.tick1line.get_visible())
+        self.assertTrue(first_x_tick.tick2line.get_visible())
+        self.assertFalse(first_x_tick.label1.get_visible())
+        self.assertTrue(first_x_tick.label2.get_visible())
+        self.assertFalse(first_y_tick.tick1line.get_visible())
+        self.assertTrue(first_y_tick.tick2line.get_visible())
+        self.assertFalse(first_y_tick.label1.get_visible())
+        self.assertTrue(first_y_tick.label2.get_visible())
+        self.assertAlmostEqual(first_x_tick.tick2line.get_markersize(), 8.0)
+        self.assertFalse(legend.get_frame().get_visible())
+
+        self.page._spine_bottom_cb.setChecked(False)
+        self.page._spine_left_cb.setChecked(False)
+        self.page._spine_top_cb.setChecked(False)
+        self.page._spine_right_cb.setChecked(False)
+
+        extras = self.page._plot_style_extras
+        self.assertFalse(extras["spine_visibility"]["bottom"])
+        self.assertFalse(extras["spine_visibility"]["left"])
+        self.assertFalse(extras["spine_visibility"]["top"])
+        self.assertFalse(extras["spine_visibility"]["right"])
+        self.page._redraw_now()
+        axis = self.page._figure.axes[0]
+        self.assertFalse(axis.spines["bottom"].get_visible())
+        self.assertFalse(axis.spines["left"].get_visible())
+        self.assertFalse(axis.spines["top"].get_visible())
+        self.assertFalse(axis.spines["right"].get_visible())
+
+    def test_plot_style_legend_and_canvas_controls_apply_extras(self):
+        if self.page._figure is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._legend_frame_alpha_slider.setValue(35)
+        self.page._legend_face_color_edit.setText("#123456")
+        self.page._legend_face_color_edit.editingFinished.emit()
+        self.page._legend_face_alpha_slider.setValue(60)
+        self.page._canvas_color_edit.setText("#224466")
+        self.page._canvas_color_edit.editingFinished.emit()
+        self.page._canvas_alpha_slider.setValue(45)
+
+        extras = self.page._plot_style_extras
+        self.assertAlmostEqual(extras["legend_kwargs"]["edgealpha"], 0.35)
+        self.assertEqual(extras["legend_kwargs"]["facecolor"], "#123456")
+        self.assertAlmostEqual(extras["legend_kwargs"]["facealpha"], 0.60)
+        self.assertEqual(extras["figure_facecolor"], "#224466")
+        self.assertAlmostEqual(extras["figure_facealpha"], 0.45)
+
+        self.page._redraw_now()
+
+        axis = self.page._figure.axes[0]
+        legend = axis.get_legend()
+        legend_frame = legend.get_frame()
+        self.assertAlmostEqual(legend_frame.get_edgecolor()[3], 0.35, places=2)
+        self.assertAlmostEqual(legend_frame.get_facecolor()[3], 0.60, places=2)
+
+        expected_canvas_rgb = (34 / 255, 68 / 255, 102 / 255)
+        for actual, expected in zip(self.page._figure.get_facecolor()[:3], expected_canvas_rgb):
+            self.assertAlmostEqual(actual, expected, places=2)
+        for actual, expected in zip(axis.get_facecolor()[:3], expected_canvas_rgb):
+            self.assertAlmostEqual(actual, expected, places=2)
+        self.assertAlmostEqual(self.page._figure.get_facecolor()[3], 0.45, places=2)
+        self.assertAlmostEqual(axis.get_facecolor()[3], 0.45, places=2)
+
+    def test_plot_style_template_preserves_style_extras(self):
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._tick_top_cb.setChecked(True)
+        self.page._legend_frame_cb.setChecked(False)
+        self.page._legend_frame_alpha_slider.setValue(35)
+        self.page._legend_anchor_x_edit.setText("0.2")
+        self.page._legend_anchor_x_edit.editingFinished.emit()
+        self.page._legend_anchor_y_edit.setText("0.8")
+        self.page._legend_anchor_y_edit.editingFinished.emit()
+        self.page._legend_edge_color_edit.setText("#ff0000")
+        self.page._legend_edge_color_edit.editingFinished.emit()
+        self.page._legend_face_color_edit.setText("#123456")
+        self.page._legend_face_color_edit.editingFinished.emit()
+        self.page._legend_face_alpha_slider.setValue(60)
+        self.page._canvas_color_edit.setText("#224466")
+        self.page._canvas_color_edit.editingFinished.emit()
+        self.page._canvas_alpha_slider.setValue(45)
+
+        template = self.page._save_template_named("带扩展样式")
+
+        self.assertIsNotNone(template)
+        self.assertTrue(template.style_extras["tick_params"]["top"])
+        self.assertFalse(template.style_extras["legend_kwargs"]["frameon"])
+        self.assertAlmostEqual(template.style_extras["legend_kwargs"]["edgealpha"], 0.35)
+        self.assertEqual(template.style_extras["legend_kwargs"]["bbox_to_anchor"], [0.2, 0.8])
+        self.assertEqual(template.style_extras["legend_kwargs"]["edgecolor"], "#ff0000")
+        self.assertEqual(template.style_extras["legend_kwargs"]["facecolor"], "#123456")
+        self.assertAlmostEqual(template.style_extras["legend_kwargs"]["facealpha"], 0.60)
+        self.assertEqual(template.style_extras["figure_facecolor"], "#224466")
+        self.assertAlmostEqual(template.style_extras["figure_facealpha"], 0.45)
+
+        self.page._tick_top_cb.setChecked(False)
+        self.page._legend_frame_cb.setChecked(True)
+        self.page._legend_frame_alpha_slider.setValue(80)
+        self.page._legend_anchor_x_edit.clear()
+        self.page._legend_anchor_x_edit.editingFinished.emit()
+        self.page._legend_anchor_y_edit.clear()
+        self.page._legend_anchor_y_edit.editingFinished.emit()
+        self.page._legend_edge_color_edit.clear()
+        self.page._legend_edge_color_edit.editingFinished.emit()
+        self.page._legend_face_color_edit.clear()
+        self.page._legend_face_color_edit.editingFinished.emit()
+        self.page._legend_face_alpha_slider.setValue(80)
+        self.page._canvas_color_edit.clear()
+        self.page._canvas_color_edit.editingFinished.emit()
+        self.page._canvas_alpha_slider.setValue(100)
+        self.page.load_template(template.id)
+
+        self.assertTrue(self.page._tick_top_cb.isChecked())
+        self.assertFalse(self.page._legend_frame_cb.isChecked())
+        self.assertEqual(self.page._legend_frame_alpha_slider.value(), 35)
+        self.assertEqual(self.page._legend_anchor_x_edit.text(), "0.2")
+        self.assertEqual(self.page._legend_anchor_y_edit.text(), "0.8")
+        self.assertEqual(self.page._legend_edge_color_edit.text(), "#ff0000")
+        self.assertEqual(self.page._legend_face_color_edit.text(), "#123456")
+        self.assertEqual(self.page._legend_face_alpha_slider.value(), 60)
+        self.assertEqual(self.page._canvas_color_edit.text(), "#224466")
+        self.assertEqual(self.page._canvas_alpha_slider.value(), 45)
+
+    def test_plot_style_supports_precise_legend_anchor(self):
+        if self.page._figure is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._legend_pos_combo.setCurrentText("upper left")
+        self.page._legend_anchor_x_edit.setText("0.2")
+        self.page._legend_anchor_x_edit.editingFinished.emit()
+        self.page._legend_anchor_y_edit.setText("0.8")
+        self.page._legend_anchor_y_edit.editingFinished.emit()
+
+        self.assertEqual(self.page._plot_style_extras["legend_kwargs"]["bbox_to_anchor"], [0.2, 0.8])
+
+        self.page._redraw_now()
+
+        axis = self.page._figure.axes[0]
+        legend = axis.get_legend()
+        anchor_bbox = legend.get_bbox_to_anchor().transformed(axis.transAxes.inverted())
+        self.assertAlmostEqual(anchor_bbox.x0, 0.2, places=2)
+        self.assertAlmostEqual(anchor_bbox.y0, 0.8, places=2)
 
     def test_display_canvas_size_preserves_requested_aspect_ratio(self):
         width, height = self.page._fitted_canvas_size(1200, 800, 9.5 / 6.5)
@@ -7870,6 +8133,10 @@ class TestAnalysisPage(unittest.TestCase):
             self.assertEqual(axis.get_xlabel(), "频率 (Hz)")
             self.assertEqual(axis.get_ylabel(), "幅值")
             self.assertEqual(axis.get_title(), "自定义频谱")
+
+            output_options = self.page._analysis_output_series_options()
+            self.assertEqual(output_options[0]["label"], "频谱")
+            self.assertEqual(output_options[0]["series"].name, "频谱结果")
 
             exported = self.page._build_analysis_output_series("导出频谱")
             self.assertIsNotNone(exported)

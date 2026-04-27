@@ -2234,7 +2234,7 @@ class AnalysisPage(QWidget):
                 {
                     "line_name": line_name,
                     "label": label,
-                    "series": DataSeries(name=label, x=xs, y=ys, source="computed"),
+                    "series": DataSeries(name=line_name, x=xs, y=ys, source="computed"),
                 }
             )
         return options

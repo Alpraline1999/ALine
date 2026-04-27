@@ -187,6 +187,7 @@ class FigureConfig(BaseModel):
     line_width: float = 1.4
     marker_size: float = 5.0
     legend_position: str = "best"      # matplotlib loc 字符串
+    style_extras: Dict[str, Any] = {}
 
 
 class FigureState(BaseModel):

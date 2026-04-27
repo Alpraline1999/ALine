@@ -43,6 +43,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     RoundMenu,
+    Slider,
     SmoothScrollArea,
     TabCloseButtonDisplayMode,
     TeachingTip,
@@ -94,7 +95,7 @@ from ui.widgets.matplotlib_preview import (
 )
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color
+from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color, secondary_text_style_sheet
 
 try:
     import matplotlib
@@ -137,6 +138,24 @@ _ICON_HIDE = getattr(FIF, "HIDE", FIF.CANCEL)
 _ICON_EXPORT_TO_PICTURES = getattr(FIF, "IMAGE_EXPORT", FIF.PHOTO)
 _ICON_PLOT_EXTENSION_HELP = getattr(FIF, "INFO", getattr(FIF, "HELP", FIF.SEARCH))
 _PLOT_EXTENSION_TEACHING_TIP_TEXT = "左侧负责选择、配置并应用扩展；右侧展示当前扩展状态、参数说明，以及当前图表里已加载的扩展实例。"
+_TICK_DIRECTION_CHOICES = ["默认", "out", "in", "inout"]
+_LEGEND_ALPHA_DEFAULT = 0.8
+_CANVAS_ALPHA_DEFAULT = 1.0
+_BASE_PLOT_STYLE_EXTRA_KEYS = {
+    "tick_params",
+    "legend_kwargs",
+    "grid_kwargs",
+    "line_defaults",
+    "errorbar_kwargs",
+    "axis_kwargs",
+    "subplot_adjust",
+    "spine_visibility",
+    "spine_width",
+    "figure_facecolor",
+    "figure_facealpha",
+    "axes_facecolor",
+    "axes_facealpha",
+}
 _BASE_CURVE_STYLE_EXTENSION_TYPE = "base_curve_style_controls"
 _BASE_PLOT_STYLE_EXTENSION_TYPE = "base_plot_style_controls"
 
@@ -164,6 +183,13 @@ def _apply_base_plot_style_patch(plot_context: PlotExtensionContext, options: Di
     }
     if figure_patch:
         plot_context.patch_figure_state(figure_patch)
+    style_patch = {
+        key: copy.deepcopy(value)
+        for key, value in dict(options or {}).items()
+        if key in _BASE_PLOT_STYLE_EXTRA_KEYS
+    }
+    if style_patch:
+        plot_context.patch_plot_style(style_patch)
 
 
 _BASE_CURVE_STYLE_EXTENSION = PlotExtension(
@@ -273,6 +299,9 @@ class ChartPage(QWidget):
         self._plot_style_extra_versions: Dict[tuple[str, ...], int] = {}
         self._curve_style_change_versions: Dict[str, Dict[str, int]] = {}
         self._plot_style_extras: Dict[str, Any] = {}
+        self._legend_anchor_x_draft = ""
+        self._legend_anchor_y_draft = ""
+        self._preserve_partial_legend_anchor_draft = False
         self._display_dpi = 100.0
         self._display_canvas_size: Optional[tuple[int, int]] = None
         self._canvas_host: Optional[QScrollArea] = None
@@ -692,6 +721,64 @@ class ChartPage(QWidget):
         edit.editingFinished.connect(slot)
 
     @staticmethod
+    def _alpha_slider_value(alpha: float) -> int:
+        return int(round(_clamp_float(alpha, 0.0, 1.0) * 100.0))
+
+    @staticmethod
+    def _alpha_from_slider_value(value: int) -> float:
+        return _clamp_float(float(value) / 100.0, 0.0, 1.0)
+
+    def _update_style_opacity_value_label(self, value: Optional[int] = None) -> None:
+        if not hasattr(self, "_style_opacity_value_label"):
+            return
+        slider_value = self._style_opacity_slider.value() if value is None else value
+        self._style_opacity_value_label.setText(f"{self._alpha_from_slider_value(slider_value):.2f}")
+
+    def _update_alpha_value_label(self, label: Optional[BodyLabel], value: int) -> None:
+        if label is None:
+            return
+        label.setText(f"{self._alpha_from_slider_value(value):.2f}")
+
+    def _set_alpha_slider_value(
+        self,
+        slider: Slider,
+        label: Optional[BodyLabel],
+        alpha: Optional[float],
+        *,
+        default_alpha: float,
+    ) -> None:
+        slider.blockSignals(True)
+        slider.setValue(self._alpha_slider_value(default_alpha if alpha is None else alpha))
+        slider.blockSignals(False)
+        self._update_alpha_value_label(label, slider.value())
+
+    def _on_legend_frame_alpha_changed(self, value: int) -> None:
+        self._update_alpha_value_label(getattr(self, "_legend_frame_alpha_value_label", None), value)
+        self._on_quick_config_changed()
+
+    def _on_legend_face_alpha_changed(self, value: int) -> None:
+        self._update_alpha_value_label(getattr(self, "_legend_face_alpha_value_label", None), value)
+        self._on_quick_config_changed()
+
+    def _on_canvas_alpha_changed(self, value: int) -> None:
+        self._update_alpha_value_label(getattr(self, "_canvas_alpha_value_label", None), value)
+        self._on_quick_config_changed()
+
+    def _on_legend_anchor_x_text_changed(self, text: str) -> None:
+        self._legend_anchor_x_draft = text.strip()
+
+    def _on_legend_anchor_y_text_changed(self, text: str) -> None:
+        self._legend_anchor_y_draft = text.strip()
+
+    def _on_legend_anchor_x_committed(self) -> None:
+        self._legend_anchor_x_draft = self._legend_anchor_x_edit.text().strip()
+        self._on_quick_config_changed()
+
+    def _on_legend_anchor_y_committed(self) -> None:
+        self._legend_anchor_y_draft = self._legend_anchor_y_edit.text().strip()
+        self._on_quick_config_changed()
+
+    @staticmethod
     def _set_square_tool_button(button: ToolButton) -> None:
         button.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
 
@@ -891,6 +978,9 @@ class ChartPage(QWidget):
         layout.addWidget(self._style_target_label)
         self._style_target_label.hide()
 
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("基础外观", page))
+
         color_row = QHBoxLayout()
         color_row.addWidget(self._make_style_form_label("颜色:", page))
         self._style_color_btn = ColorPickerButton(QColor("#888888"), "", page, enableAlpha=False)
@@ -913,25 +1003,52 @@ class ChartPage(QWidget):
         color_row.addWidget(self._style_line_combo, 1)
         layout.addLayout(color_row)
 
-        line_set_row = QHBoxLayout()
-        line_set_row.addWidget(self._make_style_form_label("线宽:", page))
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("线条细节", page))
+
+        line_metric_row = QHBoxLayout()
+        line_metric_row.addWidget(self._make_style_form_label("线宽:", page))
         self._style_line_width_edit = LineEdit(page)
         self._style_line_width_edit.setPlaceholderText("1.4")
         self._style_line_width_edit.setEnabled(False)
         self._connect_line_edit_commit(self._style_line_width_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_line_width_edit)
-        line_set_row.addWidget(self._style_line_width_edit)
-        line_set_row.addStretch()
-        layout.addLayout(line_set_row)
+        line_metric_row.addWidget(self._style_line_width_edit)
+        line_metric_row.addStretch()
+        layout.addLayout(line_metric_row)
 
-        line_set_row.addWidget(self._make_style_form_label("透明度:", page))
-        self._style_opacity_edit = LineEdit(page)
-        self._style_opacity_edit.setPlaceholderText("1.0")
-        self._style_opacity_edit.setEnabled(False)
-        self._connect_line_edit_commit(self._style_opacity_edit, self._on_style_metrics_changed)
-        self._style_opacity_edit.textChanged.connect(lambda _text: self._on_style_metrics_changed())
-        self._set_compact_edit_width(self._style_opacity_edit)
-        line_set_row.addWidget(self._style_opacity_edit)
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(self._make_style_form_label("透明度:", page))
+        self._style_opacity_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._style_opacity_slider.setRange(0, 100)
+        self._style_opacity_slider.setSingleStep(1)
+        self._style_opacity_slider.setPageStep(5)
+        self._style_opacity_slider.setEnabled(False)
+        self._style_opacity_slider.setMinimumWidth(152)
+        self._style_opacity_slider.setValue(self._alpha_slider_value(1.0))
+        opacity_row.addWidget(self._style_opacity_slider, 1)
+        self._style_opacity_value_label = BodyLabel("1.00", page)
+        self._style_opacity_value_label.setStyleSheet(secondary_text_style_sheet(font_size=12))
+        self._style_opacity_value_label.setMinimumWidth(40)
+        opacity_row.addWidget(self._style_opacity_value_label)
+        opacity_row.addStretch()
+        self._update_style_opacity_value_label(self._style_opacity_slider.value())
+        self._style_opacity_slider.valueChanged.connect(self._on_style_opacity_changed)
+        layout.addLayout(opacity_row)
+
+        dash_scale_row = QHBoxLayout()
+        dash_scale_row.addWidget(self._make_style_form_label("虚线缩放:", page))
+        self._style_dash_scale_edit = LineEdit(page)
+        self._style_dash_scale_edit.setPlaceholderText("1.0")
+        self._style_dash_scale_edit.setEnabled(False)
+        self._connect_line_edit_commit(self._style_dash_scale_edit, self._on_style_metrics_changed)
+        self._set_compact_edit_width(self._style_dash_scale_edit)
+        dash_scale_row.addWidget(self._style_dash_scale_edit)
+        dash_scale_row.addStretch()
+        layout.addLayout(dash_scale_row)
+
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("标记与可见性", page))
 
         marker_set_row = QHBoxLayout()
         marker_set_row.addWidget(self._make_style_form_label("点大小:", page))
@@ -941,8 +1058,6 @@ class ChartPage(QWidget):
         self._connect_line_edit_commit(self._style_marker_size_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_marker_size_edit)
         marker_set_row.addWidget(self._style_marker_size_edit)
-        marker_set_row.addStretch()
-        layout.addLayout(marker_set_row)
 
         marker_set_row.addWidget(self._make_style_form_label("点间距:", page))
         self._style_density_edit = LineEdit(page)
@@ -951,6 +1066,16 @@ class ChartPage(QWidget):
         self._connect_line_edit_commit(self._style_density_edit, self._on_style_metrics_changed)
         self._set_compact_edit_width(self._style_density_edit)
         marker_set_row.addWidget(self._style_density_edit)
+        marker_set_row.addStretch()
+        layout.addLayout(marker_set_row)
+
+        visibility_row = QHBoxLayout()
+        self._style_visible_cb = CheckBox("显示当前曲线", page)
+        self._style_visible_cb.setEnabled(False)
+        self._style_visible_cb.stateChanged.connect(self._on_style_visibility_changed)
+        visibility_row.addWidget(self._style_visible_cb)
+        visibility_row.addStretch()
+        layout.addLayout(visibility_row)
 
         layout.addStretch()
         return scroll
@@ -1060,7 +1185,88 @@ class ChartPage(QWidget):
         layout.addLayout(axis_flag_row)
 
         layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("版式与标注", page))
+        layout.addWidget(make_section_label("刻度", page))
+
+        tick_side_1_row = QHBoxLayout()
+        self._tick_bottom_cb = CheckBox("底部刻度", page)
+        self._tick_bottom_cb.setChecked(True)
+        self._tick_bottom_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_side_1_row.addWidget(self._tick_bottom_cb)
+        self._tick_left_cb = CheckBox("左侧刻度", page)
+        self._tick_left_cb.setChecked(True)
+        self._tick_left_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_side_1_row.addWidget(self._tick_left_cb)
+        tick_side_1_row.addStretch()
+        layout.addLayout(tick_side_1_row)
+
+        tick_side_2_row = QHBoxLayout()
+        self._tick_top_cb = CheckBox("顶部刻度", page)
+        self._tick_top_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_side_2_row.addWidget(self._tick_top_cb)
+        self._tick_right_cb = CheckBox("右侧刻度", page)
+        self._tick_right_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_side_2_row.addWidget(self._tick_right_cb)
+        tick_side_2_row.addStretch()
+        layout.addLayout(tick_side_2_row)
+
+        tick_label_toggle_1_row = QHBoxLayout()
+        self._tick_label_bottom_cb = CheckBox("底部标签", page)
+        self._tick_label_bottom_cb.setChecked(True)
+        self._tick_label_bottom_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_label_toggle_1_row.addWidget(self._tick_label_bottom_cb)
+        self._tick_label_left_cb = CheckBox("左侧标签", page)
+        self._tick_label_left_cb.setChecked(True)
+        self._tick_label_left_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_label_toggle_1_row.addWidget(self._tick_label_left_cb)
+        tick_label_toggle_1_row.addStretch()
+        layout.addLayout(tick_label_toggle_1_row)
+
+        tick_label_toggle_2_row = QHBoxLayout()
+        self._tick_label_top_cb = CheckBox("顶部标签", page)
+        self._tick_label_top_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_label_toggle_2_row.addWidget(self._tick_label_top_cb)
+        self._tick_label_right_cb = CheckBox("右侧标签", page)
+        self._tick_label_right_cb.stateChanged.connect(self._on_quick_config_changed)
+        tick_label_toggle_2_row.addWidget(self._tick_label_right_cb)
+        tick_label_toggle_2_row.addStretch()
+        layout.addLayout(tick_label_toggle_2_row)
+
+        tick_direction_row = QHBoxLayout()
+        tick_direction_row.addWidget(self._make_style_form_label("方向:", page))
+        self._tick_direction_combo = ComboBox(page)
+        self._tick_direction_combo.addItems(_TICK_DIRECTION_CHOICES)
+        self._tick_direction_combo.currentIndexChanged.connect(self._on_quick_config_changed)
+        tick_direction_row.addWidget(self._tick_direction_combo, 1)
+        layout.addLayout(tick_direction_row)
+
+        tick_label_row = QHBoxLayout()
+        tick_label_row.addWidget(self._make_style_form_label("标签字号:", page))
+        self._tick_label_size_edit = LineEdit(page)
+        self._tick_label_size_edit.setPlaceholderText("跟随字号")
+        self._connect_line_edit_commit(self._tick_label_size_edit, self._on_quick_config_changed)
+        self._set_compact_edit_width(self._tick_label_size_edit)
+        tick_label_row.addWidget(self._tick_label_size_edit)
+        tick_label_row.addStretch()
+        layout.addLayout(tick_label_row)
+
+        tick_metric_row = QHBoxLayout()
+        tick_metric_row.addWidget(self._make_style_form_label("长度:", page))
+        self._tick_length_edit = LineEdit(page)
+        self._tick_length_edit.setPlaceholderText("默认")
+        self._connect_line_edit_commit(self._tick_length_edit, self._on_quick_config_changed)
+        self._set_compact_edit_width(self._tick_length_edit)
+        tick_metric_row.addWidget(self._tick_length_edit)
+        tick_metric_row.addWidget(self._make_style_form_label("宽度:", page))
+        self._tick_width_edit = LineEdit(page)
+        self._tick_width_edit.setPlaceholderText("默认")
+        self._connect_line_edit_commit(self._tick_width_edit, self._on_quick_config_changed)
+        self._set_compact_edit_width(self._tick_width_edit)
+        tick_metric_row.addWidget(self._tick_width_edit)
+        tick_metric_row.addStretch()
+        layout.addLayout(tick_metric_row)
+
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("图例与字体", page))
 
         legend_row = QHBoxLayout()
         legend_row.addWidget(self._make_style_form_label("图例位置:", page))
@@ -1072,6 +1278,26 @@ class ChartPage(QWidget):
         self._legend_pos_combo.currentIndexChanged.connect(self._on_quick_config_changed)
         legend_row.addWidget(self._legend_pos_combo, 1)
         layout.addLayout(legend_row)
+
+        legend_anchor_row = QHBoxLayout()
+        legend_anchor_row.addWidget(self._make_style_form_label("锚点 X:", page))
+        self._legend_anchor_x_edit = LineEdit(page)
+        self._legend_anchor_x_edit.setPlaceholderText("留空")
+        self._legend_anchor_x_edit.setToolTip("与上方图例位置配合使用，按坐标轴比例设置 X 锚点，例如 0.02 或 1.0")
+        self._legend_anchor_x_edit.textChanged.connect(self._on_legend_anchor_x_text_changed)
+        self._legend_anchor_x_edit.editingFinished.connect(self._on_legend_anchor_x_committed)
+        self._set_compact_edit_width(self._legend_anchor_x_edit)
+        legend_anchor_row.addWidget(self._legend_anchor_x_edit)
+        legend_anchor_row.addWidget(self._make_style_form_label("锚点 Y:", page))
+        self._legend_anchor_y_edit = LineEdit(page)
+        self._legend_anchor_y_edit.setPlaceholderText("留空")
+        self._legend_anchor_y_edit.setToolTip("与上方图例位置配合使用，按坐标轴比例设置 Y 锚点，例如 0.98 或 0.5")
+        self._legend_anchor_y_edit.textChanged.connect(self._on_legend_anchor_y_text_changed)
+        self._legend_anchor_y_edit.editingFinished.connect(self._on_legend_anchor_y_committed)
+        self._set_compact_edit_width(self._legend_anchor_y_edit)
+        legend_anchor_row.addWidget(self._legend_anchor_y_edit)
+        legend_anchor_row.addStretch()
+        layout.addLayout(legend_anchor_row)
 
         font_row = QHBoxLayout()
         font_row.addWidget(self._make_style_form_label("字体族:", page))
@@ -1097,25 +1323,114 @@ class ChartPage(QWidget):
         font_size_row.addStretch()
         layout.addLayout(font_size_row)
 
+        legend_frame_row = QHBoxLayout()
+        self._legend_frame_cb = CheckBox("显示图例边框", page)
+        self._legend_frame_cb.setChecked(True)
+        self._legend_frame_cb.stateChanged.connect(self._on_quick_config_changed)
+        legend_frame_row.addWidget(self._legend_frame_cb)
+        legend_frame_row.addStretch()
+        layout.addLayout(legend_frame_row)
+
+        legend_frame_alpha_row = QHBoxLayout()
+        legend_frame_alpha_row.addWidget(self._make_style_form_label("边框透明度:", page))
+        self._legend_frame_alpha_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._legend_frame_alpha_slider.setRange(0, 100)
+        self._legend_frame_alpha_slider.setSingleStep(1)
+        self._legend_frame_alpha_slider.setPageStep(5)
+        self._legend_frame_alpha_slider.setMinimumWidth(132)
+        self._legend_frame_alpha_slider.setValue(self._alpha_slider_value(_LEGEND_ALPHA_DEFAULT))
+        legend_frame_alpha_row.addWidget(self._legend_frame_alpha_slider, 1)
+        self._legend_frame_alpha_value_label = BodyLabel("0.80", page)
+        self._legend_frame_alpha_value_label.setStyleSheet(secondary_text_style_sheet(font_size=12))
+        self._legend_frame_alpha_value_label.setMinimumWidth(40)
+        legend_frame_alpha_row.addWidget(self._legend_frame_alpha_value_label)
+        legend_frame_alpha_row.addStretch()
+        self._update_alpha_value_label(self._legend_frame_alpha_value_label, self._legend_frame_alpha_slider.value())
+        self._legend_frame_alpha_slider.valueChanged.connect(self._on_legend_frame_alpha_changed)
+        layout.addLayout(legend_frame_alpha_row)
+
+        legend_edge_color_row = QHBoxLayout()
+        legend_edge_color_row.addWidget(self._make_style_form_label("边框颜色:", page))
+        self._legend_edge_color_edit = LineEdit(page)
+        self._legend_edge_color_edit.setPlaceholderText("留空跟随主题")
+        self._connect_line_edit_commit(self._legend_edge_color_edit, self._on_quick_config_changed)
+        legend_edge_color_row.addWidget(self._legend_edge_color_edit, 1)
+        layout.addLayout(legend_edge_color_row)
+
+        legend_face_color_row = QHBoxLayout()
+        legend_face_color_row.addWidget(self._make_style_form_label("背景颜色:", page))
+        self._legend_face_color_edit = LineEdit(page)
+        self._legend_face_color_edit.setPlaceholderText("留空跟随画布")
+        self._connect_line_edit_commit(self._legend_face_color_edit, self._on_quick_config_changed)
+        legend_face_color_row.addWidget(self._legend_face_color_edit, 1)
+        layout.addLayout(legend_face_color_row)
+
+        legend_face_alpha_row = QHBoxLayout()
+        legend_face_alpha_row.addWidget(self._make_style_form_label("背景透明度:", page))
+        self._legend_face_alpha_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._legend_face_alpha_slider.setRange(0, 100)
+        self._legend_face_alpha_slider.setSingleStep(1)
+        self._legend_face_alpha_slider.setPageStep(5)
+        self._legend_face_alpha_slider.setMinimumWidth(132)
+        self._legend_face_alpha_slider.setValue(self._alpha_slider_value(_LEGEND_ALPHA_DEFAULT))
+        legend_face_alpha_row.addWidget(self._legend_face_alpha_slider, 1)
+        self._legend_face_alpha_value_label = BodyLabel("0.80", page)
+        self._legend_face_alpha_value_label.setStyleSheet(secondary_text_style_sheet(font_size=12))
+        self._legend_face_alpha_value_label.setMinimumWidth(40)
+        legend_face_alpha_row.addWidget(self._legend_face_alpha_value_label)
+        legend_face_alpha_row.addStretch()
+        self._update_alpha_value_label(self._legend_face_alpha_value_label, self._legend_face_alpha_slider.value())
+        self._legend_face_alpha_slider.valueChanged.connect(self._on_legend_face_alpha_changed)
+        layout.addLayout(legend_face_alpha_row)
+
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("画布与默认样式", page))
 
-        figure_size_row = QHBoxLayout()
-        figure_size_row.addWidget(self._make_style_form_label("图宽:", page))
+        canvas_color_row = QHBoxLayout()
+        canvas_color_row.addWidget(self._make_style_form_label("画布颜色:", page))
+        self._canvas_color_edit = LineEdit(page)
+        self._canvas_color_edit.setPlaceholderText("留空跟随主题")
+        self._connect_line_edit_commit(self._canvas_color_edit, self._on_quick_config_changed)
+        canvas_color_row.addWidget(self._canvas_color_edit, 1)
+        layout.addLayout(canvas_color_row)
+
+        canvas_alpha_row = QHBoxLayout()
+        canvas_alpha_row.addWidget(self._make_style_form_label("画布透明度:", page))
+        self._canvas_alpha_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._canvas_alpha_slider.setRange(0, 100)
+        self._canvas_alpha_slider.setSingleStep(1)
+        self._canvas_alpha_slider.setPageStep(5)
+        self._canvas_alpha_slider.setMinimumWidth(132)
+        self._canvas_alpha_slider.setValue(self._alpha_slider_value(_CANVAS_ALPHA_DEFAULT))
+        canvas_alpha_row.addWidget(self._canvas_alpha_slider, 1)
+        self._canvas_alpha_value_label = BodyLabel("1.00", page)
+        self._canvas_alpha_value_label.setStyleSheet(secondary_text_style_sheet(font_size=12))
+        self._canvas_alpha_value_label.setMinimumWidth(40)
+        canvas_alpha_row.addWidget(self._canvas_alpha_value_label)
+        canvas_alpha_row.addStretch()
+        self._update_alpha_value_label(self._canvas_alpha_value_label, self._canvas_alpha_slider.value())
+        self._canvas_alpha_slider.valueChanged.connect(self._on_canvas_alpha_changed)
+        layout.addLayout(canvas_alpha_row)
+
+        figure_width_row = QHBoxLayout()
+        figure_width_row.addWidget(self._make_style_form_label("图宽:", page))
         self._figure_width_edit = LineEdit(page)
         self._figure_width_edit.setPlaceholderText("7.0")
         self._connect_line_edit_commit(self._figure_width_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_width_edit)
-        figure_size_row.addWidget(self._figure_width_edit)
-        figure_size_row.addStretch()
-        layout.addLayout(figure_size_row)
+        figure_width_row.addWidget(self._figure_width_edit)
+        figure_width_row.addStretch()
+        layout.addLayout(figure_width_row)
 
-        figure_size_row.addWidget(self._make_style_form_label("图高:", page))
+        figure_height_row = QHBoxLayout()
+        figure_height_row.addWidget(self._make_style_form_label("图高:", page))
         self._figure_height_edit = LineEdit(page)
         self._figure_height_edit.setPlaceholderText("5.0")
         self._connect_line_edit_commit(self._figure_height_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._figure_height_edit)
-        figure_size_row.addWidget(self._figure_height_edit)
+        figure_height_row.addWidget(self._figure_height_edit)
+        figure_height_row.addStretch()
+        layout.addLayout(figure_height_row)
 
         dpi_row = QHBoxLayout()
         dpi_row.addWidget(self._make_style_form_label("DPI:", page))
@@ -1147,6 +1462,9 @@ class ChartPage(QWidget):
         marker_row.addStretch()
         layout.addLayout(marker_row)
 
+        layout.addWidget(make_hsep(page))
+        layout.addWidget(make_section_label("网格与边框", page))
+
         grid_style_row = QHBoxLayout()
         grid_style_row.addWidget(self._make_style_form_label("网格透明度:", page))
         self._grid_alpha_edit = LineEdit(page)
@@ -1166,6 +1484,40 @@ class ChartPage(QWidget):
         grid_width_row.addWidget(self._grid_line_width_edit)
         grid_width_row.addStretch()
         layout.addLayout(grid_width_row)
+
+        spine_primary_toggle_row = QHBoxLayout()
+        self._spine_bottom_cb = CheckBox("显示底部边框", page)
+        self._spine_bottom_cb.setChecked(True)
+        self._spine_bottom_cb.stateChanged.connect(self._on_quick_config_changed)
+        spine_primary_toggle_row.addWidget(self._spine_bottom_cb)
+        self._spine_left_cb = CheckBox("显示左侧边框", page)
+        self._spine_left_cb.setChecked(True)
+        self._spine_left_cb.stateChanged.connect(self._on_quick_config_changed)
+        spine_primary_toggle_row.addWidget(self._spine_left_cb)
+        spine_primary_toggle_row.addStretch()
+        layout.addLayout(spine_primary_toggle_row)
+
+        spine_secondary_toggle_row = QHBoxLayout()
+        self._spine_top_cb = CheckBox("显示顶部边框", page)
+        self._spine_top_cb.setChecked(True)
+        self._spine_top_cb.stateChanged.connect(self._on_quick_config_changed)
+        spine_secondary_toggle_row.addWidget(self._spine_top_cb)
+        self._spine_right_cb = CheckBox("显示右侧边框", page)
+        self._spine_right_cb.setChecked(True)
+        self._spine_right_cb.stateChanged.connect(self._on_quick_config_changed)
+        spine_secondary_toggle_row.addWidget(self._spine_right_cb)
+        spine_secondary_toggle_row.addStretch()
+        layout.addLayout(spine_secondary_toggle_row)
+
+        spine_width_row = QHBoxLayout()
+        spine_width_row.addWidget(self._make_style_form_label("边框线宽:", page))
+        self._spine_width_edit = LineEdit(page)
+        self._spine_width_edit.setPlaceholderText("默认")
+        self._connect_line_edit_commit(self._spine_width_edit, self._on_quick_config_changed)
+        self._set_compact_edit_width(self._spine_width_edit)
+        spine_width_row.addWidget(self._spine_width_edit)
+        spine_width_row.addStretch()
+        layout.addLayout(spine_width_row)
 
         layout.addStretch()
         return scroll
@@ -2183,7 +2535,9 @@ class ChartPage(QWidget):
         )
         self._active_template_node_id = figure.id
         self._applied_plot_style_ref = make_plot_style_asset_key("template", figure.id)
-        self._apply_plot_style_payload(state.model_dump(), source="manual")
+        payload = state.model_dump()
+        payload.update(copy.deepcopy(dict(figure.style_extras or {})))
+        self._apply_plot_style_payload(payload, source="manual")
         self._refresh_style_extension_panel()
         self._redraw_now()
 
@@ -2218,6 +2572,7 @@ class ChartPage(QWidget):
             legend_font_size=state.legend_font_size,
             line_width=state.line_width,
             marker_size=state.marker_size,
+            style_extras=copy.deepcopy(self._plot_style_extras),
         )
         if figure_id:
             config.id = figure_id
@@ -2458,23 +2813,39 @@ class ChartPage(QWidget):
             return
         self._apply_curve_style_payload(self._curve_key(target_curve), patch, source="manual")
 
-    def _apply_base_plot_style_options(self, options: Dict[str, Any], *, changed_keys: Optional[set[str]] = None) -> None:
+    def _apply_base_plot_style_options(
+        self,
+        options: Dict[str, Any],
+        *,
+        changed_keys: Optional[set[str]] = None,
+        extra_options: Optional[Dict[str, Any]] = None,
+        changed_extra_paths: Optional[set[tuple[str, ...]]] = None,
+    ) -> None:
         extension = extension_registry.get_plot(_BASE_PLOT_STYLE_EXTENSION_TYPE)
         if extension is None:
             return
         plot_context = self._base_style_plot_context(selected_curve=self._selected_curve())
         extension.handler(plot_context, dict(options or {}))
         payload = dict(plot_context.figure_state_patch or {})
-        if plot_context.plot_style_patch:
+        if extra_options is not None:
+            payload = _merge_nested_mapping(payload, copy.deepcopy(extra_options))
+            if changed_extra_paths:
+                self._record_plot_style_extra_changes(changed_extra_paths)
+        elif plot_context.plot_style_patch:
             payload = _merge_nested_mapping(payload, dict(plot_context.plot_style_patch or {}))
             changed_paths = set(_flatten_nested_mapping(dict(plot_context.plot_style_patch or {})).keys())
             if changed_paths:
                 self._record_plot_style_extra_changes(changed_paths)
         if changed_keys:
             self._record_figure_state_changes(changed_keys)
-        if not payload:
+        if not payload and extra_options is None:
             return
-        self._apply_plot_style_payload(payload, source="extension")
+        preserve_partial_legend_anchor_draft = self._preserve_partial_legend_anchor_draft
+        self._preserve_partial_legend_anchor_draft = extra_options is not None
+        try:
+            self._apply_plot_style_payload(payload, source="extension")
+        finally:
+            self._preserve_partial_legend_anchor_draft = preserve_partial_legend_anchor_draft
 
     def _save_curve_style_template_named(self, name: str) -> bool:
         style = self._current_curve_style()
@@ -2546,9 +2917,186 @@ class ChartPage(QWidget):
                 self._record_figure_state_changes(changed_state_keys, sequence=sequence)
                 self._record_plot_style_extra_changes(changed_extra_paths, sequence=sequence)
         self._plot_style_extras = next_plot_style_extras
-        self._apply_figure_state(FigureState(**state_payload))
+        self._apply_plot_style_extra_controls()
+        self._apply_figure_state(FigureState(**state_payload), apply_extra_controls=False)
 
-    def _apply_figure_state(self, state: FigureState) -> None:
+    def _plot_style_extra_options_from_controls(self) -> Dict[str, Any]:
+        extras: Dict[str, Any] = {}
+
+        tick_defaults = {
+            "bottom": True,
+            "left": True,
+            "top": False,
+            "right": False,
+            "labelbottom": True,
+            "labelleft": True,
+            "labeltop": False,
+            "labelright": False,
+        }
+        tick_params: Dict[str, Any] = {}
+        tick_states = {
+            "bottom": bool(self._tick_bottom_cb.isChecked()),
+            "left": bool(self._tick_left_cb.isChecked()),
+            "top": bool(self._tick_top_cb.isChecked()),
+            "right": bool(self._tick_right_cb.isChecked()),
+            "labelbottom": bool(self._tick_label_bottom_cb.isChecked()),
+            "labelleft": bool(self._tick_label_left_cb.isChecked()),
+            "labeltop": bool(self._tick_label_top_cb.isChecked()),
+            "labelright": bool(self._tick_label_right_cb.isChecked()),
+        }
+        for key, value in tick_states.items():
+            if value != tick_defaults[key]:
+                tick_params[key] = value
+        tick_direction = self._tick_direction_combo.currentText().strip()
+        if tick_direction and tick_direction != "默认":
+            tick_params["direction"] = tick_direction
+        tick_label_size = _safe_int(self._tick_label_size_edit.text())
+        if tick_label_size is not None and tick_label_size > 0:
+            tick_params["labelsize"] = tick_label_size
+        tick_length = _safe_float(self._tick_length_edit.text())
+        if tick_length is not None and tick_length >= 0:
+            tick_params["length"] = tick_length
+        tick_width = _safe_float(self._tick_width_edit.text())
+        if tick_width is not None and tick_width >= 0:
+            tick_params["width"] = tick_width
+        if tick_params:
+            extras["tick_params"] = tick_params
+
+        legend_kwargs: Dict[str, Any] = {}
+        if not self._legend_frame_cb.isChecked():
+            legend_kwargs["frameon"] = False
+        legend_frame_alpha = self._alpha_from_slider_value(self._legend_frame_alpha_slider.value())
+        if abs(legend_frame_alpha - _LEGEND_ALPHA_DEFAULT) > 1e-6:
+            legend_kwargs["edgealpha"] = legend_frame_alpha
+        legend_edge_color = _safe_color(self._legend_edge_color_edit.text())
+        if legend_edge_color:
+            legend_kwargs["edgecolor"] = legend_edge_color
+        legend_face_color = _safe_color(self._legend_face_color_edit.text())
+        if legend_face_color:
+            legend_kwargs["facecolor"] = legend_face_color
+        legend_face_alpha = self._alpha_from_slider_value(self._legend_face_alpha_slider.value())
+        if abs(legend_face_alpha - _LEGEND_ALPHA_DEFAULT) > 1e-6:
+            legend_kwargs["facealpha"] = legend_face_alpha
+        legend_anchor_x = _safe_float(self._legend_anchor_x_edit.text().strip() or self._legend_anchor_x_draft)
+        legend_anchor_y = _safe_float(self._legend_anchor_y_edit.text().strip() or self._legend_anchor_y_draft)
+        if legend_anchor_x is not None and legend_anchor_y is not None:
+            legend_kwargs["bbox_to_anchor"] = [legend_anchor_x, legend_anchor_y]
+        if legend_kwargs:
+            if self._legend_frame_cb.isChecked() and any(key in legend_kwargs for key in {"framealpha", "edgecolor", "facecolor"}):
+                legend_kwargs.setdefault("frameon", True)
+            extras["legend_kwargs"] = legend_kwargs
+
+        spine_visibility: Dict[str, Any] = {}
+        if not self._spine_bottom_cb.isChecked():
+            spine_visibility["bottom"] = False
+        if not self._spine_left_cb.isChecked():
+            spine_visibility["left"] = False
+        if not self._spine_top_cb.isChecked():
+            spine_visibility["top"] = False
+        if not self._spine_right_cb.isChecked():
+            spine_visibility["right"] = False
+        if spine_visibility:
+            extras["spine_visibility"] = spine_visibility
+
+        spine_width = _safe_float(self._spine_width_edit.text())
+        if spine_width is not None and spine_width >= 0:
+            extras["spine_width"] = spine_width
+
+        canvas_color = _safe_color(self._canvas_color_edit.text())
+        if canvas_color:
+            extras["figure_facecolor"] = canvas_color
+        canvas_alpha = self._alpha_from_slider_value(self._canvas_alpha_slider.value())
+        if abs(canvas_alpha - _CANVAS_ALPHA_DEFAULT) > 1e-6:
+            extras["figure_facealpha"] = canvas_alpha
+
+        return extras
+
+    def _apply_plot_style_extra_controls(self) -> None:
+        tick_params = dict(self._plot_style_extras.get("tick_params") or {})
+        legend_kwargs = dict(self._plot_style_extras.get("legend_kwargs") or {})
+        spine_visibility = dict(self._plot_style_extras.get("spine_visibility") or {})
+
+        for checkbox, checked in (
+            (self._spine_bottom_cb, bool(spine_visibility.get("bottom", True))),
+            (self._spine_left_cb, bool(spine_visibility.get("left", True))),
+            (self._tick_bottom_cb, bool(tick_params.get("bottom", True))),
+            (self._tick_left_cb, bool(tick_params.get("left", True))),
+            (self._tick_top_cb, bool(tick_params.get("top", False))),
+            (self._tick_right_cb, bool(tick_params.get("right", False))),
+            (self._tick_label_bottom_cb, bool(tick_params.get("labelbottom", True))),
+            (self._tick_label_left_cb, bool(tick_params.get("labelleft", True))),
+            (self._tick_label_top_cb, bool(tick_params.get("labeltop", False))),
+            (self._tick_label_right_cb, bool(tick_params.get("labelright", False))),
+            (self._legend_frame_cb, bool(legend_kwargs.get("frameon", True))),
+            (self._spine_top_cb, bool(spine_visibility.get("top", True))),
+            (self._spine_right_cb, bool(spine_visibility.get("right", True))),
+        ):
+            checkbox.blockSignals(True)
+            checkbox.setChecked(checked)
+            checkbox.blockSignals(False)
+
+        self._tick_direction_combo.blockSignals(True)
+        direction = str(tick_params.get("direction") or "默认")
+        direction_index = self._tick_direction_combo.findText(direction)
+        self._tick_direction_combo.setCurrentIndex(direction_index if direction_index >= 0 else 0)
+        self._tick_direction_combo.blockSignals(False)
+
+        _set_line_edit_text(self._tick_label_size_edit, tick_params.get("labelsize"), allow_blank=True)
+        _set_line_edit_text(self._tick_length_edit, tick_params.get("length"), allow_blank=True)
+        _set_line_edit_text(self._tick_width_edit, tick_params.get("width"), allow_blank=True)
+        legend_frame_alpha = _safe_float(legend_kwargs.get("edgealpha"))
+        if legend_frame_alpha is None:
+            legend_frame_alpha = _safe_float(legend_kwargs.get("framealpha"))
+        self._set_alpha_slider_value(
+            self._legend_frame_alpha_slider,
+            self._legend_frame_alpha_value_label,
+            legend_frame_alpha,
+            default_alpha=_LEGEND_ALPHA_DEFAULT,
+        )
+        _set_line_edit_text(self._legend_edge_color_edit, legend_kwargs.get("edgecolor"), allow_blank=True)
+        _set_line_edit_text(self._legend_face_color_edit, legend_kwargs.get("facecolor"), allow_blank=True)
+        legend_face_alpha = _safe_float(legend_kwargs.get("facealpha"))
+        if legend_face_alpha is None:
+            legend_face_alpha = _safe_float(legend_kwargs.get("framealpha"))
+        self._set_alpha_slider_value(
+            self._legend_face_alpha_slider,
+            self._legend_face_alpha_value_label,
+            legend_face_alpha,
+            default_alpha=_LEGEND_ALPHA_DEFAULT,
+        )
+        legend_anchor = legend_kwargs.get("bbox_to_anchor")
+        if isinstance(legend_anchor, (list, tuple)) and len(legend_anchor) >= 2:
+            _set_line_edit_text(self._legend_anchor_x_edit, legend_anchor[0], allow_blank=True)
+            _set_line_edit_text(self._legend_anchor_y_edit, legend_anchor[1], allow_blank=True)
+            self._legend_anchor_x_draft = self._legend_anchor_x_edit.text().strip()
+            self._legend_anchor_y_draft = self._legend_anchor_y_edit.text().strip()
+        else:
+            preserve_partial_anchor = bool(
+                self._preserve_partial_legend_anchor_draft
+                and (self._legend_anchor_x_edit.text().strip() or self._legend_anchor_y_edit.text().strip())
+            )
+            _set_line_edit_text(self._legend_anchor_x_edit, None, allow_blank=True)
+            _set_line_edit_text(self._legend_anchor_y_edit, None, allow_blank=True)
+            if not preserve_partial_anchor:
+                self._legend_anchor_x_draft = ""
+                self._legend_anchor_y_draft = ""
+        _set_line_edit_text(
+            self._canvas_color_edit,
+            self._plot_style_extras.get("figure_facecolor") or self._plot_style_extras.get("axes_facecolor"),
+            allow_blank=True,
+        )
+        canvas_alpha = _safe_float(self._plot_style_extras.get("figure_facealpha"))
+        if canvas_alpha is None:
+            canvas_alpha = _safe_float(self._plot_style_extras.get("axes_facealpha"))
+        self._set_alpha_slider_value(
+            self._canvas_alpha_slider,
+            self._canvas_alpha_value_label,
+            canvas_alpha,
+            default_alpha=_CANVAS_ALPHA_DEFAULT,
+        )
+        _set_line_edit_text(self._spine_width_edit, self._plot_style_extras.get("spine_width"), allow_blank=True)
+
+    def _apply_figure_state(self, state: FigureState, *, apply_extra_controls: bool = True) -> None:
         self._figure_state = state
         self._refresh_template_combo()
 
@@ -2586,6 +3134,8 @@ class ChartPage(QWidget):
         if legend_idx >= 0:
             self._legend_pos_combo.setCurrentIndex(legend_idx)
         self._legend_pos_combo.blockSignals(False)
+        if apply_extra_controls:
+            self._apply_plot_style_extra_controls()
         theme = global_assets.get_plot_theme(state.theme)
         self._current_plot_theme_id = theme.id if theme is not None else None
         self._theme_hint_label.setText(_THEME_HINTS.get(state.theme, ""))
@@ -2705,14 +3255,20 @@ class ChartPage(QWidget):
 
     def _on_quick_config_changed(self) -> None:
         previous_state_payload = self._figure_state.model_dump()
+        previous_extra_payload = copy.deepcopy(self._plot_style_extras)
         state = self._sync_state_from_controls()
+        state_payload = state.model_dump()
         changed_keys = {
-            key for key, value in state.model_dump().items()
+            key for key, value in state_payload.items()
             if previous_state_payload.get(key) != value
         }
+        extra_options = self._plot_style_extra_options_from_controls()
+        changed_extra_paths = _nested_mapping_changed_paths(previous_extra_payload, extra_options)
         self._apply_base_plot_style_options(
-            {key: state.model_dump()[key] for key in changed_keys},
+            {key: state_payload[key] for key in changed_keys},
             changed_keys=changed_keys,
+            extra_options=extra_options,
+            changed_extra_paths=changed_extra_paths,
         )
         self._theme_hint_label.setText(_THEME_HINTS.get(self._figure_state.theme, ""))
         self._redraw()
@@ -3050,7 +3606,11 @@ class ChartPage(QWidget):
         self._sync_canvas_display_geometry(state)
         bg, fg, grid_color = self._theme_palette_for_state(state)
         figure_facecolor = effective_plot_style_extras.get("figure_facecolor")
-        axes_facecolor = effective_plot_style_extras.get("axes_facecolor")
+        figure_facealpha = _safe_float(effective_plot_style_extras.get("figure_facealpha"))
+        axes_facecolor = effective_plot_style_extras.get("axes_facecolor") or figure_facecolor
+        axes_facealpha = _safe_float(effective_plot_style_extras.get("axes_facealpha"))
+        if axes_facealpha is None:
+            axes_facealpha = figure_facealpha
         visible_series = [
             curve for curve in self._chart_series
             if effective_curve_style_payloads.get(self._curve_identity(curve), {}).get("visible", True)
@@ -3076,12 +3636,15 @@ class ChartPage(QWidget):
             axis = self._figure.add_subplot(111)
             plot_context.set_active_axis(axis)
 
-        self._figure.patch.set_facecolor(figure_facecolor or bg)
+        self._figure.patch.set_facecolor(_color_with_alpha(figure_facecolor or bg, figure_facealpha))
         if axis is not None and not plot_context.skip_default_formatting:
-            axis.set_facecolor(axes_facecolor or bg)
+            axis.set_facecolor(_color_with_alpha(axes_facecolor or bg, axes_facealpha))
             spine_width = _safe_float(effective_plot_style_extras.get("spine_width"))
-            for spine in axis.spines.values():
+            spine_visibility = dict(effective_plot_style_extras.get("spine_visibility", {}) or {})
+            for spine_name, spine in axis.spines.items():
                 spine.set_edgecolor(fg)
+                if spine_name in spine_visibility:
+                    spine.set_visible(bool(spine_visibility.get(spine_name)))
                 if spine_width is not None:
                     spine.set_linewidth(max(0.1, spine_width))
 
@@ -3151,6 +3714,10 @@ class ChartPage(QWidget):
 
         legend = None
         if visible_series and not plot_context.skip_default_plot and axis is not None and not plot_context.skip_default_formatting:
+            legend_style_kwargs = dict(effective_plot_style_extras.get("legend_kwargs", {}) or {})
+            legend_edge_alpha = _safe_float(legend_style_kwargs.get("edgealpha"))
+            legend_face_alpha = _safe_float(legend_style_kwargs.get("facealpha"))
+            legacy_frame_alpha = _safe_float(legend_style_kwargs.get("framealpha"))
             legend_kwargs: Dict[str, Any] = {
                 "facecolor": bg,
                 "edgecolor": fg,
@@ -3161,7 +3728,15 @@ class ChartPage(QWidget):
                 legend_kwargs["prop"] = {"family": state.font_family, "size": state.legend_font_size}
             else:
                 legend_kwargs["fontsize"] = state.legend_font_size
-            legend_kwargs.update(dict(effective_plot_style_extras.get("legend_kwargs", {}) or {}))
+            legend_call_kwargs = dict(legend_style_kwargs)
+            if legend_edge_alpha is not None or legend_face_alpha is not None:
+                legend_call_kwargs.pop("framealpha", None)
+            legend_call_kwargs.pop("edgealpha", None)
+            legend_call_kwargs.pop("facealpha", None)
+            legend_kwargs.update(legend_call_kwargs)
+            legend_anchor = legend_kwargs.get("bbox_to_anchor")
+            if isinstance(legend_anchor, (list, tuple)) and len(legend_anchor) >= 2:
+                legend_kwargs["bbox_to_anchor"] = (float(legend_anchor[0]), float(legend_anchor[1]))
             legend = axis.legend(
                 **legend_kwargs,
             )
@@ -3203,6 +3778,15 @@ class ChartPage(QWidget):
             if tick_params:
                 axis.tick_params(**tick_params)
             if legend is not None:
+                legend_frame = legend.get_frame()
+                if legend_edge_alpha is not None or legend_face_alpha is not None:
+                    legend_frame.set_alpha(None)
+                if legend_edge_alpha is not None:
+                    legend_frame.set_edgecolor(_color_with_alpha(legend_frame.get_edgecolor(), legend_edge_alpha))
+                elif legend_face_alpha is not None and legacy_frame_alpha is not None:
+                    legend_frame.set_edgecolor(_color_with_alpha(legend_frame.get_edgecolor(), legacy_frame_alpha))
+                if legend_face_alpha is not None:
+                    legend_frame.set_facecolor(_color_with_alpha(legend_frame.get_facecolor(), legend_face_alpha))
                 for text in legend.get_texts():
                     self._apply_text_style(text, font_family=state.font_family, font_size=state.legend_font_size, color=fg)
                 self._apply_text_style(legend.get_title(), font_family=state.font_family, font_size=state.legend_font_size, color=fg)
@@ -3257,9 +3841,11 @@ class ChartPage(QWidget):
         self._style_reset_color_btn.setEnabled(enabled)
         self._style_line_combo.setEnabled(enabled)
         self._style_line_width_edit.setEnabled(enabled)
-        self._style_opacity_edit.setEnabled(enabled)
+        self._style_opacity_slider.setEnabled(enabled)
+        self._style_dash_scale_edit.setEnabled(enabled)
         self._style_marker_size_edit.setEnabled(enabled)
         self._style_density_edit.setEnabled(enabled)
+        self._style_visible_cb.setEnabled(enabled)
         self._btn_load_curve_style_template.setEnabled(enabled)
         self._btn_save_curve_style_template.setEnabled(enabled)
         if enabled and curve:
@@ -3284,24 +3870,43 @@ class ChartPage(QWidget):
             self._style_line_width_edit.blockSignals(True)
             self._style_line_width_edit.setText(f"{style.linewidth:g}")
             self._style_line_width_edit.blockSignals(False)
-            self._style_opacity_edit.blockSignals(True)
-            self._style_opacity_edit.setText(f"{style.alpha:g}")
-            self._style_opacity_edit.blockSignals(False)
+            self._style_opacity_slider.blockSignals(True)
+            self._style_opacity_slider.setValue(self._alpha_slider_value(style.alpha))
+            self._style_opacity_slider.blockSignals(False)
+            self._update_style_opacity_value_label(self._style_opacity_slider.value())
+            self._style_dash_scale_edit.blockSignals(True)
+            self._style_dash_scale_edit.setText(f"{style.dash_scale:g}")
+            self._style_dash_scale_edit.blockSignals(False)
             self._style_marker_size_edit.blockSignals(True)
             self._style_marker_size_edit.setText(f"{style.marker_size:g}")
             self._style_marker_size_edit.blockSignals(False)
             self._style_density_edit.blockSignals(True)
             self._style_density_edit.setText(str(style.markevery))
             self._style_density_edit.blockSignals(False)
+            self._style_visible_cb.blockSignals(True)
+            self._style_visible_cb.setChecked(bool(style.visible))
+            self._style_visible_cb.blockSignals(False)
         else:
             self._style_target = None
             self._style_target_label.setText("当前选中：未选中")
             self._style_target_label.setToolTip("")
             self._update_color_btn("#888888")
             self._style_line_width_edit.clear()
-            self._style_opacity_edit.clear()
+            self._style_opacity_slider.blockSignals(True)
+            self._style_opacity_slider.setValue(self._alpha_slider_value(1.0))
+            self._style_opacity_slider.blockSignals(False)
+            self._update_style_opacity_value_label(self._style_opacity_slider.value())
+            self._style_dash_scale_edit.clear()
             self._style_marker_size_edit.clear()
             self._style_density_edit.clear()
+            self._style_visible_cb.blockSignals(True)
+            self._style_visible_cb.setChecked(False)
+            self._style_visible_cb.blockSignals(False)
+
+    def _on_style_opacity_changed(self, value: int) -> None:
+        self._update_style_opacity_value_label(value)
+        if self._style_target:
+            self._on_style_metrics_changed()
 
     def _update_color_btn(self, color_str: str) -> None:
         color = QColor(color_str)
@@ -3341,6 +3946,12 @@ class ChartPage(QWidget):
         )
         self._redraw_now()
 
+    def _on_style_visibility_changed(self, _state: int) -> None:
+        if not self._style_target:
+            return
+        self._apply_base_curve_style_options({"visible": bool(self._style_visible_cb.isChecked())})
+        self._redraw_now()
+
     def _on_style_metrics_changed(self) -> None:
         if not self._style_target:
             return
@@ -3348,10 +3959,10 @@ class ChartPage(QWidget):
         self._apply_base_curve_style_options(
             {
                 "linewidth": max(0.1, _safe_float_or(self._style_line_width_edit.text(), self._figure_state.line_width)),
-                "alpha": _clamp_float(_safe_float_or(self._style_opacity_edit.text(), 1.0), 0.0, 1.0),
+                "alpha": self._alpha_from_slider_value(self._style_opacity_slider.value()),
                 "marker_size": max(0.1, _safe_float_or(self._style_marker_size_edit.text(), self._figure_state.marker_size)),
                 "markevery": density,
-                "dash_scale": float(density),
+                "dash_scale": max(0.1, _safe_float_or(self._style_dash_scale_edit.text(), 1.0)),
             }
         )
         self._redraw()
@@ -3457,6 +4068,13 @@ def _safe_float_or(value, default: float) -> float:
     return default if parsed is None else parsed
 
 
+def _safe_int(value) -> Optional[int]:
+    try:
+        return int(str(value).strip()) if value not in (None, "", "None") else None
+    except Exception:
+        return None
+
+
 def _clamp_float(value: float, minimum: float, maximum: float) -> float:
     return min(maximum, max(minimum, value))
 
@@ -3468,6 +4086,33 @@ def _safe_int_or(value, default: int) -> int:
         return int(str(value).strip())
     except Exception:
         return default
+
+
+def _safe_color(value) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    color = QColor(text)
+    if not color.isValid():
+        return None
+    return color.name(QColor.NameFormat.HexRgb)
+
+
+def _color_with_alpha(value: Any, alpha: Optional[float]) -> str | tuple[float, float, float, float] | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        if alpha is None and len(value) >= 4:
+            return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+        return (float(value[0]), float(value[1]), float(value[2]), _clamp_float(alpha if alpha is not None else 1.0, 0.0, 1.0))
+    if alpha is None:
+        return str(value)
+    clamped_alpha = _clamp_float(alpha, 0.0, 1.0)
+    color = QColor(str(value or ""))
+    if not color.isValid():
+        return str(value)
+    color.setAlphaF(clamped_alpha)
+    return (color.redF(), color.greenF(), color.blueF(), color.alphaF())
 
 
 def _set_line_edit_text(widget: LineEdit, value, allow_blank: bool = False) -> None:
