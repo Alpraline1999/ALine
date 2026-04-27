@@ -431,9 +431,14 @@ class ProjectManager:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        project = Project(**data)
-        if project.tree is None:
+        if not isinstance(data, dict):
+            raise ValueError("项目文件格式无效")
+        if not data.get("aline_version"):
+            raise ValueError("项目文件缺少 aline_version，当前版本不再支持旧格式项目")
+        if data.get("tree") is None:
             raise ValueError("项目文件缺少 tree 结构，当前版本不再支持旧格式项目")
+
+        project = Project(**data)
         self._ensure_project_tree_groups(project)
         project.file_path = file_path
         project.is_modified = False
@@ -472,8 +477,7 @@ class ProjectManager:
             os.makedirs(dir_path, exist_ok=True)
 
         self.current_project.updated_at = datetime.now().isoformat()
-        if self.current_project.aline_version is None:
-            self.current_project.aline_version = _ALINE_VERSION
+        self.current_project.aline_version = _ALINE_VERSION
 
         # 保持向后兼容：同步 data_files → datasets
         self.sync_legacy_datasets(self.current_project)

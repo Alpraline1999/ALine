@@ -70,14 +70,17 @@ class TestSchemas(unittest.TestCase):
         p = Project.create_new("exp_1")
         self.assertEqual(p.aline_version, "0.3")
         self.assertEqual(p.name, "exp_1")
+        self.assertIsNotNone(p.tree)
 
-    def test_project_backward_compat_extra_fields_ignored(self):
-        """旧文件中有 ALine 不认识的字段时应静默忽略。"""
+    def test_project_extra_fields_are_ignored(self):
+        """额外字段应静默忽略，且当前格式字段应补默认值。"""
         from models.schemas import Project
         data = {"id": "abc", "name": "old", "unknown_field_xyz": 999,
                 "created_at": "2024", "updated_at": "2024"}
         p = Project(**data)
         self.assertEqual(p.name, "old")
+        self.assertEqual(p.aline_version, "0.3")
+        self.assertIsNotNone(p.tree)
 
     def test_figure_config_dump_excludes_legacy_axis_and_series_fields(self):
         from models.schemas import AxisConfig, FigureConfig, SeriesRef
@@ -818,6 +821,16 @@ class TestProjectManager(unittest.TestCase):
             path = f.name
         try:
             with self.assertRaisesRegex(ValueError, r"tree"):
+                self.pm.open_file(path)
+        finally:
+            os.unlink(path)
+
+    def test_open_rejects_aline_project_without_version(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".aline", delete=False, encoding="utf-8") as f:
+            json.dump({"id": "legacy", "name": "legacy", "tree": {"nodes": []}}, f)
+            path = f.name
+        try:
+            with self.assertRaisesRegex(ValueError, r"aline_version"):
                 self.pm.open_file(path)
         finally:
             os.unlink(path)
