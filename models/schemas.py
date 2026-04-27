@@ -167,13 +167,9 @@ class FigureConfig(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
-    # v0.2 字段（保留向后兼容）
-    series_refs: List[Any] = []        # 兼容旧 dict 格式；v0.3 推荐用 typed_series_refs
-    axis_config: Any = {}              # 兼容旧 dict 格式；v0.3 推荐用 typed_axis_config
-    legend_config: Dict[str, Any] = {}
+    legend_config: Dict[str, Any] = Field(default_factory=dict)
     theme: str = "default"
-    # v0.3 新增
-    typed_series_refs: List[SeriesRef] = []
+    typed_series_refs: List[SeriesRef] = Field(default_factory=list)
     typed_axis_config: AxisConfig = Field(default_factory=AxisConfig)
     figure_size: Tuple[float, float] = (7.0, 5.0)   # 英寸
     dpi: int = 150
@@ -187,7 +183,7 @@ class FigureConfig(BaseModel):
     line_width: float = 1.4
     marker_size: float = 5.0
     legend_position: str = "best"      # matplotlib loc 字符串
-    style_extras: Dict[str, Any] = {}
+    style_extras: Dict[str, Any] = Field(default_factory=dict)
 
 
 class FigureState(BaseModel):

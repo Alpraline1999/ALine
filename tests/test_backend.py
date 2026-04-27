@@ -79,6 +79,22 @@ class TestSchemas(unittest.TestCase):
         p = Project(**data)
         self.assertEqual(p.name, "old")
 
+    def test_figure_config_dump_excludes_legacy_axis_and_series_fields(self):
+        from models.schemas import AxisConfig, FigureConfig, SeriesRef
+
+        config = FigureConfig(
+            name="typed-only",
+            typed_series_refs=[SeriesRef(series_id="series-1", series_name="Series 1")],
+            typed_axis_config=AxisConfig(x_label="Time", y_label="Signal"),
+        )
+
+        payload = config.model_dump()
+
+        self.assertNotIn("series_refs", payload)
+        self.assertNotIn("axis_config", payload)
+        self.assertEqual(payload["typed_series_refs"][0]["series_id"], "series-1")
+        self.assertEqual(payload["typed_axis_config"]["x_label"], "Time")
+
 
 class TestRecentProjects(unittest.TestCase):
 
