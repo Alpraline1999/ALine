@@ -558,7 +558,7 @@ class MainWindow(FluentWindow):
             self,
             "打开项目",
             "",
-            "ALine 项目 (*.aline *.pyline);;所有文件 (*)",
+            "ALine 项目 (*.aline);;所有文件 (*)",
         )
         if not file_path:
             return

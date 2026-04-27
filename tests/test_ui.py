@@ -9227,7 +9227,7 @@ class TestMainWindow(unittest.TestCase):
         created_mock.assert_called_once_with("面板项目")
 
     def test_open_project_from_panel_uses_window_level_dialog_flow(self):
-        with mock.patch("ui.main_window.QFileDialog.getOpenFileName", return_value=("/tmp/demo.aline", "ALine 项目 (*.aline *.pyline)")) as file_mock, \
+        with mock.patch("ui.main_window.QFileDialog.getOpenFileName", return_value=("/tmp/demo.aline", "ALine 项目 (*.aline)")) as file_mock, \
              mock.patch.object(self.pm, "open", return_value=self.p) as open_mock, \
              mock.patch.object(self.win, "_on_project_opened") as opened_mock:
             self.win._open_project_from_panel()
@@ -10400,7 +10400,7 @@ class TestChartPageV3(unittest.TestCase):
 
         self.page.on_tree_node_activated("series", self.s.id)
         with tempfile.TemporaryDirectory() as temp_dir:
-            project_file = Path(temp_dir) / "chart_export.pyline"
+            project_file = Path(temp_dir) / "chart_export.aline"
             self.pm.save(str(project_file))
             picture_root = next(
                 n for n in self.p.tree.nodes
@@ -10426,7 +10426,7 @@ class TestChartPageV3(unittest.TestCase):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._x_label_edit.setText("Time")
         with tempfile.TemporaryDirectory() as temp_dir:
-            project_file = Path(temp_dir) / "chart_snapshot.pyline"
+            project_file = Path(temp_dir) / "chart_snapshot.aline"
             self.pm.save(str(project_file))
             picture_root = next(
                 n for n in self.p.tree.nodes

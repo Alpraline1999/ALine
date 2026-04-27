@@ -2509,7 +2509,7 @@ class DigitizePage(QWidget):
 
     def _on_open_project(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "打开项目", "", "ALine 项目 (*.aline *.pyline);;所有文件 (*)"
+            self, "打开项目", "", "ALine 项目 (*.aline);;所有文件 (*)"
         )
         if file_path:
             try:

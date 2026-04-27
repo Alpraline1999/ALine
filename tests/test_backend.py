@@ -79,6 +79,53 @@ class TestSchemas(unittest.TestCase):
         p = Project(**data)
         self.assertEqual(p.name, "old")
 
+
+class TestRecentProjects(unittest.TestCase):
+
+    def test_load_recent_ignores_legacy_pyline_recent_file(self):
+        import core.recent_projects as recent_projects
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            current_file = temp_root / ".aline_recent.json"
+            legacy_file = temp_root / ".pyline_recent.json"
+            project_path = temp_root / "legacy_project.aline"
+            project_path.write_text("{}", encoding="utf-8")
+            legacy_file.write_text(
+                json.dumps([
+                    {
+                        "path": str(project_path),
+                        "name": "legacy",
+                        "opened_at": "2026-04-27T10:00:00",
+                    }
+                ]),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(recent_projects, "_RECENT_FILE", str(current_file)):
+                self.assertEqual(recent_projects.load_recent(), [])
+
+
+class TestShortcutManager(unittest.TestCase):
+
+    def test_shortcut_manager_ignores_legacy_pyline_config(self):
+        from core.shortcut_manager import ShortcutManager
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            current_file = temp_root / "aline" / "shortcuts.json"
+            legacy_file = temp_root / "pyline" / "shortcuts.json"
+            legacy_file.parent.mkdir(parents=True, exist_ok=True)
+            legacy_file.write_text(
+                json.dumps({"open_project": "Ctrl+Shift+O"}),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(ShortcutManager, "_CONFIG_FILE", current_file):
+                manager = ShortcutManager()
+
+            self.assertEqual(manager.get("open_project"), "Ctrl+O")
+
     def test_tree_node_discriminated_union_folder(self):
         from models.schemas import FolderNode, ProjectTree
         node = FolderNode(name="datasets")
@@ -692,7 +739,7 @@ class TestProjectManager(unittest.TestCase):
         self.pm.migrate_to_v2(p)
         df = DataFile(name="file.csv", series=[DataSeries(name="s1", x=[1,2,3], y=[4,5,6])])
         self.pm.add_data_file(df)
-        with tempfile.NamedTemporaryFile(suffix=".pyline", delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".aline", delete=False) as f:
             path = f.name
         try:
             self.pm.save(path)
@@ -704,24 +751,41 @@ class TestProjectManager(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_sync_legacy_datasets_on_save(self):
-        """v0.2 DataFile 应在保存时同步到 datasets 保证兼容。"""
+    def test_sync_datasets_on_save(self):
+        """DataFile 应在保存时同步到 datasets。"""
         from models.schemas import DataFile, DataSeries
         p = self.pm.create_new("sync_test")
         self.pm.migrate_to_v2(p)
         df = DataFile(name="compat.csv",
                       series=[DataSeries(name="s1", x=[1], y=[2])])
         self.pm.add_data_file(df)
-        with tempfile.NamedTemporaryFile(suffix=".pyline", delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".aline", delete=False) as f:
             path = f.name
         try:
             self.pm.save(path)
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
-            # datasets 应存在（旧 PyLine 兼容）
             self.assertIn("datasets", data)
         finally:
             os.unlink(path)
+
+    def test_open_rejects_non_aline_project_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".pyline", delete=False, encoding="utf-8") as f:
+            json.dump({"id": "legacy", "name": "legacy"}, f)
+            path = f.name
+        try:
+            with self.assertRaisesRegex(ValueError, r"\.aline"):
+                self.pm.open_file(path)
+        finally:
+            os.unlink(path)
+
+    def test_save_appends_aline_suffix_when_missing(self):
+        self.pm.create_new("suffix_test")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = os.path.join(temp_dir, "suffix_test")
+            saved_path = self.pm.save(target)
+            self.assertTrue(os.path.exists(saved_path))
+        self.assertTrue(saved_path.endswith(".aline"))
 
     def test_add_series_to_dataset(self):
         p = self.pm.create_new("t")

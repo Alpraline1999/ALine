@@ -50,6 +50,7 @@ from models.schemas import (
 )
 
 _ALINE_VERSION = "0.3"
+_PROJECT_FILE_SUFFIX = ".aline"
 
 _GROUP_TYPE_ALIASES = {
     "datasets": {"datasets", "dataset_set"},
@@ -400,8 +401,20 @@ class ProjectManager:
 
         return project
 
+    def _normalize_project_file_path(self, file_path: str, *, for_save: bool) -> str:
+        normalized = self._normalize_path(file_path)
+        suffix = Path(normalized).suffix.lower()
+        if not suffix:
+            if for_save:
+                return f"{normalized}{_PROJECT_FILE_SUFFIX}"
+            raise ValueError("项目文件必须使用 .aline 扩展名")
+        if suffix != _PROJECT_FILE_SUFFIX:
+            action = "保存" if for_save else "打开"
+            raise ValueError(f"仅支持 {_PROJECT_FILE_SUFFIX} 项目文件，无法{action}: {normalized}")
+        return normalized
+
     def open(self, file_path: str) -> Project:
-        file_path = self._normalize_path(file_path)
+        file_path = self._normalize_project_file_path(file_path, for_save=False)
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"项目文件不存在: {file_path}")
 
@@ -442,7 +455,7 @@ class ProjectManager:
             if file_path is None:
                 raise ValueError("未指定保存路径")
 
-        file_path = self._normalize_path(file_path)
+        file_path = self._normalize_project_file_path(file_path, for_save=True)
         previous_path = self.current_project.file_path
 
         dir_path = os.path.dirname(file_path)

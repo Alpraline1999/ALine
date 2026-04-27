@@ -111,7 +111,6 @@ class ShortcutManager(QObject):
 
     shortcuts_changed = Signal()
     _CONFIG_FILE = Path.home() / ".config" / "aline" / "shortcuts.json"
-    _LEGACY_CONFIG_FILE = Path.home() / ".config" / "pyline" / "shortcuts.json"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -171,9 +170,8 @@ class ShortcutManager(QObject):
 
     def _load(self) -> None:
         try:
-            config_file = self._CONFIG_FILE if self._CONFIG_FILE.exists() else self._LEGACY_CONFIG_FILE
-            if config_file.exists():
-                with open(config_file, "r", encoding="utf-8") as f:
+            if self._CONFIG_FILE.exists():
+                with open(self._CONFIG_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 for action, key_sequence in data.items():
                     if action in self._shortcuts:
