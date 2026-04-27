@@ -20,8 +20,7 @@ from qfluentwidgets import (
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
 )
 
-from core.extension_api import build_extension_entry, extension_lines_number, extension_registry, normalize_extension_lines_list, reload_configured_extensions
-from core.builtin_extensions import register_core_builtin_extensions
+from core.extension_api import build_extension_entry, ensure_configured_extensions_loaded, extension_lines_number, extension_registry, normalize_extension_lines_list, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from ui.theme import (
     WORKBENCH_BUTTON_HEIGHT,
@@ -106,7 +105,7 @@ class ProcessPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        register_core_builtin_extensions(extension_registry)
+        ensure_configured_extensions_loaded()
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._src_xs: List[float] = []

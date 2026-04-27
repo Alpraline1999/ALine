@@ -34,7 +34,6 @@ from ui.dialogs.export_flow import (
 )
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
-from core.builtin_extensions import register_core_builtin_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
@@ -53,6 +52,7 @@ from ui.notifications import show_error, show_warning
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, accent_color, apply_button_metrics, make_hint_label, make_section_label, make_hsep, placeholder_color
 from core.extension_api import (
     build_extension_entry,
+    ensure_configured_extensions_loaded,
     extension_lines_picker_visible,
     extension_lines_number,
     extension_registry,
@@ -148,7 +148,7 @@ class AnalysisPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        register_core_builtin_extensions(extension_registry)
+        ensure_configured_extensions_loaded()
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._result: Optional[Dict[str, Any]] = None

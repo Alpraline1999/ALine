@@ -2388,6 +2388,18 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(analysis_entry["source_kind"], "builtin")
         self.assertTrue(analysis_entry["listed"])
 
+    def test_ensure_configured_extensions_loaded_bootstraps_empty_registry(self):
+        from core.extension_api import ensure_configured_extensions_loaded, extension_registry
+
+        extension_registry.clear()
+        report = ensure_configured_extensions_loaded()
+
+        self.assertIsNotNone(extension_registry.get_processing("crop"))
+        self.assertIsNotNone(extension_registry.get_analysis("statistics"))
+        self.assertIsNotNone(extension_registry.get_plot("plot_text_annotation"))
+        self.assertIsNotNone(extension_registry.get_digitize("builtin_digitize_color_detect"))
+        self.assertIn("loaded", report)
+
     def test_global_asset_extension_configs_preserve_extension_version(self):
         from core.global_assets import GlobalAssetManager
 

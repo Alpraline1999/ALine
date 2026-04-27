@@ -1695,6 +1695,20 @@ def load_configured_extensions(
     return report
 
 
+def ensure_configured_extensions_loaded(
+    base_dir: str | Path | None = None,
+    external_dir: str | Path | Iterable[str | Path] | None = None,
+) -> Dict[str, List[str]]:
+    if any((
+        extension_registry.list_processing(),
+        extension_registry.list_analysis(),
+        extension_registry.list_plot(),
+        extension_registry.list_digitize(),
+    )):
+        return extension_registry.get_last_load_report()
+    return load_configured_extensions(base_dir, external_dir)
+
+
 def reload_configured_extensions(
     base_dir: str | Path | None = None,
     external_dir: str | Path | None = None,
