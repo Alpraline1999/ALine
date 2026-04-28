@@ -1,9 +1,8 @@
 import math
 from typing import Any, cast
 
-from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.plot._runtime import axis_line_style, current_axis, current_figure
-from processing.extension_tools import line_xy, normalize_lines
+from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
+from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
 
 
 def _as_float(value, default=None):
@@ -11,6 +10,34 @@ def _as_float(value, default=None):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _context_lines(plot_context, params):
+    base_series = list(plot_context.visible_series or plot_context.plotted_series or [])
+    requested = normalize_extension_lines_list(params.get("lines_list")) if "lines_list" in params else []
+    if requested:
+        return series_payloads_to_lines([base_series[index - 1] for index in requested if 1 <= index <= len(base_series)])
+
+    ordered = []
+    if isinstance(plot_context.selected_series, dict):
+        ordered.append(plot_context.selected_series)
+    for item in base_series:
+        if isinstance(plot_context.selected_series, dict) and item is plot_context.selected_series:
+            continue
+        ordered.append(item)
+    return series_payloads_to_lines(ordered)
+
+
+def _axis_line_style(axis: Any):
+    if axis is None or not list(getattr(axis, "lines", []) or []):
+        return {}
+    line = list(axis.lines)[0]
+    return {
+        "color": line.get_color(),
+        "linewidth": float(line.get_linewidth()),
+        "marker": str(line.get_marker() or ""),
+        "markersize": float(line.get_markersize()),
+    }
 
 
 def _theta_values(xs, theta_unit):
@@ -23,14 +50,14 @@ def _theta_values(xs, theta_unit):
     return values
 
 
-def draw_polar_projection(lines, params):
-    figure = current_figure()
-    previous_axis = current_axis()
-    normalized_lines = normalize_lines(lines)
+def draw_polar_projection(plot_context, params):
+    figure = plot_context.figure
+    previous_axis = plot_context.axis
+    normalized_lines = _context_lines(plot_context, params)
     if figure is None or not normalized_lines:
         return
 
-    style = axis_line_style(previous_axis)
+    style = _axis_line_style(previous_axis)
     theta_unit = str(params.get("theta_unit", "degree") or "degree").strip().lower()
     xs, ys = line_xy(normalized_lines[0])
     theta_values = _theta_values(xs, theta_unit)

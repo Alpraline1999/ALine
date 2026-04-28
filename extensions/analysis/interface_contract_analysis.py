@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_xy, normalize_lines
+from extensions.processing.extension_tools import line_xy, normalize_lines
 
 
 VERSION = "0.1.0"

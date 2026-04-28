@@ -4,7 +4,7 @@ import math
 from typing import Any, Dict, List
 
 from core.extension_api import AnalysisExtension
-from processing.extension_tools import line_xy, primary_line
+from extensions.processing.extension_tools import line_xy, primary_line
 
 
 VERSION = "0.1.0"

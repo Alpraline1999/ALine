@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.plot._runtime import current_axis, current_theme_colors
-from processing.data_engine import align_lines_to_common_x
-from processing.extension_tools import line_xy, normalize_lines
+from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
+from extensions.processing.extension_tools import align_lines_to_common_x, line_xy, series_payloads_to_lines
 
 
 def _as_float(value, default):
@@ -13,12 +11,35 @@ def _as_float(value, default):
         return float(default)
 
 
-def draw_dual_curve_band(lines, params):
-    axis = current_axis()
+def _context_lines(plot_context, params):
+    base_series = list(plot_context.visible_series or plot_context.plotted_series or [])
+    requested = normalize_extension_lines_list(params.get("lines_list")) if "lines_list" in params else []
+    if requested:
+        return series_payloads_to_lines([base_series[index - 1] for index in requested if 1 <= index <= len(base_series)])
+
+    ordered = []
+    if isinstance(plot_context.selected_series, dict):
+        ordered.append(plot_context.selected_series)
+    for item in base_series:
+        if isinstance(plot_context.selected_series, dict) and item is plot_context.selected_series:
+            continue
+        ordered.append(item)
+    return series_payloads_to_lines(ordered)
+
+
+def _theme_colors(plot_context):
+    return {
+        "foreground": str((plot_context.theme_colors or {}).get("foreground") or "#222222"),
+        "background": str((plot_context.theme_colors or {}).get("background") or "#ffffff"),
+    }
+
+
+def draw_dual_curve_band(plot_context, params):
+    axis = plot_context.axis
     if axis is None:
         return
 
-    candidates = normalize_lines(lines)[:2]
+    candidates = _context_lines(plot_context, params)[:2]
     if len(candidates) < 2:
         return
 
@@ -48,7 +69,7 @@ def draw_dual_curve_band(lines, params):
     if not differences:
         return
     peak_index = max(range(len(differences)), key=lambda index: differences[index])
-    theme_colors = current_theme_colors(axis)
+    theme_colors = _theme_colors(plot_context)
     foreground = theme_colors["foreground"]
     background = theme_colors["background"]
     peak_x = x_values[peak_index]

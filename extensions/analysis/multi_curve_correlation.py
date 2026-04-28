@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_from_xy, line_xy, normalize_lines
+from extensions.processing.extension_tools import line_from_xy, line_xy, normalize_lines
 
 
 def _pearson(values_a, values_b):

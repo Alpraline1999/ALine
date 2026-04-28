@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_from_xy, line_xy, primary_line
+from extensions.processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
 def _as_float(value, default):

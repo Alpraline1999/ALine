@@ -1,5 +1,5 @@
-from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.plot._runtime import current_axis, current_theme_colors, visible_points
+from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
+from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
 
 
 def _as_float(value, default):
@@ -9,12 +9,48 @@ def _as_float(value, default):
         return float(default)
 
 
-def draw_reference_overlay(lines, params):
-    axis = current_axis()
+def _context_series(plot_context, params):
+    base_series = list(plot_context.visible_series or plot_context.plotted_series or [])
+    requested = normalize_extension_lines_list(params.get("lines_list")) if "lines_list" in params else []
+    if requested:
+        return [base_series[index - 1] for index in requested if 1 <= index <= len(base_series)]
+
+    ordered = []
+    if isinstance(plot_context.selected_series, dict):
+        ordered.append(plot_context.selected_series)
+    for item in base_series:
+        if isinstance(plot_context.selected_series, dict) and item is plot_context.selected_series:
+            continue
+        ordered.append(item)
+    return ordered
+
+
+def _visible_points(plot_context, params):
+    points = []
+    for index, line in enumerate(series_payloads_to_lines(_context_series(plot_context, params)), start=1):
+        xs, ys = line_xy(line)
+        for x_value, y_value in zip(xs, ys):
+            points.append((f"line_{index}", float(x_value), float(y_value)))
+    return points
+
+
+def _theme_colors(plot_context, axis):
+    foreground = str((plot_context.theme_colors or {}).get("foreground") or "#222222")
+    background = str((plot_context.theme_colors or {}).get("background") or "#ffffff")
+    if axis is not None:
+        try:
+            background = background or axis.get_facecolor()
+        except Exception:
+            pass
+    return {"foreground": foreground, "background": background}
+
+
+def draw_reference_overlay(plot_context, params):
+    axis = plot_context.axis
     if axis is None:
         return
 
-    points = visible_points(lines)
+    points = _visible_points(plot_context, params)
     if not points:
         return
 
@@ -42,7 +78,7 @@ def draw_reference_overlay(lines, params):
         peak_name, peak_x, peak_y = max(points, key=lambda item: item[2])
         marker_size = max(10.0, _as_float(params.get("marker_size", 42.0), 42.0))
         axis.scatter([peak_x], [peak_y], color=line_color, s=marker_size, zorder=6)
-        theme_colors = current_theme_colors(axis)
+        theme_colors = _theme_colors(plot_context, axis)
         foreground = theme_colors["foreground"]
         background = theme_colors["background"]
         annotation_prefix = str(params.get("annotation_prefix", "峰值"))

@@ -12,6 +12,7 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
     ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action, FluentIcon as FIF)
 
 from core.exporter import Exporter
+from core.builtin_extensions import register_core_builtin_extensions
 from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.extension_panel import ExtensionConfigPanel
@@ -19,7 +20,7 @@ from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_curve_file_export_plan, choose_data_export_plan, curve_export_file_filter
-from core.extension_api import build_extension_entry, ensure_configured_extensions_loaded, extension_registry, reload_configured_extensions
+from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
@@ -97,7 +98,7 @@ class DigitizePage(QWidget):
         self._sort_col = -1  # -1表示未排序
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._shortcut_bindings = ShortcutBindingSet()
-        ensure_configured_extensions_loaded()
+        register_core_builtin_extensions(extension_registry)
         self.setup_ui()
         self._setup_viewer_signals()
         self._setup_shortcuts()

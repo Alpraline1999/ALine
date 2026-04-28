@@ -322,12 +322,13 @@ class PlotTheme(BaseModel):
 class Project(BaseModel):
     """项目根节点。
 
-    当前运行时与磁盘格式均以 .aline 为准：
-    - `aline_version` 默认写入当前版本
-    - `tree` 默认存在，表示标准项目树结构
-    - 未识别的额外字段会被静默忽略，便于前向兼容
+    兼容性保证：
+    - PyLine 旧字段（images / imported_curves）全部保留
+    - ALine 新字段（datasets / analyses / figures）全部带默认值
+    - Pydantic 加载旧 .pyline 文件时新字段取默认值，不崩溃
+    - `aline_version` 为 None 时表示纯 PyLine 项目
     """
-    # ── 基础字段 ──────────────────────────────────
+    # ── PyLine 字段（保持原样）─────────────────────
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
     images: List[ImageWork] = []
@@ -338,13 +339,13 @@ class Project(BaseModel):
     file_path: Optional[str] = None     # 运行时字段，序列化时排除
     is_modified: bool = False           # 运行时脏标记，序列化时排除
 
-    # ── 当前 .aline 项目字段 ───────────────────────
+    # ── ALine 新增字段 ─────────────────────────────
     datasets: List[Dataset] = []
     analyses: List[AnalysisResult] = []
     figures: List[FigureConfig] = []
-    aline_version: str = "0.3"
+    aline_version: Optional[str] = None
 
-    # ── 项目内容字段 ───────────────────────────────
+    # ── v0.2 新增字段（全部带默认值，旧文件打开不报错）──
     data_files: List["DataFile"] = []
     source_files: List["SourceFileAsset"] = []
     saved_pipelines: List["SavedPipeline"] = []
@@ -352,7 +353,7 @@ class Project(BaseModel):
     ai_prompts: List["AIPrompt"] = []
     ai_skills: List["AISkill"] = []
     ai_agents: List["AIAgent"] = []
-    tree: "ProjectTree" = Field(default_factory=lambda: ProjectTree())
+    tree: Optional["ProjectTree"] = None  # None = 旧文件，migrate_to_v2 时自动构建
 
     model_config = ConfigDict(extra="ignore")
 
@@ -364,10 +365,11 @@ class Project(BaseModel):
             name=name,
             created_at=now,
             updated_at=now,
+            aline_version="0.3",
         )
 
     def is_aline_project(self) -> bool:
-        return bool(self.aline_version)
+        return self.aline_version is not None
 
     # ── 便捷查找方法 ───────────────────────────────
 

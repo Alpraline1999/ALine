@@ -10,7 +10,7 @@ ALine 扩展是一个普通 Python 文件。应用启动或重载扩展时，会
 
 ```python
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import line_from_xy, line_xy, primary_line
+from extensions.processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
 def offset_handler(lines, params):
@@ -67,12 +67,12 @@ extensions/
 
 ## 四类扩展
 
-| 类型 | 注册类 | 强制签名 | 输出 | 用途 |
-| --- | --- | --- | --- | --- |
-| 处理扩展 | `ProcessingExtension` | `(lines, params)` | `line` | 生成一条新的曲线 |
-| 分析扩展 | `AnalysisExtension` | `(lines, params)` | `dict` | 生成摘要、表格、文本和结果曲线 |
-| 绘图扩展 | `PlotExtension` | `(lines, params)` | `None` | 在当前 matplotlib 图表上绘制或标注 |
-| 数字化扩展 | `DigitizeExtension` | `(figure, params)` | `line` | 从图像资源提取曲线点 |
+| 类型       | 注册类                | 强制签名                 | 输出   | 用途                               |
+| ---------- | --------------------- | ------------------------ | ------ | ---------------------------------- |
+| 处理扩展   | `ProcessingExtension` | `(lines, params)`        | `line` | 生成一条新的曲线                   |
+| 分析扩展   | `AnalysisExtension`   | `(lines, params)`        | `dict` | 生成摘要、表格、文本和结果曲线     |
+| 绘图扩展   | `PlotExtension`       | `(plot_context, params)` | `None` | 在当前 matplotlib 图表上绘制或标注 |
+| 数字化扩展 | `DigitizeExtension`   | `(figure, params)`       | `line` | 从图像资源提取曲线点               |
 
 `params` 是页面根据 `config_fields` 和运行时上下文生成的参数字典。扩展不得把页面私有对象作为 handler 参数。
 
@@ -97,7 +97,7 @@ lines = [line, ...]
 扩展内部如果需要在 `x_list` 与 `y_list` 之间转换，使用统一工具：
 
 ```python
-from processing.extension_tools import line_from_xy, line_xy
+from extensions.processing.extension_tools import line_from_xy, line_xy
 
 line = line_from_xy([0, 1, 2], [3, 4, 5])
 xs, ys = line_xy(line)
@@ -109,15 +109,12 @@ xs, ys = line_xy(line)
 
 当前稳定底层接口如下：
 
-- `processing.extension_tools.line_from_xy(xs, ys)`：从 x/y 序列生成合法 point-list line。
-- `processing.extension_tools.line_xy(line)`：把 point-list line 拆成 x/y 序列。
-- `processing.extension_tools.primary_line(lines)`：取第一条输入曲线，缺省返回空曲线。
-- `processing.extension_tools.crop_xy(line, params)`：按 X 区间裁剪曲线。
-- `processing.extension_tools.transform_xy(line, params)`：按表达式变换曲线。
-- `processing.extension_tools.resample_xy(line, params)`：按点数、间距或目标曲线重采样。
-- `processing.data_engine.align_lines_to_common_x(lines, params)`：把多条 point-list 曲线对齐到公共 X 网格。
+- `extensions.processing.extension_tools.line_from_xy(xs, ys)`：从 x/y 序列生成合法 point-list line。
+- `extensions.processing.extension_tools.line_xy(line)`：把 point-list line 拆成 x/y 序列。
+- `extensions.processing.extension_tools.primary_line(lines)`：取第一条输入曲线，缺省返回空曲线。
+- `extensions.processing.extension_tools.align_lines_to_common_x(lines, params)`：把多条 point-list 曲线对齐到公共 X 网格。
 
-算法类扩展优先组合这些工具。数字化扩展如需识别颜色、形状或模板，应在 `extensions/digitize/` 内实现，不依赖旧的外部提取器模块。
+裁剪、数学变换、重采样这类单扩展算法应保留在各自扩展文件内实现，不作为稳定公共 helper 暴露。数字化扩展如需识别颜色、形状或模板，也应在 `extensions/digitize/` 内实现，不依赖旧的外部提取器模块。
 
 ## 元数据字段
 
@@ -146,19 +143,19 @@ xs, ys = line_xy(line)
 
 ## 参数字段
 
-| `field_type` | 控件语义 | 常用字段 |
-| --- | --- | --- |
-| `string` | 单行文本 | `default`、`placeholder` |
-| `integer` | 整数输入 | `default`、`min_value`、`max_value`、`step` |
-| `number` | 浮点输入 | `default`、`min_value`、`max_value`、`step` |
-| `boolean` | 开关 | `default=True/False` |
-| `selective` | 固定选项 | `choices=(...)` |
-| `limited` | 范围滑块 | `min_value`、`max_value`、`step` |
-| `color` | 颜色选择 | `default="#0078D4"` |
-| `line` | 单条曲线引用 | `default=1` |
-| `figure` | 图片或文件路径 | `placeholder` |
-| `pickcolor` | 在数字化图像上取色 | `default={"r": 0, "g": 120, "b": 212}` |
-| `shot` | 在数字化图像上截图 | `default=None` |
+| `field_type` | 控件语义           | 常用字段                                    |
+| ------------ | ------------------ | ------------------------------------------- |
+| `string`     | 单行文本           | `default`、`placeholder`                    |
+| `integer`    | 整数输入           | `default`、`min_value`、`max_value`、`step` |
+| `number`     | 浮点输入           | `default`、`min_value`、`max_value`、`step` |
+| `boolean`    | 开关               | `default=True/False`                        |
+| `selective`  | 固定选项           | `choices=(...)`                             |
+| `limited`    | 范围滑块           | `min_value`、`max_value`、`step`            |
+| `color`      | 颜色选择           | `default="#0078D4"`                         |
+| `line`       | 单条曲线引用       | `default=1`                                 |
+| `figure`     | 图片或文件路径     | `placeholder`                               |
+| `pickcolor`  | 在数字化图像上取色 | `default={"r": 0, "g": 120, "b": 212}`      |
+| `shot`       | 在数字化图像上截图 | `default=None`                              |
 
 示例：
 
@@ -247,18 +244,21 @@ report_placeholders=[
 
 ## 绘图扩展
 
-绘图扩展接收当前可见曲线，直接操作当前 matplotlib figure / axis，返回 `None`。
+绘图扩展接收 `plot_context` 与参数字典，直接操作当前 matplotlib figure / axis，返回 `None`。
 
 ```python
 from core.extension_api import PlotExtension
-from extensions.plot._runtime import current_axis, visible_points
+from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
 
 
-def handler(lines, params):
-    axis = current_axis()
+def handler(plot_context, params):
+    axis = plot_context.axis
     if axis is None:
         return None
-    points = visible_points(lines)
+    points = []
+    for index, line in enumerate(series_payloads_to_lines(plot_context.visible_series), start=1):
+        xs, ys = line_xy(line)
+        points.extend((f"line_{index}", x_value, y_value) for x_value, y_value in zip(xs, ys))
     if not points:
         return None
     x = sum(point[1] for point in points) / len(points)
@@ -269,10 +269,11 @@ def handler(lines, params):
 
 规则：
 
-- handler 始终是 `(lines, params)`。
+- handler 始终是 `(plot_context, params)`。
 - 参数统一命名为 `params`。
 - `phases` 控制调用阶段，可选 `before_plot`、`after_plot`。
 - 扩展只绘制或修改当前图元，不接管页面绘图流程。
+- 需要读曲线数据时，使用 `plot_context.visible_series` / `plot_context.selected_series`，再按需转成 point-list。
 
 ## 数字化扩展
 
@@ -300,7 +301,7 @@ def handler(figure, params):
 
 - `extensions/processing/interface_contract_processing.py`：展示 `(lines, params) -> line`，覆盖 string、integer、number、boolean、selective、limited、color、line、figure 字段。
 - `extensions/analysis/interface_contract_analysis.py`：展示 `(lines, params) -> dict`，覆盖摘要、表格、文本、结果曲线和报告占位符。
-- `extensions/plot/interface_contract_plot.py`：展示 `(lines, params) -> None`，覆盖绘图阶段、当前 axis 与常见绘图参数。
+- `extensions/plot/interface_contract_plot.py`：展示 `(plot_context, params) -> None`，覆盖绘图阶段、当前 axis 与常见绘图参数。
 - `extensions/digitize/interface_contract_digitize.py`：展示 `(figure, params) -> line`，覆盖 figure、pickcolor、shot 与数字化输出。
 
 这些扩展会正常加载，并标记为 `experimental`。它们既是功能示例，也是接口回归测试入口。

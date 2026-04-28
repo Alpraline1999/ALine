@@ -1,7 +1,7 @@
 """
-项目管理器 — 管理 .aline 项目及运行时数据资产。
+项目管理器 — 兼容读写 .pyline / .aline 文件
 
-旧迁移函数仍保留给显式测试与清理阶段使用，但日常打开/编辑流程只面向当前 .aline 结构。
+完整保留 PyLine 原有所有方法，新增 ALine 数据/分析管理接口。
 """
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ class ProjectManager:
     """项目管理器（全局单例）。
 
     支持多项目同时打开，维护当前项目概念。
-    当前运行时仅支持 .aline 项目文件。
+    同时兼容 .pyline（旧格式）和 .aline / .pyline（含 ALine 扩展字段）。
     """
 
     def __init__(self) -> None:
@@ -413,16 +413,6 @@ class ProjectManager:
             raise ValueError(f"仅支持 {_PROJECT_FILE_SUFFIX} 项目文件，无法{action}: {normalized}")
         return normalized
 
-    def _ensure_runtime_project_tree(self, project: Optional[Project] = None) -> None:
-        p = project or self.current_project
-        if p is None:
-            return
-        if p.tree is None:
-            self._init_new_project_tree(p)
-            p.is_modified = True
-            return
-        self._ensure_project_tree_groups(p)
-
     def open(self, file_path: str) -> Project:
         file_path = self._normalize_project_file_path(file_path, for_save=False)
         if not os.path.exists(file_path):
@@ -431,15 +421,7 @@ class ProjectManager:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        if not isinstance(data, dict):
-            raise ValueError("项目文件格式无效")
-        if not data.get("aline_version"):
-            raise ValueError("项目文件缺少 aline_version，当前版本不再支持旧格式项目")
-        if data.get("tree") is None:
-            raise ValueError("项目文件缺少 tree 结构，当前版本不再支持旧格式项目")
-
         project = Project(**data)
-        self._ensure_project_tree_groups(project)
         project.file_path = file_path
         project.is_modified = False
 
@@ -451,6 +433,10 @@ class ProjectManager:
             self._projects.append(project)
 
         self._current_project_id = project.id
+
+        # 迁移旧版本文件
+        self.migrate_to_v2(project)
+        self.migrate_to_v3(project)
 
         from core.recent_projects import add_recent
         add_recent(file_path, project.name)
@@ -477,7 +463,8 @@ class ProjectManager:
             os.makedirs(dir_path, exist_ok=True)
 
         self.current_project.updated_at = datetime.now().isoformat()
-        self.current_project.aline_version = _ALINE_VERSION
+        if self.current_project.aline_version is None:
+            self.current_project.aline_version = _ALINE_VERSION
 
         # 保持向后兼容：同步 data_files → datasets
         self.sync_legacy_datasets(self.current_project)
@@ -516,7 +503,9 @@ class ProjectManager:
         if self.current_project is None:
             raise ValueError("没有当前项目")
         image_path = self._normalize_path(image_path)
-        self._ensure_runtime_project_tree(self.current_project)
+        if self.current_project.tree is None:
+            self.migrate_to_v2(self.current_project)
+        self._ensure_project_tree_groups(self.current_project)
         if parent_id is None:
             img_folder = self._find_folder_by_group_type("images")
             parent_id = img_folder.id if img_folder else None
@@ -658,7 +647,9 @@ class ProjectManager:
         image_path = self._normalize_path(image_path)
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"图片文件不存在: {image_path}")
-        self._ensure_runtime_project_tree(p)
+        if p.tree is None:
+            self.migrate_to_v2(p)
+        self._ensure_project_tree_groups(p)
         if parent_id is None:
             picture_folder = self._find_folder_by_group_type("pictures")
             parent_id = picture_folder.id if picture_folder else None
@@ -775,7 +766,9 @@ class ProjectManager:
         normalized_path = self._normalize_path(file_path)
         if not os.path.exists(normalized_path):
             raise FileNotFoundError(f"源文件不存在: {normalized_path}")
-        self._ensure_runtime_project_tree(p)
+        if p.tree is None:
+            self.migrate_to_v2(p)
+        self._ensure_project_tree_groups(p)
         if parent_id is None:
             source_root = self._find_folder_by_group_type("source_files")
             parent_id = source_root.id if source_root else None
@@ -1312,7 +1305,9 @@ class ProjectManager:
         self._clear_last_operation_error()
         if self.current_project is None:
             return False
-        self._ensure_runtime_project_tree(self.current_project)
+        if self.current_project.tree is None:
+            self.migrate_to_v2(self.current_project)
+        self._ensure_project_tree_groups(self.current_project)
         folder = self._find_folder_by_group_type("analysis_result_group")
         target_parent_id = self.get_analysis_result_target_folder_id(parent_id)
         if target_parent_id is None:
@@ -1626,7 +1621,8 @@ class ProjectManager:
         p = self.current_project
         if p is None:
             return None
-        self._ensure_runtime_project_tree(p)
+        if p.tree is None:
+            self.migrate_to_v2(p)
         group_type = self._canonical_group_type(group_type)
         if not self._ensure_unique_tree_child_name(parent_id, name, node_kind="folder", project=p):
             return None
@@ -2067,7 +2063,8 @@ class ProjectManager:
         p = self.current_project
         if p is None:
             return None
-        self._ensure_runtime_project_tree(p)
+        if p.tree is None:
+            self.migrate_to_v2(p)
         # 默认挂在"数据集"文件夹下（优先 group_type，回退名称）
         if parent_id is None:
             ds_folder = self._find_folder_by_group_type("datasets") or self._find_folder_by_name("数据集")

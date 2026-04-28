@@ -20,7 +20,7 @@
 | 报告模板配置位置不合理且分析页缺少模板应用能力             | 报告模板进入项目树，归类到工具集中的报告模板组；分析页增加应用报告模板、编辑模板、渲染预览和导出功能；设置页不再管理报告模板 | `ui/pages/analysis_page.py`、`ui/widgets/project_tree.py`、`core/project_manager.py` |
 | 图片取点只能导出文件或剪贴板                               | 增加导出为数据列，可将提取曲线写入项目中的数据文件或数据集                                                                   | `ui/pages/digitize_page.py`、`core/project_manager.py`                               |
 | Pipeline 不能作为模板保存和复用                            | Process 页引入 Pipeline 模板库，支持保存、加载、覆盖、另存                                                                   | `ui/pages/process_page.py`、`core/project_manager.py`                                |
-| AI runtime 已存在，但前端入口与当前产品决策冲突             | 保留核心 AI 层与配置模型；暂停右侧 AI 助手栏、项目树 AI 工具节点和设置页 AI Provider 前端入口，只保留运行时与后续接入点     | `core/ai/`、`ai/`、`core/ai_client.py`、`ui/pages/settings_page.py`                   |
+| AI runtime 已存在，但前端入口与当前产品决策冲突            | 保留核心 AI 层与配置模型；暂停右侧 AI 助手栏、项目树 AI 工具节点和设置页 AI Provider 前端入口，只保留运行时与后续接入点      | `core/ai/`、`ai/`、`core/ai_client.py`、`ui/pages/settings_page.py`                  |
 
 ### 1.2 本轮设计原则
 
@@ -753,11 +753,11 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 
 #### 原则 3：一类扩展只保留一套正式输出协议
 
-统一曲线协议为 point-list：`line = [[x, y], ...]`。扩展内部如需从 `x_list` / `y_list` 生成曲线，必须调用 `processing.extension_tools.line_from_xy(xs, ys)`，由该接口完成长度、数值和有限性检查。
+统一曲线协议为 point-list：`line = [[x, y], ...]`。扩展内部如需从 `x_list` / `y_list` 生成曲线，必须调用 `extensions.processing.extension_tools.line_from_xy(xs, ys)`，由该接口完成长度、数值和有限性检查。
 
 1. Processing：正式签名固定为 `(lines, params) -> line`，不再接受 xs / ys、inputs dict 或 `{"lines": ...}` 返回格式。
 2. Analysis：正式签名固定为 `(lines, params) -> dict`，输入曲线名等元数据由运行时补齐，不再把 dict 曲线协议暴露给扩展。
-3. Plot：正式签名固定为 `(lines, params) -> None`，扩展只通过 `extensions.plot._runtime.current_axis()` 等公开运行时工具操作当前 matplotlib 图元，不再把私有 `plot_context` 作为 handler 参数。
+3. Plot：正式签名固定为 `(plot_context, params) -> None`，扩展直接读取 `plot_context.figure / axis / visible_series / selected_series` 操作当前 matplotlib 图元，不再依赖独立 runtime 中转。
 4. Digitize：正式签名固定为 `(figure, params) -> line`，页面统一从 line 还原点列表，不再猜测 `points / summary / warnings` 结构。
 
 #### 原则 4：多曲线输入顺序必须显式化
@@ -772,10 +772,10 @@ UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
 2. 严格协议包装。
 3. 调用稳定底层接口。
 
-当前允许作为稳定底层接口直接复用的只有：`align_lines_to_common_x`、`crop_xy`、`transform_xy`、`resample_xy`、`line_from_xy`。
-其余算法如内置数字化提取器应保留在扩展目录内部实现，不再依赖旧的 app 级提取模块。
+当前允许作为稳定底层接口直接复用的只有：`align_lines_to_common_x`、`line_from_xy`、`line_xy`、`primary_line`。
+其余算法如裁剪、数学变换、重采样、内置数字化提取器等，应保留在扩展目录内部实现，不再依赖旧的 app 级提取模块。
 
-算法逻辑应尽量下沉到共用模块，避免以后在 builtin、external、页面私有逻辑之间复制实现。
+算法逻辑优先留在所属扩展内；只有被多类扩展稳定共享、且已经收口的 point-list 协议转换/对齐工具，才允许下沉到共用模块。
 
 #### 原则 6：缺依赖时的行为必须可预期
 

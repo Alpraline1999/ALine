@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from processing.extension_tools import line_from_xy, line_xy, primary_line
+from extensions.processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
 VERSION = "0.1.0"

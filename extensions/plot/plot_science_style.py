@@ -1,5 +1,4 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.plot._runtime import current_axis, current_figure
 
 
 _NAMED_SIZES = {
@@ -70,10 +69,9 @@ def _apply_legend(axis, legend_location, legend_font_size, legend_frame, legend_
         text.set_fontsize(legend_font_size)
 
 
-def apply_science_style(lines, params):
-    del lines
-    figure = current_figure()
-    axis = current_axis()
+def apply_science_style(plot_context, params):
+    figure = plot_context.figure
+    axis = plot_context.axis
     if figure is None or axis is None:
         return
 

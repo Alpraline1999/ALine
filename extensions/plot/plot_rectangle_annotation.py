@@ -1,7 +1,6 @@
 from matplotlib.patches import Rectangle
 
 from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.plot._runtime import current_axis
 
 
 def _as_float(value, default):
@@ -11,9 +10,8 @@ def _as_float(value, default):
         return float(default)
 
 
-def draw_rectangle_annotation(lines, params):
-    del lines
-    axis = current_axis()
+def draw_rectangle_annotation(plot_context, params):
+    axis = plot_context.axis
     if axis is None:
         return
 

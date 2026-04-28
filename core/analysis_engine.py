@@ -11,7 +11,7 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.extension_api import extension_registry, invoke_analysis_extension_handler
-from processing.extension_tools import line_from_xy
+from extensions.processing.extension_tools import line_from_xy
 
 # ─────────────────────────────────────────────────────────────
 # 曲线拟合

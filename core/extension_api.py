@@ -10,7 +10,7 @@ from types import ModuleType
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
 import hashlib
 
-from processing.extension_tools import normalize_line, series_payloads_to_lines
+from extensions.processing.extension_tools import normalize_line, series_payloads_to_lines
 
 
 XY = Tuple[List[float], List[float]]
@@ -49,6 +49,7 @@ _EXTENSION_TOOL_TIER_LABELS = {
 }
 
 _EXTENSION_SOURCE_KINDS = frozenset(_EXTENSION_ORIGIN_LABELS)
+_NON_EXTENSION_MODULE_FILENAMES = frozenset({"extension_tools.py"})
 
 
 def normalize_extension_field_type(
@@ -975,7 +976,7 @@ class ExtensionRegistry:
         detail_report: Dict[str, List[Dict[str, Any]]] = {"loaded": [], "errors": []}
         for raw_path in paths:
             path = Path(raw_path)
-            if path.name.startswith("_"):
+            if path.name.startswith("_") or path.name in _NON_EXTENSION_MODULE_FILENAMES:
                 continue
             detail_source = source_kind or _infer_extension_source_kind(path, source_directory)
             try:
@@ -1401,18 +1402,6 @@ def invoke_plot_extension_handler(
     supported_phases = normalize_plot_extension_phases(getattr(extension, "phases", None)) if extension is not None else ("before_plot", "after_plot")
     if context.phase not in supported_phases:
         return
-    base_series = list(context.visible_series or context.plotted_series or [])
-    requested_indices = normalize_extension_lines_list(params.get("lines_list")) if "lines_list" in params else []
-    if requested_indices:
-        series_pool = [base_series[index - 1] for index in requested_indices if 1 <= index <= len(base_series)]
-    else:
-        series_pool: List[Dict[str, Any]] = []
-        if isinstance(context.selected_series, dict):
-            series_pool.append(context.selected_series)
-        for item in base_series:
-            if isinstance(context.selected_series, dict) and item is context.selected_series:
-                continue
-            series_pool.append(item)
 
     try:
         import matplotlib.pyplot as plt
@@ -1430,19 +1419,11 @@ def invoke_plot_extension_handler(
         except Exception:
             pass
 
-    plot_runtime = None
     try:
-        from extensions.plot import _runtime as plot_runtime
-        plot_runtime._set_active_plot_target(context.figure, context.axis)
-    except Exception:
-        plot_runtime = None
-
-    try:
-        handler(series_payloads_to_lines(series_pool), dict(params))
+        handler(context, dict(params))
         context.refresh_axes()
     finally:
-        if plot_runtime is not None:
-            plot_runtime._clear_active_plot_target()
+        pass
 
     if plt is not None and context.axes:
         try:

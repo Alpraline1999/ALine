@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.extension_api import DigitizeExtension, ExtensionConfigField
-from processing.extension_tools import line_from_xy
+from extensions.processing.extension_tools import line_from_xy
 
 
 VERSION = "0.1.0"

@@ -1,5 +1,4 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.plot._runtime import current_axis
 
 
 def _as_float(value, default):
@@ -13,9 +12,8 @@ def _coord_system(params):
     return "data" if str(params.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else "axes fraction"
 
 
-def draw_arrow_annotation(lines, params):
-    del lines
-    axis = current_axis()
+def draw_arrow_annotation(plot_context, params):
+    axis = plot_context.axis
     if axis is None:
         return
 

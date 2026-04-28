@@ -1,13 +1,28 @@
 from __future__ import annotations
 
 import math
+from typing import Any, Dict, Optional
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, crop_xy, primary_line
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
+
+
+def _crop_xy(line: Any, params: Optional[Dict[str, Any]] = None):
+    xs, ys = line_xy(line)
+    options = dict(params or {})
+    raw_x_min = options.get("x_min")
+    raw_x_max = options.get("x_max")
+    x_min = -math.inf if raw_x_min in (None, "") else float(raw_x_min)
+    x_max = math.inf if raw_x_max in (None, "") else float(raw_x_max)
+    pairs = [(x_value, y_value) for x_value, y_value in zip(xs, ys) if x_min <= x_value <= x_max]
+    if not pairs:
+        return []
+    nx, ny = zip(*pairs)
+    return line_from_xy(list(nx), list(ny))
 
 
 def crop_handler(lines, params):
-    return crop_xy(primary_line(lines), params)
+    return _crop_xy(primary_line(lines), params)
 
 
 def register_extensions(registry) -> None:

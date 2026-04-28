@@ -70,17 +70,14 @@ class TestSchemas(unittest.TestCase):
         p = Project.create_new("exp_1")
         self.assertEqual(p.aline_version, "0.3")
         self.assertEqual(p.name, "exp_1")
-        self.assertIsNotNone(p.tree)
 
-    def test_project_extra_fields_are_ignored(self):
-        """额外字段应静默忽略，且当前格式字段应补默认值。"""
+    def test_project_backward_compat_extra_fields_ignored(self):
+        """旧文件中有 ALine 不认识的字段时应静默忽略。"""
         from models.schemas import Project
         data = {"id": "abc", "name": "old", "unknown_field_xyz": 999,
                 "created_at": "2024", "updated_at": "2024"}
         p = Project(**data)
         self.assertEqual(p.name, "old")
-        self.assertEqual(p.aline_version, "0.3")
-        self.assertIsNotNone(p.tree)
 
     def test_figure_config_dump_excludes_legacy_axis_and_series_fields(self):
         from models.schemas import AxisConfig, FigureConfig, SeriesRef
@@ -475,23 +472,6 @@ class TestProjectManager(unittest.TestCase):
         self.assertEqual(node.kind, "folder")
         self.assertEqual(node.name, "my_folder")
 
-    def test_add_folder_reinitializes_tree_without_legacy_migration(self):
-        p = self.pm.create_new("test_runtime_tree")
-        p.tree = None
-
-        with mock.patch.object(self.pm, "migrate_to_v2", side_effect=AssertionError("不应再调用旧迁移")):
-            node = self.pm.add_folder("runtime_folder")
-
-        self.assertIsNotNone(node)
-        self.assertIsNotNone(p.tree)
-        root_groups = {
-            getattr(tree_node, "group_type", None)
-            for tree_node in p.tree.nodes
-            if tree_node.kind == "folder" and tree_node.parent_id is None
-        }
-        self.assertIn("datasets", root_groups)
-        self.assertIn("source_files", root_groups)
-
     def test_add_data_file(self):
         from models.schemas import DataFile, DataSeries
         p = self.pm.create_new("test")
@@ -811,26 +791,6 @@ class TestProjectManager(unittest.TestCase):
             path = f.name
         try:
             with self.assertRaisesRegex(ValueError, r"\.aline"):
-                self.pm.open_file(path)
-        finally:
-            os.unlink(path)
-
-    def test_open_rejects_aline_project_without_tree(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".aline", delete=False, encoding="utf-8") as f:
-            json.dump({"id": "legacy", "name": "legacy", "aline_version": "0.3"}, f)
-            path = f.name
-        try:
-            with self.assertRaisesRegex(ValueError, r"tree"):
-                self.pm.open_file(path)
-        finally:
-            os.unlink(path)
-
-    def test_open_rejects_aline_project_without_version(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".aline", delete=False, encoding="utf-8") as f:
-            json.dump({"id": "legacy", "name": "legacy", "tree": {"nodes": []}}, f)
-            path = f.name
-        try:
-            with self.assertRaisesRegex(ValueError, r"aline_version"):
                 self.pm.open_file(path)
         finally:
             os.unlink(path)
@@ -2387,18 +2347,6 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertTrue(processing_entry["listed"])
         self.assertEqual(analysis_entry["source_kind"], "builtin")
         self.assertTrue(analysis_entry["listed"])
-
-    def test_ensure_configured_extensions_loaded_bootstraps_empty_registry(self):
-        from core.extension_api import ensure_configured_extensions_loaded, extension_registry
-
-        extension_registry.clear()
-        report = ensure_configured_extensions_loaded()
-
-        self.assertIsNotNone(extension_registry.get_processing("crop"))
-        self.assertIsNotNone(extension_registry.get_analysis("statistics"))
-        self.assertIsNotNone(extension_registry.get_plot("plot_text_annotation"))
-        self.assertIsNotNone(extension_registry.get_digitize("builtin_digitize_color_detect"))
-        self.assertIn("loaded", report)
 
     def test_global_asset_extension_configs_preserve_extension_version(self):
         from core.global_assets import GlobalAssetManager

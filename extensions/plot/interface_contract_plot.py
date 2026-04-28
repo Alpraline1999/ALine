@@ -1,18 +1,43 @@
 from __future__ import annotations
 
-from core.extension_api import ExtensionConfigField, PlotExtension
-from extensions.plot._runtime import current_axis, visible_points
+from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
+from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
 
 
 VERSION = "0.1.0"
 
 
-def plot_interface_contract(lines, params):
-    axis = current_axis()
+def _context_series(plot_context, params):
+    base_series = list(plot_context.visible_series or plot_context.plotted_series or [])
+    requested = normalize_extension_lines_list(params.get("lines_list")) if "lines_list" in params else []
+    if requested:
+        return [base_series[index - 1] for index in requested if 1 <= index <= len(base_series)]
+
+    ordered = []
+    if isinstance(plot_context.selected_series, dict):
+        ordered.append(plot_context.selected_series)
+    for item in base_series:
+        if isinstance(plot_context.selected_series, dict) and item is plot_context.selected_series:
+            continue
+        ordered.append(item)
+    return ordered
+
+
+def _visible_points(plot_context, params):
+    points = []
+    for index, line in enumerate(series_payloads_to_lines(_context_series(plot_context, params)), start=1):
+        xs, ys = line_xy(line)
+        for x_value, y_value in zip(xs, ys):
+            points.append((f"line_{index}", float(x_value), float(y_value)))
+    return points
+
+
+def plot_interface_contract(plot_context, params):
+    axis = plot_context.axis
     if axis is None:
         return None
 
-    points = visible_points(lines)
+    points = _visible_points(plot_context, params)
     color = str(params.get("color", "#0078D4") or "#0078D4")
     alpha = max(0.0, min(1.0, float(params.get("alpha", 0.9) or 0.9)))
     label = str(params.get("label", "接口示例绘图") or "接口示例绘图")
@@ -35,7 +60,7 @@ def register_extensions(registry):
             type="interface_contract_plot",
             name="接口示例：绘图扩展",
             handler=plot_interface_contract,
-            description="展示绘图扩展的强制签名 (lines, params) -> None，只操作当前 matplotlib 图元。",
+            description="展示绘图扩展的强制签名 (plot_context, params) -> None，只操作当前 matplotlib 图元。",
             version=VERSION,
             lines_number=(1, -1),
             phases=("after_plot",),

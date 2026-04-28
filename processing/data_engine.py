@@ -43,7 +43,7 @@ from core.extension_api import (
     invoke_processing_extension_handler,
     normalize_extension_lines_list,
 )
-from processing.extension_tools import Line, line_from_xy, line_xy, normalize_line, normalize_lines
+from extensions.processing.extension_tools import align_lines_to_common_x, Line, line_from_xy, line_xy, normalize_line, normalize_lines
 
 
 # 当前 pipeline 执行期间的 "已选择列表" 池，供 _op_resample(mode=align) 等使用。
@@ -338,58 +338,9 @@ def _normalize_processing_output_lines(payload: Any, template_line: PipelineLine
     return [_merge_line_payload(template_line, {"x": xs, "y": ys})]
 
 
-def align_lines_to_common_x(
-    lines: List[Line],
-    params: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[Line], List[str]]:
-    prepared_lines = [_sorted_line(line) for line in normalize_lines(lines)]
-    if len(prepared_lines) < 2:
-        return prepared_lines, []
-    if _lines_share_same_x(prepared_lines):
-        return prepared_lines, []
-
-    options = dict(params or {})
-    align_mode = str(options.get("align_mode", "auto") or "auto").strip().lower()
-    if align_mode == "strict":
-        raise ValueError("输入曲线 X 坐标未对齐，需进行坐标间距重采样")
-
-    grid = _build_alignment_grid(prepared_lines, options)
-    aligned_lines = []
-    for line in prepared_lines:
-        xs, ys = line_xy(line)
-        aligned_lines.append(line_from_xy(list(grid), [_interp_linear(x_value, xs, ys) for x_value in grid]))
-
-    description = _describe_alignment_mode(options, len(grid))
-    warnings = [
-        "需进行坐标间距重采样",
-        f"输入曲线 X 坐标未对齐，已在重叠区间内按{description}自动重采样。",
-    ]
-    return aligned_lines, warnings
-
-
 def _sorted_line_payload(line: PipelineLine) -> PipelineLine:
     xs, ys = _sorted_unique_xy(list(line.get("x", []) or []), list(line.get("y", []) or []))
     return _merge_line_payload(line, {"x": xs, "y": ys})
-
-
-def _sorted_line(line: Line) -> Line:
-    xs, ys = line_xy(line)
-    sorted_xs, sorted_ys = _sorted_unique_xy(xs, ys)
-    return line_from_xy(sorted_xs, sorted_ys)
-
-
-def _lines_share_same_x(lines: List[Line]) -> bool:
-    if len(lines) < 2:
-        return True
-    base_x, _base_y = line_xy(lines[0])
-    for line in lines[1:]:
-        current_x, _current_y = line_xy(line)
-        if len(current_x) != len(base_x):
-            return False
-        for left, right in zip(base_x, current_x):
-            if not math.isclose(left, right, rel_tol=0.0, abs_tol=1e-9):
-                return False
-    return True
 
 
 def _build_alignment_grid(lines: List[Line], params: Dict[str, Any]) -> List[float]:

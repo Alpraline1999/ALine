@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import List, Tuple
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.data_engine import align_lines_to_common_x
-from processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, normalize_lines
+from extensions.processing.extension_tools import align_lines_to_common_x, BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, normalize_lines
 
 
 def pairwise_compute_handler(lines, params):
