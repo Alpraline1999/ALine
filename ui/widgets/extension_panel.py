@@ -42,7 +42,6 @@ from ui.theme import (
     card_title_style_sheet,
     flat_status_button_style,
     install_fluent_tooltip,
-    make_hint_label,
     make_hsep,
     make_section_label,
     notification_parent,
@@ -108,6 +107,9 @@ class ExtensionConfigPanel(QWidget):
         self._panel_mode = mode if mode in {"full", "help_only", "compact"} else "full"
         self._framed = bool(framed)
         self._config_entry_visible = False
+        self._help_area_expanding_override: Optional[bool] = None
+        self._help_area_min_height_override: Optional[int] = None
+        self._help_area_max_height_override: Optional[int] = None
         self._setup_ui(title)
         self._click_away_focus_commit = install_click_away_focus_commit(self)
 
@@ -154,9 +156,6 @@ class ExtensionConfigPanel(QWidget):
         self._status_summary_btn.setFlat(True)
         self._status_summary_btn.clicked.connect(self._show_status_details)
         status_row.addWidget(self._status_summary_btn, 1)
-        self._status_label = make_hint_label("尚未扫描扩展", card)
-        self._status_label.hide()
-        self._status_detail_btn = None
         layout.addWidget(self._status_row_widget)
 
         self._extension_section_label = make_section_label("扩展", card)
@@ -286,10 +285,32 @@ class ExtensionConfigPanel(QWidget):
         if hasattr(self, "_title_label"):
             self._apply_panel_mode()
 
+    def set_help_area_layout(
+        self,
+        *,
+        expanding: Optional[bool] = None,
+        min_height: Optional[int] = None,
+        max_height: Optional[int] = None,
+    ) -> None:
+        self._help_area_expanding_override = expanding
+        self._help_area_min_height_override = min_height
+        self._help_area_max_height_override = max_height
+        if hasattr(self, "_config_help_area"):
+            self._apply_panel_mode()
+
+    def add_bottom_widget(self, widget: QWidget, *, stretch: int = 0) -> None:
+        self._surface_layout.addWidget(widget, stretch)
+
     def _apply_panel_mode(self) -> None:
         is_full = self._panel_mode == "full"
         is_help_only = self._panel_mode == "help_only"
         is_compact = self._panel_mode == "compact"
+        help_area_expands = is_help_only if self._help_area_expanding_override is None else bool(self._help_area_expanding_override)
+        help_area_min_height = self._help_area_min_height_override if self._help_area_min_height_override is not None else 124
+        if self._help_area_max_height_override is not None:
+            help_area_max_height = max(self._help_area_max_height_override, help_area_min_height)
+        else:
+            help_area_max_height = 16777215 if help_area_expands else 172
 
         self._title_label.setVisible(is_full)
         self._status_row_widget.setVisible(is_full)
@@ -307,13 +328,11 @@ class ExtensionConfigPanel(QWidget):
         self._parameter_section_label.setText("参数说明" if is_help_only else "参数")
         self._usage_hint_label.setVisible(is_full)
         self._config_help_area.setVisible(is_full or is_help_only)
-        if is_help_only:
-            self._config_help_area.setMinimumHeight(124)
-            self._config_help_area.setMaximumHeight(16777215)
+        self._config_help_area.setMinimumHeight(help_area_min_height)
+        self._config_help_area.setMaximumHeight(help_area_max_height)
+        if help_area_expands:
             self._config_help_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         else:
-            self._config_help_area.setMinimumHeight(124)
-            self._config_help_area.setMaximumHeight(172)
             self._config_help_area.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._editor.setVisible(not is_help_only)
         self._action_row_widget.setVisible(is_full)
@@ -322,7 +341,7 @@ class ExtensionConfigPanel(QWidget):
             QSizePolicy.Policy.Expanding,
         )
         self._root_layout.setAlignment(self._surface, Qt.AlignmentFlag(0))
-        self._surface_layout.setStretchFactor(self._config_help_area, 1 if is_help_only else 0)
+        self._surface_layout.setStretchFactor(self._config_help_area, 1 if help_area_expands else 0)
 
         for index, divider in enumerate(self._section_dividers):
             if is_full:
@@ -620,7 +639,6 @@ class ExtensionConfigPanel(QWidget):
             status_text = f"{label} {registered_count} 项可用{source_suffix}"
         else:
             status_text = f"{label} 暂无可用项"
-        self._status_label.setText(status_text)
         self._status_summary_btn.setText(status_text)
         has_details = bool(status["details"].get("loaded") or status["details"].get("errors"))
         if error_count:

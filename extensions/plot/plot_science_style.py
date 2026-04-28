@@ -112,7 +112,10 @@ def apply_science_style(plot_context, params):
             right=bool(params.get("show_right_ticks", rc_params.get("ytick.right", True))),
             labelsize=tick_label_size,
         )
-        current.grid(show_grid, alpha=grid_alpha, linewidth=grid_line_width)
+        if show_grid:
+            current.grid(show_grid, alpha=grid_alpha, linewidth=grid_line_width)
+        else:
+            current.grid(show_grid)
         for spine in current.spines.values():
             spine.set_linewidth(spine_width)
         for line in list(getattr(current, "lines", []) or []):

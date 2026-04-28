@@ -812,137 +812,61 @@ class ChartPage(QWidget):
         return scroll, page, layout
 
     def _build_plot_extension_side_panel(self, parent: QWidget) -> QWidget:
-        panel = QWidget(parent)
-        root = QVBoxLayout(panel)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        panel = ExtensionConfigPanel("绘图扩展", "应用扩展", parent, mode="help_only", framed=True)
+        panel.set_status_context("plot", "绘图扩展")
+        panel.set_help_area_layout(expanding=False, min_height=124, max_height=124)
 
-        card = CardWidget(panel)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(8)
+        loaded_section = QWidget(panel)
+        loaded_layout = QVBoxLayout(loaded_section)
+        loaded_layout.setContentsMargins(0, 0, 0, 0)
+        loaded_layout.setSpacing(8)
+        loaded_layout.addWidget(make_hsep(loaded_section))
 
-        layout.addWidget(make_section_label("绘图扩展", card))
-
-        self._plot_extension_status_label = CaptionLabel("未选择扩展", card)
-        self._plot_extension_status_label.setWordWrap(True)
-        layout.addWidget(self._plot_extension_status_label)
-
-        layout.addWidget(make_section_label("参数说明", card))
-        self._plot_extension_config_help_area = SmoothScrollArea(card)
-        self._plot_extension_config_help_area.setWidgetResizable(True)
-        self._plot_extension_config_help_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._plot_extension_config_help_area.setMinimumHeight(124)
-        self._plot_extension_config_help_area.setMaximumHeight(172)
-        self._plot_extension_config_help_area.setStyleSheet("background: transparent; border: none;")
-        self._plot_extension_config_help_container = QWidget(self._plot_extension_config_help_area)
-        plot_help_layout = QVBoxLayout(self._plot_extension_config_help_container)
-        plot_help_layout.setContentsMargins(0, 0, 0, 0)
-        plot_help_layout.setSpacing(0)
-        self._plot_extension_config_help_label = CaptionLabel("保留 {} 使用默认参数。", self._plot_extension_config_help_container)
-        self._plot_extension_config_help_label.setWordWrap(True)
-        plot_help_layout.addWidget(self._plot_extension_config_help_label)
-        plot_help_layout.addStretch()
-        self._plot_extension_config_help_area.setWidget(self._plot_extension_config_help_container)
-        layout.addWidget(self._plot_extension_config_help_area)
-
-        layout.addWidget(make_hsep(card))
         applied_header = QHBoxLayout()
         applied_header.setContentsMargins(0, 0, 0, 0)
         applied_header.setSpacing(6)
-        applied_header.addWidget(make_section_label("已加载扩展", card))
+        applied_header.addWidget(make_section_label("已加载扩展", loaded_section))
         applied_header.addStretch()
-        self._clear_all_plot_extensions_btn = ToolButton(FIF.DELETE, card)
+        self._clear_all_plot_extensions_btn = ToolButton(FIF.DELETE, loaded_section)
         self._set_square_tool_button(self._clear_all_plot_extensions_btn)
         self._clear_all_plot_extensions_btn.setToolTip("清除全部已加载扩展")
         self._clear_all_plot_extensions_btn.clicked.connect(self._clear_all_plot_extensions)
         self._clear_all_plot_extensions_btn.installEventFilter(ToolTipFilter(self._clear_all_plot_extensions_btn, 300, ToolTipPosition.TOP))
         self._clear_all_plot_extensions_btn.setEnabled(False)
         applied_header.addWidget(self._clear_all_plot_extensions_btn)
-        self._remove_selected_plot_extension_btn = PushButton("撤销选中", card)
+        self._remove_selected_plot_extension_btn = PushButton("撤销选中", loaded_section)
         self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
         self._remove_selected_plot_extension_btn.setEnabled(False)
         applied_header.addWidget(self._remove_selected_plot_extension_btn)
-        layout.addLayout(applied_header)
+        loaded_layout.addLayout(applied_header)
 
-        self._plot_extension_repeat_hint = make_hint_label("同一扩展可重复加载，列表会保留目标曲线和参数摘要。", card)
-        layout.addWidget(self._plot_extension_repeat_hint)
+        self._plot_extension_repeat_hint = make_hint_label("同一扩展可重复加载，列表会保留目标曲线和参数摘要。", loaded_section)
+        loaded_layout.addWidget(self._plot_extension_repeat_hint)
 
-        self._plot_extension_applied_list = ListWidget(card)
+        self._plot_extension_applied_list = ListWidget(loaded_section)
         self._plot_extension_applied_list.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
-        layout.addWidget(self._plot_extension_applied_list, 1)
+        loaded_layout.addWidget(self._plot_extension_applied_list, 1)
 
-        root.addWidget(card, 1)
+        panel.add_bottom_widget(loaded_section, stretch=1)
         return panel
 
     def _update_plot_extension_help_area_height(self) -> None:
-        if not hasattr(self, "_plot_extension_config_help_area") or not hasattr(self, "_extension_panel"):
+        if not hasattr(self, "_extension_panel") or not isinstance(self._extension_panel, ExtensionConfigPanel):
             return
         panel_height = max(int(self._extension_panel.height() or 0), 0)
         target_height = max(124, panel_height // 3) if panel_height else 124
-        self._plot_extension_config_help_area.setMinimumHeight(target_height)
-        self._plot_extension_config_help_area.setMaximumHeight(target_height)
-
-    @staticmethod
-    def _plot_extension_help_text(entry: Optional[dict]) -> str:
-        if entry is None:
-            return "保留 {} 使用默认参数。"
-
-        fields = [
-            dict(item)
-            for item in (entry.get("normalized_config_fields") or entry.get("config_fields") or [])
-            if isinstance(item, dict)
-        ]
-        if fields:
-            lines = ["字段："]
-            for field in fields:
-                key = str(field.get("key") or "option")
-                if str(field.get("field_type") or "").strip().lower() == "lines" or key == "lines_list":
-                    description = str(field.get("description") or "").strip()
-                    lines.append(f"- lines: {description}")
-                    continue
-                field_type = str(field.get("field_type") or "string")
-                required = "必选" if field.get("required") else "可选"
-                parts = [f"{key}: {field_type}", required]
-                description = str(field.get("description") or "").strip()
-                if description:
-                    parts.append(description)
-                choices = list(field.get("choices") or [])
-                if choices:
-                    parts.append(f"可选值: {', '.join(str(choice) for choice in choices)}")
-                lines.append(f"- {'; '.join(parts)}")
-            return "\n".join(lines)
-
-        defaults = dict(entry.get("resolved_options") or {})
-        if defaults:
-            lines = ["默认字段："]
-            for key, value in defaults.items():
-                lines.append(f"- {key}: {json.dumps(value, ensure_ascii=False)}")
-            return "\n".join(lines)
-        return "无需额外参数，保留 {} 即可。"
-
-    def _entry_for_plot_extension_type(self, type_id: Optional[str]) -> Optional[dict]:
-        if not type_id:
-            return None
-        return next((entry for entry in self._plot_extension_entries() if entry.get("type") == type_id), None)
+        self._extension_panel.set_help_area_layout(expanding=False, min_height=target_height, max_height=target_height)
 
     def _update_plot_extension_info_panel(self, type_id: Optional[str]) -> None:
-        entry = self._entry_for_plot_extension_type(type_id)
-        if not hasattr(self, "_plot_extension_config_help_label"):
+        if not hasattr(self, "_extension_panel") or not isinstance(self._extension_panel, ExtensionConfigPanel):
             return
-        if entry is None:
-            if hasattr(self, "_plot_extension_status_label"):
-                self._plot_extension_status_label.setText("未选择扩展")
-            self._plot_extension_config_help_label.setText("保留 {} 使用默认参数。")
-            return
-        if hasattr(self, "_plot_extension_status_label"):
-            self._plot_extension_status_label.setText(
-                f"当前扩展: {entry.get('name') or entry.get('type') or '绘图扩展'} · "
-                f"{entry.get('origin_label') or entry.get('source_label') or '内置'} · v{entry.get('version') or '0.1.0'}"
-            )
-        self._plot_extension_config_help_label.setText(self._plot_extension_help_text(entry))
+        self._extension_panel.set_entries(
+            self._plot_extension_entries(),
+            saved_options=self._plot_extension_options,
+            current_type=type_id,
+        )
 
     def _on_plot_extension_type_changed(self, type_id: str) -> None:
         self._update_plot_extension_info_panel(type_id or None)

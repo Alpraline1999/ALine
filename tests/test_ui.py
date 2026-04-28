@@ -2505,7 +2505,8 @@ class TestExtensionConfigPanel(unittest.TestCase):
         self.assertEqual(panel._description_label.styleSheet(), secondary_text_style_sheet(font_size=12))
         self.assertIn("font-size: 12px", panel._description_label.styleSheet())
         self.assertTrue(panel._status_summary_btn.isFlat())
-        self.assertIsNone(panel._status_detail_btn)
+        self.assertFalse(hasattr(panel, "_status_label"))
+        self.assertFalse(hasattr(panel, "_status_detail_btn"))
         panel.deleteLater()
 
     def test_panel_header_uses_name_source_version_format(self):
@@ -2555,8 +2556,7 @@ class TestExtensionConfigPanel(unittest.TestCase):
         ):
             panel.set_status_context("processing", "处理扩展")
 
-        self.assertEqual(panel._status_label.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败。")
-        self.assertEqual(panel._status_summary_btn.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败。")
+        self.assertEqual(panel._status_summary_btn.text(), "处理扩展 2 项可用（内置 1 / 外部 1），1 项失败")
         self.assertTrue(panel._status_summary_btn.isEnabled())
         self.assertIn("font-size: 12px", panel._status_summary_btn.styleSheet())
         self.assertIn(warning_color(), panel._status_summary_btn.styleSheet())
@@ -4940,9 +4940,9 @@ class TestChartPage(unittest.TestCase):
         QApplication.processEvents()
 
         expected_height = max(124, self.page._extension_panel.height() // 3)
-        self.assertEqual(self.page._plot_extension_config_help_area.minimumHeight(), expected_height)
-        self.assertEqual(self.page._plot_extension_config_help_area.maximumHeight(), expected_height)
-        self.assertIs(self.page._plot_extension_config_help_area.widget(), self.page._plot_extension_config_help_container)
+        self.assertEqual(self.page._extension_panel._config_help_area.minimumHeight(), expected_height)
+        self.assertEqual(self.page._extension_panel._config_help_area.maximumHeight(), expected_height)
+        self.assertIs(self.page._extension_panel._config_help_area.widget(), self.page._extension_panel._config_help_container)
 
     def test_plot_extension_tab_shows_divider_below_config_selector(self):
         self.page._style_tabs.setCurrentIndex(2)
@@ -4952,12 +4952,15 @@ class TestChartPage(unittest.TestCase):
         self.assertFalse(self.page._plot_extension_controls._config_row_divider.isHidden())
 
     def test_extension_panel_uses_splitter_side_panel(self):
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
         self.page.resize(1280, 820)
         self.page.show()
         QApplication.processEvents()
 
         self.assertEqual(self.page._page_splitter.count(), 2)
         self.assertIs(self.page._page_splitter.widget(1), self.page._extension_panel)
+        self.assertIsInstance(self.page._extension_panel, ExtensionConfigPanel)
         self.assertTrue(self.page._extension_panel.isHidden())
 
         self.page.set_extension_panel_visible(True)
@@ -5491,9 +5494,33 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(len({button.geometry().top() for button in action_buttons}), 1)
         self.assertLess(self.page._btn_clear.width(), WORKBENCH_BUTTON_MIN_WIDTH)
 
-    def test_plot_extension_side_panel_omits_description_section(self):
-        self.assertFalse(hasattr(self.page, "_plot_extension_description_label"))
-        self.assertEqual(self.page._plot_extension_config_help_label.text(), "保留 {} 使用默认参数。")
+    def test_plot_extension_side_panel_shows_description_section(self):
+        from core.extension_api import PlotExtension, extension_registry
+        from ui.widgets.extension_panel import ExtensionConfigPanel
+
+        self.assertIsInstance(self.page._extension_panel, ExtensionConfigPanel)
+        self.assertEqual(self.page._extension_panel._description_label.text(), "在左侧选择扩展后，这里会显示扩展说明。")
+        self.assertEqual(self.page._extension_panel._config_help_label.text(), "保留 {} 使用默认参数。")
+
+        extension_registry.register_plot(
+            PlotExtension(
+                type="chart_plot_description_probe",
+                name="说明探针",
+                description="用于验证右侧绘图扩展说明区域。",
+                handler=lambda plot_context, options: None,
+            )
+        )
+        try:
+            self.page._refresh_style_extension_panel()
+            self.page._update_plot_extension_info_panel("chart_plot_description_probe")
+
+            self.assertEqual(
+                self.page._extension_panel._description_label.text(),
+                "用于验证右侧绘图扩展说明区域。",
+            )
+        finally:
+            extension_registry.unregister_plot("chart_plot_description_probe")
+            self.page._refresh_style_extension_panel()
 
     def test_chart_left_panel_uses_vertical_splitter(self):
         self.page.resize(1280, 820)
