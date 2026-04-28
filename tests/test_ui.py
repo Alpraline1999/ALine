@@ -9473,6 +9473,22 @@ class TestMainWindow(unittest.TestCase):
         self.win.switchTo(self.win.digitize_page)
         self.assertEqual(button.toolTip(), "显示扩展面板")
 
+    def test_switching_page_reapplies_shared_extension_panel_state(self):
+        button = self.win._tree_panel.extension_toggle_btn
+
+        self.win.switchTo(self.win.chart_page)
+        self.win._toggle_current_page_extension_panel()
+        self.assertTrue(self.win.analysis_page.is_extension_panel_visible())
+
+        self.win.analysis_page.set_extension_panel_visible(False)
+        self.assertFalse(self.win.analysis_page.is_extension_panel_visible())
+
+        self.win.switchTo(self.win.analysis_page)
+
+        self.assertTrue(self.win.analysis_page.is_extension_panel_visible())
+        self.assertFalse(self.win.analysis_page._extension_panel.isHidden())
+        self.assertEqual(button.toolTip(), "隐藏扩展面板")
+
     def test_tree_root_switches_current_project(self):
         other = self.pm.create_new("mw_other")
         self.pm.migrate_to_v3(other)
