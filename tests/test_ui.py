@@ -4966,6 +4966,10 @@ class TestChartPage(unittest.TestCase):
         self.assertFalse(self.page._extension_panel.isHidden())
         self.assertGreater(self.page._page_splitter.sizes()[1], 0)
 
+    def test_chart_main_splitters_use_shared_workbench_handle_width(self):
+        self.assertEqual(self.page._page_splitter.handleWidth(), 4)
+        self.assertEqual(self.page._content_splitter.handleWidth(), 4)
+
     def test_chart_current_curve_color_uses_fluent_picker_button(self):
         from PySide6.QtWidgets import QFrame
         from qfluentwidgets import ColorPickerButton
@@ -8864,6 +8868,21 @@ class TestDigitizePage(unittest.TestCase):
         self.page._auto_mode_combo.setCurrentIndex(self.page._auto_mode_type_ids.index(SHAPE_DIGITIZE_EXTENSION_TYPE))
 
         self.assertEqual(self.page._extension_panel.current_type(), SHAPE_DIGITIZE_EXTENSION_TYPE)
+
+    def test_digitize_main_panel_uses_shared_workbench_spacing(self):
+        preview_panel = self.page._splitter.widget(1)
+        preview_margins = preview_panel.layout().contentsMargins()
+        tool_margins = self.page._right_panel.layout().contentsMargins()
+
+        self.assertEqual(self.page._splitter.handleWidth(), 4)
+        self.assertEqual(
+            (tool_margins.left(), tool_margins.top(), tool_margins.right(), tool_margins.bottom()),
+            (14, 14, 14, 14),
+        )
+        self.assertEqual(
+            (preview_margins.left(), preview_margins.top(), preview_margins.right(), preview_margins.bottom()),
+            (14, 14, 14, 14),
+        )
 
     def test_curve_data_buttons_are_above_panel_title(self):
         layout = self.page._right_panel.layout()

@@ -362,11 +362,11 @@ class ChartPage(QWidget):
         root.setSpacing(10)
 
         self._page_splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._page_splitter.setHandleWidth(6)
+        self._page_splitter.setHandleWidth(4)
         root.addWidget(self._page_splitter, 1)
 
         self._content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._content_splitter.setHandleWidth(6)
+        self._content_splitter.setHandleWidth(4)
 
         left_card = CardWidget(self)
         self._tool_panel = left_card

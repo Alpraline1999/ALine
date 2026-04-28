@@ -147,12 +147,12 @@ class DigitizePage(QWidget):
         main_layout.setContentsMargins(12, 12, 12, 12)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._splitter.setHandleWidth(6)
+        self._splitter.setHandleWidth(4)
 
         center_panel = CardWidget(self)
         # center_panel.setFrameShape(QFrame.Shape.StyledPanel)
         center_layout = QVBoxLayout(center_panel)
-        center_layout.setContentsMargins(12, 12, 12, 10)
+        center_layout.setContentsMargins(14, 14, 14, 14)
         center_layout.setSpacing(8)
 
         # 图片查看器上方工具栏（橡皮/清空/撤销/重做，靠右）
@@ -365,7 +365,7 @@ class DigitizePage(QWidget):
         panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(8)
 
         actions_row = QHBoxLayout()
