@@ -2603,6 +2603,17 @@ class ChartPage(QWidget):
         self._update_curve_style_template_summary()
         self._refresh_style_extension_panel()
 
+    def handle_extension_runtime_reload(self, valid_plot_types: set[str]) -> None:
+        self._plot_extension_options = {
+            key: value for key, value in self._plot_extension_options.items() if key in valid_plot_types
+        }
+        self._applied_plot_extensions = [
+            entry for entry in self._applied_plot_extensions if entry.get("type") in valid_plot_types
+        ]
+        self._refresh_curve_style_template_combo()
+        self._refresh_template_combo(self._applied_plot_style_ref)
+        self._refresh_style_extension_panel()
+
     def _update_curve_style_template_summary(self) -> None:
         if not self._active_curve_style_ref:
             self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
@@ -3439,6 +3450,9 @@ class ChartPage(QWidget):
     def _redraw(self) -> None:
         self._redraw_timer.start()
 
+    def request_redraw(self) -> None:
+        self._redraw()
+
     @staticmethod
     def _apply_text_style(text_obj, *, font_family: str, font_size: int, color: Optional[str] = None) -> None:
         if text_obj is None:
@@ -4100,4 +4114,3 @@ def _set_line_edit_text(widget: LineEdit, value, allow_blank: bool = False) -> N
     else:
         widget.setText(str(value))
     widget.blockSignals(False)
-

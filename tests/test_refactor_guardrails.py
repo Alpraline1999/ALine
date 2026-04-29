@@ -74,26 +74,7 @@ ALLOWED_CORE_EXTENSION_IMPORTS = {
     "core/extension_api.py": {"extensions.processing.extension_tools"},
 }
 
-ALLOWED_MAIN_WINDOW_PRIVATE_PAGE_ACCESSES = {
-    "analysis_page._refresh_analysis_type_choices",
-    "chart_page._applied_plot_extensions",
-    "chart_page._applied_plot_style_ref",
-    "chart_page._plot_extension_options",
-    "chart_page._redraw",
-    "chart_page._refresh_curve_style_template_combo",
-    "chart_page._refresh_style_extension_panel",
-    "chart_page._refresh_template_combo",
-    "data_page._import_current_source_file_to_dataset",
-    "data_page._add_dataset",
-    "data_page._import_file",
-    "digitize_page._image_viewer",
-    "digitize_page._on_add_curve",
-    "digitize_page._on_export_to_data_file",
-    "digitize_page._refresh_project_tree",
-    "home_page._refresh_extension_summary",
-    "process_page._refresh_processing_extensions",
-    "settings_page._update_colors",
-}
+ALLOWED_MAIN_WINDOW_PRIVATE_PAGE_ACCESSES = set()
 
 
 def _parse_python(path: Path) -> ast.AST:

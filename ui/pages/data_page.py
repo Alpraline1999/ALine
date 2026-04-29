@@ -4047,6 +4047,9 @@ class DataPage(QWidget):
             return
         self._import_file(source_path)
 
+    def import_current_source_file_to_dataset(self) -> None:
+        self._import_current_source_file_to_dataset()
+
     def _import_current_source_file_to_digitize(self) -> None:
         asset = self._current_source_file_asset()
         source_path = self._current_source_file_path()
@@ -4475,6 +4478,9 @@ class DataPage(QWidget):
             self.project_modified.emit()
             InfoBar.success("导入成功", "文件已导入到数据管理区", parent=self, position=InfoBarPosition.TOP)
 
+    def import_file_from_shell(self, file_path: Optional[str] = None) -> None:
+        self._import_file(file_path)
+
     # ─────────────────────────────────────────────────────────
     # 操作：新建数据集
     # ─────────────────────────────────────────────────────────
@@ -4493,6 +4499,9 @@ class DataPage(QWidget):
                 if node is not None:
                     self.refresh()
                     self.project_modified.emit()
+
+    def add_dataset_from_shell(self) -> None:
+        self._add_dataset()
 
     # ─────────────────────────────────────────────────────────
     # 操作：曲线 → DataSeries

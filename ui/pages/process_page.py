@@ -1537,6 +1537,9 @@ class ProcessPage(QWidget):
             current_type=current_type if extension_registry.get_processing(current_type or "") else None,
         )
 
+    def refresh_processing_extensions(self) -> None:
+        self._refresh_processing_extensions()
+
     def _reload_processing_extensions(self) -> None:
         report = reload_configured_extensions()
         self._refresh_processing_extensions()

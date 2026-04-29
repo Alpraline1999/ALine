@@ -347,8 +347,8 @@ class MainWindow(FluentWindow):
         self._shortcut_bindings.bind("go_analysis_page", self, lambda: self.switchTo(self.analysis_page), context=context)
         self._shortcut_bindings.bind("go_digitize_page", self, lambda: self.switchTo(self.digitize_page), context=context)
         self._shortcut_bindings.bind("go_settings_page", self, lambda: self.switchTo(self.settings_page), context=context)
-        self._shortcut_bindings.bind("data_add_dataset", self, self.data_page._add_dataset, context=context)
-        self._shortcut_bindings.bind("data_import_file", self, self.data_page._import_file, context=context)
+        self._shortcut_bindings.bind("data_add_dataset", self, self.data_page.add_dataset_from_shell, context=context)
+        self._shortcut_bindings.bind("data_import_file", self, self.data_page.import_file_from_shell, context=context)
 
     def apply_shortcuts(self) -> None:
         self._shortcut_bindings.apply()
@@ -392,20 +392,12 @@ class MainWindow(FluentWindow):
     def _on_extensions_reloaded(self) -> None:
         from core.extension_api import extension_registry
 
-        self.home_page._refresh_extension_summary()
-        self.process_page._refresh_processing_extensions()
-        self.analysis_page._refresh_analysis_type_choices()
+        self.home_page.refresh_extension_summary()
+        self.process_page.refresh_processing_extensions()
+        self.analysis_page.refresh_analysis_type_choices()
 
         plot_types = {extension.type for extension in extension_registry.list_plot()}
-        self.chart_page._plot_extension_options = {
-            key: value for key, value in self.chart_page._plot_extension_options.items() if key in plot_types
-        }
-        self.chart_page._applied_plot_extensions = [
-            entry for entry in self.chart_page._applied_plot_extensions if entry.get("type") in plot_types
-        ]
-        self.chart_page._refresh_curve_style_template_combo()
-        self.chart_page._refresh_template_combo(self.chart_page._applied_plot_style_ref)
-        self.chart_page._refresh_style_extension_panel()
+        self.chart_page.handle_extension_runtime_reload(plot_types)
         self._tree_panel.tree.refresh()
 
     # ─────────────────────────────────────────────────────────
@@ -520,7 +512,7 @@ class MainWindow(FluentWindow):
             project_manager.migrate_to_v2(p)
             project_manager.migrate_to_v3(p)
         self._update_window_title()
-        self.digitize_page._refresh_project_tree()
+        self.digitize_page.refresh_project_tree()
         self.data_page.refresh()
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
@@ -532,7 +524,7 @@ class MainWindow(FluentWindow):
             project_manager.migrate_to_v2(p)
             project_manager.migrate_to_v3(p)
         self._update_window_title()
-        self.digitize_page._refresh_project_tree()
+        self.digitize_page.refresh_project_tree()
         self.data_page.refresh()
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
@@ -615,7 +607,7 @@ class MainWindow(FluentWindow):
             return False
 
         self.data_page.refresh()
-        self.digitize_page._refresh_project_tree()
+        self.digitize_page.refresh_project_tree()
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
         self._update_window_title()
@@ -637,8 +629,8 @@ class MainWindow(FluentWindow):
 
         project_manager.close_current_project()
         self.data_page.refresh()
-        self.digitize_page._image_viewer.clear_image()
-        self.digitize_page._refresh_project_tree()
+        self.digitize_page.clear_current_image()
+        self.digitize_page.refresh_project_tree()
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
         self._update_window_title()
@@ -691,15 +683,13 @@ class MainWindow(FluentWindow):
             self.switchTo(self.digitize_page)
             if hasattr(self.digitize_page, 'load_image_by_id'):
                 self.digitize_page.load_image_by_id(node_id)
-            if hasattr(self.digitize_page, '_on_add_curve'):
-                self.digitize_page._on_add_curve()
+            self.digitize_page.add_curve_from_shell()
             return
         if kind == "curve_export_to_data_file":
             self.switchTo(self.digitize_page)
             if hasattr(self.digitize_page, 'load_curve_by_id'):
                 self.digitize_page.load_curve_by_id(node_id)
-            if hasattr(self.digitize_page, '_on_export_to_data_file'):
-                self.digitize_page._on_export_to_data_file()
+            self.digitize_page.export_current_curve_to_data_file()
             return
         if kind in ("data_file", "series", "curve"):
             if self._dispatch_activation_to_current_page(kind, node_id):
@@ -708,7 +698,7 @@ class MainWindow(FluentWindow):
             self.switchTo(self.data_page)
             self.data_page.on_tree_node_selected("source_file", node_id)
             if kind == "source_file_to_data":
-                self.data_page._import_current_source_file_to_dataset()
+                self.data_page.import_current_source_file_to_dataset()
             return
         if kind == "source_file_to_digitize":
             source_node = project_manager.get_node_by_id(node_id)
@@ -952,9 +942,9 @@ class MainWindow(FluentWindow):
 
     def _update_all_pages_theme(self):
         self.home_page.update_theme()
-        self.settings_page._update_colors()
+        self.settings_page.update_theme_colors()
         self.digitize_page.update_theme_colors()
-        self.chart_page._redraw()
+        self.chart_page.request_redraw()
         self.data_page.update_theme()
         self.process_page.update_theme()
         self.analysis_page.update_theme()

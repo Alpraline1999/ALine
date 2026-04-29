@@ -1127,6 +1127,9 @@ class DigitizePage(QWidget):
         if _target_item is not None:
             self._project_tree.setCurrentItem(_target_item)
 
+    def refresh_project_tree(self, show_indicator: bool = False) -> None:
+        self._refresh_project_tree(show_indicator=show_indicator)
+
     def _on_tool_clicked(self, tool_name: Optional[str]):
         """处理工具按钮点击"""
         # 如果已经激活了同一个工具，检查是否需要完成校准
@@ -1980,6 +1983,9 @@ class DigitizePage(QWidget):
 
         self.project_modified.emit()
 
+    def export_current_curve_to_data_file(self) -> None:
+        self._on_export_to_data_file()
+
     def _update_export_target_label(self):
         if self._export_target_kind == "data_file" and self._export_target_id:
             node = project_manager.get_node_by_id(self._export_target_id)
@@ -2626,6 +2632,12 @@ class DigitizePage(QWidget):
             self._update_curve_table()
             self._refresh_project_tree()
             self.project_modified.emit()
+
+    def add_curve_from_shell(self) -> None:
+        self._on_add_curve()
+
+    def clear_current_image(self) -> None:
+        self._image_viewer.clear_image()
 
     def _on_image_loaded(self, file_path: str):
         # 更新底部状态栏路径

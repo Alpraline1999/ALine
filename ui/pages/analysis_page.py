@@ -1097,6 +1097,9 @@ class AnalysisPage(QWidget):
         self._on_type_changed(self._type_combo.currentIndex())
         self._refresh_report_placeholder_choices()
 
+    def refresh_analysis_type_choices(self) -> None:
+        self._refresh_analysis_type_choices()
+
     def _on_analysis_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
         self._analysis_extension_options[type_id] = dict(options)
         if type_id in self._analysis_type_ids:

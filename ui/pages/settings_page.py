@@ -920,6 +920,9 @@ class SettingsPage(QWidget):
         if hasattr(self, "_ai_tool_detail_type") and self._ai_tool_detail_type is not None:
             self._ai_tool_detail_type.setStyleSheet(secondary_text_style_sheet())
 
+    def update_theme_colors(self) -> None:
+        self._update_colors()
+
     def _current_tree_display_mode(self) -> TreeNameDisplayMode:
         if self._tree_display_mode_combo is None:
             return "wrap"

@@ -520,6 +520,9 @@ class HomePage(QWidget):
         install_fluent_tooltip(self._extension_status_btn)
         self._extension_status_btn.setEnabled(bool(details.get("loaded") or details.get("errors")))
 
+    def refresh_extension_summary(self) -> None:
+        self._refresh_extension_summary()
+
     def _show_extension_details(self) -> None:
         show_extension_load_report_dialog(self, "扩展加载详情")
 
