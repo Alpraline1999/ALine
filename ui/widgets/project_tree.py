@@ -1117,21 +1117,21 @@ class ProjectTreeWidget(QWidget):
 
         if kind in _SYNTHETIC_GLOBAL_KINDS:
             if kind == "global_pipeline":
-                manage_entries.append((FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((FIF.DEVELOPER_TOOLS, "加载到处理页", self._page_dispatcher.make_activation_callback(kind, node_id)))
             elif kind == "global_report_template":
-                manage_entries.append((FIF.DOCUMENT, "应用到分析页", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((FIF.DOCUMENT, "应用到分析页", self._page_dispatcher.make_activation_callback(kind, node_id)))
             elif kind == "global_curve_style_template":
-                manage_entries.append((FIF.PENCIL_INK, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((FIF.PENCIL_INK, "应用到可视化", self._page_dispatcher.make_activation_callback(kind, node_id)))
             elif kind in ("global_plot_style", "global_plot_theme"):
-                manage_entries.append((FIF.PIE_SINGLE, "应用到可视化", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((FIF.PIE_SINGLE, "应用到可视化", self._page_dispatcher.make_activation_callback(kind, node_id)))
             elif kind == "global_group":
                 if self._parse_extension_config_group_node_id(node_id) is not None:
                     manage_entries.append((FIF.ADD, "新建配置", lambda: self._cmd_create_extension_config(node_id)))
             elif kind == "global_extension_config":
-                manage_entries.append((getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "在数据管理页查看/编辑", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "在数据管理页查看/编辑", self._page_dispatcher.make_activation_callback(kind, node_id)))
                 manage_entries.append((FIF.COPY, "创建副本", lambda: self._cmd_duplicate_extension_config(node_id)))
             elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
-                manage_entries.append((FIF.EDIT, "在设置中查看", lambda: self.node_activated.emit(kind, node_id)))
+                manage_entries.append((FIF.EDIT, "在设置中查看", self._page_dispatcher.make_activation_callback(kind, node_id)))
             if self._can_edit_global_asset(kind, node_id):
                 manage_entries.extend([
                     (FIF.EDIT, "重命名", lambda: self._cmd_rename_global(kind, node_id, item.text(0))),
@@ -1171,9 +1171,9 @@ class ProjectTreeWidget(QWidget):
         elif kind == "data_file":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("data_file_to_chart", node_id)),
-                (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("data_file_to_process", node_id)),
-                (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("data_file_to_analysis", node_id)),
+                (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("data_file_to_chart", node_id)),
+                (FIF.DEVELOPER_TOOLS, "发送到处理", self._page_dispatcher.make_activation_callback("data_file_to_process", node_id)),
+                (FIF.SEARCH, "发送到分析", self._page_dispatcher.make_activation_callback("data_file_to_analysis", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
@@ -1183,8 +1183,8 @@ class ProjectTreeWidget(QWidget):
         elif kind == "source_file":
             move_choices = self._move_target_choices(kind, node_id)
             import_entries.extend([
-                (_IMPORT_DATA_ACTION_ICON, "导入到数据集", lambda: self.node_activated.emit("source_file_to_data", node_id)),
-                (FIF.PHOTO, "导入到数字化", lambda: self.node_activated.emit("source_file_to_digitize", node_id)),
+                (_IMPORT_DATA_ACTION_ICON, "导入到数据集", self._page_dispatcher.make_activation_callback("source_file_to_data", node_id)),
+                (FIF.PHOTO, "导入到数字化", self._page_dispatcher.make_activation_callback("source_file_to_digitize", node_id)),
             ])
             manage_entries.extend([
                 (_SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
@@ -1197,9 +1197,9 @@ class ProjectTreeWidget(QWidget):
         elif kind == "series":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("series_to_chart", node_id)),
-                (FIF.DEVELOPER_TOOLS, "发送到处理", lambda: self.node_activated.emit("series_to_process", node_id)),
-                (FIF.SEARCH, "发送到分析", lambda: self.node_activated.emit("series_to_analysis", node_id)),
+                (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("series_to_chart", node_id)),
+                (FIF.DEVELOPER_TOOLS, "发送到处理", self._page_dispatcher.make_activation_callback("series_to_process", node_id)),
+                (FIF.SEARCH, "发送到分析", self._page_dispatcher.make_activation_callback("series_to_analysis", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
             ])
@@ -1209,8 +1209,8 @@ class ProjectTreeWidget(QWidget):
         elif kind == "image_work":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (FIF.ADD, "新增曲线", lambda: self.node_activated.emit("image_work_add_curve", node_id)),
-                (_OPEN_DIGITIZE_ACTION_ICON, "打开取点", lambda: self.node_activated.emit("image_work", node_id)),
+                (FIF.ADD, "新增曲线", self._page_dispatcher.make_activation_callback("image_work_add_curve", node_id)),
+                (_OPEN_DIGITIZE_ACTION_ICON, "打开取点", self._page_dispatcher.make_activation_callback("image_work", node_id)),
                 # (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("image_work_to_chart", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
@@ -1221,7 +1221,7 @@ class ProjectTreeWidget(QWidget):
         elif kind == "picture":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("picture_to_chart", node_id)),
+                (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("picture_to_chart", node_id)),
                 (_PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
@@ -1232,8 +1232,8 @@ class ProjectTreeWidget(QWidget):
         elif kind == "curve":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (_IMPORT_DATA_ACTION_ICON, "导出为数据列", lambda: self.node_activated.emit("curve_export_to_data_file", node_id)),
-                (FIF.PIE_SINGLE, "发送到可视化", lambda: self.node_activated.emit("curve_to_chart", node_id)),
+                (_IMPORT_DATA_ACTION_ICON, "导出为数据列", self._page_dispatcher.make_activation_callback("curve_export_to_data_file", node_id)),
+                (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("curve_to_chart", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual(kind, node_id, item.text(0))),
             ])
@@ -1242,21 +1242,21 @@ class ProjectTreeWidget(QWidget):
 
         elif kind == "pipeline":
             manage_entries.extend([
-                (FIF.DEVELOPER_TOOLS, "加载到处理页", lambda: self.node_activated.emit("pipeline", node_id)),
+                (FIF.DEVELOPER_TOOLS, "加载到处理页", self._page_dispatcher.make_activation_callback("pipeline", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
 
         elif kind == "figure_template":
             manage_entries.extend([
-                (FIF.PIE_SINGLE, "加载到可视化", lambda: self.node_activated.emit("figure_template", node_id)),
+                (FIF.PIE_SINGLE, "加载到可视化", self._page_dispatcher.make_activation_callback("figure_template", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
 
         elif kind == "report_template":
             manage_entries.extend([
-                (FIF.SEARCH, "加载到分析页", lambda: self.node_activated.emit("report_template", node_id)),
+                (FIF.SEARCH, "加载到分析页", self._page_dispatcher.make_activation_callback("report_template", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
@@ -1264,7 +1264,7 @@ class ProjectTreeWidget(QWidget):
         elif kind == "analysis_result":
             move_choices = self._move_target_choices(kind, node_id)
             manage_entries.extend([
-                (FIF.SEARCH, "发送到分析页", lambda: self.node_activated.emit("analysis_result", node_id)),
+                (FIF.SEARCH, "发送到分析页", self._page_dispatcher.make_activation_callback("analysis_result", node_id)),
                 (FIF.EDIT, "重命名", lambda: self.rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
@@ -1273,7 +1273,7 @@ class ProjectTreeWidget(QWidget):
 
         elif kind in ("ai_prompt", "ai_skill", "ai_agent", "ai_tool"):
             manage_entries.extend([
-                (FIF.EDIT, "编辑", lambda: self.node_activated.emit(kind, node_id)),
+                (FIF.EDIT, "编辑", self._page_dispatcher.make_activation_callback(kind, node_id)),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
 
