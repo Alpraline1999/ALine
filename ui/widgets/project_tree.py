@@ -26,6 +26,7 @@ from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
 from models.schemas import DataFile
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
+from ui.widgets.project_tree_builder import ProjectTreeBuilder
 from ui.widgets.project_tree_view import ProjectTreeView
 
 
@@ -309,6 +310,8 @@ class ProjectTreeWidget(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self._builder = ProjectTreeBuilder()
+        self._projects = project_manager.projects
         self._filter_kinds: List[str] = []  # 空 = 显示全部
         self._focus_root_group_types: List[str] = []
         layout = QVBoxLayout(self)
@@ -358,68 +361,26 @@ class ProjectTreeWidget(QWidget):
 
     def refresh(self) -> None:
         """从 project_manager.projects 完整重建树。"""
-        expansion_state = self._capture_expansion_state()
-        selected_key = self._current_item_key()
-        self._tree.blockSignals(True)
-        self._tree.clear()
-        if not project_manager.projects:
-            if not self._focus_root_group_types:
-                self._build_global_assets_root()
-            self._restore_expansion_state(expansion_state)
-            self._restore_selection(selected_key)
-            self._tree.blockSignals(False)
-            self.refreshed.emit()
-            return
+        self._projects = project_manager.projects
+        self._builder.build(self)
 
-        focus_group_types = set(self._focus_root_group_types)
-        multiple_projects = len(project_manager.projects) > 1
-        for project in project_manager.projects:
-            if project.tree is None:
-                continue
-            if focus_group_types:
-                root_children = sorted(
-                    project.tree.get_children(None),
-                    key=lambda node: self._tree_node_sort_key(node, None),
-                )
-                for node in root_children:
-                    if node.kind != "folder":
-                        continue
-                    group_type = self._canonical_group_type(getattr(node, "group_type", None))
-                    if group_type not in focus_group_types:
-                        continue
-                    item = self._make_item(node, project.id)
-                    if multiple_projects:
-                        label = f"{project.name} / {item.text(0)}"
-                        item.setText(0, label)
-                        item.setToolTip(0, label)
-                    self._tree.addTopLevelItem(item)
-                    self._build_children(project, node.id, item)
-                    item.setExpanded(True)
-                continue
-            project_item = QTreeWidgetItem([project.name])
-            project_item.setData(0, _ROLE, ("project", project.id))
-            project_item.setData(0, _PROJECT_ROLE, project.id)
-            project_item.setIcon(0, _PROJECT_ICON.icon())
-            project_item.setToolTip(0, project.name)
-            if project.id == project_manager.current_project_id:
-                font = project_item.font(0)
-                font.setBold(True)
-                project_item.setFont(0, font)
-            self._tree.addTopLevelItem(project_item)
-            self._build_children(project, None, project_item)
-            project_item.setExpanded(True)
-        if not focus_group_types:
-            self._build_global_assets_root()
-        self._restore_expansion_state(expansion_state)
-        selected_key = self._apply_focus_view(selected_key)
-        self._restore_selection(selected_key)
-        self._apply_name_display_mode()
-        self._tree.blockSignals(False)
-        self._tree.viewport().update()
-        self._tree.updateGeometry()
-        if self._name_display_mode == "wrap":
-            QTimer.singleShot(0, self._update_wrapped_item_size_hints)
+    def _schedule_wrapped_item_size_hint_update(self) -> None:
+        QTimer.singleShot(0, self._update_wrapped_item_size_hints)
+
+    def refreshed_emit(self) -> None:
         self.refreshed.emit()
+
+    def _make_project_item(self, project) -> QTreeWidgetItem:
+        project_item = QTreeWidgetItem([project.name])
+        project_item.setData(0, _ROLE, ("project", project.id))
+        project_item.setData(0, _PROJECT_ROLE, project.id)
+        project_item.setIcon(0, _PROJECT_ICON.icon())
+        project_item.setToolTip(0, project.name)
+        if project.id == project_manager.current_project_id:
+            font = project_item.font(0)
+            font.setBold(True)
+            project_item.setFont(0, font)
+        return project_item
 
     def expand_all_items(self) -> None:
         self._expand_all_items()
