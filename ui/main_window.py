@@ -11,6 +11,7 @@ from qfluentwidgets import (
     ToolTipFilter, ToolTipPosition,
 )
 
+from app.context import AppContext
 from .pages.home_page import HomePage
 from .pages.digitize_page import DigitizePage
 from .pages.chart_page import ChartPage
@@ -218,6 +219,7 @@ class MainWindow(FluentWindow):
 
     def __init__(self):
         super().__init__()
+        self.app_context = AppContext()
         self._page_tree_focus_mode_enabled = is_page_tree_focus_mode_enabled()
         self._tree_panel_user_hidden = False
         self._tree_panel_width = _TREE_PANEL_DEFAULT_WIDTH
