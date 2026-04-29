@@ -24,6 +24,7 @@ from core.global_assets import ExtensionConfigPreset, global_assets, make_plot_s
 from core.extension_api import build_extension_entry, extension_registry
 from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
+from app.project_tree_command_service import ProjectTreeCommandService
 from models.schemas import DataFile
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.widgets.project_tree_builder import ProjectTreeBuilder
@@ -355,6 +356,16 @@ class ProjectTreeWidget(QWidget):
         self._fluent_tooltip: Optional[ToolTip] = None
         self._name_display_mode = "elide"
         self._page_dispatcher = ProjectTreePageDispatcher(self.node_selected, self.node_activated)
+        self._command_service = ProjectTreeCommandService(
+            confirm_delete=self._confirm_tree_delete,
+            prompt_text=self._prompt_tree_text,
+            create_child_folder=self._create_child_folder,
+            notify_warning=self._notify_tree_warning,
+            refresh=self.refresh,
+            select_node=self.select_node,
+            project_modified=self.project_modified.emit,
+            last_error_message=project_manager.get_last_error_message,
+        )
         self.set_name_display_mode(get_tree_name_display_mode())
 
     # ─────────────────────────────────────────────────────────
@@ -1289,50 +1300,28 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _cmd_delete(self, node_id: str, node_name: str) -> None:
-        box = MessageBox("确认删除", f'确定要删除「{node_name}」及其所有内容吗？', self._dialog_parent())
-        if box.exec():
-            project_manager.delete_node(node_id)
-            self.refresh()
-            self.project_modified.emit()
+        self._command_service.delete_node(node_id, node_name)
 
     def _cmd_add_child_folder(self, parent_id: str) -> None:
-        name, ok = TextInputDialog.get_text(self._dialog_parent(), "新建子文件夹", "文件夹名称:", placeholder="输入子文件夹名称")
-        if not ok:
-            return
-        folder = self._create_child_folder(parent_id, name)
-        if folder is None:
-            InfoBar.warning(
-                "创建失败",
-                project_manager.get_last_error_message() or "未能创建子文件夹",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return
-        self.refresh()
-        self.select_node(folder.id)
-        self.project_modified.emit()
+        self._command_service.add_child_folder(parent_id)
 
     def _cmd_add_dataset_node(self, parent_id: str) -> None:
-        from models.schemas import DataFile
+        self._command_service.add_dataset_node(parent_id)
 
-        name, ok = TextInputDialog.get_text(self._dialog_parent(), "新建数据集", "数据集名称:", placeholder="输入数据集名称")
-        if not ok:
-            return
-        clean_name = name.strip()
-        if not clean_name:
-            return
-        node = project_manager.add_data_file(DataFile(name=clean_name), parent_id=parent_id)
-        if node is None:
-            InfoBar.warning(
-                "创建失败",
-                project_manager.get_last_error_message() or "未能创建新的数据集",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return
-        self.refresh()
-        self.select_node(node.id)
-        self.project_modified.emit()
+    def _confirm_tree_delete(self, title: str, message: str) -> bool:
+        box = MessageBox(title, message, self._dialog_parent())
+        return bool(box.exec())
+
+    def _prompt_tree_text(self, title: str, label: str, placeholder: str) -> tuple[str, bool]:
+        return TextInputDialog.get_text(self._dialog_parent(), title, label, placeholder=placeholder)
+
+    def _notify_tree_warning(self, title: str, content: str) -> None:
+        InfoBar.warning(
+            title,
+            content,
+            parent=self._dialog_parent(),
+            position=InfoBarPosition.TOP,
+        )
 
     def _cmd_import_data_file(self, parent_id: Optional[str] = None) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
