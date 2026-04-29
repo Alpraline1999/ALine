@@ -22,6 +22,8 @@ def _load_command_service_module():
         def __init__(self) -> None:
             self.deleted: list[str] = []
             self.added: list[tuple[str, str]] = []
+            self.renamed_series: list[tuple[str, str]] = []
+            self.removed_empty_folder_args: list[str | None] = []
             self.return_node = types.SimpleNamespace(id="node-1")
 
         def delete_node(self, node_id: str) -> None:
@@ -30,6 +32,17 @@ def _load_command_service_module():
         def add_data_file(self, data_file, parent_id: str | None = None):
             self.added.append((data_file.name, parent_id))
             return self.return_node
+
+        def rename_series(self, node_id: str, name: str) -> bool:
+            self.renamed_series.append((node_id, name))
+            return True
+
+        def rename_curve(self, node_id: str, name: str) -> bool:
+            return True
+
+        def remove_empty_folders(self, root_id: str | None = None):
+            self.removed_empty_folder_args.append(root_id)
+            return ["f1", "f2"]
 
     fake_pm_module.project_manager = _FakeProjectManager()
     sys.modules["core.project_manager"] = fake_pm_module
@@ -56,8 +69,10 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: True,
             prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             notify_warning=lambda *_args: None,
+            notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
             select_node=lambda node_id: calls.append(f"select:{node_id}"),
             project_modified=lambda: calls.append("modified"),
@@ -74,8 +89,10 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
             prompt_text=lambda *_args: ("dataset-a", True),
+            prompt_existing_text=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             notify_warning=lambda *_args: None,
+            notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
             select_node=lambda node_id: calls.append(f"select:{node_id}"),
             project_modified=lambda: calls.append("modified"),
@@ -86,6 +103,48 @@ class TestProjectTreeCommandService(unittest.TestCase):
 
         self.assertEqual([("dataset-a", "parent-1")], project_manager.added)
         self.assertEqual(["refresh", "select:node-1", "modified"], calls)
+
+    def test_rename_virtual_series_renames_then_refreshes(self) -> None:
+        calls: list[str] = []
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: False,
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("series-b", True),
+            create_child_folder=lambda *_args: None,
+            notify_warning=lambda *_args: None,
+            notify_success=lambda *_args: None,
+            refresh=lambda: calls.append("refresh"),
+            select_node=lambda node_id: calls.append(f"select:{node_id}"),
+            project_modified=lambda: calls.append("modified"),
+            last_error_message=lambda: "",
+        )
+
+        service.rename_virtual("series", "s1", "old")
+
+        self.assertEqual([("s1", "series-b")], project_manager.renamed_series)
+        self.assertEqual(["refresh", "modified"], calls)
+
+    def test_prune_empty_folders_reports_success(self) -> None:
+        calls: list[tuple[str, str]] = []
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: False,
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
+            create_child_folder=lambda *_args: None,
+            notify_warning=lambda *_args: None,
+            notify_success=lambda title, content: calls.append((title, content)),
+            refresh=lambda: calls.append(("refresh", "")),
+            select_node=lambda node_id: calls.append((f"select:{node_id}", "")),
+            project_modified=lambda: calls.append(("modified", "")),
+            last_error_message=lambda: "",
+        )
+
+        service.prune_empty_folders("root-1", scope_label="测试树")
+
+        self.assertEqual(["root-1"], project_manager.removed_empty_folder_args)
+        self.assertEqual(("refresh", ""), calls[0])
+        self.assertEqual(("modified", ""), calls[1])
+        self.assertEqual(("清理完成", "已移除 2 个空文件夹"), calls[2])
 
 
 if __name__ == "__main__":

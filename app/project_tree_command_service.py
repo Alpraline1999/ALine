@@ -11,8 +11,10 @@ from models.schemas import DataFile
 class ProjectTreeCommandService:
     confirm_delete: Callable[[str, str], bool]
     prompt_text: Callable[[str, str, str], tuple[str, bool]]
+    prompt_existing_text: Callable[[str, str, str], tuple[str, bool]]
     create_child_folder: Callable[[str, str], object | None]
     notify_warning: Callable[[str, str], None]
+    notify_success: Callable[[str, str], None]
     refresh: Callable[[], None]
     select_node: Callable[[str], None]
     project_modified: Callable[[], None]
@@ -51,3 +53,27 @@ class ProjectTreeCommandService:
         self.refresh()
         self.select_node(node.id)
         self.project_modified()
+
+    def rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
+        title = "重命名数据列" if kind == "series" else "重命名曲线"
+        new_name, ok = self.prompt_existing_text(title, "名称:", current_name)
+        if not ok or not new_name.strip():
+            return
+        if kind == "series":
+            changed = project_manager.rename_series(node_id, new_name.strip())
+        else:
+            changed = project_manager.rename_curve(node_id, new_name.strip())
+        if changed:
+            self.refresh()
+            self.project_modified()
+            return
+        self.notify_warning("重命名失败", self.last_error_message() or "名称已存在或当前节点不支持重命名")
+
+    def prune_empty_folders(self, root_id: str | None = None, *, scope_label: str = "项目树") -> None:
+        removed_ids = project_manager.remove_empty_folders(root_id)
+        if not removed_ids:
+            self.notify_success("无需清理", f"{scope_label} 中没有可移除的空文件夹")
+            return
+        self.refresh()
+        self.project_modified()
+        self.notify_success("清理完成", f"已移除 {len(removed_ids)} 个空文件夹")

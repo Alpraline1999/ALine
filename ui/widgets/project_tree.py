@@ -359,8 +359,10 @@ class ProjectTreeWidget(QWidget):
         self._command_service = ProjectTreeCommandService(
             confirm_delete=self._confirm_tree_delete,
             prompt_text=self._prompt_tree_text,
+            prompt_existing_text=self._prompt_tree_existing_text,
             create_child_folder=self._create_child_folder,
             notify_warning=self._notify_tree_warning,
+            notify_success=self._notify_tree_success,
             refresh=self.refresh,
             select_node=self.select_node,
             project_modified=self.project_modified.emit,
@@ -1315,8 +1317,19 @@ class ProjectTreeWidget(QWidget):
     def _prompt_tree_text(self, title: str, label: str, placeholder: str) -> tuple[str, bool]:
         return TextInputDialog.get_text(self._dialog_parent(), title, label, placeholder=placeholder)
 
+    def _prompt_tree_existing_text(self, title: str, label: str, text: str) -> tuple[str, bool]:
+        return TextInputDialog.get_text(self._dialog_parent(), title, label, text=text)
+
     def _notify_tree_warning(self, title: str, content: str) -> None:
         InfoBar.warning(
+            title,
+            content,
+            parent=self._dialog_parent(),
+            position=InfoBarPosition.TOP,
+        )
+
+    def _notify_tree_success(self, title: str, content: str) -> None:
+        InfoBar.success(
             title,
             content,
             parent=self._dialog_parent(),
@@ -1431,43 +1444,10 @@ class ProjectTreeWidget(QWidget):
             )
 
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
-        title = "重命名数据列" if kind == "series" else "重命名曲线"
-        new_name, ok = TextInputDialog.get_text(self._dialog_parent(), title, "名称:", text=current_name)
-        if not ok or not new_name.strip():
-            return
-        if kind == "series":
-            changed = project_manager.rename_series(node_id, new_name.strip())
-        else:
-            changed = project_manager.rename_curve(node_id, new_name.strip())
-        if changed:
-            self.refresh()
-            self.project_modified.emit()
-            return
-        InfoBar.warning(
-            "重命名失败",
-            project_manager.get_last_error_message() or "名称已存在或当前节点不支持重命名",
-            parent=self._dialog_parent(),
-            position=InfoBarPosition.TOP,
-        )
+        self._command_service.rename_virtual(kind, node_id, current_name)
 
     def _cmd_prune_empty_folders(self, root_id: Optional[str] = None, *, scope_label: str = "项目树") -> None:
-        removed_ids = project_manager.remove_empty_folders(root_id)
-        if not removed_ids:
-            InfoBar.success(
-                "无需清理",
-                f"{scope_label} 中没有可移除的空文件夹",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return
-        self.refresh()
-        self.project_modified.emit()
-        InfoBar.success(
-            "清理完成",
-            f"已移除 {len(removed_ids)} 个空文件夹",
-            parent=self._dialog_parent(),
-            position=InfoBarPosition.TOP,
-        )
+        self._command_service.prune_empty_folders(root_id, scope_label=scope_label)
 
     def _cmd_delete_batch(self, payloads: List[Dict[str, object]]) -> None:
         count = len(payloads)
