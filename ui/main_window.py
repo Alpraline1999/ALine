@@ -12,6 +12,8 @@ from qfluentwidgets import (
 )
 
 from app.context import AppContext
+from app.messages import AppCommand, AppCommandType, TreeCommand
+from app.tree_action_dispatcher import ProjectTreeActionDispatcher
 from .pages.home_page import HomePage
 from .pages.digitize_page import DigitizePage
 from .pages.chart_page import ChartPage
@@ -220,6 +222,10 @@ class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
         self.app_context = AppContext()
+        self._tree_action_dispatcher = ProjectTreeActionDispatcher(
+            command_handler=self._handle_tree_app_command,
+            project_id_getter=lambda: project_manager.current_project_id,
+        )
         self._page_tree_focus_mode_enabled = is_page_tree_focus_mode_enabled()
         self._tree_panel_user_hidden = False
         self._tree_panel_width = _TREE_PANEL_DEFAULT_WIDTH
@@ -377,8 +383,8 @@ class MainWindow(FluentWindow):
         self.data_page.send_to_process.connect(self._on_send_to_process)
 
         # 共享树信号路由
-        self._tree_panel.tree.node_selected.connect(self._on_tree_node_selected)
-        self._tree_panel.tree.node_activated.connect(self._on_tree_node_activated)
+        self._tree_panel.tree.node_selected.connect(self._dispatch_tree_node_selected)
+        self._tree_panel.tree.node_activated.connect(self._dispatch_tree_node_activated)
         self._tree_panel.tree.project_modified.connect(self._on_project_modified)
         self._tree_panel.tree.project_modified.connect(self._tree_panel.tree.refresh)
 
@@ -649,6 +655,22 @@ class MainWindow(FluentWindow):
     # 树节点路由
     # ─────────────────────────────────────────────────────────
 
+    def _dispatch_tree_node_selected(self, kind: str, node_id: str) -> None:
+        self._tree_action_dispatcher.dispatch_selected(kind, node_id)
+
+    def _dispatch_tree_node_activated(self, kind: str, node_id: str) -> None:
+        self._tree_action_dispatcher.dispatch_activated(kind, node_id)
+
+    def _handle_tree_app_command(self, command: AppCommand) -> None:
+        if command.command_type != AppCommandType.TREE or command.tree_command is None:
+            return
+        tree_command = command.tree_command
+        if tree_command.command_type.value == "select":
+            self._on_tree_node_selected_command(tree_command)
+            return
+        if tree_command.command_type.value == "activate":
+            self._on_tree_node_activated_command(tree_command)
+
     def _dispatch_activation_to_current_page(self, kind: str, node_id: str) -> bool:
         page = self.stackedWidget.currentWidget()
         if kind == "data_file" and page is not self.process_page:
@@ -667,8 +689,10 @@ class MainWindow(FluentWindow):
             return True
         return False
 
-    def _on_tree_node_activated(self, kind: str, node_id: str) -> None:
+    def _on_tree_node_activated_command(self, tree_command: TreeCommand) -> None:
         """双击节点 → 在当前页面执行主动作；显式发送动作才跨页。"""
+        kind = tree_command.node.kind
+        node_id = tree_command.node.node_id
         self._update_window_title()
         if kind == "project":
             self._tree_panel.tree.refresh()
@@ -773,8 +797,10 @@ class MainWindow(FluentWindow):
         self.data_page.on_tree_node_selected("global_extension_config", config_id)
         return True
 
-    def _on_tree_node_selected(self, kind: str, node_id: str) -> None:
+    def _on_tree_node_selected_command(self, tree_command: TreeCommand) -> None:
         """单击节点 → 通知当前页面。"""
+        kind = tree_command.node.kind
+        node_id = tree_command.node.node_id
         self._update_window_title()
         if kind == "project":
             self._tree_panel.tree.refresh()
