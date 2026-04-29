@@ -171,6 +171,7 @@ def _apply_base_curve_style_patch(plot_context: PlotExtensionContext, options: D
     }
     if patch:
         plot_context.patch_selected_curve_style(patch)
+        # 只 patch context，不直接操作 matplotlib 对象，确保后续曲线样式可覆盖
 
 
 def _apply_base_plot_style_patch(plot_context: PlotExtensionContext, options: Dict[str, Any]) -> None:
@@ -191,6 +192,7 @@ def _apply_base_plot_style_patch(plot_context: PlotExtensionContext, options: Di
     }
     if style_patch:
         plot_context.patch_plot_style(style_patch)
+        # 只 patch context，不直接操作 matplotlib 对象，确保后续绘图样式可覆盖
 
 
 _BASE_CURVE_STYLE_EXTENSION = PlotExtension(
@@ -383,13 +385,17 @@ class ChartPage(QWidget):
         left_layout.addWidget(self._chart_left_splitter, 1)
 
         list_section = QWidget(self._chart_left_splitter)
+                # 先应用扩展 patch，再应用曲线/绘图样式 patch，确保后施加的覆盖先施加的
+                # 1. 应用所有扩展 patch 到 context（不直接操作 matplotlib）
+                # 2. 再应用曲线样式 patch
+                # 3. 再应用绘图样式 patch
         list_layout = QVBoxLayout(list_section)
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setSpacing(10)
 
         list_layout.addWidget(make_section_label("已绘图曲线", left_card))
         self._chart_list = ListWidget(left_card)
-        self._chart_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._chart_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._chart_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._chart_list.currentItemChanged.connect(self._on_current_changed)
         self._chart_list.customContextMenuRequested.connect(self._on_chart_list_context_menu)
@@ -3279,7 +3285,23 @@ class ChartPage(QWidget):
         reset_action.setEnabled(self._curve_display_name(curve) != (curve.get("name") or ""))
         reset_action.triggered.connect(lambda checked=False: self._reset_curve_display_name(curve))
         menu.addAction(reset_action)
+
+        # 新增“仅显示选中”功能
+        show_only_action = Action(getattr(FIF, "VIEW", FIF.SEARCH), "仅显示选中")
+        show_only_action.triggered.connect(self._show_only_selected_curve)
+        menu.addAction(show_only_action)
+
         menu.exec(self._chart_list.mapToGlobal(pos))
+
+    def _show_only_selected_curve(self):
+        selected_curve = self._selected_curve()
+        if selected_curve is None:
+            return
+        selected_key = self._curve_key(selected_curve)
+        for curve in self._chart_series:
+            curve["visible"] = (self._curve_key(curve) == selected_key)
+        self._refresh_chart_list()
+        self._redraw_now()
 
     def _refresh_chart_list(self) -> None:
         current_name = self._style_target
@@ -3398,11 +3420,19 @@ class ChartPage(QWidget):
         self._redraw_now()
 
     def _toggle_selected_visibility(self) -> None:
-        curve = self._selected_curve()
-        if curve is None:
+        selected_items = self._chart_list.selectedItems()
+        if not selected_items:
             return
-        curve["visible"] = not bool(curve.get("visible", True))
-        self._record_curve_style_changes(self._curve_key(curve), {"visible"})
+        # 以第一个选中项的 visible 状态为基准，全部反转
+        first_curve = self._curve_from_item(selected_items[0])
+        if first_curve is None:
+            return
+        new_visible = not bool(first_curve.get("visible", True))
+        for item in selected_items:
+            curve = self._curve_from_item(item)
+            if curve is not None:
+                curve["visible"] = new_visible
+                self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
         self._redraw_now()
 
