@@ -27,6 +27,7 @@ from core.ui_preferences import get_tree_name_display_mode
 from models.schemas import DataFile
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.widgets.project_tree_builder import ProjectTreeBuilder
+from ui.widgets.project_tree_page_dispatcher import ProjectTreePageDispatcher
 from ui.widgets.project_tree_view import ProjectTreeView
 
 
@@ -353,6 +354,7 @@ class ProjectTreeWidget(QWidget):
         self._focused_item_key: Optional[str] = None
         self._fluent_tooltip: Optional[ToolTip] = None
         self._name_display_mode = "elide"
+        self._page_dispatcher = ProjectTreePageDispatcher(self.node_selected, self.node_activated)
         self.set_name_display_mode(get_tree_name_display_mode())
 
     # ─────────────────────────────────────────────────────────
@@ -873,7 +875,7 @@ class ProjectTreeWidget(QWidget):
             return
         self.refresh()
         self.project_modified.emit()
-        self.node_activated.emit("global_extension_config", saved.id)
+        self._page_dispatcher.emit_activated("global_extension_config", saved.id)
 
     def _cmd_duplicate_extension_config(self, config_id: str) -> None:
         config_item = global_assets.get_extension_config(config_id)
@@ -902,7 +904,7 @@ class ProjectTreeWidget(QWidget):
             return
         self.refresh()
         self.project_modified.emit()
-        self.node_activated.emit("global_extension_config", saved.id)
+        self._page_dispatcher.emit_activated("global_extension_config", saved.id)
 
     def _make_item(self, node, project_id: str) -> QTreeWidgetItem:
         group_type = self._canonical_group_type(getattr(node, "group_type", None))
@@ -998,7 +1000,7 @@ class ProjectTreeWidget(QWidget):
         self._activate_item_project(item)
         d = self._item_role_data(item)
         if d:
-            self.node_selected.emit(d[0], d[1])
+            self._page_dispatcher.emit_selected(d[0], d[1])
 
     def _on_item_activated(self, item: QTreeWidgetItem, _col: int) -> None:
         if self._consume_branch_toggle_click(item):
@@ -1006,7 +1008,7 @@ class ProjectTreeWidget(QWidget):
         self._activate_item_project(item)
         d = self._item_role_data(item)
         if d:
-            self.node_activated.emit(d[0], d[1])
+            self._page_dispatcher.emit_activated(d[0], d[1])
 
     def eventFilter(self, watched, event):
         if watched is self._tree.viewport():
