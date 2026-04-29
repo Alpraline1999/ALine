@@ -15,7 +15,7 @@ from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QRectF, QSize, Q
 from PySide6.QtGui import QAbstractTextDocumentLayout, QColor, QDesktopServices, QFontMetrics, QPainter, QPalette, QPen, QPixmap, QTextDocument, QTextOption
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QFileDialog, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip, TreeWidget,
+    Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip,
 )
 from qfluentwidgets.components.widgets.tree_view import TreeItemDelegate
 from PySide6.QtWidgets import QTreeWidgetItem
@@ -26,6 +26,7 @@ from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
 from models.schemas import DataFile
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
+from ui.widgets.project_tree_view import ProjectTreeView
 
 
 def _series_color_icon(color_str: str) -> QPixmap:
@@ -223,51 +224,8 @@ def _extension_config_sort_key(config) -> tuple[int, int, str, str]:
     return (0 if bool(getattr(config, "is_default", False)) else 1, name_key[0], name_key[1], name_key[2])
 
 
-class _ProjectTreeView(TreeWidget):
-    def __init__(self, owner: "ProjectTreeWidget", parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self._owner = owner
-
-    def startDrag(self, supportedActions) -> None:
-        selected_items = [item for item in self.selectedItems() if item is not None]
-        current_item = self.currentItem()
-        if current_item is not None and current_item in selected_items:
-            self._owner._remember_drag_source_items(selected_items)
-        elif current_item is not None:
-            self._owner._remember_drag_source_items([current_item])
-        else:
-            self._owner._remember_drag_source_items(selected_items)
-        super().startDrag(supportedActions)
-
-    def dropEvent(self, event) -> None:
-        source_items = self._owner._drag_source_items_for_drop(self.currentItem())
-        target_item = self.itemAt(event.position().toPoint())
-        try:
-            if len(source_items) > 1:
-                if self._owner._perform_batch_drop_move(source_items, target_item, defer_view_refresh=True):
-                    event.acceptProposedAction()
-                    return
-                event.ignore()
-                return
-            source_item = source_items[0] if source_items else None
-            if self._owner._perform_drop_move(source_item, target_item, defer_view_refresh=True):
-                event.acceptProposedAction()
-                return
-            event.ignore()
-        finally:
-            self._owner._clear_drag_source_item()
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_F2 and event.modifiers() == Qt.KeyboardModifier.NoModifier:
-            if self._owner.can_rename_selected_item():
-                self._owner.rename_selected_item()
-                event.accept()
-                return
-        super().keyPressEvent(event)
-
-
 class _ProjectTreeWrapAnywhereDelegate(TreeItemDelegate):
-    def __init__(self, owner: "ProjectTreeWidget", parent: "_ProjectTreeView"):
+    def __init__(self, owner: "ProjectTreeWidget", parent: ProjectTreeView):
         super().__init__(parent)
         self._owner = owner
 
@@ -357,7 +315,7 @@ class ProjectTreeWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._tree = _ProjectTreeView(self, self)
+        self._tree = ProjectTreeView(self, self)
         self._tree.setHeaderHidden(True)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
