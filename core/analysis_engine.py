@@ -380,6 +380,44 @@ def compute_error_metrics(
     }
 
 
+def _build_curve_fit_analysis_result(first: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    model = params.get("model", "linear")
+    result = fit_curve(first["x"], first["y"], model, params.get("p0"))
+    result["analysis_type"] = "curve_fit"
+    result["source_name"] = first.get("name", "")
+    result["summary_items"] = [
+        {"label": "模型", "value": result.get("model", "")},
+        {"label": "方程", "value": result.get("equation", "")},
+        {"label": "R²", "value": result.get("r2")},
+        {"label": "数据源", "value": result.get("source_name", "")},
+    ]
+    param_names = list(result.get("param_names", []) or [])
+    param_values = list(result.get("params", []) or [])
+    if param_names and param_values:
+        result["table_sections"] = [
+            {
+                "title": "拟合参数",
+                "headers": ["参数", "值"],
+                "rows": [[name, value] for name, value in zip(param_names, param_values)],
+            }
+        ]
+    result["lines"] = [
+        {"line_name": "拟合曲线", "line": line_from_xy(result.get("fit_x", []), result.get("fit_y", []))},
+    ]
+    result["_plot_series"] = [
+        {
+            "name": result.get("source_name") or "原始数据",
+            "line": line_from_xy(first["x"], first["y"]),
+            "kind": "scatter",
+            "color": "#888888",
+            "alpha": 0.7,
+            "size": 15,
+        },
+        {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438", "line_width": 2.0},
+    ]
+    return result
+
+
 def run_analysis(
     analysis_type: str,
     inputs: List[Dict[str, Any]],
@@ -400,42 +438,7 @@ def run_analysis(
     if analysis_type == "curve_fit":
         if not normalized_inputs:
             raise ValueError("curve_fit 需要至少一条输入数据")
-        first = normalized_inputs[0]
-        model = params.get("model", "linear")
-        result = fit_curve(first["x"], first["y"], model, params.get("p0"))
-        result["analysis_type"] = "curve_fit"
-        result["source_name"] = first.get("name", "")
-        result["summary_items"] = [
-            {"label": "模型", "value": result.get("model", "")},
-            {"label": "方程", "value": result.get("equation", "")},
-            {"label": "R²", "value": result.get("r2")},
-            {"label": "数据源", "value": result.get("source_name", "")},
-        ]
-        param_names = list(result.get("param_names", []) or [])
-        param_values = list(result.get("params", []) or [])
-        if param_names and param_values:
-            result["table_sections"] = [
-                {
-                    "title": "拟合参数",
-                    "headers": ["参数", "值"],
-                    "rows": [[name, value] for name, value in zip(param_names, param_values)],
-                }
-            ]
-        result["lines"] = [
-            {"line_name": "拟合曲线", "line": line_from_xy(result.get("fit_x", []), result.get("fit_y", []))},
-        ]
-        result["_plot_series"] = [
-            {
-                "name": result.get("source_name") or "原始数据",
-                "line": line_from_xy(first["x"], first["y"]),
-                "kind": "scatter",
-                "color": "#888888",
-                "alpha": 0.7,
-                "size": 15,
-            },
-            {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438", "line_width": 2.0},
-        ]
-        return result
+        return _build_curve_fit_analysis_result(normalized_inputs[0], params)
     if analysis_type == "peak_detect":
         if not normalized_inputs:
             raise ValueError("peak_detect 需要至少一条输入数据")
