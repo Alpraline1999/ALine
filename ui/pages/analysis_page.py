@@ -35,6 +35,7 @@ from ui.dialogs.export_flow import (
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from app.workspaces.analysis_workspace import AnalysisWorkspaceController, AnalysisWorkspaceState
+from core.report_templates import DEFAULT_REPORT_TEMPLATE
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
@@ -2389,13 +2390,11 @@ class AnalysisPage(QWidget):
         self._render_report_preview()
 
     def _current_report_template_content(self) -> str:
-        from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
-
         if self._current_report_template_id:
             template = project_manager.get_report_template(self._current_report_template_id)
             if template is not None:
                 return template.content
-        return _DEFAULT_REPORT_TEMPLATE
+        return DEFAULT_REPORT_TEMPLATE
 
     def _report_template_choices(self) -> List[tuple[str, Optional[str]]]:
         choices: List[tuple[str, Optional[str]]] = [("默认模板", None)]
@@ -2429,9 +2428,7 @@ class AnalysisPage(QWidget):
         self._load_report_template_by_id(self._selected_report_template_id(), announce=True)
 
     def _load_report_template_by_id(self, template_id: Optional[str], announce: bool = False) -> bool:
-        from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
-
-        content = _DEFAULT_REPORT_TEMPLATE
+        content = DEFAULT_REPORT_TEMPLATE
         template_name = "默认模板"
         current_template_id = None
         if template_id:

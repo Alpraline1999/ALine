@@ -30,7 +30,7 @@ from models.schemas import (
     ReportTemplate,
     SavedPipeline,
 )
-from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
+from core.report_templates import DEFAULT_REPORT_TEMPLATE
 
 _GLOBAL_ASSET_VERSION = "1"
 _BUILTIN_DEFAULT_REPORT_TEMPLATE_ID = "builtin:default-report-template"
@@ -124,7 +124,7 @@ def _builtin_report_templates() -> List[ReportTemplate]:
         ReportTemplate(
             id=_BUILTIN_DEFAULT_REPORT_TEMPLATE_ID,
             name="默认模板",
-            content=_DEFAULT_REPORT_TEMPLATE,
+            content=DEFAULT_REPORT_TEMPLATE,
             is_builtin=True,
         )
     ]

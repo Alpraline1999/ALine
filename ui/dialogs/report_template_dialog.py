@@ -19,7 +19,8 @@ except ImportError:
     _HAS_WEB = False
 
 from core.global_assets import global_assets
-from core.analysis_engine import render_report, _DEFAULT_REPORT_TEMPLATE, list_report_template_placeholders
+from core.analysis_engine import render_report, list_report_template_placeholders
+from core.report_templates import DEFAULT_REPORT_TEMPLATE
 from models.schemas import ReportTemplate
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.theme import accent_color, border_color, secondary_color, surface_color, text_color
@@ -156,14 +157,14 @@ class ReportTemplateDialog(QDialog):
         self._tmpl_combo.setCurrentIndex(selected_index)
         if selected_index == 0:
             self._template_id = None
-            self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
+            self._editor.setPlainText(DEFAULT_REPORT_TEMPLATE)
         else:
             self._on_template_selected(selected_index)
 
     def _on_template_selected(self, idx: int):
         if idx == 0:
             self._template_id = None
-            self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
+            self._editor.setPlainText(DEFAULT_REPORT_TEMPLATE)
             return
         if idx >= len(self._template_ids):
             return
@@ -171,7 +172,7 @@ class ReportTemplateDialog(QDialog):
         template = global_assets.get_report_template(template_id) if template_id else None
         if template is None:
             self._template_id = None
-            self._editor.setPlainText(_DEFAULT_REPORT_TEMPLATE)
+            self._editor.setPlainText(DEFAULT_REPORT_TEMPLATE)
             return
         self._template_id = template.id
         self._editor.setPlainText(template.content)
