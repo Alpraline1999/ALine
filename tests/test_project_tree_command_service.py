@@ -7,6 +7,7 @@ import unittest
 
 
 def _load_command_service_module():
+    original_models = sys.modules.get("models.schemas")
     fake_models = types.ModuleType("models.schemas")
 
     class DataFile:
@@ -18,6 +19,7 @@ def _load_command_service_module():
     fake_models.DataFile = DataFile
     sys.modules["models.schemas"] = fake_models
 
+    original_global_assets = sys.modules.get("core.global_assets")
     fake_global_assets_module = types.ModuleType("core.global_assets")
 
     class _FakeGlobalAssets:
@@ -128,6 +130,7 @@ def _load_command_service_module():
     fake_global_assets_module.parse_plot_style_asset_key = parse_plot_style_asset_key
     sys.modules["core.global_assets"] = fake_global_assets_module
 
+    original_project_manager = sys.modules.get("core.project_manager")
     fake_pm_module = types.ModuleType("core.project_manager")
 
     class _FakeProjectManager:
@@ -220,7 +223,21 @@ def _load_command_service_module():
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if original_models is None:
+            sys.modules.pop("models.schemas", None)
+        else:
+            sys.modules["models.schemas"] = original_models
+        if original_global_assets is None:
+            sys.modules.pop("core.global_assets", None)
+        else:
+            sys.modules["core.global_assets"] = original_global_assets
+        if original_project_manager is None:
+            sys.modules.pop("core.project_manager", None)
+        else:
+            sys.modules["core.project_manager"] = original_project_manager
     return module
 
 

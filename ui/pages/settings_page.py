@@ -142,6 +142,8 @@ class SettingsPage(QWidget):
         self._lang_card = None
         self._shortcuts_card = None
         self._shortcuts_editor_card = None
+        self._tmpl_card = None
+        self._tmpl_list = None
         self.theme_combo = None
         self._shortcut_filter_edit = None
         self._shortcut_edits: dict[str, QKeySequenceEdit] = {}
@@ -1444,8 +1446,9 @@ class SettingsPage(QWidget):
     # ── 报告模板方法 ──────────────────────────────────────────
 
     def refresh_templates(self) -> None:
-        """报告模板已迁入分析页；保留空实现以兼容旧调用。"""
-        self._tmpl_list.clear()
+        """报告模板已迁入分析页；保留兼容入口以承接旧刷新调用。"""
+        if self._tmpl_list is not None:
+            self._tmpl_list.clear()
         self._refresh_ai_tools_panel()
 
     def _refresh_ai_tools_panel(self) -> None:

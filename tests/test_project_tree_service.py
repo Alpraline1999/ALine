@@ -7,6 +7,7 @@ import unittest
 
 
 def _load_project_tree_service_module():
+    original_global_assets = sys.modules.get("core.global_assets")
     fake_global_assets = types.ModuleType("core.global_assets")
 
     class _FakeGlobalAssets:
@@ -64,6 +65,7 @@ def _load_project_tree_service_module():
     fake_global_assets.global_assets = _FakeGlobalAssets()
     sys.modules["core.global_assets"] = fake_global_assets
 
+    original_models = sys.modules.get("models.schemas")
     fake_models = types.ModuleType("models.schemas")
 
     class FolderNode:
@@ -90,7 +92,17 @@ def _load_project_tree_service_module():
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if original_models is None:
+            sys.modules.pop("models.schemas", None)
+        else:
+            sys.modules["models.schemas"] = original_models
+        if original_global_assets is None:
+            sys.modules.pop("core.global_assets", None)
+        else:
+            sys.modules["core.global_assets"] = original_global_assets
     return module
 
 

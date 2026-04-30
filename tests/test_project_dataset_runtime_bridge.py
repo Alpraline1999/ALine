@@ -7,6 +7,7 @@ import unittest
 
 
 def _load_project_asset_service_module():
+    original_models = sys.modules.get("models.schemas")
     fake_models = types.ModuleType("models.schemas")
 
     class DataSeries:
@@ -62,7 +63,13 @@ def _load_project_asset_service_module():
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if original_models is None:
+            sys.modules.pop("models.schemas", None)
+        else:
+            sys.modules["models.schemas"] = original_models
     module.TestProject = Project
     return module
 
