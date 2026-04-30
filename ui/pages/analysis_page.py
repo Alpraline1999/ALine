@@ -34,6 +34,7 @@ from ui.dialogs.export_flow import (
 )
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
+from app.workspaces.analysis_workspace import AnalysisWorkspaceController, AnalysisWorkspaceState
 from core.builtin_extensions import register_core_builtin_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
@@ -146,9 +147,59 @@ class AnalysisPage(QWidget):
         "folder", "data_file", "image_work", "global_report_template", "series", "curve",
     ]
 
+    @property
+    def _selected_inputs(self):
+        return self._workspace_state.selected_inputs
+
+    @_selected_inputs.setter
+    def _selected_inputs(self, value):
+        self._workspace_state.selected_inputs = value
+
+    @property
+    def _current_report_template_id(self):
+        return self._workspace_state.current_report_template_id
+
+    @_current_report_template_id.setter
+    def _current_report_template_id(self, value):
+        self._workspace_state.current_report_template_id = value
+
+    @property
+    def _current_report_template_name(self):
+        return self._workspace_state.current_report_template_name
+
+    @_current_report_template_name.setter
+    def _current_report_template_name(self, value):
+        self._workspace_state.current_report_template_name = value
+
+    @property
+    def _report_template_ids(self):
+        return self._workspace_state.report_template_ids
+
+    @_report_template_ids.setter
+    def _report_template_ids(self, value):
+        self._workspace_state.report_template_ids = value
+
+    @property
+    def _selected_tree_kind(self):
+        return self._workspace_state.selected_tree_kind
+
+    @_selected_tree_kind.setter
+    def _selected_tree_kind(self, value):
+        self._workspace_state.selected_tree_kind = value
+
+    @property
+    def _selected_tree_node_id(self):
+        return self._workspace_state.selected_tree_node_id
+
+    @_selected_tree_node_id.setter
+    def _selected_tree_node_id(self, value):
+        self._workspace_state.selected_tree_node_id = value
+
     def __init__(self, parent=None):
         super().__init__(parent)
         register_core_builtin_extensions(extension_registry)
+        self._workspace_state = AnalysisWorkspaceState()
+        self._workspace_controller = AnalysisWorkspaceController(self._workspace_state)
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._result: Optional[Dict[str, Any]] = None
@@ -157,18 +208,18 @@ class AnalysisPage(QWidget):
         self._analysis_label_map: Dict[str, str] = {}
         self._analysis_extension_options: Dict[str, Dict[str, Any]] = {}
         # 已选分析数据列表：List[{"kind": str, "node_id": str, "label": str}]
-        self._selected_inputs: List[dict] = []
-        self._current_report_template_id: Optional[str] = None
-        self._current_report_template_name: str = "默认模板"
-        self._report_template_ids: List[Optional[str]] = [None]
+        self._selected_inputs = []
+        self._current_report_template_id = None
+        self._current_report_template_name = "默认模板"
+        self._report_template_ids = [None]
         self._analysis_tab_views: Dict[str, Dict[str, Any]] = {}
         self._analysis_tab_keys: List[str] = []
         self._report_result_selectors: Dict[str, ComboBox] = {}
         self._report_result_selector_keys: Dict[str, List[Optional[str]]] = {}
         self._report_placeholder_completer: Optional[QCompleter] = None
         self._report_placeholder_search_model: Optional[QStringListModel] = None
-        self._selected_tree_kind: Optional[str] = None
-        self._selected_tree_node_id: Optional[str] = None
+        self._selected_tree_kind = None
+        self._selected_tree_node_id = None
         self._report_placeholder_entries = list_report_template_placeholders()
         self._next_temporary_result_number = 1
         self._shortcut_bindings = ShortcutBindingSet()
@@ -1403,13 +1454,14 @@ class AnalysisPage(QWidget):
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """单击选中节点（只更新高亮，不加入分析列表）。"""
-        self._selected_tree_kind = kind
-        self._selected_tree_node_id = node_id
+        self._workspace_controller.handle_tree_selected(kind, node_id)
 
     def on_tree_node_activated(self, kind: str, node_id: str) -> None:
         """双击树节点 → 加入分析输入列表。"""
-        if kind.endswith("_to_analysis"):
-            kind = kind[:-12]
+        handled = self._workspace_controller.handle_tree_activated(kind, node_id)
+        if handled is None:
+            return
+        kind, node_id = handled
         if kind == "global_report_template":
             self.load_report_template(node_id)
             return
