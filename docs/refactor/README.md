@@ -13,6 +13,9 @@
 7. [06-phase-5-cleanup-file-splitting-and-dead-path-removal.md](06-phase-5-cleanup-file-splitting-and-dead-path-removal.md)
 8. [07-phase-6-quality-gates-and-test-restructure.md](07-phase-6-quality-gates-and-test-restructure.md)
 9. [08-phase-7-ui-state-performance-and-polish.md](08-phase-7-ui-state-performance-and-polish.md)
+10. [10-phase-8-large-curve-performance-and-extension-optimization.md](10-phase-8-large-curve-performance-and-extension-optimization.md)
+11. [11-phase-9-runtime-array-data-model.md](11-phase-9-runtime-array-data-model.md)
+12. [12-phase-10-extension-runtime-and-api-hardening.md](12-phase-10-extension-runtime-and-api-hardening.md)
 
 ## 文档职责
 
@@ -22,6 +25,15 @@
 - `01` 到 `08`
   - 每份文档对应一个可执行阶段。
   - 每份文档都必须独立说明进入前提、目标边界、验收标准、提交检查点和回退方式。
+- `10-phase-8-large-curve-performance-and-extension-optimization.md`
+  - 定义大曲线、大数据量场景的 profiling、抽样、缓存、后台执行和局部性能优化阶段。
+  - 该阶段默认承接 `Phase 7` 之后的性能硬化工作，并为后续运行时数组化提供证据。
+- `11-phase-9-runtime-array-data-model.md`
+  - 定义运行时曲线主数据数组化与热路径表示收口阶段。
+  - 该阶段负责把性能敏感的数值曲线主数据迁移到数组后端，而不是把所有 `list` 全面替换为 `numpy`。
+- `12-phase-10-extension-runtime-and-api-hardening.md`
+  - 定义扩展运行时、扩展接口契约、批处理与隔离策略的重构阶段。
+  - 该阶段负责收口 `core.extension_api` 的职责边界，并让扩展运行时与 `Phase 9` 的数组主数据对齐。
 
 ## 阶段进入规则
 
@@ -62,6 +74,16 @@
   - 图表工作集、处理输入、分析结果上下文、数字化当前图片/曲线/导出目标、`FigureState`
 - 后置到 `Phase 7` 的纯 UI 状态：
   - splitter 尺寸、滚动位置、tooltip 生命周期、当前 tab 视觉态、教学提示临时状态、预览工具栏显隐
+- 后置到 `Phase 8` 的性能优化：
+  - 大曲线 profiling、抽样、缓存、后台执行、局部刷新
+- 后置到 `Phase 9` 的运行时主数据优化：
+  - 曲线主数据数组化
+  - `list(point)` / `x,y` / `series payload` 重复转换收口
+  - 热路径 `numpy` / 数组视图统一适配
+- 后置到 `Phase 10` 的扩展运行时优化：
+  - 扩展接口契约重构
+  - 扩展批处理、数组原生输入、超时隔离、profiling 钩子
+  - 扩展加载器 / 调用器 / 注册表边界收口
 
 ## 使用方式
 
