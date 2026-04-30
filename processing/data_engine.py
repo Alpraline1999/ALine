@@ -40,9 +40,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.extension_api import (
     extension_lines_number,
     extension_registry,
-    invoke_processing_extension_handler,
     normalize_extension_lines_list,
 )
+from core.extension_invoker import invoke_processing_extension_handler
 from extensions.processing.extension_tools import align_lines_to_common_x, Line, line_from_xy, line_xy, normalize_line, normalize_lines
 
 

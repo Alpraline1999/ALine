@@ -2133,8 +2133,8 @@ class TestAnalysisEngine(unittest.TestCase):
             invoke_analysis_extension_handler,
             invoke_digitize_extension_handler,
             invoke_plot_extension_handler,
-            invoke_processing_extension_handler,
         )
+        from core.extension_invoker import invoke_processing_extension_handler
         from processing.extension_tools import line_xy
 
         registry = ExtensionRegistry()

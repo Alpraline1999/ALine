@@ -20,6 +20,10 @@
 14. [14-phase-12-ui-page-decomposition-and-shell-normalization.md](14-phase-12-ui-page-decomposition-and-shell-normalization.md)
 15. [15-phase-13-codebase-normalization-and-ui-consistency.md](15-phase-13-codebase-normalization-and-ui-consistency.md)
 16. [16-phase-12-13-execution-summary.md](16-phase-12-13-execution-summary.md)
+17. [17-phase-14-redundancy-elimination-and-architectural-consistency.md](17-phase-14-redundancy-elimination-and-architectural-consistency.md)
+18. [18-phase-15-monolith-decomposition-and-shared-widget-extraction.md](18-phase-15-monolith-decomposition-and-shared-widget-extraction.md)
+19. [19-phase-16-static-quality-and-reliability-hardening.md](19-phase-16-static-quality-and-reliability-hardening.md)
+20. [20-phase-17-domain-flow-and-analytical-workbench-normalization.md](20-phase-17-domain-flow-and-analytical-workbench-normalization.md)
 
 ## 文档职责
 
@@ -47,6 +51,18 @@
 - `15-phase-13-codebase-normalization-and-ui-consistency.md`
   - 定义代码规范、冗余收口与 UI 风格一致性阶段。
   - 该阶段负责清理兼容转发、重复适配、命名与导出不一致问题，并沉淀共享 UI token / 组件 / 状态呈现约定。
+- `17-phase-14-redundancy-elimination-and-architectural-consistency.md`
+  - 定义 `Phase 13` 之后的高收益重复实现清理与架构一致性硬化阶段。
+  - 该阶段负责处理 extension handler 重复、ProjectManager 内部重复服务、matplotlib 启动重复、小型死转发层，以及 DataPage 前提澄清后的后续边界。
+- `18-phase-15-monolith-decomposition-and-shared-widget-extraction.md`
+  - 定义 `Phase 14` 之后的超大页面与共享控件深拆阶段。
+  - 该阶段负责继续拆分 `DataPage`、`project_tree`、`image_viewer`、`extension_options_form` 等高复杂度 monolith，并把页面状态代理和共享控件职责进一步收口。
+- `19-phase-16-static-quality-and-reliability-hardening.md`
+  - 定义静态质量、异常策略和 UI 交互回调硬化阶段。
+  - 该阶段负责收口 `ruff` 高噪声问题、静默吞异常、具名回调替换、导入与导出面漂移，以及 state bridge 代理模式的可维护性问题。
+- `20-phase-17-domain-flow-and-analytical-workbench-normalization.md`
+  - 定义分析、导入、导出等长流程业务模块的结构收口阶段。
+  - 该阶段负责整理 `analysis_engine`、`import_dialog`、`export_flow`、`data_engine` 等长函数/长分支模块，使业务编排、结果模型和扩展接入边界更稳定。
 
 ## 阶段进入规则
 
@@ -108,6 +124,22 @@
   - 兼容层与死路径清理
   - 重复 helper / adapter 收口
   - UI token、状态文案和交互样式统一
+- 后置到 `Phase 14` 的重复实现与一致性硬化：
+  - extension runtime / api 重复实现消除
+  - 共享基础设施重复初始化收口
+  - `ProjectManager` 内部服务化提炼
+  - `DataPage` 前提校正后的页面边界和状态整理
+- 后置到 `Phase 15` 的深层 monolith 拆分：
+  - `DataPage` / `project_tree` / `image_viewer` / `extension_options_form` 等共享控件与页面深拆
+  - 页面 state bridge / presenter / panel factory 进一步固化
+- 后置到 `Phase 16` 的静态质量与可靠性硬化：
+  - `ruff` 高噪声债务
+  - 静默异常策略分级
+  - lambda / 闭包回调具名化
+  - state proxy / 导入导出面规范化
+- 后置到 `Phase 17` 的长流程业务编排收口：
+  - `analysis_engine` / `import_dialog` / `export_flow` / `data_engine` 长分支与长函数重构
+  - 结果模型、导入解析、导出计划与扩展入口边界统一
 
 ## 使用方式
 

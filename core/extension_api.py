@@ -9,7 +9,13 @@ from types import ModuleType
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
 import hashlib
 
-from core.line_tools import normalize_line, series_payloads_to_lines
+from core.line_tools import normalize_line
+from core.extension_runtime import (
+    invoke_analysis_extension_handler,
+    invoke_digitize_extension_handler,
+    invoke_plot_extension_handler,
+    invoke_processing_extension_handler,
+)
 
 
 XY = Tuple[List[float], List[float]]
@@ -1260,15 +1266,6 @@ def extension_entry_parameter_help_text(entry: Optional[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def invoke_processing_extension_handler(
-    handler: Callable[..., Any],
-    inputs: List[Dict[str, Any]],
-    params: Dict[str, Any],
-) -> Any:
-    result = handler(series_payloads_to_lines(inputs), dict(params))
-    return normalize_line(result)
-
-
 def _normalize_analysis_result_lines(payload: Dict[str, Any]) -> Dict[str, Any]:
     raw_lines = payload.get("lines")
     if raw_lines is None:
@@ -1324,85 +1321,6 @@ def _normalize_analysis_plot_series(payload: Dict[str, Any], line_lookup: Dict[s
         payload["_plot_series"] = [dict(item) for item in normalized_plot_series]
     if "plot_series" in payload:
         payload["plot_series"] = [dict(item) for item in normalized_plot_series]
-
-
-def invoke_analysis_extension_handler(
-    handler: Callable[..., Any],
-    inputs: List[Dict[str, Any]],
-    params: Dict[str, Any],
-) -> Any:
-    normalized_inputs = [dict(item or {}) for item in inputs]
-    result = handler(series_payloads_to_lines(normalized_inputs), dict(params))
-    if not isinstance(result, dict):
-        return result
-
-    payload = dict(result)
-    if normalized_inputs:
-        source_name = str(normalized_inputs[0].get("name", "") or "")
-        if source_name and not str(payload.get("source_name", "") or "").strip():
-            payload["source_name"] = source_name
-    if len(normalized_inputs) >= 2:
-        name1 = str(normalized_inputs[0].get("name", "") or "")
-        name2 = str(normalized_inputs[1].get("name", "") or "")
-        if name1 and not str(payload.get("name1", "") or "").strip():
-            payload["name1"] = name1
-        if name2 and not str(payload.get("name2", "") or "").strip():
-            payload["name2"] = name2
-    line_lookup = _normalize_analysis_result_lines(payload)
-    _normalize_analysis_plot_series(payload, line_lookup)
-    return payload
-
-
-def invoke_plot_extension_handler(
-    extension_or_handler: Any,
-    context: PlotExtensionContext,
-    params: Dict[str, Any],
-) -> None:
-    extension = extension_or_handler if isinstance(extension_or_handler, PlotExtension) else None
-    handler: Callable[..., Any] = extension.handler if extension is not None else cast(Callable[..., Any], extension_or_handler)
-    supported_phases = normalize_plot_extension_phases(getattr(extension, "phases", None)) if extension is not None else ("before_plot", "after_plot")
-    if context.phase not in supported_phases:
-        return
-
-    try:
-        import matplotlib.pyplot as plt
-    except Exception:
-        plt = None  # type: ignore[assignment]
-
-    if plt is not None and context.figure is not None:
-        try:
-            plt.figure(context.figure.number)
-        except Exception:
-            pass
-    if plt is not None and context.axis is not None:
-        try:
-            plt.sca(context.axis)
-        except Exception:
-            pass
-
-    try:
-        handler(context, dict(params))
-        context.refresh_axes()
-    finally:
-        pass
-
-    if plt is not None and context.axes:
-        try:
-            current_axis = plt.gca()
-        except Exception:
-            current_axis = None
-        if current_axis is not None and getattr(current_axis, "figure", None) is context.figure:
-            context.set_active_axis(current_axis)
-
-
-def invoke_digitize_extension_handler(
-    handler: Callable[..., Any],
-    figure: Any,
-    params: Dict[str, Any],
-) -> Any:
-    result = handler(figure, dict(params))
-    return normalize_line(result)
-
 
 def default_extensions_directory(base_dir: str | Path | None = None) -> Path:
     if base_dir is not None:
