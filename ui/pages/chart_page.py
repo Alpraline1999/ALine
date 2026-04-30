@@ -96,6 +96,7 @@ from ui.widgets.matplotlib_preview import (
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color, secondary_text_style_sheet
+from app.workspaces.chart_workspace import ChartWorkspaceController, ChartWorkspaceState
 
 try:
     import matplotlib
@@ -281,6 +282,8 @@ class ChartPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ensure_base_style_extensions_registered()
+        self._workspace_state = ChartWorkspaceState()
+        self._workspace_controller = ChartWorkspaceController(self._workspace_state)
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._chart_series: List[dict] = []
@@ -1491,8 +1494,7 @@ class ChartPage(QWidget):
         return scroll
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
-        self._selected_tree_kind = kind
-        self._selected_tree_id = node_id
+        self._workspace_controller.handle_tree_selected(kind, node_id)
 
     def on_tree_node_activated(self, kind: str, node_id: str) -> None:
         if kind == "global_curve_style_template":
@@ -4044,6 +4046,214 @@ class ChartPage(QWidget):
 
     def update_theme(self) -> None:
         self._redraw_now()
+
+    @property
+    def _chart_series(self):
+        return self._workspace_state.chart_series
+
+    @_chart_series.setter
+    def _chart_series(self, value):
+        self._workspace_state.chart_series = value
+
+    @property
+    def _curve_styles(self):
+        return self._workspace_state.curve_styles
+
+    @_curve_styles.setter
+    def _curve_styles(self, value):
+        self._workspace_state.curve_styles = value
+
+    @property
+    def _style_target(self):
+        return self._workspace_state.style_target
+
+    @_style_target.setter
+    def _style_target(self, value):
+        self._workspace_state.style_target = value
+
+    @property
+    def _figure_state(self):
+        return self._workspace_state.figure_state
+
+    @_figure_state.setter
+    def _figure_state(self, value):
+        self._workspace_state.figure_state = value
+
+    @property
+    def _plot_style_refs(self):
+        return self._workspace_state.plot_style_refs
+
+    @_plot_style_refs.setter
+    def _plot_style_refs(self, value):
+        self._workspace_state.plot_style_refs = value
+
+    @property
+    def _applied_plot_style_ref(self):
+        return self._workspace_state.applied_plot_style_ref
+
+    @_applied_plot_style_ref.setter
+    def _applied_plot_style_ref(self, value):
+        self._workspace_state.applied_plot_style_ref = value
+
+    @property
+    def _active_template_node_id(self):
+        return self._workspace_state.active_template_node_id
+
+    @_active_template_node_id.setter
+    def _active_template_node_id(self, value):
+        self._workspace_state.active_template_node_id = value
+
+    @property
+    def _curve_style_template_ids(self):
+        return self._workspace_state.curve_style_template_ids
+
+    @_curve_style_template_ids.setter
+    def _curve_style_template_ids(self, value):
+        self._workspace_state.curve_style_template_ids = value
+
+    @property
+    def _active_curve_style_ref(self):
+        return self._workspace_state.active_curve_style_ref
+
+    @_active_curve_style_ref.setter
+    def _active_curve_style_ref(self, value):
+        self._workspace_state.active_curve_style_ref = value
+
+    @property
+    def _active_curve_style_template_id(self):
+        return self._workspace_state.active_curve_style_template_id
+
+    @_active_curve_style_template_id.setter
+    def _active_curve_style_template_id(self, value):
+        self._workspace_state.active_curve_style_template_id = value
+
+    @property
+    def _current_plot_theme_id(self):
+        return self._workspace_state.current_plot_theme_id
+
+    @_current_plot_theme_id.setter
+    def _current_plot_theme_id(self, value):
+        self._workspace_state.current_plot_theme_id = value
+
+    @property
+    def _plot_extension_options(self):
+        return self._workspace_state.plot_extension_options
+
+    @_plot_extension_options.setter
+    def _plot_extension_options(self, value):
+        self._workspace_state.plot_extension_options = value
+
+    @property
+    def _applied_plot_extensions(self):
+        return self._workspace_state.applied_plot_extensions
+
+    @_applied_plot_extensions.setter
+    def _applied_plot_extensions(self, value):
+        self._workspace_state.applied_plot_extensions = value
+
+    @property
+    def _plot_extension_instance_seed(self):
+        return self._workspace_state.plot_extension_instance_seed
+
+    @_plot_extension_instance_seed.setter
+    def _plot_extension_instance_seed(self, value):
+        self._workspace_state.plot_extension_instance_seed = value
+
+    @property
+    def _style_change_sequence(self):
+        return self._workspace_state.style_change_sequence
+
+    @_style_change_sequence.setter
+    def _style_change_sequence(self, value):
+        self._workspace_state.style_change_sequence = value
+
+    @property
+    def _figure_state_change_versions(self):
+        return self._workspace_state.figure_state_change_versions
+
+    @_figure_state_change_versions.setter
+    def _figure_state_change_versions(self, value):
+        self._workspace_state.figure_state_change_versions = value
+
+    @property
+    def _plot_style_extra_versions(self):
+        return self._workspace_state.plot_style_extra_versions
+
+    @_plot_style_extra_versions.setter
+    def _plot_style_extra_versions(self, value):
+        self._workspace_state.plot_style_extra_versions = value
+
+    @property
+    def _curve_style_change_versions(self):
+        return self._workspace_state.curve_style_change_versions
+
+    @_curve_style_change_versions.setter
+    def _curve_style_change_versions(self, value):
+        self._workspace_state.curve_style_change_versions = value
+
+    @property
+    def _plot_style_extras(self):
+        return self._workspace_state.plot_style_extras
+
+    @_plot_style_extras.setter
+    def _plot_style_extras(self, value):
+        self._workspace_state.plot_style_extras = value
+
+    @property
+    def _legend_anchor_x_draft(self):
+        return self._workspace_state.legend_anchor_x_draft
+
+    @_legend_anchor_x_draft.setter
+    def _legend_anchor_x_draft(self, value):
+        self._workspace_state.legend_anchor_x_draft = value
+
+    @property
+    def _legend_anchor_y_draft(self):
+        return self._workspace_state.legend_anchor_y_draft
+
+    @_legend_anchor_y_draft.setter
+    def _legend_anchor_y_draft(self, value):
+        self._workspace_state.legend_anchor_y_draft = value
+
+    @property
+    def _preserve_partial_legend_anchor_draft(self):
+        return self._workspace_state.preserve_partial_legend_anchor_draft
+
+    @_preserve_partial_legend_anchor_draft.setter
+    def _preserve_partial_legend_anchor_draft(self, value):
+        self._workspace_state.preserve_partial_legend_anchor_draft = value
+
+    @property
+    def _display_dpi(self):
+        return self._workspace_state.display_dpi
+
+    @_display_dpi.setter
+    def _display_dpi(self, value):
+        self._workspace_state.display_dpi = value
+
+    @property
+    def _display_canvas_size(self):
+        return self._workspace_state.display_canvas_size
+
+    @_display_canvas_size.setter
+    def _display_canvas_size(self, value):
+        self._workspace_state.display_canvas_size = value
+
+    @property
+    def _selected_tree_kind(self):
+        return self._workspace_state.selected_tree_kind
+
+    @_selected_tree_kind.setter
+    def _selected_tree_kind(self, value):
+        self._workspace_state.selected_tree_kind = value
+
+    @property
+    def _selected_tree_id(self):
+        return self._workspace_state.selected_tree_id
+
+    @_selected_tree_id.setter
+    def _selected_tree_id(self, value):
+        self._workspace_state.selected_tree_id = value
 
 
 def _safe_float(value) -> Optional[float]:

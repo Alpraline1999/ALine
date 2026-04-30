@@ -26,6 +26,7 @@ from core.project_manager import project_manager
 from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
 from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
 from models.schemas import CalibrationData, DataFile, DataSeries
+from app.workspaces.digitize_workspace import DigitizeWorkspaceController, DigitizeWorkspaceState
 
 
 _SUPPORTED_SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
@@ -59,6 +60,8 @@ class DigitizePage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._workspace_state = DigitizeWorkspaceState()
+        self._workspace_controller = DigitizeWorkspaceController(self._workspace_state)
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._splitter = None
@@ -908,8 +911,7 @@ class DigitizePage(QWidget):
         return params
 
     def _clear_pending_digitize_interaction(self) -> None:
-        self._pending_digitize_field_key = None
-        self._pending_digitize_field_type = None
+        self._workspace_controller.clear_pending_interaction()
 
     def _set_digitize_interactive_field_value(self, key: str | None, value: Any) -> bool:
         if not key or self._digitize_extension_controls is None:
@@ -1355,8 +1357,8 @@ class DigitizePage(QWidget):
             self._refresh_project_tree()
 
         image_work = project_manager.add_image(file_path)
-        self._current_image_id = image_work.id
-        self._current_curve_id = None
+        self._workspace_controller.set_current_image(image_work.id)
+        self._workspace_controller.set_current_curve(None)
         self._image_viewer.load_image(project_manager.get_image_path(image_work.id))
         self._refresh_project_tree()
         self.project_modified.emit()
@@ -3414,6 +3416,150 @@ class DigitizePage(QWidget):
         self.project_modified.emit()
         self._is_undo_redo = False
         self._status_label.setText("已重做")
+
+    @property
+    def _current_image_id(self):
+        return self._workspace_state.current_image_id
+
+    @_current_image_id.setter
+    def _current_image_id(self, value):
+        self._workspace_state.current_image_id = value
+
+    @property
+    def _current_curve_id(self):
+        return self._workspace_state.current_curve_id
+
+    @_current_curve_id.setter
+    def _current_curve_id(self, value):
+        self._workspace_state.current_curve_id = value
+
+    @property
+    def _export_target_kind(self):
+        return self._workspace_state.export_target_kind
+
+    @_export_target_kind.setter
+    def _export_target_kind(self, value):
+        self._workspace_state.export_target_kind = value
+
+    @property
+    def _export_target_id(self):
+        return self._workspace_state.export_target_id
+
+    @_export_target_id.setter
+    def _export_target_id(self, value):
+        self._workspace_state.export_target_id = value
+
+    @property
+    def _last_export_suggestion(self):
+        return self._workspace_state.last_export_suggestion
+
+    @_last_export_suggestion.setter
+    def _last_export_suggestion(self, value):
+        self._workspace_state.last_export_suggestion = value
+
+    @property
+    def _current_curve_points(self):
+        return self._workspace_state.current_curve_points
+
+    @_current_curve_points.setter
+    def _current_curve_points(self, value):
+        self._workspace_state.current_curve_points = value
+
+    @property
+    def _active_tool(self):
+        return self._workspace_state.active_tool
+
+    @_active_tool.setter
+    def _active_tool(self, value):
+        self._workspace_state.active_tool = value
+
+    @property
+    def _hidden_curves(self):
+        return self._workspace_state.hidden_curves
+
+    @_hidden_curves.setter
+    def _hidden_curves(self, value):
+        self._workspace_state.hidden_curves = value
+
+    @property
+    def _undo_stack(self):
+        return self._workspace_state.undo_stack
+
+    @_undo_stack.setter
+    def _undo_stack(self, value):
+        self._workspace_state.undo_stack = value
+
+    @property
+    def _redo_stack(self):
+        return self._workspace_state.redo_stack
+
+    @_redo_stack.setter
+    def _redo_stack(self, value):
+        self._workspace_state.redo_stack = value
+
+    @property
+    def _max_history(self):
+        return self._workspace_state.max_history
+
+    @_max_history.setter
+    def _max_history(self, value):
+        self._workspace_state.max_history = value
+
+    @property
+    def _is_undo_redo(self):
+        return self._workspace_state.is_undo_redo
+
+    @_is_undo_redo.setter
+    def _is_undo_redo(self, value):
+        self._workspace_state.is_undo_redo = value
+
+    @property
+    def _sampled_color(self):
+        return self._workspace_state.sampled_color
+
+    @_sampled_color.setter
+    def _sampled_color(self, value):
+        self._workspace_state.sampled_color = value
+
+    @property
+    def _auto_preview_points(self):
+        return self._workspace_state.auto_preview_points
+
+    @_auto_preview_points.setter
+    def _auto_preview_points(self, value):
+        self._workspace_state.auto_preview_points = value
+
+    @property
+    def _shape_template(self):
+        return self._workspace_state.shape_template
+
+    @_shape_template.setter
+    def _shape_template(self, value):
+        self._workspace_state.shape_template = value
+
+    @property
+    def _auto_mode_type_ids(self):
+        return self._workspace_state.auto_mode_type_ids
+
+    @_auto_mode_type_ids.setter
+    def _auto_mode_type_ids(self, value):
+        self._workspace_state.auto_mode_type_ids = value
+
+    @property
+    def _pending_digitize_field_key(self):
+        return self._workspace_state.pending_digitize_field_key
+
+    @_pending_digitize_field_key.setter
+    def _pending_digitize_field_key(self, value):
+        self._workspace_state.pending_digitize_field_key = value
+
+    @property
+    def _pending_digitize_field_type(self):
+        return self._workspace_state.pending_digitize_field_type
+
+    @_pending_digitize_field_type.setter
+    def _pending_digitize_field_type(self, value):
+        self._workspace_state.pending_digitize_field_type = value
 
 
 # 需要导入 FIF
