@@ -10,12 +10,20 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.line_tools import (
+    Line,
+    Point,
+    XY,
+    line_from_xy,
+    line_xy,
+    normalize_line,
+    normalize_lines,
+    series_payload_to_line,
+    series_payloads_to_lines,
+)
+
 
 BUILTIN_EXTENSION_VERSION = "0.1.0"
-
-Point = List[float]
-Line = List[Point]
-XY = Tuple[List[float], List[float]]
 
 __all__ = [
     "BUILTIN_EXTENSION_VERSION",
@@ -34,64 +42,10 @@ __all__ = [
 ]
 
 
-def _normalize_point(raw: Any, index: int) -> Point:
-    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
-        raise ValueError(f"line 第 {index + 1} 个点必须是 [x, y]")
-    try:
-        x_value = float(raw[0])
-        y_value = float(raw[1])
-    except (TypeError, ValueError):
-        raise ValueError(f"line 第 {index + 1} 个点包含非数值坐标") from None
-    if not math.isfinite(x_value) or not math.isfinite(y_value):
-        raise ValueError(f"line 第 {index + 1} 个点包含无效坐标")
-    return [x_value, y_value]
-
-
-def normalize_line(raw: Any) -> Line:
-    """将单条曲线标准化为 point-list，即 [[x, y], ...]。"""
-    if not isinstance(raw, (list, tuple)):
-        raise ValueError("line 必须是 point-list，即 [[x, y], ...]")
-    return [_normalize_point(point, index) for index, point in enumerate(list(raw))]
-
-
-def normalize_lines(raw: Any) -> List[Line]:
-    """将曲线列表标准化为 line 数组。"""
-    if raw in (None, "", [], ()):  # type: ignore[comparison-overlap]
-        return []
-    return [normalize_line(item) for item in list(raw)]
-
-
-def line_from_xy(xs: List[float], ys: List[float]) -> Line:
-    """将 x/y 列表转换为 point-list 协议。"""
-    x_values = list(xs or [])
-    y_values = list(ys or [])
-    if len(x_values) != len(y_values):
-        raise ValueError("x_list 与 y_list 长度必须一致，无法转换为 line")
-    return normalize_line([[x_value, y_value] for x_value, y_value in zip(x_values, y_values)])
-
-
-def line_xy(line: Any) -> XY:
-    """从 point-list 协议中拆出 x/y 两个列表。"""
-    normalized = normalize_line(line)
-    return [point[0] for point in normalized], [point[1] for point in normalized]
-
-
 def primary_line(lines: Any) -> Line:
     """返回输入曲线列表中的第一条曲线。"""
     normalized = normalize_lines(lines)
     return normalized[0] if normalized else []
-
-
-def series_payload_to_line(item: Any) -> Line:
-    """将 series payload 或对象转换为 line 协议。"""
-    if isinstance(item, dict):
-        return line_from_xy(list(item.get("x", []) or []), list(item.get("y", []) or []))
-    return line_from_xy(list(getattr(item, "x", []) or []), list(getattr(item, "y", []) or []))
-
-
-def series_payloads_to_lines(raw: Any) -> List[Line]:
-    """批量将 series payload 列表转换为 line 协议。"""
-    return [series_payload_to_line(item) for item in list(raw or [])]
 
 
 def align_lines_to_common_x(
@@ -158,7 +112,7 @@ def _sorted_unique_xy(xs: List[float], ys: List[float]) -> XY:
             continue
         pairs.append((x_float, y_float))
     if len(pairs) < 2:
-        return list(xs), list(ys)
+        return line_xy(line_from_xy(xs, ys))
 
     pairs.sort(key=lambda item: item[0])
     unique_x: List[float] = []
@@ -169,7 +123,7 @@ def _sorted_unique_xy(xs: List[float], ys: List[float]) -> XY:
             continue
         unique_x.append(x_value)
         unique_y.append(y_value)
-    return unique_x, unique_y
+    return line_xy(line_from_xy(unique_x, unique_y))
 
 
 def _estimate_sample_spacing(xs: List[float]) -> Optional[float]:

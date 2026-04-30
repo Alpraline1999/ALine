@@ -8,11 +8,23 @@ from __future__ import annotations
 import math
 from typing import Any, List, Optional, Tuple
 
+from core.curve_data import (
+    CurveBuffer,
+    SeriesArrayView,
+    curve_buffer_to_line,
+    curve_buffer_to_views,
+    line_to_curve_buffer,
+    series_payload_to_curve_buffer,
+    series_payloads_to_curve_batch,
+)
+
 Point = List[float]
 Line = List[Point]
-XY = Tuple[List[float], List[float]]
+XY = Tuple[SeriesArrayView, SeriesArrayView]
 
 __all__ = [
+    "CurveBuffer",
+    "SeriesArrayView",
     "Point",
     "Line",
     "XY",
@@ -20,8 +32,13 @@ __all__ = [
     "normalize_lines",
     "line_from_xy",
     "line_xy",
+    "line_to_curve_buffer",
+    "curve_buffer_to_line",
+    "curve_buffer_to_views",
     "series_payload_to_line",
     "series_payloads_to_lines",
+    "series_payload_to_curve_buffer",
+    "series_payloads_to_curve_batch",
 ]
 
 
@@ -51,23 +68,16 @@ def normalize_lines(raw: Any) -> List[Line]:
 
 
 def line_from_xy(xs: List[float], ys: List[float]) -> Line:
-    x_values = list(xs or [])
-    y_values = list(ys or [])
-    if len(x_values) != len(y_values):
-        raise ValueError("x_list 与 y_list 长度必须一致，无法转换为 line")
-    return normalize_line([[x_value, y_value] for x_value, y_value in zip(x_values, y_values)])
+    return CurveBuffer.from_xy(xs, ys).to_line()
 
 
 def line_xy(line: Any) -> XY:
-    normalized = normalize_line(line)
-    return [point[0] for point in normalized], [point[1] for point in normalized]
+    return curve_buffer_to_views(line_to_curve_buffer(line))
 
 
 def series_payload_to_line(item: Any) -> Line:
-    if isinstance(item, dict):
-        return line_from_xy(list(item.get("x", []) or []), list(item.get("y", []) or []))
-    return line_from_xy(list(getattr(item, "x", []) or []), list(getattr(item, "y", []) or []))
+    return curve_buffer_to_line(series_payload_to_curve_buffer(item))
 
 
 def series_payloads_to_lines(raw: Any) -> List[Line]:
-    return [series_payload_to_line(item) for item in list(raw or [])]
+    return [buffer.to_line() for buffer in series_payloads_to_curve_batch(raw)]
