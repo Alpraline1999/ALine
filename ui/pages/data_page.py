@@ -69,6 +69,7 @@ from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
 from models.schemas import DataFile, DataSeries, Dataset, Curve
+from app.workspaces.data_workspace import DataWorkspaceController, DataWorkspaceState
 from ui.dialogs.export_flow import choose_curve_file_export_plan, curve_export_file_filter
 
 try:
@@ -181,19 +182,125 @@ class DataPage(QWidget):
     project_modified  = Signal()
     tree_filter_kinds = ["folder", "source_file", "data_file", "image_work", "series", "curve", "analysis_result"]
 
+    @property
+    def _selected_type(self):
+        return self._workspace_state.selected_type
+
+    @_selected_type.setter
+    def _selected_type(self, value):
+        self._workspace_state.selected_type = value
+
+    @property
+    def _selected_id(self):
+        return self._workspace_state.selected_id
+
+    @_selected_id.setter
+    def _selected_id(self, value):
+        self._workspace_state.selected_id = value
+
+    @property
+    def _selected_node_kind(self):
+        return self._workspace_state.selected_node_kind
+
+    @_selected_node_kind.setter
+    def _selected_node_kind(self, value):
+        self._workspace_state.selected_node_kind = value
+
+    @property
+    def _selected_node_id(self):
+        return self._workspace_state.selected_node_id
+
+    @_selected_node_id.setter
+    def _selected_node_id(self, value):
+        self._workspace_state.selected_node_id = value
+
+    @property
+    def _preview_xs(self):
+        return self._workspace_state.preview_xs
+
+    @_preview_xs.setter
+    def _preview_xs(self, value):
+        self._workspace_state.preview_xs = value
+
+    @property
+    def _preview_ys(self):
+        return self._workspace_state.preview_ys
+
+    @_preview_ys.setter
+    def _preview_ys(self, value):
+        self._workspace_state.preview_ys = value
+
+    @property
+    def _preview_name(self):
+        return self._workspace_state.preview_name
+
+    @_preview_name.setter
+    def _preview_name(self, value):
+        self._workspace_state.preview_name = value
+
+    @property
+    def _preview_x_label(self):
+        return self._workspace_state.preview_x_label
+
+    @_preview_x_label.setter
+    def _preview_x_label(self, value):
+        self._workspace_state.preview_x_label = value
+
+    @property
+    def _preview_y_label(self):
+        return self._workspace_state.preview_y_label
+
+    @_preview_y_label.setter
+    def _preview_y_label(self, value):
+        self._workspace_state.preview_y_label = value
+
+    @property
+    def _pending_import_paths(self):
+        return self._workspace_state.pending_import_paths
+
+    @_pending_import_paths.setter
+    def _pending_import_paths(self, value):
+        self._workspace_state.pending_import_paths = value
+
+    @property
+    def _pending_import_names(self):
+        return self._workspace_state.pending_import_names
+
+    @_pending_import_names.setter
+    def _pending_import_names(self, value):
+        self._workspace_state.pending_import_names = value
+
+    @property
+    def _node_preview_states(self):
+        return self._workspace_state.node_preview_states
+
+    @_node_preview_states.setter
+    def _node_preview_states(self, value):
+        self._workspace_state.node_preview_states = value
+
+    @property
+    def _current_extension_config_id(self):
+        return self._workspace_state.current_extension_config_id
+
+    @_current_extension_config_id.setter
+    def _current_extension_config_id(self, value):
+        self._workspace_state.current_extension_config_id = value
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._selected_type: Optional[str] = None
-        self._selected_id:   Optional[str] = None
-        self._selected_node_kind: Optional[str] = None
-        self._selected_node_id: Optional[str] = None
-        self._preview_xs: list[float] = []
-        self._preview_ys: list[float] = []
+        self._workspace_state = DataWorkspaceState()
+        self._workspace_controller = DataWorkspaceController(self._workspace_state)
+        self._selected_type = None
+        self._selected_id = None
+        self._selected_node_kind = None
+        self._selected_node_id = None
+        self._preview_xs = []
+        self._preview_ys = []
         self._preview_name = ""
         self._preview_x_label = "X"
         self._preview_y_label = "Y"
-        self._pending_import_paths: list[str] = []
-        self._pending_import_names: dict[str, str] = {}
+        self._pending_import_paths = []
+        self._pending_import_names = {}
         self._pending_import_states: dict[str, _PendingImportQueueState] = {
             "source_files": _PendingImportQueueState(),
             "datasets": _PendingImportQueueState(),
@@ -206,7 +313,7 @@ class DataPage(QWidget):
         self._preview_image_path: Optional[str] = None
         self._node_preview_states: dict[str, _NodePreviewState] = {}
         self._current_source_preview_total_rows = 0
-        self._current_extension_config_id: Optional[str] = None
+        self._current_extension_config_id = None
         self._fluent_tooltip = None
         self._fluent_tooltip_views: dict[QWidget, TreeWidget] = {}
         self._shortcut_bindings = ShortcutBindingSet()
@@ -4715,8 +4822,7 @@ class DataPage(QWidget):
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树选中节点 → 显示预览。"""
-        self._selected_node_kind = kind
-        self._selected_node_id = node_id
+        self._workspace_controller.handle_tree_selected(kind, node_id)
         if kind == "global_extension_config" and self._show_extension_config_editor(node_id):
             self._selected_type = None
             self._selected_id = None

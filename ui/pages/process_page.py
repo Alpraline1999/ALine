@@ -22,6 +22,7 @@ from qfluentwidgets import (
 
 from core.extension_api import build_extension_entry, ensure_configured_extensions_loaded, extension_lines_number, extension_registry, normalize_extension_lines_list, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
+from app.workspaces.process_workspace import ProcessWorkspaceController, ProcessWorkspaceState
 from ui.theme import (
     WORKBENCH_BUTTON_HEIGHT,
     WORKBENCH_BUTTON_MIN_WIDTH,
@@ -103,19 +104,93 @@ class ProcessPage(QWidget):
     project_modified = Signal()  # 操作链保存等操作导致项目修改时发出
     assets_modified = Signal()   # 全局 Pipeline 模板变更时发出
 
+    @property
+    def _selected_inputs(self):
+        return self._workspace_state.selected_inputs
+
+    @_selected_inputs.setter
+    def _selected_inputs(self, value):
+        self._workspace_state.selected_inputs = value
+
+    @property
+    def _src_series_batch(self):
+        return self._workspace_state.src_series_batch
+
+    @_src_series_batch.setter
+    def _src_series_batch(self, value):
+        self._workspace_state.src_series_batch = value
+
+    @property
+    def _out_series_batch(self):
+        return self._workspace_state.out_series_batch
+
+    @_out_series_batch.setter
+    def _out_series_batch(self, value):
+        self._workspace_state.out_series_batch = value
+
+    @property
+    def _pipeline_warnings(self):
+        return self._workspace_state.pipeline_warnings
+
+    @_pipeline_warnings.setter
+    def _pipeline_warnings(self, value):
+        self._workspace_state.pipeline_warnings = value
+
+    @property
+    def _selected_src_id(self):
+        return self._workspace_state.selected_src_id
+
+    @_selected_src_id.setter
+    def _selected_src_id(self, value):
+        self._workspace_state.selected_src_id = value
+
+    @property
+    def _selected_source_kind(self):
+        return self._workspace_state.selected_source_kind
+
+    @_selected_source_kind.setter
+    def _selected_source_kind(self, value):
+        self._workspace_state.selected_source_kind = value
+
+    @property
+    def _selected_source_node_id(self):
+        return self._workspace_state.selected_source_node_id
+
+    @_selected_source_node_id.setter
+    def _selected_source_node_id(self, value):
+        self._workspace_state.selected_source_node_id = value
+
+    @property
+    def _current_pipeline_id(self):
+        return self._workspace_state.current_pipeline_id
+
+    @_current_pipeline_id.setter
+    def _current_pipeline_id(self, value):
+        self._workspace_state.current_pipeline_id = value
+
+    @property
+    def _save_target_ids(self):
+        return self._workspace_state.save_target_ids
+
+    @_save_target_ids.setter
+    def _save_target_ids(self, value):
+        self._workspace_state.save_target_ids = value
+
     def __init__(self, parent=None):
         super().__init__(parent)
         ensure_configured_extensions_loaded()
+        self._workspace_state = ProcessWorkspaceState()
+        self._workspace_controller = ProcessWorkspaceController(self._workspace_state)
         self._extension_panel_visible = False
         self._extension_panel_width = 360
         self._src_xs: List[float] = []
         self._src_ys: List[float] = []
         self._out_xs: List[float] = []
         self._out_ys: List[float] = []
-        self._selected_inputs: List[Dict[str, Any]] = []
-        self._src_series_batch: List[DataSeries] = []
-        self._out_series_batch: List[DataSeries] = []
-        self._pipeline_warnings: List[str] = []
+        self._selected_inputs = []
+        self._src_series_batch = []
+        self._out_series_batch = []
+        self._pipeline_warnings = []
         self._ops: List[Dict[str, Any]] = []
         self._param_widgets: List[_ParamWidget] = []
         self._pipeline_selected_node_ids: List[str] = []
@@ -125,12 +200,12 @@ class ProcessPage(QWidget):
         self._processing_op_hints: Dict[str, str] = {}
         self._processing_extension_options: Dict[str, Dict[str, Any]] = {}
         self._preview_nav_toolbar = None
-        self._selected_src_id: Optional[str] = None
-        self._selected_source_kind: Optional[str] = None
-        self._selected_source_node_id: Optional[str] = None
-        self._current_pipeline_id: Optional[str] = None
+        self._selected_src_id = None
+        self._selected_source_kind = None
+        self._selected_source_node_id = None
+        self._current_pipeline_id = None
         self._pipeline_template_ids: List[str] = []
-        self._save_target_ids: List[Optional[str]] = []
+        self._save_target_ids = []
         # 防抖定时器：参数变更时防止每次按键都触发管道计算
         self._run_timer = QTimer(self)
         self._run_timer.setSingleShot(True)
@@ -1653,8 +1728,7 @@ class ProcessPage(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def receive_data(self, data_type: str, obj_id: str):
-        self._selected_source_kind = data_type
-        self._selected_source_node_id = obj_id
+        self._workspace_controller.receive_data_request(data_type, obj_id)
         if self._append_inputs_from_tree_node(data_type, obj_id):
             return
         self._refresh_tree()
@@ -1671,10 +1745,9 @@ class ProcessPage(QWidget):
                     return
 
     def on_tree_node_activated(self, kind: str, node_id: str) -> None:
-        if kind.endswith("_to_process"):
-            kind = kind[:-11]
-        if kind in ("series", "curve", "data_file", "image_work"):
-            self.receive_data(kind, node_id)
+        handled = self._workspace_controller.handle_tree_activated(kind, node_id)
+        if handled is not None:
+            self.receive_data(*handled)
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         del kind, node_id
