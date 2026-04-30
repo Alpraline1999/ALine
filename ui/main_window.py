@@ -166,11 +166,6 @@ class _SharedTreePanel(QWidget):
         self.extension_toggle_btn.hide()
         right_group.addWidget(self.extension_toggle_btn)
 
-        # AI 助手入口已暂停，保留隐藏按钮以兼容旧属性访问。
-        self.ai_toggle_btn = ToggleToolButton(FIF.CHAT, self)
-        self.ai_toggle_btn.setToolTip("显示/隐藏 AI 助手")
-        self.ai_toggle_btn.hide()
-
         toolbar.addWidget(right_group_container, 1)
 
         layout.addLayout(toolbar)
@@ -186,8 +181,7 @@ class _SharedTreePanel(QWidget):
         # 安装 Fluent 风格 Tooltip
         for btn in [self.new_project_btn, self.open_project_btn, self.save_project_btn,
             self.close_project_btn, self.tree_expand_toggle_btn, self.tree_manage_btn,
-            self.extension_toggle_btn,
-                    self.ai_toggle_btn]:
+            self.extension_toggle_btn]:
             btn.setFixedSize(32, 32)
             btn.installEventFilter(ToolTipFilter(btn, 500, ToolTipPosition.BOTTOM))
 

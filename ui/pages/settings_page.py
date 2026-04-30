@@ -171,8 +171,6 @@ class SettingsPage(QWidget):
         tabs.addTab(self._build_general_tab(), "常规")
         tabs.addTab(self._build_extensions_tab(), "扩展")
         tabs.addTab(self._build_shortcuts_tab(), "快捷键")
-        self._hidden_ai_tab = self._build_ai_tab()
-        self._hidden_ai_tab.hide()
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
