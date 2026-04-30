@@ -104,38 +104,6 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _current_report_template_id(self, value):
         self._workspace_state.current_report_template_id = value
 
-    @property
-    def _current_report_template_name(self):
-        return self._workspace_state.current_report_template_name
-
-    @_current_report_template_name.setter
-    def _current_report_template_name(self, value):
-        self._workspace_state.current_report_template_name = value
-
-    @property
-    def _report_template_ids(self):
-        return self._workspace_state.report_template_ids
-
-    @_report_template_ids.setter
-    def _report_template_ids(self, value):
-        self._workspace_state.report_template_ids = value
-
-    @property
-    def _selected_tree_kind(self):
-        return self._workspace_state.selected_tree_kind
-
-    @_selected_tree_kind.setter
-    def _selected_tree_kind(self, value):
-        self._workspace_state.selected_tree_kind = value
-
-    @property
-    def _selected_tree_node_id(self):
-        return self._workspace_state.selected_tree_node_id
-
-    @_selected_tree_node_id.setter
-    def _selected_tree_node_id(self, value):
-        self._workspace_state.selected_tree_node_id = value
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._workspace_state = AnalysisWorkspaceState()
@@ -147,18 +115,18 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._analysis_label_map: Dict[str, str] = {}
         self._analysis_extension_options: Dict[str, Dict[str, Any]] = {}
         # 已选分析数据列表：List[{"kind": str, "node_id": str, "label": str}]
-        self._selected_inputs = []
-        self._current_report_template_id = None
-        self._current_report_template_name = "默认模板"
-        self._report_template_ids = [None]
+        self._workspace_state.selected_inputs = []
+        self._workspace_state.current_report_template_id = None
+        self._workspace_state.current_report_template_name = "默认模板"
+        self._workspace_state.report_template_ids = [None]
         self._analysis_tab_views: Dict[str, Dict[str, Any]] = {}
         self._analysis_tab_keys: List[str] = []
         self._report_result_selectors: Dict[str, ComboBox] = {}
         self._report_result_selector_keys: Dict[str, List[Optional[str]]] = {}
         self._report_placeholder_completer: Optional[QCompleter] = None
         self._report_placeholder_search_model: Optional[QStringListModel] = None
-        self._selected_tree_kind = None
-        self._selected_tree_node_id = None
+        self._workspace_state.selected_tree_kind = None
+        self._workspace_state.selected_tree_node_id = None
         self._report_placeholder_entries = list_report_template_placeholders()
         self._next_temporary_result_number = 1
         self._shortcut_bindings = ShortcutBindingSet()
@@ -1051,6 +1019,14 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _refresh_analysis_type_choices(self) -> None:
         current_type = self._current_analysis_type() if hasattr(self, "_type_combo") else None
         entries = self._analysis_extension_entries()
+        if not entries:
+            entries = [
+                {"type": "curve_fit", "name": "曲线拟合"},
+                {"type": "peak_detect", "name": "峰值检测"},
+                {"type": "statistics", "name": "统计分析"},
+                {"type": "correlation", "name": "相关性分析"},
+                {"type": "error_compare", "name": "误差对比"},
+            ]
         self._analysis_type_labels = [str(entry.get("name") or entry.get("type") or "分析") for entry in entries]
         self._analysis_type_ids = [str(entry.get("type") or "") for entry in entries]
         self._analysis_label_map = {
@@ -1748,7 +1724,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _on_type_changed(self, idx: int):
-        t = self._analysis_type_ids[idx] if idx < len(self._analysis_type_ids) else "curve_fit"
+        t = self._analysis_type_ids[idx] if 0 <= idx < len(self._analysis_type_ids) else "curve_fit"
         self._result = None
         uses_extension_form = extension_registry.get_analysis(t) is not None
         self._extension_params_label.setVisible(False)
