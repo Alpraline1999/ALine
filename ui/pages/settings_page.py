@@ -235,6 +235,42 @@ class SettingsPage(QWidget):
             f" border: 1px solid {accent_color()}; border-radius: 8px; padding: 4px 8px;"
         )
 
+    def _ai_config_controls_ready(self) -> bool:
+        return all(
+            hasattr(self, name) and getattr(self, name) is not None
+            for name in (
+                "_ai_provider_combo",
+                "_ai_url_edit",
+                "_ai_key_edit",
+                "_ai_model_edit",
+                "_ai_timeout_edit",
+                "_ai_temperature_edit",
+                "_ai_top_p_edit",
+                "_ai_max_tokens_edit",
+                "_ai_system_prompt_edit",
+                "_ai_ollama_keep_alive_edit",
+                "_ai_ollama_num_ctx_edit",
+                "_ai_provider_hint",
+                "_ai_refresh_models_btn",
+                "_ai_model_preset_combo",
+            )
+        )
+
+    def _ai_tools_controls_ready(self) -> bool:
+        return all(
+            hasattr(self, name) and getattr(self, name) is not None
+            for name in (
+                "_ai_tools_project_label",
+                "_ai_tools_summary_label",
+                "_ai_tool_selector",
+                "_ai_tool_detail_name",
+                "_ai_tool_detail_type",
+                "_ai_tool_detail_desc",
+                "_ai_tool_edit_btn",
+                "_ai_tool_delete_btn",
+            )
+        )
+
     @staticmethod
     def _attach_setting_card_control(card: SettingCard, widget: QWidget, *, alignment: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignRight) -> None:
         card.hBoxLayout.addWidget(widget, 0, alignment | Qt.AlignmentFlag.AlignVCenter)
@@ -1223,12 +1259,16 @@ class SettingsPage(QWidget):
     # ── AI 配置方法 ──────────────────────────────────────────
 
     def _current_provider_key(self) -> str:
+        if not self._ai_config_controls_ready():
+            return self._active_provider_key
         idx = self._ai_provider_combo.currentIndex()
         if 0 <= idx < len(self._provider_keys):
             return self._provider_keys[idx]
         return self._active_provider_key
 
     def _populate_model_presets(self, models: list[str], preferred: str = "") -> None:
+        if not self._ai_config_controls_ready():
+            return
         current = preferred or self._ai_model_edit.text().strip()
         self._ai_model_preset_combo.blockSignals(True)
         self._ai_model_preset_combo.clear()
@@ -1242,6 +1282,8 @@ class SettingsPage(QWidget):
         self._ai_model_preset_combo.blockSignals(False)
 
     def _on_model_preset_changed(self, idx: int) -> None:
+        if not self._ai_config_controls_ready():
+            return
         if idx < 0:
             return
         model_name = self._ai_model_preset_combo.currentText().strip()
@@ -1267,6 +1309,9 @@ class SettingsPage(QWidget):
     def _collect_ai_config(self):
         from core.ai_client import AIConfig
 
+        if not self._ai_config_controls_ready():
+            return AIConfig()
+
         provider = self._current_provider_key()
         if provider not in {"openai_compatible", "ollama"}:
             provider = "openai_compatible"
@@ -1287,6 +1332,8 @@ class SettingsPage(QWidget):
         )
 
     def _load_ai_config(self) -> None:
+        if not self._ai_config_controls_ready():
+            return
         from core.ai_client import AIConfig
         cfg = AIConfig.load()
         idx = self._provider_keys.index(cfg.provider) if cfg.provider in self._provider_keys else 0
@@ -1304,6 +1351,8 @@ class SettingsPage(QWidget):
         self._on_ai_provider_changed(idx)
 
     def _on_ai_provider_changed(self, idx: int) -> None:
+        if not self._ai_config_controls_ready():
+            return
         provider = self._provider_keys[idx] if 0 <= idx < len(self._provider_keys) else "openai_compatible"
         previous_preset = get_provider_preset(self._active_provider_key)
         preset = get_provider_preset(provider)
@@ -1334,11 +1383,15 @@ class SettingsPage(QWidget):
         self._active_provider_key = provider
 
     def _save_ai_config(self) -> None:
+        if not self._ai_config_controls_ready():
+            return
         cfg = self._collect_ai_config()
         cfg.save()
         InfoBar.success("已保存", "AI 配置已保存", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _refresh_available_models(self) -> None:
+        if not self._ai_config_controls_ready():
+            return
         from core.ai_client import AIClient
 
         provider = self._current_provider_key()
@@ -1358,6 +1411,8 @@ class SettingsPage(QWidget):
         InfoBar.success("模型已刷新", f"发现 {len(models)} 个可用模型", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _test_ai_connection(self) -> None:
+        if not self._ai_config_controls_ready():
+            return
         self._save_ai_config()
         InfoBar.info("测试中", "正在测试 AI 连接…", parent=self._notification_parent(), position=InfoBarPosition.TOP)
         import asyncio
@@ -1393,6 +1448,8 @@ class SettingsPage(QWidget):
         self._refresh_ai_tools_panel()
 
     def _refresh_ai_tools_panel(self) -> None:
+        if not self._ai_tools_controls_ready():
+            return
         from ai.command_layer import COMMANDS
         from core.global_assets import global_assets
 
@@ -1443,6 +1500,8 @@ class SettingsPage(QWidget):
             self._clear_ai_tool_detail()
 
     def _clear_ai_tool_detail(self) -> None:
+        if not self._ai_tools_controls_ready():
+            return
         self._ai_tool_detail_name.setText("—")
         self._ai_tool_detail_type.setText("—")
         self._ai_tool_detail_desc.setText("—")
@@ -1450,6 +1509,8 @@ class SettingsPage(QWidget):
         self._ai_tool_delete_btn.setEnabled(False)
 
     def _on_ai_tool_selected(self, idx: int) -> None:
+        if not self._ai_tools_controls_ready():
+            return
         if idx < 0 or idx >= len(self._ai_tool_items):
             self._clear_ai_tool_detail()
             return

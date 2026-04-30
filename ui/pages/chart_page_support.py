@@ -6,6 +6,20 @@ from typing import Any, Dict
 from core.extension_api import PlotExtension, PlotExtensionContext
 from models.schemas import FigureState
 from qfluentwidgets import FluentIcon as FIF
+from ui.matplotlib_fonts import configure_matplotlib_cjk
+
+try:
+    import matplotlib
+
+    matplotlib.use("QtAgg")
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.figure import Figure
+    configure_matplotlib_cjk(matplotlib)
+    HAS_MATPLOTLIB = True
+    _MATPLOTLIB_ERROR = ""
+except Exception as exc:
+    HAS_MATPLOTLIB = False
+    _MATPLOTLIB_ERROR = f"{type(exc).__name__}: {exc}"
 
 
 _STYLES = [
