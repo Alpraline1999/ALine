@@ -1,20 +1,12 @@
-"""
-AI 命令层 — COMMANDS 注册表 + CommandDispatcher
-
-每个 command handler 接收 params: dict，返回 CommandResult。
-CommandDispatcher.get_tools_schema() 返回 OpenAI function calling 格式。
-"""
 from __future__ import annotations
 
-import asyncio
-import json
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from ai import command_registry
-from core.global_assets import global_assets
 from ai.skill_runner import skill_runner
 from core.ai_client import AIClient
+from core.global_assets import global_assets
 from core.project_manager import project_manager
 
 
@@ -95,10 +87,6 @@ def _resolve_series(project, series_key: str):
         return None, f"系列标识不唯一: {clean_key}，匹配到 {names}"
     return None, f"找不到系列: {clean_key}"
 
-
-# ─────────────────────────────────────────────────────────────
-# Command handlers
-# ─────────────────────────────────────────────────────────────
 
 def cmd_get_project_summary(params: dict) -> CommandResult:
     p = project_manager.current_project
@@ -256,10 +244,7 @@ def cmd_list_saved_pipelines(params: dict) -> CommandResult:
     ])
 
 
-# ─── 8 条新命令（v0.3）──────────────────────────────────────────────────
-
 def cmd_import_data_file(params: dict) -> CommandResult:
-    """导入数据文件并添加到项目。"""
     file_path = params.get("file_path", "")
     parent_id = params.get("parent_id")
     if not file_path:
@@ -267,7 +252,6 @@ def cmd_import_data_file(params: dict) -> CommandResult:
     try:
         from core.data_operations import import_file
         from models.schemas import DataFile
-        import os
         series_list = import_file(file_path)
         df = DataFile(
             name=os.path.basename(file_path),
@@ -286,7 +270,6 @@ def cmd_import_data_file(params: dict) -> CommandResult:
 
 
 def cmd_export_series(params: dict) -> CommandResult:
-    """将指定数据系列导出为 CSV 文件。"""
     series_id = params.get("series_id", "")
     output_path = params.get("output_path", "")
     if not series_id or not output_path:
@@ -310,7 +293,6 @@ def cmd_export_series(params: dict) -> CommandResult:
 
 
 def cmd_apply_pipeline_persist(params: dict) -> CommandResult:
-    """对系列执行 Pipeline 并将结果保存为新 DataSeries。"""
     series_id = params.get("series_id", "")
     pipeline_id = params.get("pipeline_id", "")
     new_name = params.get("new_name", "")
@@ -331,7 +313,6 @@ def cmd_apply_pipeline_persist(params: dict) -> CommandResult:
             name=new_name or f"{series.name}_processed",
             x=xs, y=ys, source="computed",
         )
-        # 找到 series 所在 DataFile 并追加
         for df in p.data_files:
             if any(s.id == series_id for s in df.series):
                 df.series.append(new_series)
@@ -343,20 +324,17 @@ def cmd_apply_pipeline_persist(params: dict) -> CommandResult:
 
 
 def cmd_generate_report(params: dict) -> CommandResult:
-    """使用指定模板渲染分析报告，返回 Markdown 字符串。"""
     template_id = params.get("template_id", "")
     analysis_id = params.get("analysis_id", "")
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    # 获取模板内容
     if template_id:
         tmpl = project_manager.get_report_template(template_id)
         template_content = tmpl.content if tmpl else ""
     else:
         from core.analysis_engine import _DEFAULT_REPORT_TEMPLATE
         template_content = _DEFAULT_REPORT_TEMPLATE
-    # 获取分析结果
     result_data = {}
     if analysis_id:
         ar = p.find_analysis(analysis_id)
@@ -369,7 +347,6 @@ def cmd_generate_report(params: dict) -> CommandResult:
 
 
 def cmd_list_image_works(params: dict) -> CommandResult:
-    """列出项目中所有图像工作项。"""
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
@@ -380,7 +357,6 @@ def cmd_list_image_works(params: dict) -> CommandResult:
 
 
 def cmd_list_report_templates(params: dict) -> CommandResult:
-    """列出项目中所有报告模板。"""
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
@@ -391,7 +367,6 @@ def cmd_list_report_templates(params: dict) -> CommandResult:
 
 
 def cmd_save_figure_template(params: dict) -> CommandResult:
-    """将指定绘图配置保存为模板。"""
     name = params.get("name", "untitled")
     theme = params.get("theme", "默认")
     from models.schemas import FigureConfig, AxisConfig
@@ -410,9 +385,8 @@ def cmd_save_figure_template(params: dict) -> CommandResult:
 
 
 def cmd_manage_ai_tool(params: dict) -> CommandResult:
-    """创建/更新/删除 AI 工具（prompt/skill/agent）。"""
-    action = params.get("action", "create")  # create / update / delete
-    tool_type = params.get("tool_type", "prompt")  # prompt / skill / agent
+    action = params.get("action", "create")
+    tool_type = params.get("tool_type", "prompt")
     tool_id = params.get("tool_id", "")
     name = params.get("name", "")
     content = params.get("content", "")
@@ -444,10 +418,6 @@ def cmd_manage_ai_tool(params: dict) -> CommandResult:
 
     return CommandResult(success=False, error=f"未知 action: {action}")
 
-
-# ─────────────────────────────────────────────────────────────
-# 命令注册表
-# ─────────────────────────────────────────────────────────────
 
 COMMANDS: Dict[str, CommandDef] = {
     "get_project_summary": CommandDef(
@@ -591,182 +561,3 @@ COMMANDS: Dict[str, CommandDef] = {
         },
     ),
 }
-
-
-class CommandDispatcher:
-    """执行已注册命令，并提供 OpenAI function calling 格式的 tools schema。"""
-
-    def __init__(self, runtime_context: Optional[dict] = None):
-        self._runtime_context = dict(runtime_context or {})
-
-    def set_runtime_context(self, runtime_context: Optional[dict]) -> None:
-        self._runtime_context = dict(runtime_context or {})
-
-    @staticmethod
-    def _global_tool_name(prefix: str, item_id: str) -> str:
-        return f"{prefix}_{item_id.replace('-', '_')}"
-
-    def _builtin_catalog(self) -> List[dict]:
-        catalog: List[dict] = []
-        for name, cmd in command_registry.COMMANDS.items():
-            props = {}
-            required = []
-            for param_name, param_info in cmd.params_schema.items():
-                props[param_name] = {
-                    "type": param_info.get("type", "string"),
-                    "description": param_info.get("description", ""),
-                }
-                if "default" not in param_info:
-                    required.append(param_name)
-            catalog.append({
-                "name": name,
-                "label": f"内置 · {name}",
-                "description": cmd.desc,
-                "parameters": {
-                    "type": "object",
-                    "properties": props,
-                    "required": required,
-                },
-                "kind": "builtin",
-                "item_id": None,
-            })
-        return catalog
-
-    def _dynamic_ai_catalog(self) -> List[dict]:
-        catalog: List[dict] = []
-        for prompt in global_assets.list_ai_prompts():
-            catalog.append({
-                "name": self._global_tool_name("global_prompt", prompt.id),
-                "label": f"Prompt · {prompt.name}",
-                "description": prompt.description or f"读取全局 Prompt「{prompt.name}」的内容。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-                "kind": "prompt",
-                "item_id": prompt.id,
-            })
-        for skill in global_assets.list_ai_skills():
-            catalog.append({
-                "name": self._global_tool_name("global_skill", skill.id),
-                "label": f"Skill · {skill.name}",
-                "description": skill.description or f"在 ALine 沙箱中执行全局 Skill「{skill.name}」。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "task": {"type": "string", "description": "给 Skill 的任务说明，可选。"},
-                        "payload": {"type": "object", "description": "传给 Skill 的结构化输入，可选。"},
-                    },
-                    "required": [],
-                },
-                "kind": "skill",
-                "item_id": skill.id,
-            })
-        for agent in global_assets.list_ai_agents():
-            catalog.append({
-                "name": self._global_tool_name("global_agent", agent.id),
-                "label": f"Agent · {agent.name}",
-                "description": agent.description or f"调用全局 Agent「{agent.name}」处理子任务。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "task": {"type": "string", "description": "交给该 Agent 的子任务说明。"},
-                    },
-                    "required": ["task"],
-                },
-                "kind": "agent",
-                "item_id": agent.id,
-            })
-        return catalog
-
-    def list_tool_catalog(self) -> List[dict]:
-        return self._builtin_catalog() + self._dynamic_ai_catalog()
-
-    def _dynamic_tool_entry(self, action: str) -> Optional[dict]:
-        return next((item for item in self._dynamic_ai_catalog() if item["name"] == action), None)
-
-    def _execute_dynamic_tool(self, entry: dict, params: dict) -> CommandResult:
-        kind = entry["kind"]
-        item_id = entry["item_id"]
-        if kind == "prompt":
-            prompt = global_assets.get_ai_prompt(item_id)
-            if prompt is None:
-                return command_registry.CommandResult(success=False, error="找不到指定 Prompt")
-            return command_registry.CommandResult(data={
-                "type": "prompt",
-                "name": prompt.name,
-                "description": prompt.description,
-                "content": prompt.content,
-            })
-
-        if kind == "skill":
-            skill = global_assets.get_ai_skill(item_id)
-            if skill is None:
-                return command_registry.CommandResult(success=False, error="找不到指定 Skill")
-            result = skill_runner.run(skill.code, extra_vars={
-                "task": params.get("task", ""),
-                "payload": params.get("payload"),
-                "context": dict(self._runtime_context),
-            })
-            return command_registry.CommandResult(data={
-                "type": "skill",
-                "name": skill.name,
-                **result.to_dict(),
-            })
-
-        if kind == "agent":
-            agent = global_assets.get_ai_agent(item_id)
-            if agent is None:
-                return command_registry.CommandResult(success=False, error="找不到指定 Agent")
-            task = str(params.get("task") or "").strip()
-            if not task:
-                return command_registry.CommandResult(success=False, error="缺少 task 参数")
-            context_text = str(self._runtime_context.get("context_text") or "暂无上下文")
-            try:
-                response = asyncio.run(AIClient().chat([
-                    {"role": "system", "content": agent.system_prompt},
-                    {"role": "user", "content": f"ALine 当前上下文:\n{context_text}\n\n子任务:\n{task}"},
-                ]))
-            except Exception as exc:
-                return command_registry.CommandResult(success=False, error=str(exc))
-            if response.error:
-                return command_registry.CommandResult(success=False, error=response.error)
-            return command_registry.CommandResult(data={
-                "type": "agent",
-                "name": agent.name,
-                "content": response.content or "",
-            })
-
-        return command_registry.CommandResult(success=False, error=f"未知 AI 工具类型: {kind}")
-
-    def execute(self, command: dict) -> command_registry.CommandResult:
-        """command = {"action": "cmd_name", "params": {...}}"""
-        action = command.get("action", "")
-        params = command.get("params", {})
-        cmd_def = command_registry.COMMANDS.get(action)
-        if cmd_def is not None:
-            try:
-                return cmd_def.handler(params)
-            except Exception as e:
-                return command_registry.CommandResult(success=False, error=str(e))
-
-        dynamic_tool = self._dynamic_tool_entry(action)
-        if dynamic_tool is not None:
-            return self._execute_dynamic_tool(dynamic_tool, params)
-
-        return command_registry.CommandResult(success=False, error=f"未知命令: {action}")
-
-    def get_tools_schema(self) -> List[dict]:
-        """返回 OpenAI function calling 格式的 tools 列表。"""
-        tools = []
-        for entry in self.list_tool_catalog():
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": entry["name"],
-                    "description": entry["description"],
-                    "parameters": entry["parameters"],
-                },
-            })
-        return tools
