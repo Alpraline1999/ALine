@@ -25,6 +25,7 @@ from .dialogs.fluent_dialogs import TextInputDialog
 from .dialogs.project_tree_manage_dialog import ProjectTreeManageDialog
 from .notifications import show_error, show_success, show_warning
 from .widgets.project_tree import ProjectTreeWidget
+from .tree_command_route import TreeCommandRoute
 from ai.agent import ALineAgent
 from ai.command_layer import CommandDispatcher
 from core.global_assets import global_assets
@@ -219,6 +220,20 @@ class MainWindow(FluentWindow):
         self._view_state = MainWindowViewState(tree_panel_width=_TREE_PANEL_DEFAULT_WIDTH)
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
+        self._tree_command_route = TreeCommandRoute(
+            switch_to=self.switchTo,
+            current_page=lambda: self.stackedWidget.currentWidget(),
+            refresh_tree=self._tree_panel.tree.refresh,
+            refresh_templates=self.settings_page.refresh_templates,
+            get_node_by_id=project_manager.get_node_by_id,
+            get_source_file_path=project_manager.get_source_file_path,
+            open_extension_config_node=self._open_extension_config_node,
+            data_page=self.data_page,
+            digitize_page=self.digitize_page,
+            chart_page=self.chart_page,
+            process_page=self.process_page,
+            analysis_page=self.analysis_page,
+        )
         self._setup_shortcuts()
         self._setup_theme_watcher()
         self._setup_project_signals()
@@ -642,144 +657,28 @@ class MainWindow(FluentWindow):
     # ─────────────────────────────────────────────────────────
 
     def _dispatch_tree_node_selected(self, kind: str, node_id: str) -> None:
-        self._tree_action_dispatcher.dispatch_selected(kind, node_id)
+        self._tree_command_route.dispatch_selected(kind, node_id)
 
     def _dispatch_tree_node_activated(self, kind: str, node_id: str) -> None:
-        self._tree_action_dispatcher.dispatch_activated(kind, node_id)
+        self._tree_command_route.dispatch_activated(kind, node_id)
 
     def _on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """兼容旧壳层入口，统一转发到 dispatcher。"""
-        self._dispatch_tree_node_selected(kind, node_id)
+        self._tree_command_route.dispatch_selected(kind, node_id)
 
     def _on_tree_node_activated(self, kind: str, node_id: str) -> None:
         """兼容旧壳层入口，统一转发到 dispatcher。"""
-        self._dispatch_tree_node_activated(kind, node_id)
+        self._tree_command_route.dispatch_activated(kind, node_id)
 
     def _handle_tree_app_command(self, command: AppCommand) -> None:
         if command.command_type != AppCommandType.TREE or command.tree_command is None:
             return
         tree_command = command.tree_command
         if tree_command.command_type.value == "select":
-            self._on_tree_node_selected_command(tree_command)
+            self._tree_command_route.dispatch_selected(tree_command.node.kind, tree_command.node.node_id)
             return
         if tree_command.command_type.value == "activate":
-            self._on_tree_node_activated_command(tree_command)
-
-    def _dispatch_activation_to_current_page(self, kind: str, node_id: str) -> bool:
-        page = self.stackedWidget.currentWidget()
-        if kind == "data_file" and page is not self.process_page:
-            return False
-        if page is self.digitize_page and kind == "image_work":
-            if hasattr(self.digitize_page, 'load_image_by_id'):
-                self.digitize_page.load_image_by_id(node_id)
-                return True
-            return False
-
-        if hasattr(page, 'on_tree_node_activated'):
-            cast(_TreeActivatablePage, page).on_tree_node_activated(kind, node_id)
-            return True
-        if hasattr(page, 'on_tree_node_selected'):
-            cast(_TreeSelectablePage, page).on_tree_node_selected(kind, node_id)
-            return True
-        return False
-
-    def _on_tree_node_activated_command(self, tree_command: TreeCommand) -> None:
-        """双击节点 → 在当前页面执行主动作；显式发送动作才跨页。"""
-        kind = tree_command.node.kind
-        node_id = tree_command.node.node_id
-        self._update_window_title()
-        if kind == "project":
-            self._tree_panel.tree.refresh()
-            self.settings_page.refresh_templates()
-            return
-        if kind == "image_work":
-            self.switchTo(self.digitize_page)
-            if hasattr(self.digitize_page, 'load_image_by_id'):
-                self.digitize_page.load_image_by_id(node_id)
-            return
-        if kind == "image_work_add_curve":
-            self.switchTo(self.digitize_page)
-            if hasattr(self.digitize_page, 'load_image_by_id'):
-                self.digitize_page.load_image_by_id(node_id)
-            self.digitize_page.add_curve_from_shell()
-            return
-        if kind == "curve_export_to_data_file":
-            self.switchTo(self.digitize_page)
-            if hasattr(self.digitize_page, 'load_curve_by_id'):
-                self.digitize_page.load_curve_by_id(node_id)
-            self.digitize_page.export_current_curve_to_data_file()
-            return
-        if kind in ("data_file", "series", "curve"):
-            if self._dispatch_activation_to_current_page(kind, node_id):
-                return
-        if kind in ("source_file", "source_file_to_data"):
-            self.switchTo(self.data_page)
-            self.data_page.on_tree_node_selected("source_file", node_id)
-            if kind == "source_file_to_data":
-                self.data_page.import_current_source_file_to_dataset()
-            return
-        if kind == "source_file_to_digitize":
-            source_node = project_manager.get_node_by_id(node_id)
-            source_path = ""
-            source_name = ""
-            if source_node is not None and getattr(source_node, "kind", None) == "source_file":
-                source_path = project_manager.get_source_file_path(getattr(source_node, "source_file_id", ""))
-                source_name = getattr(source_node, "name", "")
-            if source_path:
-                self.switchTo(self.digitize_page)
-                self.digitize_page.import_source_image(source_path, name=source_name)
-            return
-        if kind == "pipeline":
-            if hasattr(self.process_page, 'load_pipeline'):
-                self.process_page.load_pipeline(node_id)
-            self.switchTo(self.process_page)
-        elif kind == "global_pipeline":
-            if hasattr(self.process_page, 'load_pipeline'):
-                self.process_page.load_pipeline(node_id)
-            self.switchTo(self.process_page)
-        elif kind == "global_figure_template":
-            if hasattr(self.chart_page, 'load_template'):
-                self.chart_page.load_template(node_id)
-            self.switchTo(self.chart_page)
-        elif kind in ("figure_template",):
-            if hasattr(self.chart_page, 'load_template'):
-                self.chart_page.load_template(node_id)
-            self.switchTo(self.chart_page)
-        elif kind == "global_curve_style_template":
-            self.switchTo(self.chart_page)
-            if hasattr(self.chart_page, 'load_curve_style_template'):
-                self.chart_page.load_curve_style_template(node_id)
-        elif kind in ("global_plot_style", "global_plot_theme"):
-            self.switchTo(self.chart_page)
-            if hasattr(self.chart_page, 'load_plot_style'):
-                self.chart_page.load_plot_style(node_id)
-        elif kind == "global_report_template":
-            self.switchTo(self.analysis_page)
-            if hasattr(self.analysis_page, 'load_report_template'):
-                self.analysis_page.load_report_template(node_id)
-        elif kind == "global_extension_config":
-            self._open_extension_config_node(node_id)
-        elif kind == "report_template":
-            self.switchTo(self.analysis_page)
-            if hasattr(self.analysis_page, 'load_report_template'):
-                self.analysis_page.load_report_template(node_id)
-        elif kind == "analysis_result":
-            self.switchTo(self.analysis_page)
-            if hasattr(self.analysis_page, 'load_analysis_result'):
-                self.analysis_page.load_analysis_result(node_id)
-        elif kind in ("data_file_to_chart", "image_work_to_chart",
-                       "series_to_chart", "curve_to_chart", "picture_to_chart", "picture"):
-            self.switchTo(self.chart_page)
-            if hasattr(self.chart_page, 'on_tree_node_activated'):
-                self.chart_page.on_tree_node_activated(kind, node_id)
-        elif kind in ("data_file_to_process", "series_to_process", "curve_to_process"):
-            self.switchTo(self.process_page)
-            if hasattr(self.process_page, 'on_tree_node_activated'):
-                self.process_page.on_tree_node_activated(kind, node_id)
-        elif kind in ("data_file_to_analysis", "series_to_analysis", "curve_to_analysis"):
-            self.switchTo(self.analysis_page)
-            if hasattr(self.analysis_page, 'on_tree_node_activated'):
-                self.analysis_page.on_tree_node_activated(kind, node_id)
+            self._tree_command_route.dispatch_activated(tree_command.node.kind, tree_command.node.node_id)
 
     def _open_extension_config_node(self, config_id: str) -> bool:
         config_item = global_assets.get_extension_config(config_id)
@@ -793,16 +692,7 @@ class MainWindow(FluentWindow):
 
     def _on_tree_node_selected_command(self, tree_command: TreeCommand) -> None:
         """单击节点 → 通知当前页面。"""
-        kind = tree_command.node.kind
-        node_id = tree_command.node.node_id
-        self._update_window_title()
-        if kind == "project":
-            self._tree_panel.tree.refresh()
-            self.settings_page.refresh_templates()
-            return
-        page = self.stackedWidget.currentWidget()
-        if hasattr(page, 'on_tree_node_selected'):
-            cast(_TreeSelectablePage, page).on_tree_node_selected(kind, node_id)
+        self._tree_command_route.dispatch_selected(tree_command.node.kind, tree_command.node.node_id)
 
     # ─────────────────────────────────────────────────────────
     # 数据页路由（保留）
