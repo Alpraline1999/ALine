@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import json
 import math
 from typing import Any, Dict, List, Optional
 
@@ -15,9 +14,9 @@ from qfluentwidgets import (
     BodyLabel, CaptionLabel, ComboBox, FluentIcon as FIF,
     CardWidget,
     InfoBar, InfoBarPosition, LineEdit,
-    PlainTextEdit, PrimaryPushButton, PushButton, ToolButton,
+    PrimaryPushButton, PushButton, ToolButton,
     TeachingTipTailPosition,
-    TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
+    TreeWidget, ListWidget, ToolTipFilter, ToolTipPosition,
 )
 
 from core.extension_api import build_extension_entry, extension_lines_number, extension_registry, normalize_extension_lines_list
