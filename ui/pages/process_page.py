@@ -20,7 +20,8 @@ from qfluentwidgets import (
     TreeWidget, ListWidget, CheckBox, ToolTipFilter, ToolTipPosition,
 )
 
-from core.extension_api import build_extension_entry, ensure_configured_extensions_loaded, extension_lines_number, extension_registry, normalize_extension_lines_list, reload_configured_extensions
+from core.extension_api import build_extension_entry, extension_lines_number, extension_registry, normalize_extension_lines_list
+from core.extension_loader import ensure_configured_extensions_loaded, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from app.workspaces.process_workspace import ProcessWorkspaceController, ProcessWorkspaceState
 from ui.theme import (

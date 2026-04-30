@@ -19,7 +19,8 @@ from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_curve_file_export_plan, choose_data_export_plan, curve_export_file_filter
-from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
+from core.extension_api import build_extension_entry, extension_registry
+from core.extension_loader import reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
@@ -1683,7 +1684,7 @@ class DigitizePage(QWidget):
             mask_include_mode=mask_include_mode,
         )
         try:
-            from core.extension_api import invoke_digitize_extension_handler
+            from core.extension_invoker import invoke_digitize_extension_handler
             from processing.extension_tools import line_xy
 
             result_line = invoke_digitize_extension_handler(extension.handler, image_path, params)

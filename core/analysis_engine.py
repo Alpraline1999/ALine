@@ -10,7 +10,8 @@ import math
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.extension_api import extension_registry, invoke_analysis_extension_handler
+from core.extension_api import extension_registry
+from core.extension_invoker import invoke_analysis_extension_handler
 from core.line_tools import line_from_xy
 
 # ─────────────────────────────────────────────────────────────

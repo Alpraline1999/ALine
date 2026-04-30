@@ -57,9 +57,9 @@ from core.extension_api import (
     extension_lines_number,
     extension_registry,
     normalize_extension_lines_list,
-    reload_configured_extensions,
     validate_extension_lines_list,
 )
+from core.extension_loader import reload_configured_extensions
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 from processing.extension_tools import line_from_xy, line_xy, normalize_line

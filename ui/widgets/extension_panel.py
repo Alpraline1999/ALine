@@ -29,10 +29,9 @@ from core.extension_api import (
     compare_extension_versions,
     extension_entry_display_info,
     extension_entry_parameter_help_text,
-    format_extension_load_report,
-    get_extension_load_status,
     normalize_extension_version,
 )
+from core.extension_loader import format_extension_load_report, get_extension_load_status
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit

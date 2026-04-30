@@ -63,9 +63,9 @@ from core.extension_api import (
     build_extension_entry,
     compare_extension_versions,
     extension_registry,
-    invoke_plot_extension_handler,
-    reload_configured_extensions,
 )
+from core.extension_invoker import invoke_plot_extension_handler
+from core.extension_loader import reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from models.schemas import (

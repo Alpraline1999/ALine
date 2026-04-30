@@ -28,7 +28,7 @@ from ui.theme import (
     warning_color,
 )
 from ui.widgets.extension_panel import show_extension_load_report_dialog
-from core.extension_api import get_extension_load_status
+from core.extension_loader import get_extension_load_status
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.navigation_stack import PivotStackWidget, SegmentedStackWidget
@@ -1174,7 +1174,7 @@ class SettingsPage(QWidget):
             self._external_extension_number_decimals_value_label.setText(str(int(value)))
 
     def _save_extension_settings(self) -> None:
-        from core.extension_api import reload_configured_extensions
+        from core.extension_loader import reload_configured_extensions
         from core.extension_settings import (
             set_builtin_extension_settings,
             set_extension_number_decimals,
