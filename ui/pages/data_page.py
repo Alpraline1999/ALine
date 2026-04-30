@@ -4702,7 +4702,6 @@ class DataPage(QWidget):
             return
         typ, obj_id = data
 
-        from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
         if typ == _TYPE_CURVE:
             menu.addAction("复制为 DataSeries").triggered.connect(self._copy_curve_to_series)

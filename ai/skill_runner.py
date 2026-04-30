@@ -9,15 +9,6 @@ from __future__ import annotations
 import traceback
 from typing import Any, Dict, Optional
 
-
-# 允许 skill 访问的模块白名单
-_ALLOWED_IMPORTS = frozenset([
-    "math", "statistics", "json", "re", "datetime",
-    "numpy", "scipy", "pandas",
-    "core.analysis_engine", "processing.data_engine",
-])
-
-
 def _make_safe_globals(extra: Optional[Dict[str, Any]] = None) -> dict:
     """构造受限全局命名空间。"""
     import math

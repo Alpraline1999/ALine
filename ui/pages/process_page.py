@@ -35,6 +35,7 @@ from ui.theme import (
     make_section_label,
     make_hsep,
 )
+from ui.matplotlib_fonts import bootstrap_matplotlib_qtagg
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.dialogs.export_flow import choose_data_export_batch_plan, choose_data_export_plan
 from ui.widgets.extension_panel import ExtensionConfigPanel
@@ -58,15 +59,8 @@ from processing.data_engine import apply_pipeline_to_lines
 from processing.pipeline_extension import build_pipeline_extension_definition
 from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 
-try:
-    import matplotlib
-    matplotlib.use("QtAgg")
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.figure import Figure
-    from qfluentwidgets import isDarkTheme
-    _HAS_MPL = True
-except Exception:
-    _HAS_MPL = False
+_matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtagg()
+_HAS_MPL = _matplotlib is not None
 
 
 # ── 操作定义 ─────────────────────────────────────────────────

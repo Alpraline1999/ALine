@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 from core.curve_data import CurveBuffer, series_payloads_to_curve_batch
+from core.extension_types import normalize_plot_extension_phases
 from core.line_tools import normalize_line, series_payloads_to_lines
 
 
@@ -167,9 +168,7 @@ def invoke_plot_extension_handler(
     context: Any,
     params: Dict[str, Any],
 ) -> None:
-    from core.extension_api import PlotExtension, normalize_plot_extension_phases
-
-    extension = extension_or_handler if isinstance(extension_or_handler, PlotExtension) else None
+    extension = extension_or_handler if hasattr(extension_or_handler, "handler") and hasattr(extension_or_handler, "phases") else None
     handler = extension.handler if extension is not None else extension_or_handler
     supported_phases = normalize_plot_extension_phases(getattr(extension, "phases", None)) if extension is not None else ("before_plot", "after_plot")
     if context.phase not in supported_phases:
