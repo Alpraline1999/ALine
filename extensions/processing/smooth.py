@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
-from core.line_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
 from processing.smoother import smooth_moving_average, smooth_savgol
 
 

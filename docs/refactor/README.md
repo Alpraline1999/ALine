@@ -30,6 +30,7 @@
 24. [24-phase-20-project-session-and-command-orchestration-decomposition.md](24-phase-20-project-session-and-command-orchestration-decomposition.md)
 25. [25-phase-21-ui-monolith-completion-and-workspace-surface-hardening.md](25-phase-21-ui-monolith-completion-and-workspace-surface-hardening.md)
 26. [26-phase-22-large-workspace-performance-and-data-virtualization.md](26-phase-22-large-workspace-performance-and-data-virtualization.md)
+27. [27-phase-22-execution-summary.md](27-phase-22-execution-summary.md)
 
 ## 文档职责
 

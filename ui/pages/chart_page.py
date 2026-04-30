@@ -65,6 +65,7 @@ from core.extension_api import (
 from core.extension_invoker import invoke_plot_extension_handler
 from core.extension_loader import reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
+from core.rendering import RenderDecimationPolicy, decimate_xy_for_rendering
 from core.project_manager import project_manager
 from models.schemas import (
     AxisConfig,
@@ -119,6 +120,8 @@ from .chart_page_support import (
     _TICK_DIRECTION_CHOICES,
     _THEME_HINTS,
 )
+
+_CHART_RENDER_DECIMATION_POLICY = RenderDecimationPolicy(max_points=2500)
 
 
 def _merge_nested_mapping(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -3589,16 +3592,22 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 x_values = list(curve.get("x", []))
                 y_values = list(curve.get("y", []))
                 y_err = list(curve.get("y_err", []) or [])
+                render_x_values, render_y_values, render_indices = decimate_xy_for_rendering(
+                    x_values,
+                    y_values,
+                    _CHART_RENDER_DECIMATION_POLICY,
+                )
+                render_y_err = [y_err[index] for index in render_indices] if len(y_err) == len(x_values) else []
                 plotted_series.append({
                     **curve,
                     "curve_identity": curve_identity,
                     "display_name": display_name,
                     "style": dict(style_overrides),
                 })
-                if state.show_errbar and y_err and len(y_err) == len(x_values):
-                    axis.errorbar(x_values, y_values, yerr=y_err, capsize=3, **errorbar_kwargs, **plot_kwargs)
+                if state.show_errbar and render_y_err:
+                    axis.errorbar(render_x_values, render_y_values, yerr=render_y_err, capsize=3, **errorbar_kwargs, **plot_kwargs)
                 else:
-                    axis.plot(x_values, y_values, **plot_kwargs)
+                    axis.plot(render_x_values, render_y_values, **plot_kwargs)
 
         legend = None
         if visible_series and not plot_context.skip_default_plot and axis is not None and not plot_context.skip_default_formatting:

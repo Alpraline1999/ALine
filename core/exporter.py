@@ -21,11 +21,16 @@ class Exporter:
     _SUPPORTED_SERIES_FORMATS = {"csv", "txt", "dat", "xls", "xlsx"}
 
     @staticmethod
-    def _get_rows(curve: "Curve") -> List[List]:
-        """获取数据行 [[x_actual, y_actual], ...]"""
+    def _iter_rows(curve: "Curve"):
+        """按需迭代数据行，避免在热导出路径中提前物化整批 rows。"""
         xs = curve.x_actual if curve.x_actual else curve.x_data
         ys = curve.y_actual if curve.y_actual else curve.y_data
-        return list(zip(xs, ys))
+        return zip(xs, ys)
+
+    @staticmethod
+    def _get_rows(curve: "Curve") -> List[List]:
+        """获取数据行 [[x_actual, y_actual], ...]"""
+        return list(Exporter._iter_rows(curve))
 
     @staticmethod
     def _get_header(curve: "Curve") -> List[str]:
@@ -244,28 +249,26 @@ class Exporter:
     @staticmethod
     def _write_xls_xml_file(payloads: List[dict], file_path: str, *, timestamp: Optional[str] = None, merged: bool = False) -> None:
         used_names: set[str] = set()
-        lines = [
-            '<?xml version="1.0" encoding="UTF-8"?>',
-            '<?mso-application progid="Excel.Sheet"?>',
-            '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"',
-            ' xmlns:o="urn:schemas-microsoft-com:office:office"',
-            ' xmlns:x="urn:schemas-microsoft-com:office:excel"',
-            ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"',
-            ' xmlns:html="http://www.w3.org/TR/REC-html40">',
-        ]
-        for index, (sheet_name, rows) in enumerate(Exporter._workbook_sheets(payloads, timestamp=timestamp, merged=merged), start=1):
-            safe_name = Exporter._sanitize_sheet_name(sheet_name, used_names, f"sheet_{index}")
-            lines.append(f'  <Worksheet ss:Name="{escape(safe_name)}">')
-            lines.append('    <Table>')
-            for row in rows:
-                lines.append('      <Row>')
-                for value in row:
-                    lines.append(f"        {Exporter._spreadsheet_xml_cell(value)}")
-                lines.append('      </Row>')
-            lines.append('    </Table>')
-            lines.append('  </Worksheet>')
-        lines.append('</Workbook>')
-        Path(file_path).write_text("\n".join(lines), encoding="utf-8")
+        with open(file_path, "w", encoding="utf-8") as handle:
+            handle.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+            handle.write('<?mso-application progid="Excel.Sheet"?>\n')
+            handle.write('<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n')
+            handle.write(' xmlns:o="urn:schemas-microsoft-com:office:office"\n')
+            handle.write(' xmlns:x="urn:schemas-microsoft-com:office:excel"\n')
+            handle.write(' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n')
+            handle.write(' xmlns:html="http://www.w3.org/TR/REC-html40">\n')
+            for index, (sheet_name, rows) in enumerate(Exporter._workbook_sheets(payloads, timestamp=timestamp, merged=merged), start=1):
+                safe_name = Exporter._sanitize_sheet_name(sheet_name, used_names, f"sheet_{index}")
+                handle.write(f'  <Worksheet ss:Name="{escape(safe_name)}">\n')
+                handle.write('    <Table>\n')
+                for row in rows:
+                    handle.write('      <Row>\n')
+                    for value in row:
+                        handle.write(f"        {Exporter._spreadsheet_xml_cell(value)}\n")
+                    handle.write('      </Row>\n')
+                handle.write('    </Table>\n')
+                handle.write('  </Worksheet>\n')
+            handle.write('</Workbook>')
 
     @staticmethod
     def export_series_file(
@@ -322,7 +325,6 @@ class Exporter:
     @staticmethod
     def export_csv(curve: "Curve", file_path: str, timestamp: Optional[str] = None) -> None:
         """导出为 CSV"""
-        rows = Exporter._get_rows(curve)
         header = Exporter._get_header(curve)
         with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
@@ -330,7 +332,7 @@ class Exporter:
                 writer.writerow([f"# exported: {timestamp}"])
             writer.writerow(["# " + curve.name])
             writer.writerow(header)
-            for x, y in rows:
+            for x, y in Exporter._iter_rows(curve):
                 writer.writerow([x, y])
 
     @staticmethod
@@ -341,11 +343,10 @@ class Exporter:
             if timestamp:
                 writer.writerow([f"# exported: {timestamp}"])
             for curve in curves:
-                rows = Exporter._get_rows(curve)
                 header = Exporter._get_header(curve)
                 writer.writerow(["# " + curve.name])
                 writer.writerow(header)
-                for x, y in rows:
+                for x, y in Exporter._iter_rows(curve):
                     writer.writerow([x, y])
                 writer.writerow([])
 
@@ -362,7 +363,6 @@ class Exporter:
         ws.title = curve.name[:31]  # Excel 表名限制 31 字符
 
         header = Exporter._get_header(curve)
-        rows = Exporter._get_rows(curve)
 
         start_row = 1
         if timestamp:
@@ -380,7 +380,7 @@ class Exporter:
             ws.column_dimensions[cell.column_letter].width = 16
 
         # 数据行
-        for row_idx, (x, y) in enumerate(rows, start_row + 1):
+        for row_idx, (x, y) in enumerate(Exporter._iter_rows(curve), start_row + 1):
             ws.cell(row=row_idx, column=1, value=round(x, 8))
             ws.cell(row=row_idx, column=2, value=round(y, 8))
 
@@ -400,7 +400,6 @@ class Exporter:
         for curve in curves:
             ws = wb.create_sheet(title=curve.name[:31])
             header = Exporter._get_header(curve)
-            rows = Exporter._get_rows(curve)
 
             start_row = 1
             if timestamp:
@@ -416,7 +415,7 @@ class Exporter:
                 cell.alignment = Alignment(horizontal="center")
                 ws.column_dimensions[cell.column_letter].width = 16
 
-            for row_idx, (x, y) in enumerate(rows, start_row + 1):
+            for row_idx, (x, y) in enumerate(Exporter._iter_rows(curve), start_row + 1):
                 ws.cell(row=row_idx, column=1, value=round(x, 8))
                 ws.cell(row=row_idx, column=2, value=round(y, 8))
 
@@ -429,7 +428,6 @@ class Exporter:
     @staticmethod
     def export_json(curve: "Curve", file_path: str, timestamp: Optional[str] = None) -> None:
         """导出为 JSON"""
-        rows = Exporter._get_rows(curve)
         header = Exporter._get_header(curve)
         calib = None
         if curve.calibration:
@@ -438,7 +436,7 @@ class Exporter:
             "name": curve.name,
             "calibration": calib,
             "columns": header,
-            "points": [{"x": x, "y": y} for x, y in rows],
+            "points": [{"x": x, "y": y} for x, y in Exporter._iter_rows(curve)],
         }
         if timestamp:
             data["exported_at"] = timestamp
@@ -450,7 +448,6 @@ class Exporter:
         """导出所有曲线到同一 JSON"""
         all_data = []
         for curve in curves:
-            rows = Exporter._get_rows(curve)
             header = Exporter._get_header(curve)
             calib = None
             if curve.calibration:
@@ -459,7 +456,7 @@ class Exporter:
                 "name": curve.name,
                 "calibration": calib,
                 "columns": header,
-                "points": [{"x": x, "y": y} for x, y in rows],
+                "points": [{"x": x, "y": y} for x, y in Exporter._iter_rows(curve)],
             })
         result = {"curves": all_data}
         if timestamp:
@@ -472,14 +469,13 @@ class Exporter:
     @staticmethod
     def export_txt(curve: "Curve", file_path: str, timestamp: Optional[str] = None) -> None:
         """导出为纯文本（空格分隔）"""
-        rows = Exporter._get_rows(curve)
         header = Exporter._get_header(curve)
         with open(file_path, "w", encoding="utf-8") as f:
             if timestamp:
                 f.write(f"# exported: {timestamp}\n")
             f.write(f"# {curve.name}\n")
             f.write(f"{header[0]}\t{header[1]}\n")
-            for x, y in rows:
+            for x, y in Exporter._iter_rows(curve):
                 f.write(f"{x}\t{y}\n")
 
     @staticmethod
@@ -489,11 +485,10 @@ class Exporter:
             if timestamp:
                 f.write(f"# exported: {timestamp}\n")
             for curve in curves:
-                rows = Exporter._get_rows(curve)
                 header = Exporter._get_header(curve)
                 f.write(f"# {curve.name}\n")
                 f.write(f"{header[0]}\t{header[1]}\n")
-                for x, y in rows:
+                for x, y in Exporter._iter_rows(curve):
                     f.write(f"{x}\t{y}\n")
                 f.write("\n")
 
@@ -502,13 +497,12 @@ class Exporter:
     @staticmethod
     def get_clipboard_text(curve: "Curve", timestamp: Optional[str] = None) -> str:
         """生成剪贴板文本（制表符分隔，包含表头）"""
-        rows = Exporter._get_rows(curve)
         header = Exporter._get_header(curve)
         lines = []
         if timestamp:
             lines.append(f"# exported: {timestamp}")
         lines.append("\t".join(header))
-        for x, y in rows:
+        for x, y in Exporter._iter_rows(curve):
             lines.append(f"{x}\t{y}")
         return "\n".join(lines)
 

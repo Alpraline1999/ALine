@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION
 from core.line_tools import (
-    BUILTIN_EXTENSION_VERSION,
     line_from_xy,
     line_xy,
     primary_line,

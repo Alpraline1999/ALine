@@ -17,6 +17,7 @@ from qfluentwidgets import (
     PrimaryPushButton, PushButton, ToolButton,
     TeachingTipTailPosition,
     TreeWidget, ListWidget, ToolTipFilter, ToolTipPosition,
+    isDarkTheme,
 )
 
 from core.extension_api import build_extension_entry, extension_lines_number, extension_registry, normalize_extension_lines_list
