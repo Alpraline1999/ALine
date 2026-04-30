@@ -16,6 +16,9 @@
 10. [10-phase-8-large-curve-performance-and-extension-optimization.md](10-phase-8-large-curve-performance-and-extension-optimization.md)
 11. [11-phase-9-runtime-array-data-model.md](11-phase-9-runtime-array-data-model.md)
 12. [12-phase-10-extension-runtime-and-api-hardening.md](12-phase-10-extension-runtime-and-api-hardening.md)
+13. [13-phase-11-large-curve-hot-path-and-memory-hardening.md](13-phase-11-large-curve-hot-path-and-memory-hardening.md)
+14. [14-phase-12-ui-page-decomposition-and-shell-normalization.md](14-phase-12-ui-page-decomposition-and-shell-normalization.md)
+15. [15-phase-13-codebase-normalization-and-ui-consistency.md](15-phase-13-codebase-normalization-and-ui-consistency.md)
 
 ## 文档职责
 
@@ -34,6 +37,15 @@
 - `12-phase-10-extension-runtime-and-api-hardening.md`
   - 定义扩展运行时、扩展接口契约、批处理与隔离策略的重构阶段。
   - 该阶段负责收口 `core.extension_api` 的职责边界，并让扩展运行时与 `Phase 9` 的数组主数据对齐。
+- `13-phase-11-large-curve-hot-path-and-memory-hardening.md`
+  - 定义 `Phase 10` 完成后的大曲线/大数据量热路径收口阶段。
+  - 该阶段负责把图表、处理、分析、数字化与扩展执行主链路尽量收口为 buffer-first 流动，并控制复制、阻塞和内存占用。
+- `14-phase-12-ui-page-decomposition-and-shell-normalization.md`
+  - 定义超大 UI 页面拆分与页面壳层标准化阶段。
+  - 该阶段负责拆分 `chart_page`、`digitize_page`、`analysis_page`、`process_page`、`settings_page` 等超大文件，并统一页面装配边界。
+- `15-phase-13-codebase-normalization-and-ui-consistency.md`
+  - 定义代码规范、冗余收口与 UI 风格一致性阶段。
+  - 该阶段负责清理兼容转发、重复适配、命名与导出不一致问题，并沉淀共享 UI token / 组件 / 状态呈现约定。
 
 ## 阶段进入规则
 
@@ -84,6 +96,17 @@
   - 扩展接口契约重构
   - 扩展批处理、数组原生输入、超时隔离、profiling 钩子
   - 扩展加载器 / 调用器 / 注册表边界收口
+- 后置到 `Phase 11` 的大曲线热路径收口：
+  - buffer-first 主链路
+  - 大曲线渲染渐进化与局部物化
+  - 大批量处理/分析/数字化的复制与内存占用控制
+- 后置到 `Phase 12` 的超大页面拆分：
+  - 页面壳层、actions、panels、workspace bridge 分层
+  - `MainWindow` 与页面之间的调用边界进一步收口
+- 后置到 `Phase 13` 的规范与一致性收尾：
+  - 兼容层与死路径清理
+  - 重复 helper / adapter 收口
+  - UI token、状态文案和交互样式统一
 
 ## 使用方式
 

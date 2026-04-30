@@ -221,9 +221,6 @@ def _op_lines_list(op: Dict[str, Any]) -> Tuple[List[int], bool]:
     params = dict(op.get("params", {}) or {})
     if "lines_list" in params:
         return normalize_extension_lines_list(params.get("lines_list")), True
-    legacy_cfg = params.get("lines")
-    if isinstance(legacy_cfg, dict) and "lines_list" in legacy_cfg:
-        return normalize_extension_lines_list(legacy_cfg.get("lines_list")), True
     return [], False
 
 
