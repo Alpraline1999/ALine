@@ -71,15 +71,45 @@ class ProjectTreeCommandService:
         new_name, ok = self.prompt_existing_text(title, "名称:", current_name)
         if not ok or not new_name.strip():
             return
-        if kind == "series":
-            changed = project_manager.rename_series(node_id, new_name.strip())
-        else:
-            changed = project_manager.rename_curve(node_id, new_name.strip())
+        changed = self.rename_node_by_kind(kind, node_id, new_name.strip())
         if changed:
             self.refresh()
             self.project_modified()
             return
         self.notify_warning("重命名失败", self.last_error_message() or "名称已存在或当前节点不支持重命名")
+
+    def rename_selected_item(self, kind: str, node_id: str, current_name: str) -> bool:
+        title_map = {
+            "folder": "重命名文件夹",
+            "data_file": "重命名数据文件",
+            "source_file": "重命名源文件",
+            "image_work": "重命名图像",
+            "picture": "重命名图片",
+            "analysis_result": "重命名分析结果",
+            "series": "重命名数据列",
+            "curve": "重命名曲线",
+        }
+        new_name, ok = self.prompt_existing_text(title_map.get(kind, "重命名节点"), "名称:", current_name)
+        if not ok or not new_name.strip():
+            return False
+        changed = self.rename_global_asset(kind, node_id, new_name) if kind.startswith("global_") else self.rename_node_by_kind(kind, node_id, new_name.strip())
+        if not changed:
+            self.notify_warning("重命名失败", self.last_error_message() or "名称已存在或当前节点不支持重命名")
+            return False
+        self.refresh()
+        self.select_node(node_id)
+        self.project_modified()
+        return True
+
+    def rename_node_by_kind(self, kind: str, node_id: str, new_name: str) -> bool:
+        clean_name = new_name.strip()
+        if not clean_name:
+            return False
+        if kind == "series":
+            return project_manager.rename_series(node_id, clean_name)
+        if kind == "curve":
+            return project_manager.rename_curve(node_id, clean_name)
+        return project_manager.rename_node(node_id, clean_name)
 
     def prune_empty_folders(self, root_id: str | None = None, *, scope_label: str = "项目树") -> None:
         removed_ids = project_manager.remove_empty_folders(root_id)
@@ -294,6 +324,22 @@ class ProjectTreeCommandService:
         self.notify_success("导入完成", f"已导入 {len(imported_node_ids)} 张图片到数字化")
         if failed_paths:
             self.notify_warning("部分导入失败", "以下图片未能导入: " + "、".join(failed_paths[:5]))
+
+    def import_source_file_as_digitize_image(
+        self,
+        source_path: str,
+        *,
+        parent_id: str | None = None,
+        display_name: str | None = None,
+    ) -> str | None:
+        if not self.supports_digitize_import(source_path):
+            return None
+        try:
+            image = project_manager.add_image(source_path, name=display_name or Path(source_path).name, parent_id=parent_id)
+        except (FileNotFoundError, ValueError):
+            self.notify_warning("导入失败", self.last_error_message() or "未能导入图片到数字化")
+            return None
+        return self.linked_tree_node_id("image_work", "image_work_id", image.id)
 
     def import_data_file(self, parent_id: str | None = None) -> None:
         file_path = self.choose_file(

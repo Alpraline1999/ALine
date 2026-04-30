@@ -557,44 +557,7 @@ class ProjectTreeWidget(QWidget):
             return
         kind, node_id = data
         current_name = item.text(0).strip()
-        title_map = {
-            "folder": "重命名文件夹",
-            "data_file": "重命名数据文件",
-            "source_file": "重命名源文件",
-            "image_work": "重命名图像",
-            "picture": "重命名图片",
-            "analysis_result": "重命名分析结果",
-            "series": "重命名数据列",
-            "curve": "重命名曲线",
-        }
-        title = title_map.get(kind, "重命名节点")
-        new_name, ok = TextInputDialog.get_text(self._dialog_parent(), title, "名称:", text=current_name)
-        if not ok or not new_name.strip():
-            return
-        clean_name = new_name.strip()
-        if kind in _SYNTHETIC_GLOBAL_KINDS:
-            changed = self._command_service.rename_global_asset(kind, node_id, clean_name)
-            if changed:
-                self.refresh()
-                self.project_modified.emit()
-            return
-        if kind == "series":
-            changed = project_manager.rename_series(node_id, clean_name)
-        elif kind == "curve":
-            changed = project_manager.rename_curve(node_id, clean_name)
-        else:
-            changed = project_manager.rename_node(node_id, clean_name)
-        if changed:
-            self.refresh()
-            self.select_node(node_id)
-            self.project_modified.emit()
-            return
-        InfoBar.warning(
-            "重命名失败",
-            project_manager.get_last_error_message() or "名称已存在或当前节点不支持重命名",
-            parent=self,
-            position=InfoBarPosition.TOP,
-        )
+        self._command_service.rename_selected_item(kind, node_id, current_name)
 
     def delete_selected_items(self) -> None:
         if not self.can_delete_selected_items():
@@ -1069,7 +1032,7 @@ class ProjectTreeWidget(QWidget):
             return
         previous_name = item.toolTip(0) or item.text(0)
         self._renaming = True
-        changed = project_manager.rename_node(node_id, new_name)
+        changed = self._command_service.rename_node_by_kind(kind, node_id, new_name)
         if not changed:
             current_node = project_manager.get_node_by_id(node_id)
             restored_name = getattr(current_node, "name", "") or previous_name
@@ -1804,22 +1767,17 @@ class ProjectTreeWidget(QWidget):
             return True
 
         if target_folder_id and self._folder_collection_group(target_folder_id) == "images":
-            if not self._supports_source_file_digitize_import(source_path):
+            image_node_id = self._command_service.import_source_file_as_digitize_image(
+                source_path,
+                parent_id=target_folder_id,
+                display_name=source_asset.name if source_asset is not None else Path(source_path).name,
+            )
+            if not image_node_id:
                 return False
-            try:
-                image = project_manager.add_image(
-                    source_path,
-                    name=source_asset.name if source_asset is not None else Path(source_path).name,
-                    parent_id=target_folder_id,
-                )
-            except ValueError as exc:
-                InfoBar.warning("导入失败", str(exc), parent=self._dialog_parent(), position=InfoBarPosition.TOP)
-                return False
-            image_node_id = self._linked_tree_node_id("image_work", "image_work_id", image.id)
             select_node_id = image_node_id or target_folder_id
             InfoBar.success(
                 "导入成功",
-                f"已导入到数字化: {image.name}",
+                f"已导入到数字化: {source_asset.name if source_asset is not None else Path(source_path).name}",
                 parent=self._dialog_parent(),
                 position=InfoBarPosition.TOP,
             )

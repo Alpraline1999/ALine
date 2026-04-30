@@ -179,6 +179,10 @@ def _load_command_service_module():
         def rename_curve(self, node_id: str, name: str) -> bool:
             return True
 
+        def rename_node(self, node_id: str, name: str) -> bool:
+            self.renamed_series.append((node_id, name))
+            return True
+
         def remove_empty_folders(self, root_id: str | None = None):
             self.removed_empty_folder_args.append(root_id)
             return ["f1", "f2"]
@@ -312,6 +316,15 @@ class TestProjectTreeCommandService(unittest.TestCase):
         self.assertEqual([("s1", "series-b")], project_manager.renamed_series)
         self.assertEqual(["refresh", "modified"], state["calls"])
 
+    def test_rename_selected_regular_node_refreshes_and_selects(self) -> None:
+        service, state = self._make_service(prompt_existing_text=lambda *_args: ("folder-b", True))
+
+        changed = service.rename_selected_item("folder", "f1", "Folder A")
+
+        self.assertTrue(changed)
+        self.assertEqual([("f1", "folder-b")], project_manager.renamed_series)
+        self.assertEqual(["refresh", "select:f1", "modified"], state["calls"])
+
     def test_prune_empty_folders_reports_success(self) -> None:
         service, state = self._make_service()
 
@@ -437,6 +450,18 @@ class TestProjectTreeCommandService(unittest.TestCase):
         self.assertEqual([("configure_import_target", "df-1")], state["calls"])
         self.assertEqual([("df-1", {"id": "s1"}), ("df-1", {"id": "s2"})], project_manager.added_series)
         self.assertEqual([("导入成功", "已导入 2 条数据系列到数据文件 Data A")], state["successes"])
+
+    def test_import_source_file_as_digitize_image_returns_linked_node(self) -> None:
+        linked_map = {"image-1": "img-node-1"}
+        service, _state = self._make_service(
+            supports_digitize_import=lambda path: path.endswith(".png"),
+            linked_tree_node_id=lambda _kind, _attr, value: linked_map.get(value),
+        )
+
+        selected = service.import_source_file_as_digitize_image("curve.png", parent_id="img-folder", display_name="Curve")
+
+        self.assertEqual("img-node-1", selected)
+        self.assertEqual([("curve.png", "Curve", "img-folder")], project_manager.added_images)
 
 
 if __name__ == "__main__":
