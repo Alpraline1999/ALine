@@ -20,12 +20,11 @@ from qfluentwidgets import (
 from qfluentwidgets.components.widgets.tree_view import TreeItemDelegate
 from PySide6.QtWidgets import QTreeWidgetItem
 
-from core.global_assets import ExtensionConfigPreset, global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
+from core.global_assets import ExtensionConfigPreset, global_assets, make_plot_style_asset_key
 from core.extension_api import build_extension_entry, extension_registry
 from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
 from app.project_tree_command_service import ProjectTreeCommandService
-from models.schemas import DataFile
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.widgets.project_tree_builder import ProjectTreeBuilder
 from ui.widgets.project_tree_page_dispatcher import ProjectTreePageDispatcher
@@ -359,12 +358,16 @@ class ProjectTreeWidget(QWidget):
         self._command_service = ProjectTreeCommandService(
             confirm_delete=self._confirm_tree_delete,
             confirm_batch_delete=self._confirm_tree_delete,
+            choose_file=self._choose_tree_file,
             choose_files=self._choose_tree_files,
             prompt_text=self._prompt_tree_text,
             prompt_existing_text=self._prompt_tree_existing_text,
             choose_item=self._choose_tree_item,
             create_child_folder=self._create_child_folder,
+            create_source_file_import_dialog=self._create_source_file_import_dialog,
+            configure_source_file_import_target=self._lock_source_file_import_dialog_target,
             move_node_to_target=self._move_node_to_target,
+            supports_data_file_import=self._supports_source_file_dataset_import,
             supports_digitize_import=self._supports_source_file_digitize_import,
             linked_tree_node_id=self._linked_tree_node_id,
             notify_warning=self._notify_tree_warning,
@@ -499,7 +502,7 @@ class ProjectTreeWidget(QWidget):
         if kind == "project":
             return False
         if kind in _SYNTHETIC_GLOBAL_KINDS:
-            return self._can_edit_global_asset(kind, node_id)
+            return self._command_service.can_edit_global_asset(kind, node_id)
         if kind == "folder":
             return not self._is_protected_folder(project_manager.get_node_by_id(node_id))
         return True
@@ -522,7 +525,7 @@ class ProjectTreeWidget(QWidget):
         if kind == "project":
             return False
         if kind in _SYNTHETIC_GLOBAL_KINDS:
-            return self._can_edit_global_asset(kind, node_id)
+            return self._command_service.can_edit_global_asset(kind, node_id)
         if kind == "folder":
             return not self._is_protected_folder(project_manager.get_node_by_id(node_id))
         return True
@@ -570,7 +573,7 @@ class ProjectTreeWidget(QWidget):
             return
         clean_name = new_name.strip()
         if kind in _SYNTHETIC_GLOBAL_KINDS:
-            changed = self._rename_global_asset(kind, node_id, clean_name)
+            changed = self._command_service.rename_global_asset(kind, node_id, clean_name)
             if changed:
                 self.refresh()
                 self.project_modified.emit()
@@ -1151,7 +1154,7 @@ class ProjectTreeWidget(QWidget):
                 manage_entries.append((FIF.COPY, "创建副本", lambda: self._cmd_duplicate_extension_config(node_id)))
             elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
                 manage_entries.append((FIF.EDIT, "在设置中查看", self._page_dispatcher.make_activation_callback(kind, node_id)))
-            if self._can_edit_global_asset(kind, node_id):
+            if self._command_service.can_edit_global_asset(kind, node_id):
                 manage_entries.extend([
                     (FIF.EDIT, "重命名", lambda: self._cmd_rename_global(kind, node_id, item.text(0))),
                     (FIF.DELETE, "删除", lambda: self._cmd_delete_global(kind, node_id, item.text(0))),
@@ -1354,41 +1357,17 @@ class ProjectTreeWidget(QWidget):
         )
         return list(paths)
 
-    def _cmd_import_data_file(self, parent_id: Optional[str] = None) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
+    def _choose_tree_file(self, title: str, file_filter: str) -> str:
+        path, _ = QFileDialog.getOpenFileName(
             self._dialog_parent(),
-            "导入数据文件",
+            title,
             "",
-            "数据文件 (*.csv *.txt *.dat *.tsv *.xlsx *.xls *.json *.npy *.npz);;所有文件 (*)",
+            file_filter,
         )
-        if not file_path:
-            return
-        if not self._supports_source_file_dataset_import(file_path):
-            InfoBar.warning(
-                "导入失败",
-                "当前文件类型不支持导入为数据文件",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return
-        try:
-            dialog = self._create_source_file_import_dialog(file_path)
-        except Exception as exc:
-            InfoBar.warning(
-                "导入失败",
-                f"无法读取文件: {exc}",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return
-        if not dialog.exec():
-            return
-        selected_node_id = self._apply_source_file_import_dialog_results(dialog, target_folder_id=parent_id)
-        if not selected_node_id:
-            return
-        self.refresh()
-        self.select_node(selected_node_id)
-        self.project_modified.emit()
+        return str(path)
+
+    def _cmd_import_data_file(self, parent_id: Optional[str] = None) -> None:
+        self._command_service.import_data_file(parent_id)
 
     def _cmd_import_source_files(self, parent_id: Optional[str] = None) -> None:
         self._command_service.import_source_files(parent_id)
@@ -1411,94 +1390,11 @@ class ProjectTreeWidget(QWidget):
     def _cmd_delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
         self._command_service.delete_virtual(kind, node_id, node_name)
 
-    def _can_edit_global_asset(self, kind: str, node_id: str) -> bool:
-        if kind == "global_report_template":
-            item = global_assets.get_report_template(node_id)
-            return bool(item is not None and not item.is_builtin)
-        if kind == "global_curve_style_template":
-            item = global_assets.get_curve_style_template(node_id)
-            return bool(item is not None and not item.is_builtin)
-        if kind in ("global_plot_style", "global_plot_theme"):
-            style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                return global_assets.get_figure_template(asset_id) is not None
-            item = global_assets.get_plot_theme(asset_id)
-            return bool(item is not None and not item.is_builtin)
-        if kind == "global_extension_config":
-            item = global_assets.get_extension_config(node_id)
-            return bool(item is not None and not item.is_default)
-        return kind in {
-            "global_pipeline",
-            "global_ai_prompt",
-            "global_ai_skill",
-            "global_ai_agent",
-        }
-
-    def _rename_global_asset(self, kind: str, node_id: str, new_name: str) -> bool:
-        clean_name = new_name.strip()
-        if not clean_name or not self._can_edit_global_asset(kind, node_id):
-            return False
-        if kind == "global_pipeline":
-            return global_assets.update_saved_pipeline(node_id, name=clean_name)
-        if kind == "global_report_template":
-            return global_assets.update_report_template(node_id, name=clean_name)
-        if kind == "global_curve_style_template":
-            return global_assets.update_curve_style_template(node_id, name=clean_name)
-        if kind in ("global_plot_style", "global_plot_theme"):
-            style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                return global_assets.update_figure_template(asset_id, name=clean_name)
-            return global_assets.update_plot_theme(asset_id, name=clean_name)
-        if kind == "global_extension_config":
-            return global_assets.update_extension_config(node_id, name=clean_name) is not None
-        if kind == "global_ai_prompt":
-            return global_assets.update_ai_prompt(node_id, name=clean_name)
-        if kind == "global_ai_skill":
-            return global_assets.update_ai_skill(node_id, name=clean_name)
-        if kind == "global_ai_agent":
-            return global_assets.update_ai_agent(node_id, name=clean_name)
-        return False
-
-    def _delete_global_asset(self, kind: str, node_id: str) -> bool:
-        if not self._can_edit_global_asset(kind, node_id):
-            return False
-        if kind == "global_pipeline":
-            return global_assets.delete_saved_pipeline(node_id)
-        if kind == "global_report_template":
-            return global_assets.delete_report_template(node_id)
-        if kind == "global_curve_style_template":
-            return global_assets.delete_curve_style_template(node_id)
-        if kind in ("global_plot_style", "global_plot_theme"):
-            style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                return global_assets.delete_figure_template(asset_id)
-            return global_assets.delete_plot_theme(asset_id)
-        if kind == "global_extension_config":
-            return global_assets.delete_extension_config(node_id)
-        if kind == "global_ai_prompt":
-            return global_assets.delete_ai_prompt(node_id)
-        if kind == "global_ai_skill":
-            return global_assets.delete_ai_skill(node_id)
-        if kind == "global_ai_agent":
-            return global_assets.delete_ai_agent(node_id)
-        return False
-
     def _cmd_rename_global(self, kind: str, node_id: str, current_name: str) -> None:
-        title = "重命名全局资源"
-        new_name, ok = TextInputDialog.get_text(self._dialog_parent(), title, "名称:", text=current_name)
-        if not ok:
-            return
-        if self._rename_global_asset(kind, node_id, new_name):
-            self.refresh()
-            self.project_modified.emit()
+        self._command_service.rename_global(kind, node_id, current_name)
 
     def _cmd_delete_global(self, kind: str, node_id: str, node_name: str) -> None:
-        box = MessageBox("确认删除", f'确定要删除全局资源「{node_name}」吗？', self._dialog_parent())
-        if not box.exec():
-            return
-        if self._delete_global_asset(kind, node_id):
-            self.refresh()
-            self.project_modified.emit()
+        self._command_service.delete_global(kind, node_id, node_name)
 
     def _move_target_choices(self, kind: str, node_id: str) -> List[Tuple[str, str]]:
         p = project_manager.current_project
@@ -1853,72 +1749,6 @@ class ProjectTreeWidget(QWidget):
                 return node.id
         return None
 
-    def _apply_source_file_import_dialog_results(
-        self,
-        dialog,
-        *,
-        target_folder_id: Optional[str] = None,
-        target_data_file_id: Optional[str] = None,
-    ) -> Optional[str]:
-        series_list = dialog.get_results()
-        if not series_list:
-            return None
-
-        if target_data_file_id:
-            data_file = project_manager.get_data_file(target_data_file_id)
-            if data_file is None:
-                InfoBar.warning(
-                    "导入失败",
-                    "所选目标数据文件不存在",
-                    parent=self._dialog_parent(),
-                    position=InfoBarPosition.TOP,
-                )
-                return None
-            appended = 0
-            for series in series_list:
-                if project_manager.add_series_to_data_file(target_data_file_id, series):
-                    appended += 1
-            if appended != len(series_list):
-                InfoBar.warning(
-                    "导入失败",
-                    project_manager.get_last_error_message() or "部分数据系列追加失败",
-                    parent=self._dialog_parent(),
-                    position=InfoBarPosition.TOP,
-                )
-                return None
-            InfoBar.success(
-                "导入成功",
-                f"已导入 {len(series_list)} 条数据系列到数据文件 {data_file.name}",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return self._linked_tree_node_id("data_file", "data_file_id", target_data_file_id)
-
-        source_path = dialog.get_source_path() if hasattr(dialog, "get_source_path") else ""
-        if not isinstance(source_path, str):
-            source_path = ""
-        data_file = DataFile(
-            name=dialog.get_file_name(),
-            source_path=source_path,
-            series=series_list,
-        )
-        node = project_manager.add_data_file(data_file, parent_id=target_folder_id, auto_rename_on_conflict=True)
-        if node is None:
-            InfoBar.warning(
-                "导入失败",
-                project_manager.get_last_error_message() or "未能创建新的数据文件",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return None
-        InfoBar.success(
-            "导入成功",
-            f"已导入 {len(series_list)} 条数据系列到数据文件 {data_file.name}",
-            parent=self._dialog_parent(),
-            position=InfoBarPosition.TOP,
-        )
-        return node.id
-
     def _normalized_source_file_drop_target(self, target_item: Optional[QTreeWidgetItem]) -> Tuple[Optional[str], Optional[str]]:
         target_data = self._item_role_data(target_item)
         if not target_data:
@@ -1959,23 +1789,8 @@ class ProjectTreeWidget(QWidget):
             target_folder_id = target_id
 
         if target_data_file_id or (target_folder_id and self._folder_collection_group(target_folder_id) == "datasets"):
-            if not self._supports_source_file_dataset_import(source_path):
-                return False
-            try:
-                dialog = self._create_source_file_import_dialog(source_path)
-            except Exception as exc:
-                InfoBar.warning(
-                    "导入失败",
-                    f"无法读取文件: {exc}",
-                    parent=self._dialog_parent(),
-                    position=InfoBarPosition.TOP,
-                )
-                return False
-            self._lock_source_file_import_dialog_target(dialog, target_data_file_id=target_data_file_id)
-            if not dialog.exec():
-                return False
-            select_node_id = self._apply_source_file_import_dialog_results(
-                dialog,
+            select_node_id = self._command_service.import_source_file_as_dataset(
+                source_path,
                 target_folder_id=target_folder_id,
                 target_data_file_id=target_data_file_id,
             )

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from core.global_assets import global_assets, parse_plot_style_asset_key
 from core.project_manager import project_manager
 from models.schemas import DataFile
 
@@ -12,12 +13,16 @@ from models.schemas import DataFile
 class ProjectTreeCommandService:
     confirm_delete: Callable[[str, str], bool]
     confirm_batch_delete: Callable[[str, str], bool]
+    choose_file: Callable[[str, str], str]
     choose_files: Callable[[str, str], list[str]]
     prompt_text: Callable[[str, str, str], tuple[str, bool]]
     prompt_existing_text: Callable[[str, str, str], tuple[str, bool]]
     choose_item: Callable[[str, str, list[str]], tuple[str, bool]]
     create_child_folder: Callable[[str, str], object | None]
+    create_source_file_import_dialog: Callable[[str], object]
+    configure_source_file_import_target: Callable[[object, str | None], None]
     move_node_to_target: Callable[[str, str, str], bool]
+    supports_data_file_import: Callable[[str], bool]
     supports_digitize_import: Callable[[str], bool]
     linked_tree_node_id: Callable[[str, str, str], str | None]
     notify_warning: Callable[[str, str], None]
@@ -153,6 +158,93 @@ class ProjectTreeCommandService:
             return
         self.notify_warning("移动失败", self.last_error_message() or "目标位置已存在同名节点")
 
+    def can_edit_global_asset(self, kind: str, node_id: str) -> bool:
+        if kind == "global_report_template":
+            item = global_assets.get_report_template(node_id)
+            return bool(item is not None and not item.is_builtin)
+        if kind == "global_curve_style_template":
+            item = global_assets.get_curve_style_template(node_id)
+            return bool(item is not None and not item.is_builtin)
+        if kind in ("global_plot_style", "global_plot_theme"):
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                return global_assets.get_figure_template(asset_id) is not None
+            item = global_assets.get_plot_theme(asset_id)
+            return bool(item is not None and not item.is_builtin)
+        if kind == "global_extension_config":
+            item = global_assets.get_extension_config(node_id)
+            return bool(item is not None and not item.is_default)
+        return kind in {
+            "global_pipeline",
+            "global_ai_prompt",
+            "global_ai_skill",
+            "global_ai_agent",
+        }
+
+    def rename_global_asset(self, kind: str, node_id: str, new_name: str) -> bool:
+        clean_name = new_name.strip()
+        if not clean_name or not self.can_edit_global_asset(kind, node_id):
+            return False
+        if kind == "global_pipeline":
+            return global_assets.update_saved_pipeline(node_id, name=clean_name)
+        if kind == "global_report_template":
+            return global_assets.update_report_template(node_id, name=clean_name)
+        if kind == "global_curve_style_template":
+            return global_assets.update_curve_style_template(node_id, name=clean_name)
+        if kind in ("global_plot_style", "global_plot_theme"):
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                return global_assets.update_figure_template(asset_id, name=clean_name)
+            return global_assets.update_plot_theme(asset_id, name=clean_name)
+        if kind == "global_extension_config":
+            return global_assets.update_extension_config(node_id, name=clean_name) is not None
+        if kind == "global_ai_prompt":
+            return global_assets.update_ai_prompt(node_id, name=clean_name)
+        if kind == "global_ai_skill":
+            return global_assets.update_ai_skill(node_id, name=clean_name)
+        if kind == "global_ai_agent":
+            return global_assets.update_ai_agent(node_id, name=clean_name)
+        return False
+
+    def delete_global_asset(self, kind: str, node_id: str) -> bool:
+        if not self.can_edit_global_asset(kind, node_id):
+            return False
+        if kind == "global_pipeline":
+            return global_assets.delete_saved_pipeline(node_id)
+        if kind == "global_report_template":
+            return global_assets.delete_report_template(node_id)
+        if kind == "global_curve_style_template":
+            return global_assets.delete_curve_style_template(node_id)
+        if kind in ("global_plot_style", "global_plot_theme"):
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                return global_assets.delete_figure_template(asset_id)
+            return global_assets.delete_plot_theme(asset_id)
+        if kind == "global_extension_config":
+            return global_assets.delete_extension_config(node_id)
+        if kind == "global_ai_prompt":
+            return global_assets.delete_ai_prompt(node_id)
+        if kind == "global_ai_skill":
+            return global_assets.delete_ai_skill(node_id)
+        if kind == "global_ai_agent":
+            return global_assets.delete_ai_agent(node_id)
+        return False
+
+    def rename_global(self, kind: str, node_id: str, current_name: str) -> None:
+        new_name, ok = self.prompt_existing_text("重命名全局资源", "名称:", current_name)
+        if not ok:
+            return
+        if self.rename_global_asset(kind, node_id, new_name):
+            self.refresh()
+            self.project_modified()
+
+    def delete_global(self, kind: str, node_id: str, node_name: str) -> None:
+        if not self.confirm_delete("确认删除", f"确定要删除全局资源「{node_name}」吗？"):
+            return
+        if self.delete_global_asset(kind, node_id):
+            self.refresh()
+            self.project_modified()
+
     def import_source_files(self, parent_id: str | None = None) -> None:
         clean_paths = [path for path in self.choose_files("导入源文件", "所有文件 (*.*)") if path]
         if not clean_paths:
@@ -202,3 +294,82 @@ class ProjectTreeCommandService:
         self.notify_success("导入完成", f"已导入 {len(imported_node_ids)} 张图片到数字化")
         if failed_paths:
             self.notify_warning("部分导入失败", "以下图片未能导入: " + "、".join(failed_paths[:5]))
+
+    def import_data_file(self, parent_id: str | None = None) -> None:
+        file_path = self.choose_file(
+            "导入数据文件",
+            "数据文件 (*.csv *.txt *.dat *.tsv *.xlsx *.xls *.json *.npy *.npz);;所有文件 (*)",
+        )
+        if not file_path:
+            return
+        selected_node_id = self.import_source_file_as_dataset(file_path, target_folder_id=parent_id)
+        if not selected_node_id:
+            return
+        self.refresh()
+        self.select_node(selected_node_id)
+        self.project_modified()
+
+    def import_source_file_as_dataset(
+        self,
+        source_path: str,
+        *,
+        target_folder_id: str | None = None,
+        target_data_file_id: str | None = None,
+    ) -> str | None:
+        if not self.supports_data_file_import(source_path):
+            self.notify_warning("导入失败", "当前文件类型不支持导入为数据文件")
+            return None
+        try:
+            dialog = self.create_source_file_import_dialog(source_path)
+        except Exception as exc:
+            self.notify_warning("导入失败", f"无法读取文件: {exc}")
+            return None
+        self.configure_source_file_import_target(dialog, target_data_file_id)
+        if not dialog.exec():
+            return None
+        return self._apply_source_file_import_dialog_results(
+            dialog,
+            target_folder_id=target_folder_id,
+            target_data_file_id=target_data_file_id,
+        )
+
+    def _apply_source_file_import_dialog_results(
+        self,
+        dialog: object,
+        *,
+        target_folder_id: str | None = None,
+        target_data_file_id: str | None = None,
+    ) -> str | None:
+        series_list = dialog.get_results()
+        if not series_list:
+            return None
+
+        if target_data_file_id:
+            data_file = project_manager.get_data_file(target_data_file_id)
+            if data_file is None:
+                self.notify_warning("导入失败", "所选目标数据文件不存在")
+                return None
+            appended = 0
+            for series in series_list:
+                if project_manager.add_series_to_data_file(target_data_file_id, series):
+                    appended += 1
+            if appended != len(series_list):
+                self.notify_warning("导入失败", self.last_error_message() or "部分数据系列追加失败")
+                return None
+            self.notify_success("导入成功", f"已导入 {len(series_list)} 条数据系列到数据文件 {data_file.name}")
+            return self.linked_tree_node_id("data_file", "data_file_id", target_data_file_id)
+
+        source_path = dialog.get_source_path() if hasattr(dialog, "get_source_path") else ""
+        if not isinstance(source_path, str):
+            source_path = ""
+        data_file = DataFile(
+            name=dialog.get_file_name(),
+            source_path=source_path,
+            series=series_list,
+        )
+        node = project_manager.add_data_file(data_file, parent_id=target_folder_id, auto_rename_on_conflict=True)
+        if node is None:
+            self.notify_warning("导入失败", self.last_error_message() or "未能创建新的数据文件")
+            return None
+        self.notify_success("导入成功", f"已导入 {len(series_list)} 条数据系列到数据文件 {data_file.name}")
+        return node.id
