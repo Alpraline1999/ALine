@@ -16,6 +16,7 @@ from typing import List, Optional, Tuple
 
 from core.global_assets import global_assets
 from core.project_asset_service import ProjectAssetService
+from core.project_backup_manager import ProjectBackupManager
 from core.project_migration_service import ProjectMigrationService
 from core.project_repository import ProjectRepository
 from core.project_session import ProjectSession
@@ -136,6 +137,7 @@ class ProjectManager:
             ensure_project_tree_groups=self._ensure_project_tree_groups,
             migrate_project_assets_to_global=self._migrate_project_assets_to_global,
         )
+        self._project_backup_manager = ProjectBackupManager(self)
         self._project_tree_service = ProjectTreeService(
             get_current_project=lambda: self.current_project,
             clear_last_error=self._clear_last_operation_error,
@@ -1909,6 +1911,9 @@ class ProjectManager:
                 return trial
         return candidate.with_name(f"{stem}_{image_id}{suffix}")
 
+    def _copy_file(self, source_path: Path, backup_path: Path) -> None:
+        shutil.copy2(source_path, backup_path)
+
     def _project_assets_dir(self, project_file_path: str, folder_name: str = "images") -> Path:
         return Path(project_file_path).parent / "files" / folder_name
 
@@ -1918,28 +1923,7 @@ class ProjectManager:
         project_file_path: str,
         source_project: Optional[Project],
     ) -> None:
-        source_abs = self.resolve_image_path(image, source_project)
-        if not source_abs:
-            return
-        source_path = Path(source_abs)
-        if not source_path.exists():
-            raise FileNotFoundError(f"图像文件不存在: {source_abs}")
-        backup_dir = self._project_assets_dir(project_file_path, "images")
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_filename = self._backup_filename(image, source_path.suffix)
-        backup_path = backup_dir / backup_filename
-        current_backup_abs = ""
-        if image.image_path and not Path(image.image_path).is_absolute():
-            current_backup_abs = str(
-                (Path(project_file_path).parent / image.image_path).resolve()
-            )
-        if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
-            backup_path = self._ensure_unique_path(backup_path, image.id)
-        if source_path.resolve() != backup_path.resolve():
-            shutil.copy2(source_path, backup_path)
-        rel_path = backup_path.relative_to(Path(project_file_path).parent)
-        image.image_path = rel_path.as_posix()
-        image.source_image_path = str(source_path)
+        self._project_backup_manager.backup_image_for_project(image, project_file_path, source_project)
 
     def _backup_picture_for_project(
         self,
@@ -1948,33 +1932,12 @@ class ProjectManager:
         source_project: Optional[Project],
         target_folder_id: Optional[str] = None,
     ) -> None:
-        source_abs = self.resolve_picture_path(picture, source_project)
-        if not source_abs:
-            return
-        source_path = Path(source_abs)
-        if not source_path.exists():
-            raise FileNotFoundError(f"图片文件不存在: {source_abs}")
-        backup_root = self._project_assets_dir(project_file_path, "pictures")
-        relative_subdir = self._picture_relative_subdir(picture)
-        if relative_subdir is not None:
-            backup_dir = backup_root / relative_subdir
-        elif target_folder_id and self.current_project is not None and self.current_project.file_path == project_file_path:
-            folder_path = self.resolve_picture_folder_path(target_folder_id, create=True)
-            backup_dir = Path(folder_path) if folder_path else backup_root
-        else:
-            backup_dir = backup_root
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_filename = self._backup_filename(picture, source_path.suffix)
-        backup_path = backup_dir / backup_filename
-        current_backup_abs = ""
-        if picture.image_path and not Path(picture.image_path).is_absolute():
-            current_backup_abs = str((Path(project_file_path).parent / picture.image_path).resolve())
-        if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
-            backup_path = self._ensure_unique_path(backup_path, picture.id)
-        if source_path.resolve() != backup_path.resolve():
-            shutil.copy2(source_path, backup_path)
-        rel_path = backup_path.relative_to(Path(project_file_path).parent)
-        picture.image_path = rel_path.as_posix()
+        self._project_backup_manager.backup_picture_for_project(
+            picture,
+            project_file_path,
+            source_project,
+            target_folder_id=target_folder_id,
+        )
 
     def _backup_source_file_for_project(
         self,
@@ -1983,36 +1946,12 @@ class ProjectManager:
         source_project: Optional[Project],
         target_folder_id: Optional[str] = None,
     ) -> None:
-        origin_abs = self.resolve_source_file_origin_path(source_file, source_project)
-        source_abs = origin_abs if origin_abs and Path(origin_abs).exists() else self.resolve_source_file_path(source_file, source_project)
-        if not source_abs:
-            return
-        source_path = Path(source_abs)
-        if not source_path.exists():
-            raise FileNotFoundError(f"源文件不存在: {source_abs}")
-        backup_root = self._project_assets_dir(project_file_path, "source_files")
-        relative_subdir = self._source_file_relative_subdir(source_file)
-        if relative_subdir is not None:
-            backup_dir = backup_root / relative_subdir
-        elif target_folder_id and self.current_project is not None and self.current_project.file_path == project_file_path:
-            folder_path = self.resolve_source_file_folder_path(target_folder_id, create=True)
-            backup_dir = Path(folder_path) if folder_path else backup_root
-        else:
-            backup_dir = backup_root
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_filename = self._backup_filename(source_file, source_path.suffix)
-        backup_path = backup_dir / backup_filename
-        current_backup_abs = ""
-        if source_file.file_path and not Path(source_file.file_path).is_absolute():
-            current_backup_abs = str((Path(project_file_path).parent / source_file.file_path).resolve())
-        if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
-            backup_path = self._ensure_unique_path(backup_path, source_file.id)
-        if source_path.resolve() != backup_path.resolve():
-            shutil.copy2(source_path, backup_path)
-        rel_path = backup_path.relative_to(Path(project_file_path).parent)
-        source_file.file_path = rel_path.as_posix()
-        source_file.source_file_path = origin_abs or str(source_path)
-        source_file.file_size = backup_path.stat().st_size
+        self._project_backup_manager.backup_source_file_for_project(
+            source_file,
+            project_file_path,
+            source_project,
+            target_folder_id=target_folder_id,
+        )
 
     def _picture_relative_subdir(self, picture: PictureAsset) -> Optional[Path]:
         raw_path = picture.image_path or ""
@@ -2148,43 +2087,13 @@ class ProjectManager:
             self._backup_picture_for_project(picture, target_file_path, source_project)
 
     def _delete_backup_if_managed(self, image: ImageWork, project: Project) -> None:
-        if not project.file_path:
-            return
-        raw_path = image.image_path or ""
-        if not raw_path or Path(raw_path).is_absolute():
-            return
-        backup_path = Path(project.file_path).parent / raw_path
-        try:
-            if backup_path.exists():
-                backup_path.unlink()
-        except OSError:
-            pass
+        self._project_backup_manager.delete_backup_if_managed(image, project, path_attr="image_path")
 
     def _delete_picture_backup_if_managed(self, picture: PictureAsset, project: Project) -> None:
-        if not project.file_path:
-            return
-        raw_path = picture.image_path or ""
-        if not raw_path or Path(raw_path).is_absolute():
-            return
-        backup_path = Path(project.file_path).parent / raw_path
-        try:
-            if backup_path.exists():
-                backup_path.unlink()
-        except OSError:
-            pass
+        self._project_backup_manager.delete_backup_if_managed(picture, project, path_attr="image_path")
 
     def _delete_source_file_backup_if_managed(self, source_file: SourceFileAsset, project: Project) -> None:
-        if not project.file_path:
-            return
-        raw_path = source_file.file_path or ""
-        if not raw_path or Path(raw_path).is_absolute():
-            return
-        backup_path = Path(project.file_path).parent / raw_path
-        try:
-            if backup_path.exists():
-                backup_path.unlink()
-        except OSError:
-            pass
+        self._project_backup_manager.delete_backup_if_managed(source_file, project, path_attr="file_path")
 
 
 # 全局单例
