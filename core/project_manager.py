@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from core.global_assets import global_assets
+from core.project_migration_service import ProjectMigrationService
+from core.project_repository import ProjectRepository
 from models.schemas import (
     AnalysisResult,
     AnalysisResultNode,
@@ -117,6 +119,20 @@ class ProjectManager:
         self._projects: List[Project] = []
         self._current_project_id: Optional[str] = None
         self._last_operation_error: str = ""
+        from core.recent_projects import add_recent
+
+        self._project_repository = ProjectRepository(
+            project_file_suffix=_PROJECT_FILE_SUFFIX,
+            aline_version=_ALINE_VERSION,
+            normalize_path=self._normalize_path,
+            sync_legacy_datasets=self.sync_legacy_datasets,
+            sync_project_backups=self._sync_project_backups,
+            add_recent_project=add_recent,
+        )
+        self._project_migration_service = ProjectMigrationService(
+            ensure_project_tree_groups=self._ensure_project_tree_groups,
+            migrate_project_assets_to_global=self._migrate_project_assets_to_global,
+        )
 
     def get_last_error_message(self) -> str:
         return self._last_operation_error
@@ -386,7 +402,7 @@ class ProjectManager:
         self._current_project_id = project.id
 
         # 为新项目直接初始化 v0.3 树结构（不经过旧数据迁移路径）
-        self._init_new_project_tree(project)
+        self._project_migration_service.init_new_project_tree(project)
 
         if create_structure:
             base_dir = self._normalize_path(parent_dir or os.getcwd())
@@ -402,28 +418,10 @@ class ProjectManager:
         return project
 
     def _normalize_project_file_path(self, file_path: str, *, for_save: bool) -> str:
-        normalized = self._normalize_path(file_path)
-        suffix = Path(normalized).suffix.lower()
-        if not suffix:
-            if for_save:
-                return f"{normalized}{_PROJECT_FILE_SUFFIX}"
-            raise ValueError("项目文件必须使用 .aline 扩展名")
-        if suffix != _PROJECT_FILE_SUFFIX:
-            action = "保存" if for_save else "打开"
-            raise ValueError(f"仅支持 {_PROJECT_FILE_SUFFIX} 项目文件，无法{action}: {normalized}")
-        return normalized
+        return self._project_repository.normalize_project_file_path(file_path, for_save=for_save)
 
     def open(self, file_path: str) -> Project:
-        file_path = self._normalize_project_file_path(file_path, for_save=False)
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"项目文件不存在: {file_path}")
-
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        project = Project(**data)
-        project.file_path = file_path
-        project.is_modified = False
+        project = self._project_repository.open_project(file_path)
 
         existing = self.get_project(project.id)
         if existing:
@@ -435,11 +433,8 @@ class ProjectManager:
         self._current_project_id = project.id
 
         # 迁移旧版本文件
-        self.migrate_to_v2(project)
-        self.migrate_to_v3(project)
-
-        from core.recent_projects import add_recent
-        add_recent(file_path, project.name)
+        self._project_migration_service.migrate_to_v2(project)
+        self._project_migration_service.migrate_to_v3(project)
         return project
 
     def open_file(self, file_path: str) -> Project:
@@ -449,41 +444,7 @@ class ProjectManager:
     def save(self, file_path: Optional[str] = None) -> str:
         if self.current_project is None:
             raise ValueError("没有当前项目")
-
-        if file_path is None:
-            file_path = self.current_project.file_path
-            if file_path is None:
-                raise ValueError("未指定保存路径")
-
-        file_path = self._normalize_project_file_path(file_path, for_save=True)
-        previous_path = self.current_project.file_path
-
-        dir_path = os.path.dirname(file_path)
-        if dir_path:
-            os.makedirs(dir_path, exist_ok=True)
-
-        self.current_project.updated_at = datetime.now().isoformat()
-        if self.current_project.aline_version is None:
-            self.current_project.aline_version = _ALINE_VERSION
-
-        # 保持向后兼容：同步 data_files → datasets
-        self.sync_legacy_datasets(self.current_project)
-
-        self._sync_project_backups(self.current_project, file_path, previous_path)
-
-        data = self.current_project.model_dump()
-        data.pop("file_path", None)
-        data.pop("is_modified", None)
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-        self.current_project.file_path = file_path
-        self.current_project.is_modified = False
-
-        from core.recent_projects import add_recent
-        add_recent(file_path, self.current_project.name)
-        return file_path
+        return self._project_repository.save_project(self.current_project, file_path)
 
     def close_project(self, project_id: str) -> None:
         self._projects = [p for p in self._projects if p.id != project_id]
@@ -1371,161 +1332,14 @@ class ProjectManager:
     # ─────────────────────────────────────────────
 
     def migrate_to_v2(self, project: Optional[Project] = None) -> None:
-        """将旧 v0.1/PyLine 项目迁移到 v0.2 树形结构。
-
-        - 已有 tree 则跳过（幂等）
-        - datasets → DataFile + DataFileNode（挂在"数据集"文件夹）
-        - images   → ImageWorkNode（挂在"数字化"文件夹）
-        """
-        p = project or self.current_project
-        if p is None:
-            return
-        if p.tree is not None:
-            self._ensure_project_tree_groups(p)
-            return
-
-        p.tree = ProjectTree()
-        order = 0
-
-        # 数据集文件夹
-        if p.datasets:
-            ds_folder = FolderNode(name="数据集", order=order, group_type="datasets")
-            p.tree.nodes.append(ds_folder)
-            order += 1
-
-            for ds in p.datasets:
-                df = DataFile(
-                    id=str(uuid.uuid4()),
-                    name=ds.name,
-                    series=list(ds.series),
-                )
-                p.data_files.append(df)
-                df_node = DataFileNode(
-                    name=ds.name,
-                    parent_id=ds_folder.id,
-                    data_file_id=df.id,
-                    order=len(p.tree.nodes),
-                )
-                p.tree.nodes.append(df_node)
-
-        # 数字化文件夹
-        if p.images:
-            img_folder = FolderNode(name="数字化", order=order, group_type="images")
-            p.tree.nodes.append(img_folder)
-            order += 1
-
-            for img in p.images:
-                img_node = ImageWorkNode(
-                    name=img.name,
-                    parent_id=img_folder.id,
-                    image_work_id=img.id,
-                    order=len(p.tree.nodes),
-                )
-                p.tree.nodes.append(img_node)
-
-        if p.pictures:
-            picture_folder = FolderNode(name="图片集", order=order, group_type="pictures")
-            p.tree.nodes.append(picture_folder)
-            order += 1
-
-            for picture in p.pictures:
-                picture_node = PictureNode(
-                    name=picture.name,
-                    parent_id=picture_folder.id,
-                    picture_id=picture.id,
-                    order=len(p.tree.nodes),
-                )
-                p.tree.nodes.append(picture_node)
-
-        # 工具集文件夹（空，占位）
-        tools_folder = FolderNode(name="工具集", order=order, group_type="tools")
-        p.tree.nodes.append(tools_folder)
-        pipelines_folder = FolderNode(
-            name="Pipelines", parent_id=tools_folder.id, order=0, group_type="pipeline_group"
-        )
-        p.tree.nodes.append(pipelines_folder)
-
-        self._ensure_project_tree_groups(p)
-
-        p.aline_version = "0.2"
-        p.is_modified = True
+        self._project_migration_service.migrate_to_v2(project or self.current_project)
 
     def migrate_to_v3(self, project: Optional[Project] = None) -> None:
-        """将 v0.2 项目迁移到 v0.3。
-
-        - 无 tree 则先执行 migrate_to_v2（幂等保证）
-        - 为旧 FolderNode 补充 group_type（按名称推断）
-        - 将 AIToolNode 转换为 AIPromptNode / AISkillNode / AIAgentNode
-        - 确保工具集内存在 template_group / ai_group 子文件夹
-        - 已是 v0.3 则跳过（幂等）
-        """
-        p = project or self.current_project
-        if p is None:
-            return
-        if p.tree is None:
-            self.migrate_to_v2(p)
-        if p.tree is None:
-            return
-
-        # 为旧 FolderNode 推断 group_type
-        _name_to_group = {
-            "源文件": "source_files",
-            "数据集": "datasets",
-            "图片集": "pictures",
-            "数字化": "images",
-            "工具集": "tools",
-            "Pipelines": "pipeline_group",
-            "绘图模板": "figure_template_group",
-            "绘图模板组": "figure_template_group",
-            "报告模板": "report_template_group",
-            "分析结果": "analysis_result_group",
-            "AI 工具": "ai_group",
-            "Prompts": "prompt_group",
-            "Skills": "skill_group",
-            "Agents": "agent_group",
-        }
-        for node in p.tree.nodes:
-            if node.kind == "folder":
-                if node.group_type is None:
-                    node.group_type = _name_to_group.get(node.name)  # type: ignore[assignment]
-
-        # 把 AIToolNode 转换为具体类型
-        new_nodes = []
-        for node in p.tree.nodes:
-            if node.kind == "ai_tool":
-                if node.tool_type == "prompt":
-                    new_nodes.append(AIPromptNode(
-                        id=node.id, name=node.name,
-                        parent_id=node.parent_id, order=node.order,
-                        prompt_id=node.tool_id,
-                    ))
-                elif node.tool_type == "skill":
-                    new_nodes.append(AISkillNode(
-                        id=node.id, name=node.name,
-                        parent_id=node.parent_id, order=node.order,
-                        skill_id=node.tool_id,
-                    ))
-                elif node.tool_type == "agent":
-                    new_nodes.append(AIAgentNode(
-                        id=node.id, name=node.name,
-                        parent_id=node.parent_id, order=node.order,
-                        agent_id=node.tool_id,
-                    ))
-            else:
-                new_nodes.append(node)
-        p.tree.nodes = new_nodes
-
-        self._migrate_project_assets_to_global(p)
-
-        self._ensure_project_tree_groups(p)
-
-        p.aline_version = "0.3"
-        p.is_modified = True
+        self._project_migration_service.migrate_to_v3(project or self.current_project)
 
     def _init_new_project_tree(self, p: Project) -> None:
         """直接为新建（空）项目创建 v0.3 标准树结构。"""
-        p.tree = ProjectTree()
-        self._ensure_project_tree_groups(p)
+        self._project_migration_service.init_new_project_tree(p)
 
     def _migrate_project_assets_to_global(self, project: Project) -> bool:
         changed = False
