@@ -24,6 +24,7 @@
 18. [18-phase-15-monolith-decomposition-and-shared-widget-extraction.md](18-phase-15-monolith-decomposition-and-shared-widget-extraction.md)
 19. [19-phase-16-static-quality-and-reliability-hardening.md](19-phase-16-static-quality-and-reliability-hardening.md)
 20. [20-phase-17-domain-flow-and-analytical-workbench-normalization.md](20-phase-17-domain-flow-and-analytical-workbench-normalization.md)
+21. [21-phase-17-execution-summary.md](21-phase-17-execution-summary.md)
 
 ## 文档职责
 
