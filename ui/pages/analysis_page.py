@@ -63,6 +63,7 @@ from core.extension_loader import reload_configured_extensions
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 from processing.extension_tools import line_from_xy, line_xy, normalize_line
+from ui.page_view_state import AnalysisPageViewState
 from .analysis_page_support import (
     Figure,
     FigureCanvas,
@@ -138,8 +139,7 @@ class AnalysisPage(QWidget):
         super().__init__(parent)
         self._workspace_state = AnalysisWorkspaceState()
         self._workspace_controller = AnalysisWorkspaceController(self._workspace_state)
-        self._extension_panel_visible = False
-        self._extension_panel_width = 360
+        self._view_state = AnalysisPageViewState()
         self._result: Optional[Dict[str, Any]] = None
         self._analysis_type_labels: List[str] = []
         self._analysis_type_ids: List[str] = []
@@ -174,13 +174,13 @@ class AnalysisPage(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if not getattr(self, "_input_panel_splitter_user_resized", False):
+        if not self._view_state.input_panel_splitter_user_resized:
             QTimer.singleShot(0, self._sync_input_panel_splitter_sizes)
 
     def _sync_input_panel_splitter_sizes(self) -> None:
         if not hasattr(self, "_input_panel_splitter") or self._input_panel_splitter is None:
             return
-        if getattr(self, "_input_panel_splitter_user_resized", False):
+        if self._view_state.input_panel_splitter_user_resized:
             return
         total_height = self._input_panel_splitter.height()
         if total_height <= 0:
@@ -191,7 +191,7 @@ class AnalysisPage(QWidget):
             self._input_panel_splitter.setSizes([upper, lower])
 
     def _on_input_panel_splitter_moved(self, _pos: int, _index: int) -> None:
-        self._input_panel_splitter_user_resized = True
+        self._view_state.input_panel_splitter_user_resized = True
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -218,13 +218,13 @@ class AnalysisPage(QWidget):
         self._extension_panel.apply_requested.connect(self._on_analysis_extension_apply)
         self._extension_panel.configs_changed.connect(self.assets_modified.emit)
         self._extension_panel.reload_requested.connect(self._reload_analysis_extensions)
-        self._extension_panel.setMinimumWidth(self._extension_panel_width)
-        self._extension_panel.setMaximumWidth(self._extension_panel_width)
+        self._extension_panel.setMinimumWidth(self._view_state.extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._view_state.extension_panel_width)
         self._page_splitter.addWidget(self._extension_panel)
         self._page_splitter.setStretchFactor(0, 1)
         self._page_splitter.setStretchFactor(1, 0)
         self._refresh_analysis_type_choices()
-        self.set_extension_panel_visible(self._extension_panel_visible)
+        self.set_extension_panel_visible(self._view_state.extension_panel_visible)
 
     def _setup_shortcuts(self) -> None:
         context = Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -275,16 +275,16 @@ class AnalysisPage(QWidget):
         return True
 
     def is_extension_panel_visible(self) -> bool:
-        return bool(self._extension_panel_visible)
+        return bool(self._view_state.extension_panel_visible)
 
     def set_extension_panel_visible(self, visible: bool) -> None:
-        self._extension_panel_visible = bool(visible)
+        self._view_state.extension_panel_visible = bool(visible)
         if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
             return
-        if self._extension_panel_visible:
+        if self._view_state.extension_panel_visible:
             self._extension_panel.show()
-            content_width = max(self.width() - self._extension_panel_width - 24, 640)
-            self._page_splitter.setSizes([content_width, self._extension_panel_width])
+            content_width = max(self.width() - self._view_state.extension_panel_width - 24, 640)
+            self._page_splitter.setSizes([content_width, self._view_state.extension_panel_width])
             return
         self._extension_panel.hide()
         self._page_splitter.setSizes([1, 0])
@@ -306,7 +306,6 @@ class AnalysisPage(QWidget):
         self._input_panel_splitter.setHandleWidth(6)
         self._input_panel_splitter.setChildrenCollapsible(False)
         self._input_panel_splitter.splitterMoved.connect(self._on_input_panel_splitter_moved)
-        self._input_panel_splitter_user_resized = False
         lv.addWidget(self._input_panel_splitter, 1)
 
         input_section = QWidget(self._input_panel_splitter)

@@ -96,6 +96,7 @@ from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color, secondary_text_style_sheet
 from app.workspaces.chart_workspace import ChartWorkspaceController, ChartWorkspaceState
+from ui.page_view_state import ChartPageViewState
 from .chart_page_support import (
     HAS_MATPLOTLIB,
     Figure,
@@ -194,8 +195,7 @@ class ChartPage(QWidget):
         self._ensure_base_style_extensions_registered()
         self._workspace_state = ChartWorkspaceState()
         self._workspace_controller = ChartWorkspaceController(self._workspace_state)
-        self._extension_panel_visible = False
-        self._extension_panel_width = 360
+        self._view_state = ChartPageViewState()
         self._chart_series: List[dict] = []
         self._curve_styles: Dict[str, dict] = {}
         self._style_target: Optional[str] = None
@@ -252,13 +252,13 @@ class ChartPage(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_plot_extension_help_area_height()
-        if not getattr(self, "_chart_left_splitter_user_resized", False):
+        if not self._view_state.chart_left_splitter_user_resized:
             QTimer.singleShot(0, self._sync_chart_left_splitter_sizes)
 
     def _sync_chart_left_splitter_sizes(self) -> None:
         if not hasattr(self, "_chart_left_splitter") or self._chart_left_splitter is None:
             return
-        if getattr(self, "_chart_left_splitter_user_resized", False):
+        if self._view_state.chart_left_splitter_user_resized:
             return
         total_height = self._chart_left_splitter.height()
         if total_height <= 0:
@@ -269,7 +269,7 @@ class ChartPage(QWidget):
             self._chart_left_splitter.setSizes([upper, lower])
 
     def _on_chart_left_splitter_moved(self, _pos: int, _index: int) -> None:
-        self._chart_left_splitter_user_resized = True
+        self._view_state.chart_left_splitter_user_resized = True
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -294,7 +294,6 @@ class ChartPage(QWidget):
         self._chart_left_splitter.setHandleWidth(6)
         self._chart_left_splitter.setChildrenCollapsible(False)
         self._chart_left_splitter.splitterMoved.connect(self._on_chart_left_splitter_moved)
-        self._chart_left_splitter_user_resized = False
         left_layout.addWidget(self._chart_left_splitter, 1)
 
         list_section = QWidget(self._chart_left_splitter)
@@ -455,8 +454,8 @@ class ChartPage(QWidget):
         self._page_splitter.addWidget(self._content_splitter)
 
         self._extension_panel = self._build_plot_extension_side_panel(self)
-        self._extension_panel.setMinimumWidth(self._extension_panel_width)
-        self._extension_panel.setMaximumWidth(self._extension_panel_width)
+        self._extension_panel.setMinimumWidth(self._view_state.extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._view_state.extension_panel_width)
         self._page_splitter.addWidget(self._extension_panel)
         self._page_splitter.setStretchFactor(0, 1)
         self._page_splitter.setStretchFactor(1, 0)
@@ -470,7 +469,7 @@ class ChartPage(QWidget):
         self._update_color_btn("#888888")
         self._update_visibility_button()
         self._install_tooltip_filters()
-        self.set_extension_panel_visible(self._extension_panel_visible)
+        self.set_extension_panel_visible(self._view_state.extension_panel_visible)
 
     def _setup_shortcuts(self) -> None:
         context = Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -543,16 +542,16 @@ class ChartPage(QWidget):
         return True
 
     def is_extension_panel_visible(self) -> bool:
-        return bool(self._extension_panel_visible)
+        return bool(self._view_state.extension_panel_visible)
 
     def set_extension_panel_visible(self, visible: bool) -> None:
-        self._extension_panel_visible = bool(visible)
+        self._view_state.extension_panel_visible = bool(visible)
         if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
             return
-        if self._extension_panel_visible:
+        if self._view_state.extension_panel_visible:
             self._extension_panel.show()
-            content_width = max(self.width() - self._extension_panel_width - 24, 760)
-            self._page_splitter.setSizes([content_width, self._extension_panel_width])
+            content_width = max(self.width() - self._view_state.extension_panel_width - 24, 760)
+            self._page_splitter.setSizes([content_width, self._view_state.extension_panel_width])
             return
         self._extension_panel.hide()
         self._page_splitter.setSizes([1, 0])
@@ -1847,6 +1846,7 @@ class ChartPage(QWidget):
             self._hide_chart_list_tooltip()
             return
         parent = self.window() if isinstance(self.window(), QWidget) else self
+        self._view_state.chart_list_tooltip_visible = True
         if self._chart_list_tooltip is None:
             self._chart_list_tooltip = ToolTip(text, parent)
         self._chart_list_tooltip.setText(text)
@@ -1855,6 +1855,7 @@ class ChartPage(QWidget):
         self._chart_list_tooltip.show()
 
     def _hide_chart_list_tooltip(self) -> None:
+        self._view_state.chart_list_tooltip_visible = False
         if self._chart_list_tooltip is not None:
             self._chart_list_tooltip.hide()
 

@@ -1,5 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QFormLayout, QTableWidgetItem, QHeaderView
 from PySide6.QtCore import Qt, Signal, QSize, QSignalBlocker, QTimer
@@ -23,11 +24,26 @@ from core.extension_api import build_extension_entry, extension_registry
 from core.extension_loader import reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
+from core.extension_invoker import invoke_digitize_extension_handler
 from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
 from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
 from models.schemas import CalibrationData, DataFile, DataSeries
 from app.workspaces.digitize_workspace import DigitizeWorkspaceController, DigitizeWorkspaceState
+from processing.extension_tools import line_xy
+from ui.page_view_state import DigitizePageViewState
 from .digitize_page_support import _InputDialog, _SUPPORTED_SOURCE_IMAGE_SUFFIXES
+
+
+def _build_digitize_auto_preview_points(
+    invoke_handler: Callable[[Any, str, dict[str, Any]], Any],
+    line_xy_fn: Callable[[Any], tuple[Any, Any]],
+    handler: Any,
+    image_path: str,
+    params: dict[str, Any],
+) -> list[tuple[Any, Any]]:
+    result_line = invoke_handler(handler, image_path, params)
+    xs, ys = line_xy_fn(result_line)
+    return list(zip(list(xs), list(ys)))
 
 
 class DigitizePage(QWidget):
@@ -42,14 +58,11 @@ class DigitizePage(QWidget):
         super().__init__(parent)
         self._workspace_state = DigitizeWorkspaceState()
         self._workspace_controller = DigitizeWorkspaceController(self._workspace_state)
-        self._extension_panel_visible = False
-        self._extension_panel_width = 360
+        self._view_state = DigitizePageViewState()
         self._splitter = None
         self._left_panel = None
         self._right_panel = None
         self._right_tabs = None
-        self._right_splitter_initialized = False
-        self._right_splitter_user_resized = False
         self._image_viewer: ImageViewer = cast(ImageViewer, None)
         self._tool_buttons = []
         self._project_tree: TreeWidget = cast(TreeWidget, None)
@@ -71,6 +84,9 @@ class DigitizePage(QWidget):
         # 自动选点
         self._sampled_color = None  # 采样颜色 (QColor)
         self._auto_preview_points = []  # 自动检测预览点
+        self._auto_detect_executor: ThreadPoolExecutor | None = None
+        self._auto_detect_future = None
+        self._auto_detect_job_id = 0
         # 图形识别模板
         self._shape_template: dict | None = None  # preprocess_region() 返回的字典
         self._auto_mode_type_ids: list[str] = []
@@ -97,11 +113,11 @@ class DigitizePage(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if not self._right_splitter_user_resized:
+        if not self._view_state.right_splitter_user_resized:
             QTimer.singleShot(0, self._sync_right_panel_splitter_sizes)
 
     def _sync_right_panel_splitter_sizes(self) -> None:
-        if self._right_content_splitter is None or self._right_splitter_user_resized:
+        if self._right_content_splitter is None or self._view_state.right_splitter_user_resized:
             return
         total_height = self._right_content_splitter.height()
         if total_height <= 0:
@@ -110,7 +126,7 @@ class DigitizePage(QWidget):
         lower = max(1, total_height - upper)
         with QSignalBlocker(self._right_content_splitter):
             self._right_content_splitter.setSizes([upper, lower])
-        self._right_splitter_initialized = True
+        self._view_state.right_splitter_initialized = True
 
     def _set_tool_status(self, text: str = "") -> None:
         if not hasattr(self, "_status_label") or self._status_label is None:
@@ -160,8 +176,8 @@ class DigitizePage(QWidget):
 
         self._extension_panel = ExtensionConfigPanel("数字化扩展", "应用扩展", self, mode="help_only", framed=True)
         self._extension_panel.set_status_context("digitize", "数字化扩展")
-        self._extension_panel.setMinimumWidth(self._extension_panel_width)
-        self._extension_panel.setMaximumWidth(self._extension_panel_width)
+        self._extension_panel.setMinimumWidth(self._view_state.extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._view_state.extension_panel_width)
         self._splitter.addWidget(self._extension_panel)
 
         self._splitter.setSizes([320, 760, 0])
@@ -169,22 +185,22 @@ class DigitizePage(QWidget):
 
         main_layout.addWidget(self._splitter)
         self._refresh_digitize_extension_panel()
-        self.set_extension_panel_visible(self._extension_panel_visible)
+        self.set_extension_panel_visible(self._view_state.extension_panel_visible)
 
     def supports_extension_panel_toggle(self) -> bool:
         return True
 
     def is_extension_panel_visible(self) -> bool:
-        return bool(self._extension_panel_visible)
+        return bool(self._view_state.extension_panel_visible)
 
     def set_extension_panel_visible(self, visible: bool) -> None:
-        self._extension_panel_visible = bool(visible)
+        self._view_state.extension_panel_visible = bool(visible)
         if not hasattr(self, "_extension_panel") or self._splitter is None:
             return
-        if self._extension_panel_visible:
+        if self._view_state.extension_panel_visible:
             self._extension_panel.show()
-            center_width = max(self.width() - 320 - self._extension_panel_width - 24, 640)
-            self._splitter.setSizes([320, center_width, self._extension_panel_width])
+            center_width = max(self.width() - 320 - self._view_state.extension_panel_width - 24, 640)
+            self._splitter.setSizes([320, center_width, self._view_state.extension_panel_width])
             return
         self._extension_panel.hide()
         center_width = max(self.width() - 320 - 12, 760)
@@ -436,8 +452,8 @@ class DigitizePage(QWidget):
         return panel
 
     def _on_right_content_splitter_moved(self, _pos: int, _index: int) -> None:
-        if self._right_splitter_initialized:
-            self._right_splitter_user_resized = True
+        if self._view_state.right_splitter_initialized:
+            self._view_state.right_splitter_user_resized = True
 
     def _create_top_viewer_toolbar(self, parent) -> QWidget:
         """创建图片查看器上方工具栏。"""
@@ -1579,6 +1595,13 @@ class DigitizePage(QWidget):
 
     def _on_cancel_auto_preview(self):
         """放弃自动检测结果，清除预览点，不写入曲线"""
+        if self._auto_detect_future is not None and not self._auto_detect_future.done():
+            self._auto_detect_job_id += 1
+            self._auto_detect_future = None
+            self._auto_preview_points = []
+            self._image_viewer.clear_preview_points()
+            self._set_tool_status("已取消检测，结果将被忽略")
+            return
         if not self._auto_preview_points:
             self._set_tool_status("没有待取消的预览结果")
             return
@@ -1649,36 +1672,34 @@ class DigitizePage(QWidget):
             self._set_tool_status()
             return
 
+        if self._auto_detect_future is not None and not self._auto_detect_future.done():
+            InfoBar.info(title="提示", content="自动检测正在进行，请先取消或等待完成", parent=self, duration=3000)
+            return
+
         # 获取蒙版多边形和模式
         mask = self._image_viewer.get_mask()
         mask_polygons = mask.polygons if mask and mask.enabled else None
         mask_include_mode = mask.include_mode if mask else True
 
         self._set_tool_status("检测中…")
-        from PySide6.QtWidgets import QApplication
-        QApplication.processEvents()
-
         params = self._current_digitize_extension_params(
             type_id,
             mask_polygons=mask_polygons,
             mask_include_mode=mask_include_mode,
         )
-        try:
-            from core.extension_invoker import invoke_digitize_extension_handler
-            from processing.extension_tools import line_xy
-
-            result_line = invoke_digitize_extension_handler(extension.handler, image_path, params)
-            xs, ys = line_xy(result_line)
-        except Exception as e:
-            self._set_tool_status(f"{extension.name}失败: {e}")
-            return
-
-        points = list(zip(list(xs), list(ys)))
-        desc = f"{extension.name}识别到 {len(points)} 个点"
-
-        self._auto_preview_points = points
-        self._image_viewer.set_preview_points(points)
-        self._set_tool_status(f"{desc}，点击「应用」写入曲线")
+        self._auto_detect_job_id += 1
+        job_id = self._auto_detect_job_id
+        if self._auto_detect_executor is None:
+            self._auto_detect_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="digitize-auto-detect")
+        self._auto_detect_future = self._auto_detect_executor.submit(
+            _build_digitize_auto_preview_points,
+            invoke_digitize_extension_handler,
+            line_xy,
+            extension.handler,
+            image_path,
+            params,
+        )
+        QTimer.singleShot(0, lambda job_id=job_id, extension_name=extension.name: self._poll_auto_detect(job_id, extension_name))
 
 
     def _on_apply_auto_points(self):
@@ -1721,6 +1742,30 @@ class DigitizePage(QWidget):
         self._update_curve_table()
         self._refresh_project_tree()
         self.project_modified.emit()
+
+    def _poll_auto_detect(self, job_id: int, extension_name: str) -> None:
+        future = self._auto_detect_future
+        if future is None or job_id != self._auto_detect_job_id:
+            return
+        if not future.done():
+            QTimer.singleShot(50, lambda job_id=job_id, extension_name=extension_name: self._poll_auto_detect(job_id, extension_name))
+            return
+
+        try:
+            points = list(future.result())
+        except Exception as exc:
+            if job_id == self._auto_detect_job_id:
+                self._set_tool_status(f"{extension_name}失败: {exc}")
+            self._auto_detect_future = None
+            return
+
+        if job_id != self._auto_detect_job_id:
+            return
+
+        self._auto_detect_future = None
+        self._auto_preview_points = points
+        self._image_viewer.set_preview_points(points)
+        self._set_tool_status(f"{extension_name}识别到 {len(points)} 个点，点击「应用」写入曲线")
 
     # ==================== 数据导出槽函数 ====================
 
