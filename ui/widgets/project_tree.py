@@ -1610,16 +1610,7 @@ class ProjectTreeWidget(QWidget):
         return project_manager.move_node(node_id, target_id, order)
 
     def _cmd_move_virtual(self, kind: str, node_id: str, choices: List[Tuple[str, str]]) -> None:
-        labels = [label for label, _ in choices]
-        selected, ok = SelectionDialog.get_item(self._dialog_parent(), "移动到", "目标父级:", labels)
-        if not ok or not selected:
-            return
-        target_id = next((target_id for label, target_id in choices if label == selected), None)
-        if target_id and self._move_node_to_target(kind, node_id, target_id):
-            self.refresh()
-            self.project_modified.emit()
-            return
-        InfoBar.warning("移动失败", project_manager.get_last_error_message() or "目标位置已存在同名节点", parent=self, position=InfoBarPosition.TOP)
+        self._command_service.move_virtual(kind, node_id, choices)
 
     def _selected_items_for_context_menu(self, anchor_item: QTreeWidgetItem) -> List[QTreeWidgetItem]:
         selected_items = [item for item in self._tree.selectedItems() if item is not None]

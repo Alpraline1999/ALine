@@ -255,6 +255,29 @@ class TestProjectTreeCommandService(unittest.TestCase):
         self.assertEqual(("modified", ""), calls[1])
         self.assertEqual(("批量移动未完成", "有 1 项移动失败"), calls[2])
 
+    def test_move_virtual_moves_then_refreshes(self) -> None:
+        calls: list[tuple[str, str]] = []
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("目标A", True),
+            create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda kind, node_id, target_id: (kind, node_id, target_id) == ("series", "ok2", "target-a"),
+            notify_warning=lambda title, content: calls.append((title, content)),
+            notify_success=lambda *_args: None,
+            refresh=lambda: calls.append(("refresh", "")),
+            select_node=lambda node_id: calls.append((f"select:{node_id}", "")),
+            project_modified=lambda: calls.append(("modified", "")),
+            last_error_message=lambda: "",
+        )
+
+        service.move_virtual("series", "ok2", [("目标A", "target-a"), ("目标B", "target-b")])
+
+        self.assertEqual(("refresh", ""), calls[0])
+        self.assertEqual(("modified", ""), calls[1])
+
 
 if __name__ == "__main__":
     unittest.main()

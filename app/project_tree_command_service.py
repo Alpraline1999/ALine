@@ -136,3 +136,15 @@ class ProjectTreeCommandService:
             self.project_modified()
         if failed:
             self.notify_warning("批量移动未完成", self.last_error_message() or f"有 {failed} 项移动失败")
+
+    def move_virtual(self, kind: str, node_id: str, choices: list[tuple[str, str]]) -> None:
+        labels = [label for label, _ in choices]
+        selected, ok = self.choose_item("移动到", "目标父级:", labels)
+        if not ok or not selected:
+            return
+        target_id = next((target_id for label, target_id in choices if label == selected), None)
+        if target_id and self.move_node_to_target(kind, node_id, target_id):
+            self.refresh()
+            self.project_modified()
+            return
+        self.notify_warning("移动失败", self.last_error_message() or "目标位置已存在同名节点")
