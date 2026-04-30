@@ -359,11 +359,14 @@ class ProjectTreeWidget(QWidget):
         self._command_service = ProjectTreeCommandService(
             confirm_delete=self._confirm_tree_delete,
             confirm_batch_delete=self._confirm_tree_delete,
+            choose_files=self._choose_tree_files,
             prompt_text=self._prompt_tree_text,
             prompt_existing_text=self._prompt_tree_existing_text,
             choose_item=self._choose_tree_item,
             create_child_folder=self._create_child_folder,
             move_node_to_target=self._move_node_to_target,
+            supports_digitize_import=self._supports_source_file_digitize_import,
+            linked_tree_node_id=self._linked_tree_node_id,
             notify_warning=self._notify_tree_warning,
             notify_success=self._notify_tree_success,
             refresh=self.refresh,
@@ -1342,6 +1345,15 @@ class ProjectTreeWidget(QWidget):
     def _choose_tree_item(self, title: str, label: str, items: list[str]) -> tuple[str, bool]:
         return SelectionDialog.get_item(self._dialog_parent(), title, label, items)
 
+    def _choose_tree_files(self, title: str, file_filter: str) -> list[str]:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self._dialog_parent(),
+            title,
+            "",
+            file_filter,
+        )
+        return list(paths)
+
     def _cmd_import_data_file(self, parent_id: Optional[str] = None) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self._dialog_parent(),
@@ -1379,75 +1391,10 @@ class ProjectTreeWidget(QWidget):
         self.project_modified.emit()
 
     def _cmd_import_source_files(self, parent_id: Optional[str] = None) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(
-            self._dialog_parent(),
-            "导入源文件",
-            "",
-            "所有文件 (*.*)",
-        )
-        clean_paths = [path for path in paths if path]
-        if not clean_paths:
-            return
-        nodes = project_manager.add_source_files(clean_paths, parent_id=parent_id, auto_rename_on_conflict=True)
-        if not nodes:
-            InfoBar.warning(
-                "导入失败",
-                project_manager.get_last_error_message() or "未能导入任何源文件",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
+        self._command_service.import_source_files(parent_id)
 
     def _cmd_import_digitize_images(self, parent_id: Optional[str] = None) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(
-            self._dialog_parent(),
-            "导入图片到数字化",
-            "",
-            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp);;所有文件 (*)",
-        )
-        clean_paths = [path for path in paths if path]
-        if not clean_paths:
-            return
-
-        imported_node_ids: List[str] = []
-        failed_paths: List[str] = []
-        for path in clean_paths:
-            if not self._supports_source_file_digitize_import(path):
-                failed_paths.append(Path(path).name)
-                continue
-            try:
-                image = project_manager.add_image(path, name=Path(path).name, parent_id=parent_id)
-            except (FileNotFoundError, ValueError):
-                failed_paths.append(Path(path).name)
-                continue
-            node_id = self._linked_tree_node_id("image_work", "image_work_id", image.id)
-            if node_id:
-                imported_node_ids.append(node_id)
-
-        if not imported_node_ids:
-            InfoBar.warning(
-                "导入失败",
-                project_manager.get_last_error_message() or "未能导入任何图片",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
-            return
-
-        self.refresh()
-        self.select_node(imported_node_ids[-1])
-        self.project_modified.emit()
-        InfoBar.success(
-            "导入完成",
-            f"已导入 {len(imported_node_ids)} 张图片到数字化",
-            parent=self._dialog_parent(),
-            position=InfoBarPosition.TOP,
-        )
-        if failed_paths:
-            InfoBar.warning(
-                "部分导入失败",
-                "以下图片未能导入: " + "、".join(failed_paths[:5]),
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
+        self._command_service.import_digitize_images(parent_id)
 
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
         self._command_service.rename_virtual(kind, node_id, current_name)

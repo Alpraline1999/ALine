@@ -26,6 +26,8 @@ def _load_command_service_module():
             self.removed_empty_folder_args: list[str | None] = []
             self.deleted_series: list[str] = []
             self.deleted_curves: list[str] = []
+            self.source_file_batches: list[tuple[list[str], str | None, bool]] = []
+            self.added_images: list[tuple[str, str, str | None]] = []
             self.return_node = types.SimpleNamespace(id="node-1")
 
         def delete_node(self, node_id: str) -> None:
@@ -54,6 +56,14 @@ def _load_command_service_module():
             self.deleted_curves.append(node_id)
             return True
 
+        def add_source_files(self, paths: list[str], parent_id: str | None = None, auto_rename_on_conflict: bool = False):
+            self.source_file_batches.append((list(paths), parent_id, auto_rename_on_conflict))
+            return [types.SimpleNamespace(id="src-node-1"), types.SimpleNamespace(id="src-node-2")]
+
+        def add_image(self, path: str, name: str, parent_id: str | None = None):
+            self.added_images.append((path, name, parent_id))
+            return types.SimpleNamespace(id=f"image-{len(self.added_images)}")
+
     fake_pm_module.project_manager = _FakeProjectManager()
     sys.modules["core.project_manager"] = fake_pm_module
 
@@ -81,17 +91,22 @@ class TestProjectTreeCommandService(unittest.TestCase):
         project_manager.removed_empty_folder_args.clear()
         project_manager.deleted_series.clear()
         project_manager.deleted_curves.clear()
+        project_manager.source_file_batches.clear()
+        project_manager.added_images.clear()
 
     def test_delete_node_confirms_then_refreshes(self) -> None:
         calls: list[str] = []
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: True,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
             choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -110,11 +125,14 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("dataset-a", True),
             prompt_existing_text=lambda *_args: ("", False),
             choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -133,11 +151,14 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("series-b", True),
             choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -156,11 +177,14 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
             choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda *_args: None,
             notify_success=lambda title, content: calls.append((title, content)),
             refresh=lambda: calls.append(("refresh", "")),
@@ -181,11 +205,14 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: True,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
             choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -204,11 +231,14 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
             choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -233,11 +263,14 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
             choose_item=lambda *_args: ("目标A", True),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda kind, node_id, target_id: node_id == "ok1",
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda title, content: calls.append((title, content)),
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append(("refresh", "")),
@@ -260,11 +293,14 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
             confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: [],
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
             choose_item=lambda *_args: ("目标A", True),
             create_child_folder=lambda *_args: None,
             move_node_to_target=lambda kind, node_id, target_id: (kind, node_id, target_id) == ("series", "ok2", "target-a"),
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda title, content: calls.append((title, content)),
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append(("refresh", "")),
@@ -277,6 +313,68 @@ class TestProjectTreeCommandService(unittest.TestCase):
 
         self.assertEqual(("refresh", ""), calls[0])
         self.assertEqual(("modified", ""), calls[1])
+
+    def test_import_source_files_refreshes_and_selects_last_node(self) -> None:
+        calls: list[tuple[str, str]] = []
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: ["a.csv", "b.csv"],
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("", False),
+            create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda *_args: False,
+            linked_tree_node_id=lambda *_args: None,
+            notify_warning=lambda title, content: calls.append((title, content)),
+            notify_success=lambda title, content: calls.append((title, content)),
+            refresh=lambda: calls.append(("refresh", "")),
+            select_node=lambda node_id: calls.append((f"select:{node_id}", "")),
+            project_modified=lambda: calls.append(("modified", "")),
+            last_error_message=lambda: "",
+        )
+
+        service.import_source_files("parent-s")
+
+        self.assertEqual([(["a.csv", "b.csv"], "parent-s", True)], project_manager.source_file_batches)
+        self.assertEqual(("refresh", ""), calls[0])
+        self.assertEqual(("select:src-node-2", ""), calls[1])
+        self.assertEqual(("modified", ""), calls[2])
+
+    def test_import_digitize_images_reports_success_and_partial_failures(self) -> None:
+        calls: list[tuple[str, str]] = []
+        linked_map = {"image-1": "img-node-1", "image-2": "img-node-2"}
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
+            choose_files=lambda *_args: ["ok1.png", "bad.txt", "ok2.jpg"],
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("", False),
+            create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
+            supports_digitize_import=lambda path: path.endswith((".png", ".jpg")),
+            linked_tree_node_id=lambda _kind, _attr, value: linked_map.get(value),
+            notify_warning=lambda title, content: calls.append((title, content)),
+            notify_success=lambda title, content: calls.append((title, content)),
+            refresh=lambda: calls.append(("refresh", "")),
+            select_node=lambda node_id: calls.append((f"select:{node_id}", "")),
+            project_modified=lambda: calls.append(("modified", "")),
+            last_error_message=lambda: "",
+        )
+
+        service.import_digitize_images("parent-i")
+
+        self.assertEqual(
+            [("ok1.png", "ok1.png", "parent-i"), ("ok2.jpg", "ok2.jpg", "parent-i")],
+            project_manager.added_images,
+        )
+        self.assertEqual(("refresh", ""), calls[0])
+        self.assertEqual(("select:img-node-2", ""), calls[1])
+        self.assertEqual(("modified", ""), calls[2])
+        self.assertEqual(("导入完成", "已导入 2 张图片到数字化"), calls[3])
+        self.assertEqual(("部分导入失败", "以下图片未能导入: bad.txt"), calls[4])
 
 
 if __name__ == "__main__":

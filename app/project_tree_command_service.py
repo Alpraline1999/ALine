@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from core.project_manager import project_manager
@@ -11,11 +12,14 @@ from models.schemas import DataFile
 class ProjectTreeCommandService:
     confirm_delete: Callable[[str, str], bool]
     confirm_batch_delete: Callable[[str, str], bool]
+    choose_files: Callable[[str, str], list[str]]
     prompt_text: Callable[[str, str, str], tuple[str, bool]]
     prompt_existing_text: Callable[[str, str, str], tuple[str, bool]]
     choose_item: Callable[[str, str, list[str]], tuple[str, bool]]
     create_child_folder: Callable[[str, str], object | None]
     move_node_to_target: Callable[[str, str, str], bool]
+    supports_digitize_import: Callable[[str], bool]
+    linked_tree_node_id: Callable[[str, str, str], str | None]
     notify_warning: Callable[[str, str], None]
     notify_success: Callable[[str, str], None]
     refresh: Callable[[], None]
@@ -148,3 +152,53 @@ class ProjectTreeCommandService:
             self.project_modified()
             return
         self.notify_warning("移动失败", self.last_error_message() or "目标位置已存在同名节点")
+
+    def import_source_files(self, parent_id: str | None = None) -> None:
+        clean_paths = [path for path in self.choose_files("导入源文件", "所有文件 (*.*)") if path]
+        if not clean_paths:
+            return
+        nodes = project_manager.add_source_files(clean_paths, parent_id=parent_id, auto_rename_on_conflict=True)
+        if not nodes:
+            self.notify_warning("导入失败", self.last_error_message() or "未能导入任何源文件")
+            return
+        self.refresh()
+        self.select_node(nodes[-1].id)
+        self.project_modified()
+
+    def import_digitize_images(self, parent_id: str | None = None) -> None:
+        clean_paths = [
+            path
+            for path in self.choose_files(
+                "导入图片到数字化",
+                "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp);;所有文件 (*)",
+            )
+            if path
+        ]
+        if not clean_paths:
+            return
+
+        imported_node_ids: list[str] = []
+        failed_paths: list[str] = []
+        for path in clean_paths:
+            if not self.supports_digitize_import(path):
+                failed_paths.append(Path(path).name)
+                continue
+            try:
+                image = project_manager.add_image(path, name=Path(path).name, parent_id=parent_id)
+            except (FileNotFoundError, ValueError):
+                failed_paths.append(Path(path).name)
+                continue
+            node_id = self.linked_tree_node_id("image_work", "image_work_id", image.id)
+            if node_id:
+                imported_node_ids.append(node_id)
+
+        if not imported_node_ids:
+            self.notify_warning("导入失败", self.last_error_message() or "未能导入任何图片")
+            return
+
+        self.refresh()
+        self.select_node(imported_node_ids[-1])
+        self.project_modified()
+        self.notify_success("导入完成", f"已导入 {len(imported_node_ids)} 张图片到数字化")
+        if failed_paths:
+            self.notify_warning("部分导入失败", "以下图片未能导入: " + "、".join(failed_paths[:5]))
