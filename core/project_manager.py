@@ -15,8 +15,10 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from core.global_assets import global_assets
+from core.project_asset_service import ProjectAssetService
 from core.project_migration_service import ProjectMigrationService
 from core.project_repository import ProjectRepository
+from core.project_tree_service import ProjectTreeService
 from models.schemas import (
     AnalysisResult,
     AnalysisResultNode,
@@ -132,6 +134,34 @@ class ProjectManager:
         self._project_migration_service = ProjectMigrationService(
             ensure_project_tree_groups=self._ensure_project_tree_groups,
             migrate_project_assets_to_global=self._migrate_project_assets_to_global,
+        )
+        self._project_tree_service = ProjectTreeService(
+            get_current_project=lambda: self.current_project,
+            clear_last_error=self._clear_last_operation_error,
+            ensure_project_tree=self._project_migration_service.migrate_to_v2,
+            canonical_group_type=self._canonical_group_type,
+            ensure_unique_tree_child_name=self._ensure_unique_tree_child_name,
+            rename_source_file=self.rename_source_file,
+            rename_image=self.rename_image,
+            rename_picture=self.rename_picture,
+            delete_backup_if_managed=self._delete_backup_if_managed,
+            delete_picture_backup_if_managed=self._delete_picture_backup_if_managed,
+            delete_source_file_backup_if_managed=self._delete_source_file_backup_if_managed,
+            node_collection_group_type=self._node_collection_group_type,
+            sync_picture_storage=self._sync_picture_storage,
+            sync_source_file_storage=self._sync_source_file_storage,
+        )
+        self._project_asset_service = ProjectAssetService(
+            get_current_project=lambda: self.current_project,
+            clear_last_error=self._clear_last_operation_error,
+            ensure_project_tree=self._project_migration_service.migrate_to_v2,
+            ensure_unique_tree_child_name=self._ensure_unique_tree_child_name,
+            next_unique_tree_child_name=self._next_unique_tree_child_name,
+            ensure_unique_series_name=self._ensure_unique_series_name,
+            ensure_unique_curve_name=self._ensure_unique_curve_name,
+            find_folder_by_group_type=self._find_folder_by_group_type,
+            find_folder_by_name=self._find_folder_by_name,
+            get_image=self.get_image,
         )
 
     def get_last_error_message(self) -> str:
@@ -1127,60 +1157,13 @@ class ProjectManager:
         return None, None, None
 
     def rename_series(self, series_id: str, new_name: str) -> bool:
-        self._clear_last_operation_error()
-        owner_kind, _owner, series = self._find_series_owner(series_id)
-        if owner_kind is None or _owner is None or series is None:
-            return False
-        owner_label = "数据文件" if owner_kind == "data_file" else "数据集"
-        if not self._ensure_unique_series_name(
-            getattr(_owner, "name", ""),
-            list(getattr(_owner, "series", [])),
-            new_name,
-            owner_label=owner_label,
-            exclude_series_id=series.id,
-        ):
-            return False
-        series.name = new_name
-        if self.current_project is not None:
-            self.current_project.is_modified = True
-        return True
+        return self._project_asset_service.rename_series(series_id, new_name)
 
     def delete_series(self, series_id: str) -> bool:
-        owner_kind, owner, _series = self._find_series_owner(series_id)
-        if owner_kind is None or owner is None or self.current_project is None:
-            return False
-        if owner_kind == "data_file":
-            before = len(owner.series)
-            owner.series = [s for s in owner.series if s.id != series_id]
-            changed = len(owner.series) < before
-        else:
-            before = len(owner.series)
-            owner.series = [s for s in owner.series if s.id != series_id]
-            changed = len(owner.series) < before
-        if changed:
-            self.current_project.is_modified = True
-        return changed
+        return self._project_asset_service.delete_series(series_id)
 
     def move_series_to_data_file(self, series_id: str, target_data_file_id: str) -> bool:
-        self._clear_last_operation_error()
-        p = self.current_project
-        if p is None:
-            return False
-        target = p.find_data_file(target_data_file_id)
-        owner_kind, owner, series = self._find_series_owner(series_id)
-        if target is None or owner_kind is None or owner is None or series is None:
-            return False
-        if owner_kind == "data_file" and owner.id == target.id:
-            return False
-        if not self._ensure_unique_series_name(target.name, target.series, series.name, owner_label="数据文件"):
-            return False
-        if owner_kind == "data_file":
-            owner.series = [s for s in owner.series if s.id != series_id]
-        else:
-            owner.series = [s for s in owner.series if s.id != series_id]
-        target.series.append(series)
-        p.is_modified = True
-        return True
+        return self._project_asset_service.move_series_to_data_file(series_id, target_data_file_id)
 
     def import_curve_as_series(self, curve_id: str, dataset_id: str) -> Optional[DataSeries]:
         """将 PyLine 图像提取曲线复制为 ALine DataSeries（核心互通方法）。
@@ -1218,45 +1201,13 @@ class ProjectManager:
         return None, None
 
     def rename_curve(self, curve_id: str, new_name: str) -> bool:
-        self._clear_last_operation_error()
-        image, curve = self._find_curve_owner(curve_id)
-        if image is None or curve is None:
-            return False
-        if not self._ensure_unique_curve_name(image.name, image.curves, new_name, exclude_curve_id=curve.id):
-            return False
-        curve.name = new_name
-        if self.current_project is not None:
-            self.current_project.is_modified = True
-        return True
+        return self._project_asset_service.rename_curve(curve_id, new_name)
 
     def delete_curve(self, curve_id: str) -> bool:
-        image, _curve = self._find_curve_owner(curve_id)
-        if image is None or self.current_project is None:
-            return False
-        before = len(image.curves)
-        image.curves = [c for c in image.curves if c.id != curve_id]
-        changed = len(image.curves) < before
-        if changed:
-            self.current_project.is_modified = True
-        return changed
+        return self._project_asset_service.delete_curve(curve_id)
 
     def move_curve_to_image(self, curve_id: str, target_image_id: str) -> bool:
-        self._clear_last_operation_error()
-        p = self.current_project
-        if p is None:
-            return False
-        source_image, curve = self._find_curve_owner(curve_id)
-        target_image = self.get_image(target_image_id)
-        if source_image is None or curve is None or target_image is None:
-            return False
-        if source_image.id == target_image.id:
-            return False
-        if not self._ensure_unique_curve_name(target_image.name, target_image.curves, curve.name):
-            return False
-        source_image.curves = [c for c in source_image.curves if c.id != curve_id]
-        target_image.curves.append(curve)
-        p.is_modified = True
-        return True
+        return self._project_asset_service.move_curve_to_image(curve_id, target_image_id)
 
     # ─────────────────────────────────────────────
     # ALine 分析管理（新增）
@@ -1431,268 +1382,27 @@ class ProjectManager:
     # ─────────────────────────────────────────────
 
     def add_folder(self, name: str, parent_id: Optional[str] = None, group_type: Optional[str] = None) -> Optional[FolderNode]:
-        self._clear_last_operation_error()
-        p = self.current_project
-        if p is None:
-            return None
-        if p.tree is None:
-            self.migrate_to_v2(p)
-        group_type = self._canonical_group_type(group_type)
-        if not self._ensure_unique_tree_child_name(parent_id, name, node_kind="folder", project=p):
-            return None
-        order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
-        node = FolderNode(name=name, parent_id=parent_id, order=order, group_type=group_type)  # type: ignore[arg-type]
-        p.tree.nodes.append(node)  # type: ignore
-        p.is_modified = True
-        return node
+        return self._project_tree_service.add_folder(name, parent_id, group_type)
 
     def rename_node(self, node_id: str, new_name: str) -> bool:
-        self._clear_last_operation_error()
-        p = self.current_project
-        if p is None or p.tree is None:
-            return False
-        node = p.tree.get_node(node_id)
-        if node is None:
-            return False
-        if not self._ensure_unique_tree_child_name(
-            node.parent_id,
-            new_name,
-            node_kind=node.kind,
-            exclude_node_id=node.id,
-            project=p,
-        ):
-            return False
-        # 同步关联数据实体名称
-        if node.kind == "data_file":
-            df = p.find_data_file(node.data_file_id)
-            if df:
-                df.name = new_name
-        elif node.kind == "source_file":
-            if not self.rename_source_file(node.source_file_id, new_name):
-                return False
-        elif node.kind == "image_work":
-            if not self.rename_image(node.image_work_id, new_name):
-                return False
-        elif node.kind == "picture":
-            if not self.rename_picture(node.picture_id, new_name):
-                return False
-        elif node.kind == "pipeline":
-            global_assets.update_saved_pipeline(node.pipeline_id, name=new_name)
-        elif node.kind == "figure_template":
-            global_assets.update_figure_template(node.figure_id, name=new_name)
-        elif node.kind == "report_template":
-            global_assets.update_report_template(node.template_id, name=new_name)
-        elif node.kind == "analysis_result":
-            analysis = p.find_analysis(node.analysis_id)
-            if analysis:
-                analysis.name = new_name
-        elif node.kind == "ai_prompt":
-            global_assets.update_ai_prompt(node.prompt_id, name=new_name)
-        elif node.kind == "ai_skill":
-            global_assets.update_ai_skill(node.skill_id, name=new_name)
-        elif node.kind == "ai_agent":
-            global_assets.update_ai_agent(node.agent_id, name=new_name)
-        node.name = new_name
-        collection_group = self._node_collection_group_type(node.id)
-        if node.kind in {"folder", "picture"} and collection_group == "pictures":
-            self._sync_picture_storage()
-        if node.kind in {"folder", "source_file"} and collection_group == "source_files":
-            self._sync_source_file_storage()
-        p.is_modified = True
-        return True
+        return self._project_tree_service.rename_node(node_id, new_name)
 
     def delete_node(self, node_id: str) -> bool:
         """删除节点及其所有子节点和关联数据实体。"""
-        p = self.current_project
-        if p is None or p.tree is None:
-            return False
-
-        def _collect_ids(nid: str) -> List[str]:
-            ids = [nid]
-            for child in p.tree.get_children(nid):  # type: ignore
-                ids.extend(_collect_ids(child.id))
-            return ids
-
-        ids_to_delete = set(_collect_ids(node_id))
-
-        for nid in ids_to_delete:
-            node = p.tree.get_node(nid)
-            if node is None:
-                continue
-            if node.kind == "data_file":
-                p.data_files = [df for df in p.data_files if df.id != node.data_file_id]
-            elif node.kind == "source_file":
-                source_file = next((item for item in p.source_files if item.id == node.source_file_id), None)
-                if source_file is not None:
-                    self._delete_source_file_backup_if_managed(source_file, p)
-                p.source_files = [item for item in p.source_files if item.id != node.source_file_id]
-            elif node.kind == "image_work":
-                image = next((img for img in p.images if img.id == node.image_work_id), None)
-                if image is not None:
-                    self._delete_backup_if_managed(image, p)
-                p.images = [img for img in p.images if img.id != node.image_work_id]
-            elif node.kind == "picture":
-                picture = next((item for item in p.pictures if item.id == node.picture_id), None)
-                if picture is not None:
-                    self._delete_picture_backup_if_managed(picture, p)
-                p.pictures = [item for item in p.pictures if item.id != node.picture_id]
-            elif node.kind == "pipeline":
-                global_assets.delete_saved_pipeline(node.pipeline_id)
-            elif node.kind == "figure_template":
-                global_assets.delete_figure_template(node.figure_id)
-            elif node.kind == "report_template":
-                global_assets.delete_report_template(node.template_id)
-            elif node.kind == "analysis_result":
-                p.analyses = [a for a in p.analyses if a.id != node.analysis_id]
-            elif node.kind == "ai_prompt":
-                global_assets.delete_ai_prompt(node.prompt_id)
-            elif node.kind == "ai_skill":
-                global_assets.delete_ai_skill(node.skill_id)
-            elif node.kind == "ai_agent":
-                global_assets.delete_ai_agent(node.agent_id)
-            elif node.kind == "ai_tool":  # v0.2 legacy
-                tool_id = getattr(node, "tool_id", "")
-                global_assets.delete_ai_prompt(tool_id)
-                global_assets.delete_ai_skill(tool_id)
-                global_assets.delete_ai_agent(tool_id)
-
-        p.tree.nodes = [n for n in p.tree.nodes if n.id not in ids_to_delete]
-        p.is_modified = True
-        return True
+        return self._project_tree_service.delete_node(node_id)
 
     def remove_empty_folders(self, root_id: Optional[str] = None, *, include_root: bool = False) -> List[str]:
         """清理空的用户文件夹，保留系统分组文件夹。"""
-        p = self.current_project
-        if p is None or p.tree is None:
-            return []
-
-        scoped_ids = None
-        if root_id is not None:
-            root = p.tree.get_node(root_id)
-            if root is None or root.kind != "folder":
-                return []
-
-            def _collect_folder_ids(node_id: str) -> List[str]:
-                ids = [node_id]
-                for child in p.tree.get_children(node_id):  # type: ignore
-                    if child.kind == "folder":
-                        ids.extend(_collect_folder_ids(child.id))
-                return ids
-
-            scoped_ids = set(_collect_folder_ids(root_id))
-            if not include_root:
-                scoped_ids.discard(root_id)
-
-        removed_ids: List[str] = []
-        while True:
-            removable_ids: List[str] = []
-            for node in list(p.tree.nodes):
-                if node.kind != "folder":
-                    continue
-                if scoped_ids is not None and node.id not in scoped_ids:
-                    continue
-                canonical_group = self._canonical_group_type(getattr(node, "group_type", None))
-                if canonical_group not in {None, "user"}:
-                    if canonical_group in _NON_REMOVABLE_FOLDER_GROUP_TYPES and getattr(node, "parent_id", None) is None:
-                        continue
-                if p.tree.get_children(node.id):  # type: ignore
-                    continue
-                removable_ids.append(node.id)
-
-            if not removable_ids:
-                break
-
-            removable_set = set(removable_ids)
-            p.tree.nodes = [node for node in p.tree.nodes if node.id not in removable_set]
-            removed_ids.extend(removable_ids)
-            if scoped_ids is not None:
-                scoped_ids.difference_update(removable_set)
-
-        if removed_ids:
-            p.is_modified = True
-        return removed_ids
+        return self._project_tree_service.remove_empty_folders(root_id, include_root=include_root)
 
     def move_node(self, node_id: str, new_parent_id: Optional[str], new_order: int) -> bool:
-        self._clear_last_operation_error()
-        p = self.current_project
-        if p is None or p.tree is None:
-            return False
-        node = p.tree.get_node(node_id)
-        if node is None:
-            return False
-        parent = p.tree.get_node(new_parent_id) if new_parent_id else None
-        if parent is None or parent.kind != "folder":
-            return False
-        parent_group_type = self._canonical_group_type(getattr(parent, "group_type", None))
-        if node.kind == "folder":
-            if node.parent_id is None:
-                return False
-            node_group_type = self._canonical_group_type(getattr(node, "group_type", None))
-            if node_group_type is None:
-                current = p.tree.get_node(node.parent_id) if node.parent_id else None
-                while current is not None and current.kind == "folder":
-                    node_group_type = self._canonical_group_type(getattr(current, "group_type", None))
-                    if node_group_type is not None:
-                        break
-                    current = p.tree.get_node(current.parent_id) if current.parent_id else None
-            if node_group_type != parent_group_type:
-                return False
-            current = parent
-            while current is not None and current.kind == "folder":
-                if current.id == node.id:
-                    return False
-                current = p.tree.get_node(current.parent_id) if current.parent_id else None
-            if not self._ensure_unique_tree_child_name(
-                new_parent_id,
-                node.name,
-                node_kind="folder",
-                exclude_node_id=node.id,
-                project=p,
-            ):
-                return False
-            node.parent_id = new_parent_id
-            node.order = new_order
-            if self._node_collection_group_type(node.id) == "pictures":
-                self._sync_picture_storage()
-            p.is_modified = True
-            return True
-        if node.kind == "data_file" and parent_group_type not in _GROUP_TYPE_ALIASES["datasets"]:
-            return False
-        if node.kind == "source_file" and parent_group_type not in _GROUP_TYPE_ALIASES["source_files"]:
-            return False
-        if node.kind == "image_work" and parent_group_type not in _GROUP_TYPE_ALIASES["images"]:
-            return False
-        if node.kind == "picture" and parent_group_type not in _GROUP_TYPE_ALIASES["pictures"]:
-            return False
-        if node.kind in _TOOL_NODE_PARENT_GROUP:
-            required_group = _TOOL_NODE_PARENT_GROUP[node.kind]
-            if parent_group_type not in _GROUP_TYPE_ALIASES[required_group]:
-                return False
-        if node.kind == "ai_tool":
-            required_group = {
-                "prompt": "prompt_group",
-                "skill": "skill_group",
-                "agent": "agent_group",
-            }.get(getattr(node, "tool_type", "prompt"), "prompt_group")
-            if parent_group_type not in _GROUP_TYPE_ALIASES[required_group]:
-                return False
-        if not self._ensure_unique_tree_child_name(
+        return self._project_tree_service.move_node(
+            node_id,
             new_parent_id,
-            node.name,
-            node_kind=node.kind,
-            exclude_node_id=node.id,
-            project=p,
-        ):
-            return False
-        node.parent_id = new_parent_id
-        node.order = new_order
-        collection_group = self._node_collection_group_type(node.id)
-        if node.kind in {"folder", "picture"} and collection_group == "pictures":
-            self._sync_picture_storage()
-        if node.kind in {"folder", "source_file"} and collection_group == "source_files":
-            self._sync_source_file_storage()
-        p.is_modified = True
-        return True
+            new_order,
+            group_type_aliases=_GROUP_TYPE_ALIASES,
+            tool_node_parent_group=_TOOL_NODE_PARENT_GROUP,
+        )
 
     def get_node_by_id(self, node_id: str):
         p = self.current_project
@@ -1873,46 +1583,13 @@ class ProjectManager:
         *,
         auto_rename_on_conflict: bool = False,
     ) -> Optional[DataFileNode]:
-        self._clear_last_operation_error()
-        p = self.current_project
-        if p is None:
-            return None
-        if p.tree is None:
-            self.migrate_to_v2(p)
-        # 默认挂在"数据集"文件夹下（优先 group_type，回退名称）
-        if parent_id is None:
-            ds_folder = self._find_folder_by_group_type("datasets") or self._find_folder_by_name("数据集")
-            parent_id = ds_folder.id if ds_folder else None
-        if auto_rename_on_conflict:
-            df.name = self._next_unique_tree_child_name(parent_id, df.name, node_kind="data_file", project=p)
-        if not self._ensure_unique_tree_child_name(parent_id, df.name, node_kind="data_file", project=p):
-            return None
-        p.data_files.append(df)
-        order = p.tree.get_siblings_max_order(parent_id) + 1  # type: ignore
-        node = DataFileNode(name=df.name, parent_id=parent_id, data_file_id=df.id, order=order)
-        p.tree.nodes.append(node)  # type: ignore
-        p.is_modified = True
-        return node
+        return self._project_asset_service.add_data_file(df, parent_id, auto_rename_on_conflict=auto_rename_on_conflict)
 
     def get_data_file(self, df_id: str) -> Optional[DataFile]:
-        p = self.current_project
-        if p is None:
-            return None
-        return p.find_data_file(df_id)
+        return self._project_asset_service.get_data_file(df_id)
 
     def add_series_to_data_file(self, data_file_id: str, series: DataSeries) -> bool:
-        self._clear_last_operation_error()
-        p = self.current_project
-        if p is None:
-            return False
-        df = p.find_data_file(data_file_id)
-        if df is None:
-            return False
-        if not self._ensure_unique_series_name(df.name, df.series, series.name, owner_label="数据文件"):
-            return False
-        df.series.append(series)
-        p.is_modified = True
-        return True
+        return self._project_asset_service.add_series_to_data_file(data_file_id, series)
 
     # ─────────────────────────────────────────────
     # v0.2 Pipeline CRUD
