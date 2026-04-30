@@ -2,18 +2,18 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional, cast
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QFormLayout, QTableWidgetItem, QHeaderView
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QTableWidgetItem, QHeaderView
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QFont, QColor
 from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePushButton,
-    LineEdit, SpinBox, ColorPickerButton, BodyLabel, CaptionLabel, SubtitleLabel,
-    PushButton as FPushButton, TableWidget, ComboBox, TreeWidget, TreeItemDelegate,
-    Slider, SmoothScrollArea, TabCloseButtonDisplayMode, PrimaryPushButton,
-    MessageBox, InfoBar, RoundMenu, MessageBoxBase,
+    LineEdit, SpinBox, ColorPickerButton, BodyLabel,
+    PushButton as FPushButton, TableWidget, ComboBox, TreeWidget,
+    Slider, TabCloseButtonDisplayMode, PrimaryPushButton,
+    MessageBox, InfoBar, RoundMenu,
     ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action, FluentIcon as FIF)
 
 from core.exporter import Exporter
-from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
+from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.navigation_stack import SegmentedStackWidget
@@ -1462,9 +1462,15 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
                     project_manager.pixel_to_actual_coords(self._current_curve_id, curve.x_data[i], curve.y_data[i])[1]
                     for i in range(len(curve.y_data))
                 ]
-            key_fn = lambda i: base_values[i]
+            def key_fn(i):
+                return base_values[i]
         else:
-            key_fn = (lambda i: curve.x_data[i]) if col == 0 else (lambda i: curve.y_data[i])
+            if col == 0:
+                def key_fn(i):
+                    return curve.x_data[i]
+            else:
+                def key_fn(i):
+                    return curve.y_data[i]
         indices = sorted(range(len(curve.x_data)), key=key_fn, reverse=reverse)
 
         # 记录到撤销栈（保存完整数据）

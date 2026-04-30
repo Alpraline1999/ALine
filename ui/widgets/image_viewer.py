@@ -1,7 +1,6 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from qfluentwidgets import BodyLabel
+from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, Signal, QPointF, QRectF
-from PySide6.QtGui import QPixmap, QPainter, QWheelEvent, QMouseEvent, QResizeEvent, QPen, QColor, QBrush, QKeyEvent, QPainterPath
+from PySide6.QtGui import QPainter, QWheelEvent, QMouseEvent, QResizeEvent, QPen, QColor, QBrush, QKeyEvent, QPainterPath
 
 from digitize.image_io import load_pixmap_unicode
 from .image_viewer_overlays import CalibrationOverlay, CurveOverlayItem, MaskOverlay
@@ -364,12 +363,6 @@ class ImageViewer(QWidget):
     def set_curves_visible(self, visible: bool):
         """设置曲线是否可见"""
         self._curves_visible = visible
-        self.update()
-
-    def clear_curves(self):
-        """清除所有曲线"""
-        self._curve_items.clear()
-        self._current_curve = None
         self.update()
 
     def get_current_curve(self) -> CurveOverlayItem:

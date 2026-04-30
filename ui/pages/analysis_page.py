@@ -10,18 +10,14 @@ import json
 from typing import Any, Dict, List, Optional, Set
 
 from PySide6.QtCore import QItemSelectionModel, Qt, QTimer, Signal, QStringListModel
-from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QCompleter, QFileDialog, QHBoxLayout, QHeaderView, QListWidgetItem, QSplitter,
     QFrame, QScrollArea, QSizePolicy, QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
-    Action,
     BodyLabel, CaptionLabel, ComboBox, EditableComboBox, FluentIcon as FIF,
     CardWidget,
-    InfoBar, InfoBarPosition, LineEdit,
-    ListWidget, PlainTextEdit, PrimaryPushButton, PushButton, TableWidget,
-    RoundMenu,
+    InfoBar, InfoBarPosition, PlainTextEdit, PrimaryPushButton, PushButton, TableWidget,
     TabCloseButtonDisplayMode, TabWidget, TeachingTipTailPosition, ToolButton,
 )
 
@@ -1768,7 +1764,6 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
     def _run_analysis(self):
         analysis_type = self._current_analysis_type()
-        active_view = self._current_analysis_view()
         extension_options: Optional[Dict[str, Any]] = None
         effective_extension_options: Optional[Dict[str, Any]] = None
         override_cursor = False
