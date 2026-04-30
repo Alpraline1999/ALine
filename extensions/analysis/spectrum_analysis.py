@@ -3,18 +3,12 @@ from __future__ import annotations
 import numpy as np
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
+from core.value_parsing import coerce_float
 from extensions.processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
-
-
 def _resolve_sampling_rate(xs, params):
-    configured = _as_float(params.get("sampling_rate", 0.0), 0.0)
+    configured = coerce_float(params.get("sampling_rate", 0.0), 0.0) or 0.0
     if configured > 0:
         return configured
     if len(xs) >= 2:
@@ -54,7 +48,7 @@ def spectrum_analysis(lines, params):
     if amplitudes.size:
         amplitudes[0] = amplitudes[0] / 2.0
 
-    max_frequency = _as_float(params.get("max_frequency", 0.0), 0.0)
+    max_frequency = coerce_float(params.get("max_frequency", 0.0), 0.0) or 0.0
     if max_frequency > 0:
         mask = freqs <= max_frequency
         freqs = freqs[mask]

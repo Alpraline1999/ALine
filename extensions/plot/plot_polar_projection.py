@@ -2,14 +2,8 @@ import math
 from typing import Any, cast
 
 from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
+from core.value_parsing import coerce_float
 from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
-
-
-def _as_float(value, default=None):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _context_lines(plot_context, params):
@@ -43,7 +37,7 @@ def _axis_line_style(axis: Any):
 def _theta_values(xs, theta_unit):
     values = []
     for raw in xs:
-        angle = _as_float(raw)
+        angle = coerce_float(raw, None)
         if angle is None:
             continue
         values.append(math.radians(angle) if theta_unit == "degree" else angle)
@@ -63,7 +57,7 @@ def draw_polar_projection(plot_context, params):
     theta_values = _theta_values(xs, theta_unit)
     radius_values = []
     for raw in ys:
-        radius = _as_float(raw)
+        radius = coerce_float(raw, None)
         if radius is None:
             continue
         radius_values.append(radius)
@@ -83,28 +77,28 @@ def draw_polar_projection(plot_context, params):
     axis.set_theta_zero_location(str(params.get("zero_location", "N") or "N"))
     axis.set_theta_direction(-1 if str(params.get("direction", "counterclockwise")) == "clockwise" else 1)
 
-    theta_min = _as_float(params.get("theta_min"))
-    theta_max = _as_float(params.get("theta_max"))
+    theta_min = coerce_float(params.get("theta_min"), None)
+    theta_max = coerce_float(params.get("theta_max"), None)
     if theta_min is not None:
         axis.set_thetamin(theta_min)
     if theta_max is not None:
         axis.set_thetamax(theta_max)
 
-    r_min = _as_float(params.get("r_min"))
-    r_max = _as_float(params.get("r_max"))
+    r_min = coerce_float(params.get("r_min"), None)
+    r_max = coerce_float(params.get("r_max"), None)
     if r_min is not None or r_max is not None:
         axis.set_rlim(bottom=r_min, top=r_max)
 
     color = str(params.get("color", "") or style.get("color") or "#0078D4")
     marker = str(params.get("marker", "") or style.get("marker") or "")
-    line_width = _as_float(params.get("line_width"), None)
+    line_width = coerce_float(params.get("line_width"), None)
     if line_width is None:
-        line_width = _as_float(style.get("linewidth"), 1.5) or 1.5
-    marker_size = _as_float(params.get("marker_size"), None)
+        line_width = coerce_float(style.get("linewidth"), 1.5) or 1.5
+    marker_size = coerce_float(params.get("marker_size"), None)
     if marker_size is None:
-        marker_size = _as_float(style.get("markersize"), 5.0) or 5.0
-    alpha = max(0.0, min(1.0, _as_float(params.get("alpha"), 0.95) or 0.95))
-    fill_alpha = max(0.0, min(1.0, _as_float(params.get("fill_alpha"), 0.0) or 0.0))
+        marker_size = coerce_float(style.get("markersize"), 5.0) or 5.0
+    alpha = max(0.0, min(1.0, coerce_float(params.get("alpha"), 0.95) or 0.95))
+    fill_alpha = max(0.0, min(1.0, coerce_float(params.get("fill_alpha"), 0.0) or 0.0))
     label = str(params.get("label", "")).strip() or "极坐标曲线"
 
     plot_kwargs = {"color": color, "linewidth": max(0.1, line_width), "alpha": alpha, "label": label}
@@ -123,7 +117,7 @@ def draw_polar_projection(plot_context, params):
     axis.set_xlabel(str(params.get("theta_label", "") or "角度"))
     axis.set_ylabel(str(params.get("radius_label", "") or "半径"))
 
-    radial_label_angle = _as_float(params.get("radial_label_angle"))
+    radial_label_angle = coerce_float(params.get("radial_label_angle"), None)
     if radial_label_angle is not None:
         axis.set_rlabel_position(radial_label_angle)
 

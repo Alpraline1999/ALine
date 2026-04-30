@@ -1,14 +1,8 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
+from core.value_parsing import coerce_float
 from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line
-
-
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
 
 
 def kalman_filter_handler(lines, params):
@@ -17,10 +11,10 @@ def kalman_filter_handler(lines, params):
     if not ys:
         return line_from_xy(list(xs), [])
 
-    process_variance = max(0.0, _as_float(options.get("process_variance", 1e-4), 1e-4))
-    measurement_variance = max(1e-12, _as_float(options.get("measurement_variance", 1e-2), 1e-2))
-    estimate = _as_float(options.get("initial_estimate", ys[0]), ys[0])
-    error_covariance = max(1e-12, _as_float(options.get("initial_error_covariance", 1.0), 1.0))
+    process_variance = max(0.0, coerce_float(options.get("process_variance", 1e-4), 1e-4) or 0.0)
+    measurement_variance = max(1e-12, coerce_float(options.get("measurement_variance", 1e-2), 1e-2) or 0.0)
+    estimate = coerce_float(options.get("initial_estimate", ys[0]), ys[0]) or float(ys[0])
+    error_covariance = max(1e-12, coerce_float(options.get("initial_error_covariance", 1.0), 1.0) or 0.0)
 
     filtered = []
     for raw_value in ys:

@@ -1,11 +1,5 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
-
-
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
+from core.value_parsing import coerce_float
 
 
 def _coord_system(params):
@@ -18,16 +12,16 @@ def draw_arrow_annotation(plot_context, params):
         return
 
     coord_system = _coord_system(params)
-    start_x = _as_float(params.get("start_x", 0.18), 0.18)
-    start_y = _as_float(params.get("start_y", 0.82), 0.82)
-    end_x = _as_float(params.get("end_x", 0.72), 0.72)
-    end_y = _as_float(params.get("end_y", 0.24), 0.24)
+    start_x = coerce_float(params.get("start_x", 0.18), 0.18) or 0.18
+    start_y = coerce_float(params.get("start_y", 0.82), 0.82) or 0.82
+    end_x = coerce_float(params.get("end_x", 0.72), 0.72) or 0.72
+    end_y = coerce_float(params.get("end_y", 0.24), 0.24) or 0.24
     color = str(params.get("color", "#D13438"))
     text = str(params.get("text", "关键趋势"))
     text_color = str(params.get("text_color", color))
-    alpha = min(1.0, max(0.0, _as_float(params.get("alpha", 0.95), 0.95)))
-    line_width = max(0.1, _as_float(params.get("line_width", 1.8), 1.8))
-    font_size = max(6, int(_as_float(params.get("font_size", 11), 11)))
+    alpha = min(1.0, max(0.0, coerce_float(params.get("alpha", 0.95), 0.95) or 0.95))
+    line_width = max(0.1, coerce_float(params.get("line_width", 1.8), 1.8) or 1.8)
+    font_size = max(6, int(coerce_float(params.get("font_size", 11), 11) or 11))
 
     bbox = None
     if text:

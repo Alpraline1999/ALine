@@ -1,13 +1,7 @@
 from matplotlib.patches import Rectangle
 
 from core.extension_api import ExtensionConfigField, PlotExtension
-
-
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
+from core.value_parsing import coerce_float
 
 
 def draw_rectangle_annotation(plot_context, params):
@@ -16,11 +10,11 @@ def draw_rectangle_annotation(plot_context, params):
         return
 
     transform = axis.transData if str(params.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
-    x = _as_float(params.get("x", 0.14), 0.14)
-    y = _as_float(params.get("y", 0.2), 0.2)
-    width = max(0.0, _as_float(params.get("width", 0.28), 0.28))
-    height = max(0.0, _as_float(params.get("height", 0.18), 0.18))
-    alpha = min(1.0, max(0.0, _as_float(params.get("alpha", 0.22), 0.22)))
+    x = coerce_float(params.get("x", 0.14), 0.14) or 0.14
+    y = coerce_float(params.get("y", 0.2), 0.2) or 0.2
+    width = max(0.0, coerce_float(params.get("width", 0.28), 0.28) or 0.28)
+    height = max(0.0, coerce_float(params.get("height", 0.18), 0.18) or 0.18)
+    alpha = min(1.0, max(0.0, coerce_float(params.get("alpha", 0.22), 0.22) or 0.22))
     fill = bool(params.get("fill", False))
     facecolor = str(params.get("face_color", "#f7d8d8")) if fill else "none"
 
@@ -31,7 +25,7 @@ def draw_rectangle_annotation(plot_context, params):
         transform=transform,
         facecolor=facecolor,
         edgecolor=str(params.get("edge_color", "#c23934")),
-        linewidth=max(0.1, _as_float(params.get("line_width", 1.6), 1.6)),
+        linewidth=max(0.1, coerce_float(params.get("line_width", 1.6), 1.6) or 1.6),
         linestyle=str(params.get("line_style", "--")),
         alpha=alpha,
         fill=fill,

@@ -1,4 +1,5 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
+from core.value_parsing import coerce_float
 
 
 _NAMED_SIZES = {
@@ -17,25 +18,15 @@ def _named_size(value):
     return _NAMED_SIZES.get(text)
 
 
-def _as_float(value, default):
-    named = _named_size(value)
-    if named is not None:
-        return named
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        named_default = _named_size(default)
-        if named_default is not None:
-            return named_default
-        return float(default)
-
-
 def _as_int(value, default):
-    return int(round(_as_float(value, default)))
+    number = coerce_float(value, default, named_resolver=_named_size)
+    return int(round(number if number is not None else float(default)))
 
 
 def _clamp(value, minimum, maximum, default):
-    number = _as_float(value, default)
+    number = coerce_float(value, default, named_resolver=_named_size)
+    if number is None:
+        number = float(default)
     return max(minimum, min(maximum, number))
 
 
@@ -82,11 +73,11 @@ def apply_science_style(plot_context, params):
     axis_label_size = max(1, _as_int(params.get("axis_label_size", rc_params.get("axes.labelsize", 11)), rc_params.get("axes.labelsize", 11)))
     tick_label_size = max(1, _as_int(params.get("tick_label_size", rc_params.get("xtick.labelsize", 10)), rc_params.get("xtick.labelsize", 10)))
     legend_font_size = max(1, _as_int(params.get("legend_font_size", rc_params.get("legend.fontsize", 9)), rc_params.get("legend.fontsize", 9)))
-    line_width = max(0.1, _as_float(params.get("line_width", rc_params.get("lines.linewidth", 1.6)), rc_params.get("lines.linewidth", 1.6)))
-    marker_size = max(0.1, _as_float(params.get("marker_size", rc_params.get("lines.markersize", 4.8)), rc_params.get("lines.markersize", 4.8)))
+    line_width = max(0.1, coerce_float(params.get("line_width", rc_params.get("lines.linewidth", 1.6)), rc_params.get("lines.linewidth", 1.6), named_resolver=_named_size) or float(rc_params.get("lines.linewidth", 1.6)))
+    marker_size = max(0.1, coerce_float(params.get("marker_size", rc_params.get("lines.markersize", 4.8)), rc_params.get("lines.markersize", 4.8), named_resolver=_named_size) or float(rc_params.get("lines.markersize", 4.8)))
     grid_alpha = _clamp(params.get("grid_alpha", rc_params.get("grid.alpha", 0.18)), 0.0, 1.0, rc_params.get("grid.alpha", 0.18))
-    grid_line_width = max(0.1, _as_float(params.get("grid_line_width", rc_params.get("grid.linewidth", 0.8)), rc_params.get("grid.linewidth", 0.8)))
-    spine_width = max(0.1, _as_float(params.get("spine_width", rc_params.get("axes.linewidth", 1.0)), rc_params.get("axes.linewidth", 1.0)))
+    grid_line_width = max(0.1, coerce_float(params.get("grid_line_width", rc_params.get("grid.linewidth", 0.8)), rc_params.get("grid.linewidth", 0.8), named_resolver=_named_size) or float(rc_params.get("grid.linewidth", 0.8)))
+    spine_width = max(0.1, coerce_float(params.get("spine_width", rc_params.get("axes.linewidth", 1.0)), rc_params.get("axes.linewidth", 1.0), named_resolver=_named_size) or float(rc_params.get("axes.linewidth", 1.0)))
     show_grid = bool(params.get("show_grid", rc_params.get("axes.grid", False)))
     legend_location = str(params.get("legend_location", rc_params.get("legend.loc", "best")) or "best")
     legend_frame = bool(params.get("legend_frame", rc_params.get("legend.frameon", False)))
@@ -106,8 +97,8 @@ def apply_science_style(plot_context, params):
             current.yaxis.label.set_size(axis_label_size)
         current.tick_params(
             direction=str(params.get("tick_direction", rc_params.get("xtick.direction", "in")) or "in"),
-            length=max(0.0, _as_float(params.get("tick_length", rc_params.get("xtick.major.size", 4.0)), rc_params.get("xtick.major.size", 4.0))),
-            width=max(0.1, _as_float(params.get("tick_width", rc_params.get("xtick.major.width", 1.0)), rc_params.get("xtick.major.width", 1.0))),
+            length=max(0.0, coerce_float(params.get("tick_length", rc_params.get("xtick.major.size", 4.0)), rc_params.get("xtick.major.size", 4.0), named_resolver=_named_size) or float(rc_params.get("xtick.major.size", 4.0))),
+            width=max(0.1, coerce_float(params.get("tick_width", rc_params.get("xtick.major.width", 1.0)), rc_params.get("xtick.major.width", 1.0), named_resolver=_named_size) or float(rc_params.get("xtick.major.width", 1.0))),
             top=bool(params.get("show_top_ticks", rc_params.get("xtick.top", True))),
             right=bool(params.get("show_right_ticks", rc_params.get("ytick.right", True))),
             labelsize=tick_label_size,

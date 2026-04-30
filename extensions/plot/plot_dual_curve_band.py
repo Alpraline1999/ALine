@@ -1,14 +1,8 @@
 from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
+from core.value_parsing import coerce_float
 from extensions.processing.extension_tools import align_lines_to_common_x, line_xy, series_payloads_to_lines
-
-
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
 
 
 def _context_lines(plot_context, params):
@@ -54,7 +48,7 @@ def draw_dual_curve_band(plot_context, params):
         return
 
     fill_color = str(params.get("fill_color", "#F4B183") or "#F4B183")
-    fill_alpha = min(1.0, max(0.0, _as_float(params.get("fill_alpha", 0.18), 0.18)))
+    fill_alpha = min(1.0, max(0.0, coerce_float(params.get("fill_alpha", 0.18), 0.18) or 0.18))
     label = str(params.get("label", "双曲线差异带") or "双曲线差异带")
     axis.fill_between(x_values, first_y, second_y, color=fill_color, alpha=fill_alpha, label=label, zorder=0)
 
@@ -74,14 +68,14 @@ def draw_dual_curve_band(plot_context, params):
     background = theme_colors["background"]
     peak_x = x_values[peak_index]
     peak_y = (first_y[peak_index] + second_y[peak_index]) / 2.0
-    precision = max(0, int(_as_float(params.get("annotation_precision", 3), 3)))
+    precision = max(0, int(coerce_float(params.get("annotation_precision", 3), 3) or 3))
     axis.annotate(
         f"最大差值 = {differences[peak_index]:.{precision}f}",
         xy=(peak_x, peak_y),
         xytext=(10, 10),
         textcoords="offset points",
         color=foreground,
-        fontsize=max(8, int(_as_float(params.get("annotation_font_size", 9), 9))),
+        fontsize=max(8, int(coerce_float(params.get("annotation_font_size", 9), 9) or 9)),
         bbox={"boxstyle": "round,pad=0.3", "fc": background, "ec": fill_color, "alpha": 0.92},
         arrowprops={"arrowstyle": "->", "color": fill_color, "linewidth": 1.0},
     )

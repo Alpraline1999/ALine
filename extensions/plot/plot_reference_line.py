@@ -1,12 +1,6 @@
 from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
+from core.value_parsing import coerce_float
 from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
-
-
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
 
 
 def _context_series(plot_context, params):
@@ -55,14 +49,14 @@ def draw_reference_overlay(plot_context, params):
         return
 
     label = str(params.get("label", "平均参考线"))
-    offset = _as_float(params.get("offset", 0.0), 0.0)
+    offset = coerce_float(params.get("offset", 0.0), 0.0) or 0.0
     line_color = str(params.get("line_color", "#C23B22"))
     line_style = str(params.get("line_style", "--"))
-    line_width = max(0.1, _as_float(params.get("line_width", 1.3), 1.3))
-    line_alpha = min(1.0, max(0.0, _as_float(params.get("line_alpha", 0.85), 0.85)))
+    line_width = max(0.1, coerce_float(params.get("line_width", 1.3), 1.3) or 1.3)
+    line_alpha = min(1.0, max(0.0, coerce_float(params.get("line_alpha", 0.85), 0.85) or 0.85))
     band_color = str(params.get("band_color", line_color))
-    band_alpha = min(1.0, max(0.0, _as_float(params.get("band_alpha", 0.12), 0.12)))
-    band_half_width = max(0.0, _as_float(params.get("band_half_width", 0.0), 0.0))
+    band_alpha = min(1.0, max(0.0, coerce_float(params.get("band_alpha", 0.12), 0.12) or 0.12))
+    band_half_width = max(0.0, coerce_float(params.get("band_half_width", 0.0), 0.0) or 0.0)
     show_reference_line = bool(params.get("show_reference_line", True))
     show_band = bool(params.get("show_band", True))
 
@@ -73,10 +67,10 @@ def draw_reference_overlay(plot_context, params):
     if show_reference_line:
         axis.axhline(mean_level, color=line_color, linestyle=line_style, linewidth=line_width, alpha=line_alpha, label=label)
 
-    precision = max(0, int(_as_float(params.get("annotation_precision", 3), 3)))
+    precision = max(0, int(coerce_float(params.get("annotation_precision", 3), 3) or 3))
     if bool(params.get("annotate_peak", True)):
         peak_name, peak_x, peak_y = max(points, key=lambda item: item[2])
-        marker_size = max(10.0, _as_float(params.get("marker_size", 42.0), 42.0))
+        marker_size = max(10.0, coerce_float(params.get("marker_size", 42.0), 42.0) or 42.0)
         axis.scatter([peak_x], [peak_y], color=line_color, s=marker_size, zorder=6)
         theme_colors = _theme_colors(plot_context, axis)
         foreground = theme_colors["foreground"]
@@ -88,7 +82,7 @@ def draw_reference_overlay(plot_context, params):
             xytext=(10, 12),
             textcoords="offset points",
             color=foreground,
-            fontsize=max(8, int(_as_float(params.get("annotation_font_size", 9), 9))),
+            fontsize=max(8, int(coerce_float(params.get("annotation_font_size", 9), 9) or 9)),
             bbox={"boxstyle": "round,pad=0.3", "fc": background, "ec": line_color, "alpha": 0.92},
             arrowprops={"arrowstyle": "->", "color": line_color, "linewidth": 1.0},
         )

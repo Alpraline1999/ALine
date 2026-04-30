@@ -1,13 +1,7 @@
 from matplotlib.patches import Circle
 
 from core.extension_api import ExtensionConfigField, PlotExtension
-
-
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
+from core.value_parsing import coerce_float
 
 
 def draw_circle_annotation(plot_context, params):
@@ -16,10 +10,10 @@ def draw_circle_annotation(plot_context, params):
         return
 
     transform = axis.transData if str(params.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
-    x = _as_float(params.get("x", params.get("center_x", 0.5)), 0.5)
-    y = _as_float(params.get("y", params.get("center_y", 0.5)), 0.5)
-    radius = max(0.0, _as_float(params.get("radius", 0.12), 0.12))
-    alpha = min(1.0, max(0.0, _as_float(params.get("alpha", 0.22), 0.22)))
+    x = coerce_float(params.get("x", params.get("center_x", 0.5)), 0.5) or 0.5
+    y = coerce_float(params.get("y", params.get("center_y", 0.5)), 0.5) or 0.5
+    radius = max(0.0, coerce_float(params.get("radius", 0.12), 0.12) or 0.12)
+    alpha = min(1.0, max(0.0, coerce_float(params.get("alpha", 0.22), 0.22) or 0.22))
     fill = bool(params.get("fill", False))
     facecolor = str(params.get("face_color", "#ffd966")) if fill else "none"
 
@@ -29,7 +23,7 @@ def draw_circle_annotation(plot_context, params):
         transform=transform,
         facecolor=facecolor,
         edgecolor=str(params.get("edge_color", "#ff8c00")),
-        linewidth=max(0.1, _as_float(params.get("line_width", 1.6), 1.6)),
+        linewidth=max(0.1, coerce_float(params.get("line_width", 1.6), 1.6) or 1.6),
         linestyle=str(params.get("line_style", "--")),
         alpha=alpha,
         fill=fill,

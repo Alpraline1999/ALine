@@ -37,6 +37,7 @@ import copy
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.expression_execution import DEFAULT_EXPRESSION_EXECUTOR
 from core.extension_api import extension_lines_number, extension_registry, normalize_extension_lines_list
 from core.line_tools import (
     Line,
@@ -418,54 +419,7 @@ def _evaluate_pairwise_expression(
     x2: List[float],
     y2: List[float],
 ) -> Tuple[List[float], List[float]]:
-    import math as _math
-
-    try:
-        import numpy as np
-    except ImportError:
-        np = None  # type: ignore
-
-    safe_globals = {
-        "__builtins__": {},
-        "math": _math,
-        "abs": abs,
-        "min": min,
-        "max": max,
-        "round": round,
-        "sqrt": _math.sqrt,
-        "log": _math.log,
-        "log10": _math.log10,
-        "exp": _math.exp,
-        "sin": _math.sin,
-        "cos": _math.cos,
-        "tan": _math.tan,
-        "pi": _math.pi,
-        "e": _math.e,
-    }
-    if np is not None:
-        safe_globals["np"] = np
-        for name in ("sqrt", "log", "log10", "exp", "sin", "cos", "tan", "abs", "minimum", "maximum"):
-            if hasattr(np, name):
-                safe_globals[name] = getattr(np, name)
-        try:
-            a1 = np.asarray(x1, dtype=float)
-            b1 = np.asarray(y1, dtype=float)
-            a2 = np.asarray(x2, dtype=float)
-            b2 = np.asarray(y2, dtype=float)
-            ctx = {"x1": a1, "y1": b1, "x2": a2, "y2": b2}
-            nx = eval(x_expr, safe_globals, ctx)  # noqa: S307
-            ny = eval(y_expr, safe_globals, ctx)  # noqa: S307
-            return np.asarray(nx, dtype=float).tolist(), np.asarray(ny, dtype=float).tolist()
-        except Exception:
-            pass
-
-    nx_list: List[float] = []
-    ny_list: List[float] = []
-    for left_x, left_y, right_x, right_y in zip(x1, y1, x2, y2):
-        ctx = {"x1": float(left_x), "y1": float(left_y), "x2": float(right_x), "y2": float(right_y)}
-        nx_list.append(float(eval(x_expr, safe_globals, ctx)))  # noqa: S307
-        ny_list.append(float(eval(y_expr, safe_globals, ctx)))  # noqa: S307
-    return nx_list, ny_list
+    return DEFAULT_EXPRESSION_EXECUTOR.pairwise_xy(x_expr, y_expr, x1, y1, x2, y2)
 
 
 def _x_values_equal(a: List[float], b: List[float]) -> bool:
@@ -775,43 +729,7 @@ def _op_integral(xs: List[float], ys: List[float], p: dict) -> XY:
 def _op_transform(xs: List[float], ys: List[float], p: dict) -> XY:
     x_expr = p.get("x_expr", "").strip()
     y_expr = p.get("y_expr", "").strip()
-    try:
-        import math as _math
-
-        try:
-            import numpy as np
-        except ImportError:
-            np = None
-        safe_globals = {
-            "__builtins__": {}, "math": _math, "abs": abs,
-            "min": min, "max": max, "round": round, "sqrt": _math.sqrt,
-            "log": _math.log, "log10": _math.log10, "exp": _math.exp,
-            "sin": _math.sin, "cos": _math.cos, "tan": _math.tan,
-            "pi": _math.pi, "e": _math.e,
-        }
-        if np is not None:
-            safe_globals["np"] = np
-            try:
-                x_arr = np.asarray(xs, dtype=float)
-                y_arr = np.asarray(ys, dtype=float)
-                ctx = {"x": x_arr, "y": y_arr}
-                for fn in ("sqrt", "log", "log10", "exp", "sin", "cos", "tan", "abs"):
-                    safe_globals[fn] = getattr(np, fn)
-                nx = eval(x_expr, safe_globals, ctx) if x_expr else x_arr  # noqa: S307
-                ny = eval(y_expr, safe_globals, ctx) if y_expr else y_arr  # noqa: S307
-                return np.asarray(nx, dtype=float).tolist(), np.asarray(ny, dtype=float).tolist()
-            except Exception:
-                pass
-        new_xs, new_ys = [], []
-        for x, y in zip(xs, ys):
-            ctx = {"x": x, "y": y}
-            nx = eval(x_expr, safe_globals, ctx) if x_expr else x  # noqa: S307
-            ny = eval(y_expr, safe_globals, ctx) if y_expr else y  # noqa: S307
-            new_xs.append(float(nx))
-            new_ys.append(float(ny))
-        return new_xs, new_ys
-    except Exception:
-        return list(xs), list(ys)
+    return DEFAULT_EXPRESSION_EXECUTOR.transform_xy(xs, ys, x_expr, y_expr)
 
 
 def _op_filter(xs: List[float], ys: List[float], p: dict) -> XY:

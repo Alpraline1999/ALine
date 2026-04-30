@@ -1,11 +1,5 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
-
-
-def _as_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
+from core.value_parsing import coerce_float
 
 
 def draw_text_annotation(plot_context, params):
@@ -14,11 +8,11 @@ def draw_text_annotation(plot_context, params):
         return
 
     transform = axis.transData if str(params.get("coordinate_mode", "axes_fraction")).strip().lower() == "data" else axis.transAxes
-    x = _as_float(params.get("x", 0.08), 0.08)
-    y = _as_float(params.get("y", 0.9), 0.9)
+    x = coerce_float(params.get("x", 0.08), 0.08) or 0.08
+    y = coerce_float(params.get("y", 0.9), 0.9) or 0.9
     color = str(params.get("color", "#222222"))
-    alpha = min(1.0, max(0.0, _as_float(params.get("alpha", 0.95), 0.95)))
-    font_size = max(6, int(_as_float(params.get("font_size", 11), 11)))
+    alpha = min(1.0, max(0.0, coerce_float(params.get("alpha", 0.95), 0.95) or 0.95))
+    font_size = max(6, int(coerce_float(params.get("font_size", 11), 11) or 11))
     text = str(params.get("text", "请在这里补充说明"))
     bbox_enabled = bool(params.get("show_box", True))
 
@@ -30,7 +24,7 @@ def draw_text_annotation(plot_context, params):
         color=color,
         fontsize=font_size,
         alpha=alpha,
-        rotation=_as_float(params.get("rotation", 0.0), 0.0),
+        rotation=coerce_float(params.get("rotation", 0.0), 0.0) or 0.0,
         ha=str(params.get("horizontal_align", "left")),
         va=str(params.get("vertical_align", "center")),
         bbox={"boxstyle": "round,pad=0.25", "fc": "#ffffff", "ec": color, "alpha": 0.82} if bbox_enabled else None,

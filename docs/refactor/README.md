@@ -25,6 +25,11 @@
 19. [19-phase-16-static-quality-and-reliability-hardening.md](19-phase-16-static-quality-and-reliability-hardening.md)
 20. [20-phase-17-domain-flow-and-analytical-workbench-normalization.md](20-phase-17-domain-flow-and-analytical-workbench-normalization.md)
 21. [21-phase-17-execution-summary.md](21-phase-17-execution-summary.md)
+22. [22-phase-18-shared-processing-foundation-and-dependency-direction-repair.md](22-phase-18-shared-processing-foundation-and-dependency-direction-repair.md)
+23. [23-phase-19-expression-engine-and-processing-contract-normalization.md](23-phase-19-expression-engine-and-processing-contract-normalization.md)
+24. [24-phase-20-project-session-and-command-orchestration-decomposition.md](24-phase-20-project-session-and-command-orchestration-decomposition.md)
+25. [25-phase-21-ui-monolith-completion-and-workspace-surface-hardening.md](25-phase-21-ui-monolith-completion-and-workspace-surface-hardening.md)
+26. [26-phase-22-large-workspace-performance-and-data-virtualization.md](26-phase-22-large-workspace-performance-and-data-virtualization.md)
 
 ## 文档职责
 
@@ -64,6 +69,21 @@
 - `20-phase-17-domain-flow-and-analytical-workbench-normalization.md`
   - 定义分析、导入、导出等长流程业务模块的结构收口阶段。
   - 该阶段负责整理 `analysis_engine`、`import_dialog`、`export_flow`、`data_engine` 等长函数/长分支模块，使业务编排、结果模型和扩展接入边界更稳定。
+- `22-phase-18-shared-processing-foundation-and-dependency-direction-repair.md`
+  - 定义共享处理基础、低风险一致性噪声与跨层依赖方向纠偏阶段。
+  - 该阶段负责修复 `processing` / `extensions` 共享 helper 的层次反转，消除 extension type 循环依赖，并统一 `process_page` 的 bootstrap 入口。
+- `23-phase-19-expression-engine-and-processing-contract-normalization.md`
+  - 定义表达式执行、参数解析与处理扩展契约规范化阶段。
+  - 该阶段负责收口裸 `eval`、重复 `_as_float` 和 transform/pairwise 类扩展的共享执行边界。
+- `24-phase-20-project-session-and-command-orchestration-decomposition.md`
+  - 定义 `ProjectManager` 与 `ai.command_layer` 的大型编排拆分阶段。
+  - 该阶段负责提炼 project services、命令 registry / handlers，并限制单文件业务编排继续增长。
+- `25-phase-21-ui-monolith-completion-and-workspace-surface-hardening.md`
+  - 定义剩余超大 UI 页面与 workspace surface 的收尾硬化阶段。
+  - 该阶段负责继续拆分 `DataPage`、`chart_page`、`digitize_page`、`analysis_page`、`process_page` 和 `MainWindow` 的路由边界。
+- `26-phase-22-large-workspace-performance-and-data-virtualization.md`
+  - 定义大工作区、超大曲线与大数据量链路的性能与虚拟化阶段。
+  - 该阶段负责建立 profiling 样本、收口 workspace virtualization / progressive rendering，并固定“非热点不强制 numpy 化”的规则。
 
 ## 阶段进入规则
 
