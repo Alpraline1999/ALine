@@ -37,13 +37,20 @@ import copy
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.extension_api import (
-    extension_lines_number,
-    extension_registry,
-    normalize_extension_lines_list,
+from core.extension_api import extension_lines_number, extension_registry, normalize_extension_lines_list
+from core.line_tools import (
+    Line,
+    align_lines_to_common_x,
+    build_alignment_grid as _build_alignment_grid,
+    interp_linear as _interp_linear,
+    line_from_xy,
+    line_xy,
+    normalize_line,
+    normalize_lines,
+    resolve_sample_rate as _resolve_sample_rate,
+    sorted_unique_xy as _sorted_unique_xy,
 )
 from core.extension_invoker import invoke_processing_extension_handler
-from extensions.processing.extension_tools import align_lines_to_common_x, Line, line_from_xy, line_xy, normalize_line, normalize_lines
 
 
 # 当前 pipeline 执行期间的 "已选择列表" 池，供 _op_resample(mode=align) 等使用。
@@ -355,79 +362,6 @@ def _normalize_processing_output_lines(payload: Any, template_line: PipelineLine
 def _sorted_line_payload(line: PipelineLine) -> PipelineLine:
     xs, ys = _sorted_unique_xy(list(line.get("x", []) or []), list(line.get("y", []) or []))
     return _merge_line_payload(line, {"x": xs, "y": ys})
-
-
-def _build_alignment_grid(lines: List[Line], params: Dict[str, Any]) -> List[float]:
-    x_values = [line_xy(line)[0] for line in lines]
-    starts = [float(xs[0]) for xs in x_values if len(xs) >= 2]
-    ends = [float(xs[-1]) for xs in x_values if len(xs) >= 2]
-    if not starts or not ends:
-        raise ValueError("自动对齐至少需要每条曲线包含两个有效采样点")
-    x_start = max(starts)
-    x_end = min(ends)
-    if x_end - x_start <= 1e-12:
-        raise ValueError("输入曲线没有足够的重叠区间，无法执行自动对齐")
-
-    resample_mode = str(params.get("resample_mode", params.get("mode", "count")) or "count").strip().lower()
-    if resample_mode == "spacing":
-        step = float(params.get("step", params.get("spacing", 0.0)) or 0.0)
-        if step <= 0:
-            step = _recommended_alignment_spacing(lines)
-        if step <= 0:
-            raise ValueError("无法推断有效的自动对齐重采样间距")
-        grid = [x_start]
-        next_x = x_start + step
-        while next_x < x_end - 1e-12:
-            grid.append(next_x)
-            next_x += step
-        if not math.isclose(grid[-1], x_end, rel_tol=0.0, abs_tol=1e-12):
-            grid.append(x_end)
-        return grid
-
-    n_points = int(params.get("n", 0) or 0)
-    if n_points < 2:
-        n_points = max(len(xs) for xs in x_values)
-    n_points = max(2, n_points)
-    return [x_start + index * (x_end - x_start) / (n_points - 1) for index in range(n_points)]
-
-
-def _recommended_alignment_spacing(lines: List[Line]) -> float:
-    spacings = [
-        spacing
-        for line in lines
-        for spacing in [_estimate_sample_spacing(line_xy(line)[0])]
-        if spacing is not None and spacing > 0
-    ]
-    return min(spacings) if spacings else 0.0
-
-
-def _describe_alignment_mode(params: Dict[str, Any], point_count: int) -> str:
-    resample_mode = str(params.get("resample_mode", params.get("mode", "count")) or "count").strip().lower()
-    if resample_mode == "spacing":
-        step = float(params.get("step", params.get("spacing", 0.0)) or 0.0)
-        return f"固定间距({step:g})"
-    return f"固定点数({point_count}点)"
-
-
-def _interp_linear(x_value: float, xs: List[float], ys: List[float]) -> float:
-    if not xs:
-        return 0.0
-    if x_value <= xs[0]:
-        return ys[0]
-    if x_value >= xs[-1]:
-        return ys[-1]
-    lo, hi = 0, len(xs) - 1
-    while lo + 1 < hi:
-        mid = (lo + hi) // 2
-        if xs[mid] <= x_value:
-            lo = mid
-        else:
-            hi = mid
-    span = xs[hi] - xs[lo]
-    if not span:
-        return ys[lo]
-    ratio = (x_value - xs[lo]) / span
-    return ys[lo] + ratio * (ys[hi] - ys[lo])
 
 
 def _op_pairwise_compute(lines: List[PipelineLine], p: Dict[str, Any]) -> PipelineResult:
@@ -907,55 +841,3 @@ def _op_filter(xs: List[float], ys: List[float], p: dict) -> XY:
         return list(xs), y_filt
     except ImportError:
         return list(xs), list(ys)
-
-
-def _sorted_unique_xy(xs: List[float], ys: List[float]) -> XY:
-    pairs = []
-    for x_value, y_value in zip(xs, ys):
-        try:
-            x_float = float(x_value)
-            y_float = float(y_value)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(x_float) or not math.isfinite(y_float):
-            continue
-        pairs.append((x_float, y_float))
-    if len(pairs) < 2:
-        return list(xs), list(ys)
-
-    pairs.sort(key=lambda item: item[0])
-    unique_x: List[float] = []
-    unique_y: List[float] = []
-    for x_value, y_value in pairs:
-        if unique_x and math.isclose(x_value, unique_x[-1], rel_tol=0.0, abs_tol=1e-12):
-            unique_y[-1] = y_value
-            continue
-        unique_x.append(x_value)
-        unique_y.append(y_value)
-    return unique_x, unique_y
-
-
-def _estimate_sample_spacing(xs: List[float]) -> Optional[float]:
-    x_sorted, _ = _sorted_unique_xy(xs, xs)
-    if len(x_sorted) < 2:
-        return None
-    diffs = [x_sorted[index + 1] - x_sorted[index] for index in range(len(x_sorted) - 1)]
-    diffs = [abs(diff) for diff in diffs if diff and math.isfinite(diff)]
-    if not diffs:
-        return None
-    diffs.sort()
-    return diffs[len(diffs) // 2]
-
-
-def _resolve_sample_rate(xs: List[float], p: dict) -> Optional[float]:
-    raw_sample_rate = p.get("sampling_rate")
-    try:
-        sample_rate = float(raw_sample_rate)
-    except (TypeError, ValueError):
-        sample_rate = 0.0
-    if sample_rate > 0:
-        return sample_rate
-    step = _estimate_sample_spacing(xs)
-    if step is None or step <= 0:
-        return None
-    return 1.0 / step
