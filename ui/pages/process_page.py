@@ -876,7 +876,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             for index in indices:
                 try:
                     offset = int(index) - 1
-                except Exception:
+                except (TypeError, ValueError):
                     continue
                 if 0 <= offset < len(self._selected_inputs):
                     payloads.append(self._selected_inputs[offset])
@@ -901,7 +901,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             for key in ("primary_index", "secondary_index"):
                 try:
                     value = int(normalized.get(key))
-                except Exception:
+                except (TypeError, ValueError):
                     continue
                 if value >= 1:
                     indices.append(value)
