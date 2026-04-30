@@ -18,6 +18,7 @@ from core.global_assets import global_assets
 from core.project_asset_service import ProjectAssetService
 from core.project_migration_service import ProjectMigrationService
 from core.project_repository import ProjectRepository
+from core.project_session import ProjectSession
 from core.project_tree_service import ProjectTreeService
 from models.schemas import (
     AnalysisResult,
@@ -162,6 +163,17 @@ class ProjectManager:
             find_folder_by_group_type=self._find_folder_by_group_type,
             find_folder_by_name=self._find_folder_by_name,
             get_image=self.get_image,
+        )
+        self._project_session = ProjectSession(
+            list_projects=lambda: self._projects,
+            get_current_project=lambda: self.current_project,
+            get_current_project_id=lambda: self._current_project_id,
+            set_current_project_id=self.set_current_project,
+            create_project=self.create_new,
+            open_project=self.open,
+            save_project=self.save,
+            close_current_project_cb=self.close_current_project,
+            close_project_cb=self.close_project,
         )
 
     def get_last_error_message(self) -> str:
@@ -392,6 +404,10 @@ class ProjectManager:
     @property
     def projects(self) -> List[Project]:
         return self._projects
+
+    @property
+    def project_session(self) -> ProjectSession:
+        return self._project_session
 
     @property
     def current_project(self) -> Optional[Project]:

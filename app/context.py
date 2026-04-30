@@ -8,7 +8,7 @@ from .event_bus import EventBus
 def _default_project_session() -> object:
     from core.project_manager import project_manager
 
-    return project_manager
+    return project_manager.project_session
 
 
 def _default_asset_catalog() -> object:
