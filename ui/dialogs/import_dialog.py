@@ -55,6 +55,24 @@ class TextPreviewPage:
     line_limit: int
 
 
+class ImportPreviewParser:
+    @staticmethod
+    def parse(file_path: str) -> tuple[List[str], List[List[float]]]:
+        """解析文件，返回 (headers: List[str], rows: List[List[float]])。"""
+        suffix = Path(file_path).suffix.lower()
+        if suffix in (".xlsx", ".xls"):
+            return _parse_excel(file_path)
+        if suffix == ".json":
+            return _parse_json(file_path)
+        if suffix in (".npy", ".npz"):
+            return _parse_npy(file_path)
+        return _parse_csv(file_path)
+
+
+def _parse_file_preview(file_path: str):
+    return ImportPreviewParser.parse(file_path)
+
+
 class ImportDialog(QDialog):
     """文件导入向导 — 三步流程：选文件 → 列角色 → 确认。"""
 
@@ -198,7 +216,7 @@ class ImportDialog(QDialog):
         self._clear_column_assignment_state()
         self._show_file_selection_step(enable_next=False)
         try:
-            headers, rows = _parse_file_preview(path)
+            headers, rows = ImportPreviewParser.parse(path)
             self._raw_headers = headers
             self._raw_rows = rows
             n_rows = len(rows)
@@ -530,20 +548,6 @@ class ImportDialog(QDialog):
 
     def get_file_name(self) -> str:
         return self._data_file_name_edit.text().strip() or self._default_data_file_name()
-
-
-# ─────────────────────── 文件解析工具 ──────────────────────────────────
-
-def _parse_file_preview(file_path: str):
-    """解析文件，返回 (headers: List[str], rows: List[List[float]])。"""
-    suffix = Path(file_path).suffix.lower()
-    if suffix in (".xlsx", ".xls"):
-        return _parse_excel(file_path)
-    if suffix == ".json":
-        return _parse_json(file_path)
-    if suffix in (".npy", ".npz"):
-        return _parse_npy(file_path)
-    return _parse_csv(file_path)
 
 
 def analyze_file_preview(
