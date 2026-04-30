@@ -3576,7 +3576,3 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
     @_pending_digitize_field_type.setter
     def _pending_digitize_field_type(self, value):
         self._workspace_state.pending_digitize_field_type = value
-
-
-# 需要导入 FIF
-from qfluentwidgets.common.icon import FluentIcon as FIF

@@ -647,6 +647,14 @@ class MainWindow(FluentWindow):
     def _dispatch_tree_node_activated(self, kind: str, node_id: str) -> None:
         self._tree_action_dispatcher.dispatch_activated(kind, node_id)
 
+    def _on_tree_node_selected(self, kind: str, node_id: str) -> None:
+        """兼容旧壳层入口，统一转发到 dispatcher。"""
+        self._dispatch_tree_node_selected(kind, node_id)
+
+    def _on_tree_node_activated(self, kind: str, node_id: str) -> None:
+        """兼容旧壳层入口，统一转发到 dispatcher。"""
+        self._dispatch_tree_node_activated(kind, node_id)
+
     def _handle_tree_app_command(self, command: AppCommand) -> None:
         if command.command_type != AppCommandType.TREE or command.tree_command is None:
             return
