@@ -112,6 +112,8 @@ class CurveBuffer:
 
     @classmethod
     def from_series_payload(cls, item: Any) -> "CurveBuffer":
+        if isinstance(item, CurveBuffer):
+            return item
         if isinstance(item, dict):
             return cls.from_xy(item.get("x", []), item.get("y", []))
         return cls.from_xy(getattr(item, "x", []), getattr(item, "y", []))
@@ -145,6 +147,8 @@ def curve_buffer_to_views(buffer: Any) -> tuple[SeriesArrayView, SeriesArrayView
 
 
 def series_payload_to_curve_buffer(item: Any) -> CurveBuffer:
+    if isinstance(item, CurveBuffer):
+        return item
     return CurveBuffer.from_series_payload(item)
 
 
@@ -155,4 +159,4 @@ def series_payloads_to_curve_batch(raw: Any) -> list[CurveBuffer]:
         return []
     if isinstance(raw, (list, tuple)) and len(raw) == 0:
         return []
-    return [series_payload_to_curve_buffer(item) for item in list(raw)]
+    return [series_payload_to_curve_buffer(item) for item in raw]

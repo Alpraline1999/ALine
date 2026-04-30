@@ -31,6 +31,11 @@ class TestCurveData(unittest.TestCase):
         self.assertTrue(ys)
         self.assertEqual(buffer.to_series_payload(), {"x": [0.0, 1.0, 2.0], "y": [3.0, 4.0, 5.0]})
 
+    def test_curve_buffer_from_series_payload_returns_existing_buffer(self) -> None:
+        buffer = CurveBuffer.from_xy([0, 1], [2, 3])
+
+        self.assertIs(CurveBuffer.from_series_payload(buffer), buffer)
+
 
 if __name__ == "__main__":
     unittest.main()
