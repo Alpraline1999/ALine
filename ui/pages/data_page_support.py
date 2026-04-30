@@ -3,20 +3,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ui.matplotlib_fonts import configure_matplotlib_cjk
+from ui.matplotlib_fonts import bootstrap_matplotlib_qtagg
 
-try:
-    import matplotlib
-
-    matplotlib.use("QtAgg")
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.figure import Figure
-    configure_matplotlib_cjk(matplotlib)
-    HAS_MATPLOTLIB = True
-    _MATPLOTLIB_ERROR = ""
-except Exception as exc:
-    HAS_MATPLOTLIB = False
-    _MATPLOTLIB_ERROR = f"{type(exc).__name__}: {exc}"
+_matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtagg()
+HAS_MATPLOTLIB = _matplotlib is not None
 
 
 # ── 树节点类型常量 ────────────────────────────────────────────
@@ -27,7 +17,7 @@ _TYPE_DATASET = "dataset"
 _TYPE_SERIES  = "series"
 _TYPE_ANALYSIS_ROOT = "analysis_root"
 _TYPE_ANALYSIS = "analysis"
-_SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+_SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 _TEXT_PREVIEW_SUFFIXES = {".csv", ".txt", ".dat", ".tsv", ".json", ".md", ".log", ".py", ".yaml", ".yml", ".ini"}
 _TABULAR_PREVIEW_SUFFIXES = {".xlsx", ".xls", ".npy", ".npz"}
 _EXTENSION_FIELD_HELP_COMPACT_HEIGHT = 202

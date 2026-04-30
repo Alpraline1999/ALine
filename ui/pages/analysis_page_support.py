@@ -19,17 +19,10 @@ from qfluentwidgets import (
     PlainTextEdit,
     isDarkTheme,
 )
-from ui.matplotlib_fonts import configure_matplotlib_cjk
+from ui.matplotlib_fonts import bootstrap_matplotlib_qtagg
 
-try:
-    import matplotlib
-    matplotlib.use("QtAgg")
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.figure import Figure
-    configure_matplotlib_cjk(matplotlib)
-    _HAS_MPL = True
-except Exception:
-    _HAS_MPL = False
+_matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtagg()
+_HAS_MPL = _matplotlib is not None
 
 _PREFERRED_ANALYSIS_ORDER = (
     "curve_fit",

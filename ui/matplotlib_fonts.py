@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 import os
 import platform
-from typing import List, Optional
+from typing import Any, List, Optional, Tuple
 
 
 def _candidate_font_names() -> List[str]:
@@ -101,3 +101,18 @@ def configure_matplotlib_cjk(matplotlib_module) -> Optional[str]:
     matplotlib_module.rcParams["font.size"] = max(1, float(matplotlib_module.rcParams.get("font.size", 10) or 10))
     matplotlib_module.rcParams["axes.unicode_minus"] = False
     return selected_font
+
+
+def bootstrap_matplotlib_qtagg() -> Tuple[Any, Any, Any, str]:
+    """统一初始化 matplotlib QtAgg 宿主与中文字体配置。"""
+    try:
+        import matplotlib
+
+        matplotlib.use("QtAgg")
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.figure import Figure
+
+        configure_matplotlib_cjk(matplotlib)
+        return matplotlib, FigureCanvas, Figure, ""
+    except Exception as exc:
+        return None, None, None, f"{type(exc).__name__}: {exc}"

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
-
 from core.extension_api import (
     configured_builtin_extension_files,
     configured_external_extension_files,
@@ -20,11 +18,6 @@ from core.extension_api import (
 )
 
 __all__ = [
-    "Any",
-    "Dict",
-    "Iterable",
-    "List",
-    "Optional",
     "configured_builtin_extension_files",
     "configured_external_extension_files",
     "configured_extension_directories",

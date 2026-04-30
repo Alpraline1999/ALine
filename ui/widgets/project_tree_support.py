@@ -101,7 +101,7 @@ _PICTURE_GROUP_ICON = getattr(FIF, "PHOTO", FIF.PHOTO)
 _NEW_DATASET_ACTION_ICON = getattr(FIF, "DICTIONARY_ADD", FIF.ADD)
 _IMPORT_DATA_ACTION_ICON = getattr(FIF, "DOWNLOAD", FIF.DOWNLOAD)
 _OPEN_DIGITIZE_ACTION_ICON = getattr(FIF, "LABEL", FIF.EDIT)
-_SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+_SOURCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 
 
 # ── 每种 kind 的 (FluentIcon, 颜色hint) ──────────────────────────

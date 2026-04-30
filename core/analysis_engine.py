@@ -27,10 +27,6 @@ _FIT_MODELS = {
     "2次多项式":             "poly2",
     "3次多项式":             "poly3",
 }
-FIT_MODEL_LABELS = list(_FIT_MODELS.keys())
-FIT_MODEL_TYPES  = list(_FIT_MODELS.values())
-
-
 def fit_curve(
     xs: List[float],
     ys: List[float],
