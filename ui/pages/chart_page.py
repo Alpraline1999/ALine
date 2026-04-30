@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     Action,
     BodyLabel,
-    CaptionLabel,
     CardWidget,
     CheckBox,
     ColorPickerButton,
@@ -59,7 +58,6 @@ from qfluentwidgets import (
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
 from core.extension_api import (
     PlotExtensionContext,
-    PlotExtension,
     build_extension_entry,
     compare_extension_versions,
     extension_registry,
@@ -81,7 +79,7 @@ from models.schemas import (
 )
 from ui.dialogs.export_flow import choose_picture_export_plan
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
-from ui.matplotlib_fonts import configure_matplotlib_cjk, list_matplotlib_font_families
+from ui.matplotlib_fonts import list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.matplotlib_preview import (
@@ -95,7 +93,7 @@ from ui.widgets.matplotlib_preview import (
 )
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
-from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color, secondary_text_style_sheet
+from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color, secondary_text_style_sheet
 from app.workspaces.chart_workspace import ChartWorkspaceController, ChartWorkspaceState
 from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 from ui.page_view_state import ChartPageViewState
@@ -107,12 +105,10 @@ from .chart_page_support import (
     _BASE_CURVE_STYLE_EXTENSION_TYPE,
     _BASE_PLOT_STYLE_EXTENSION,
     _BASE_PLOT_STYLE_EXTENSION_TYPE,
-    _BASE_PLOT_STYLE_EXTRA_KEYS,
     _CANVAS_ALPHA_DEFAULT,
     _GRID_ALPHA_DEFAULT,
     _ICON_EXPORT_TO_PICTURES,
     _ICON_HIDE,
-    _ICON_PLOT_EXTENSION_HELP,
     _ICON_SHOW,
     _LEGEND_ALPHA_DEFAULT,
     _MATPLOTLIB_ERROR,
@@ -120,7 +116,6 @@ from .chart_page_support import (
     _STYLE_LABELS,
     _STYLE_LINESTYLES,
     _STYLE_MARKERS,
-    _STYLES,
     _TICK_DIRECTION_CHOICES,
     _THEME_HINTS,
 )
