@@ -94,32 +94,49 @@ def apply_pipeline_to_lines(
     token = _pipeline_pool.set(pool)
     try:
         if pairing is None:
-            working = list(active)
-            for op in ops or []:
-                working, op_warnings = apply_operation_to_lines(working, op)
-                warnings.extend(op_warnings)
-            return working, warnings
-
-        pairing_index, pairing_op = pairing
-        pair_inputs = _resolve_pairing_inputs(pairing_op, pool)
-        pre = list(pair_inputs)
-        for op in (ops or [])[:pairing_index]:
-            if str(op.get("type", "") or "") == "resample" and len(pre) > 1:
-                pre, op_warnings = _apply_resample_to_lines(pre, dict(op.get("params", {}) or {}))
-            else:
-                pre, op_warnings = apply_operation_to_lines(pre, op)
-            warnings.extend(op_warnings)
-
-        mid, mid_warnings = _execute_pairing_op(pairing_op, pre)
-        warnings.extend(mid_warnings)
-
-        post = list(mid)
-        for op in (ops or [])[pairing_index + 1:]:
-            post, op_warnings = apply_operation_to_lines(post, op)
-            warnings.extend(op_warnings)
-        return post, warnings
+            return _apply_pipeline_without_pairing(active, ops, warnings)
+        return _apply_pipeline_with_pairing(active, pool, ops, pairing, warnings)
     finally:
         _pipeline_pool.reset(token)
+
+
+def _apply_pipeline_without_pairing(
+    active: List[PipelineLine],
+    ops: List[Dict[str, Any]],
+    warnings: List[str],
+) -> PipelineResult:
+    working = list(active)
+    for op in ops or []:
+        working, op_warnings = apply_operation_to_lines(working, op)
+        warnings.extend(op_warnings)
+    return working, warnings
+
+
+def _apply_pipeline_with_pairing(
+    active: List[PipelineLine],
+    pool: List[PipelineLine],
+    ops: List[Dict[str, Any]],
+    pairing: Tuple[int, Dict[str, Any]],
+    warnings: List[str],
+) -> PipelineResult:
+    pairing_index, pairing_op = pairing
+    pair_inputs = _resolve_pairing_inputs(pairing_op, pool)
+    pre = list(pair_inputs)
+    for op in (ops or [])[:pairing_index]:
+        if str(op.get("type", "") or "") == "resample" and len(pre) > 1:
+            pre, op_warnings = _apply_resample_to_lines(pre, dict(op.get("params", {}) or {}))
+        else:
+            pre, op_warnings = apply_operation_to_lines(pre, op)
+        warnings.extend(op_warnings)
+
+    mid, mid_warnings = _execute_pairing_op(pairing_op, pre)
+    warnings.extend(mid_warnings)
+
+    post = list(mid)
+    for op in (ops or [])[pairing_index + 1:]:
+        post, op_warnings = apply_operation_to_lines(post, op)
+        warnings.extend(op_warnings)
+    return post, warnings
 
 
 def apply_operation_to_lines(lines: List[PipelineLine], op: Dict[str, Any]) -> PipelineResult:
