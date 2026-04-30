@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import util as importlib_util
-import inspect
 import copy
 from pathlib import Path
 import re
@@ -225,8 +224,6 @@ def normalize_extension_lines_list(raw: Any) -> List[int]:
         text = raw.strip()
         if not text:
             return []
-        if text.lower() in {"all", ":", "*", "selected"}:
-            raise ValueError('lines_list 不再支持 "all" / ":" / "*" / "selected" 哨兵值，请显式提供曲线下标列表')
         items = [piece.strip() for piece in text.replace(";", ",").split(",") if piece.strip()]
     elif isinstance(raw, (list, tuple)):
         items = list(raw)
@@ -271,7 +268,6 @@ def validate_extension_lines_list(
 
 
 def normalize_extension_lines_config(raw: Any, *, preserve_legacy_all: bool = False) -> Dict[str, Any]:
-    del preserve_legacy_all
     config = dict(raw or {}) if isinstance(raw, dict) else {}
     number = config.get("number")
     if "lines_number" in config:
@@ -763,10 +759,7 @@ def extension_resolved_default_options(extension: Any) -> Dict[str, Any]:
 
     legacy_defaults = dict(getattr(extension, "default_options", {}) or {})
     if "lines" in legacy_defaults:
-        raw_legacy_lines = legacy_defaults.pop("lines")
-        legacy_lines = dict(raw_legacy_lines or {}) if isinstance(raw_legacy_lines, dict) else {}
-        if "lines_list" not in legacy_defaults and legacy_lines:
-            legacy_defaults["lines_list"] = legacy_lines.get("lines_list")
+        raise ValueError("lines 内嵌协议已废弃，请改用扩展注册参数 lines_number 与顶层 lines_list")
     lines_number = extension_lines_number(extension)
     if "lines_list" in legacy_defaults:
         legacy_defaults["lines_list"] = validate_extension_lines_list(
@@ -1137,10 +1130,7 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
     normalized_config_fields = extension_config_fields(extension, include_implicit_lines=True)
     legacy_default_options = dict(getattr(extension, "default_options", {}) or {})
     if "lines" in legacy_default_options:
-        raw_legacy_lines = legacy_default_options.pop("lines")
-        legacy_lines = dict(raw_legacy_lines or {}) if isinstance(raw_legacy_lines, dict) else {}
-        if "lines_list" not in legacy_default_options and legacy_lines:
-            legacy_default_options["lines_list"] = legacy_lines.get("lines_list")
+        raise ValueError("lines 内嵌协议已废弃，请改用扩展注册参数 lines_number 与顶层 lines_list")
     if "lines_list" in legacy_default_options:
         legacy_default_options["lines_list"] = normalize_extension_lines_list(legacy_default_options.get("lines_list"))
     lines_number = extension_lines_number(extension)
@@ -1268,35 +1258,6 @@ def extension_entry_parameter_help_text(entry: Optional[Dict[str, Any]]) -> str:
             parts.append(f"默认值: {default}")
         lines.append("- " + "；".join(parts))
     return "\n".join(lines)
-
-
-def _invoke_handler_with_optional_payload(
-    handler: Callable[..., Any],
-    base_args: Tuple[Any, ...],
-    optional_arg_name: str,
-    optional_payload: Any,
-) -> Any:
-    try:
-        signature = inspect.signature(handler)
-    except (TypeError, ValueError):
-        return handler(*base_args)
-
-    parameters = list(signature.parameters.values())
-    named_parameter = signature.parameters.get(optional_arg_name)
-    accepts_named = (
-        (named_parameter is not None and named_parameter.kind != inspect.Parameter.POSITIONAL_ONLY)
-        or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters)
-    )
-    if accepts_named:
-        return handler(*base_args, **{optional_arg_name: copy.deepcopy(optional_payload)})
-
-    positional_params = [
-        param for param in parameters
-        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    if any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in parameters) or len(positional_params) >= len(base_args) + 1:
-        return handler(*base_args, copy.deepcopy(optional_payload))
-    return handler(*base_args)
 
 
 def invoke_processing_extension_handler(
