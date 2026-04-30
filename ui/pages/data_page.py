@@ -246,19 +246,9 @@ class DataPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # 共享树/预览状态走 DataWorkspaceState，DataPage 自身只保留页面装配状态。
         self._workspace_state = DataWorkspaceState()
         self._workspace_controller = DataWorkspaceController(self._workspace_state)
-        self._selected_type = None
-        self._selected_id = None
-        self._selected_node_kind = None
-        self._selected_node_id = None
-        self._preview_xs = []
-        self._preview_ys = []
-        self._preview_name = ""
-        self._preview_x_label = "X"
-        self._preview_y_label = "Y"
-        self._pending_import_paths = []
-        self._pending_import_names = {}
         self._pending_import_states: dict[str, _PendingImportQueueState] = {
             "source_files": _PendingImportQueueState(),
             "datasets": _PendingImportQueueState(),
@@ -269,9 +259,7 @@ class DataPage(QWidget):
         self._show_hidden_browser_entries = False
         self._data_file_preview_node_id: Optional[str] = None
         self._preview_image_path: Optional[str] = None
-        self._node_preview_states: dict[str, _NodePreviewState] = {}
         self._current_source_preview_total_rows = 0
-        self._current_extension_config_id = None
         self._fluent_tooltip = None
         self._fluent_tooltip_views: dict[QWidget, TreeWidget] = {}
         self._shortcut_bindings = ShortcutBindingSet()
