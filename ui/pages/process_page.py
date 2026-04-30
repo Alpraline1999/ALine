@@ -9,7 +9,7 @@ import json
 import math
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QItemSelectionModel, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer, Signal
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListWidgetItem, QSizePolicy, QSplitter, QStackedWidget, QVBoxLayout, QWidget, QTreeWidgetItem
 from qfluentwidgets import (
     BodyLabel, CaptionLabel, ComboBox, FluentIcon as FIF,
@@ -57,6 +57,7 @@ from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, SavedPipeline
 from processing.data_engine import apply_pipeline_to_lines
 from processing.pipeline_extension import build_pipeline_extension_definition
+from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 
 try:
     import matplotlib
@@ -99,7 +100,7 @@ def _downsample(xs: list, ys: list, max_pts: int = 2000):
     return xs[::stride], ys[::stride]
 
 
-class ProcessPage(QWidget):
+class ProcessPage(ExtensionPanelShellMixin, QWidget):
     """数据处理页：非破坏性操作管道。"""
 
     extensions_reloaded = Signal()
@@ -230,23 +231,11 @@ class ProcessPage(QWidget):
             QTimer.singleShot(0, self._sync_selected_input_splitter_sizes)
 
     def _sync_selected_input_splitter_sizes(self) -> None:
-        if not hasattr(self, "_selected_input_splitter") or self._selected_input_splitter is None:
-            return
-        if self._view_state.selected_input_splitter_user_resized:
-            return
-        try:
-            total_height = self._selected_input_splitter.height()
-        except RuntimeError:
-            return
-        if total_height <= 0:
-            return
-        upper = max(1, int(total_height * 0.4))
-        lower = max(1, total_height - upper)
-        try:
-            with QSignalBlocker(self._selected_input_splitter):
-                self._selected_input_splitter.setSizes([upper, lower])
-        except RuntimeError:
-            return
+        sync_vertical_splitter_sizes(
+            getattr(self, "_selected_input_splitter", None),
+            user_resized=self._view_state.selected_input_splitter_user_resized,
+            upper_ratio=0.4,
+        )
 
     def _on_selected_input_splitter_moved(self, _pos: int, _index: int) -> None:
         self._view_state.selected_input_splitter_user_resized = True
@@ -334,23 +323,17 @@ class ProcessPage(QWidget):
             ),
         ]
 
-    def supports_extension_panel_toggle(self) -> bool:
-        return True
+    def _extension_panel_splitter(self) -> QSplitter | None:
+        return getattr(self, "_page_splitter", None)
 
-    def is_extension_panel_visible(self) -> bool:
-        return bool(self._view_state.extension_panel_visible)
+    def _extension_panel_visible_sizes(self) -> tuple[int, int]:
+        return (
+            max(self.width() - self._view_state.extension_panel_width - 24, 640),
+            self._view_state.extension_panel_width,
+        )
 
-    def set_extension_panel_visible(self, visible: bool) -> None:
-        self._view_state.extension_panel_visible = bool(visible)
-        if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
-            return
-        if self._view_state.extension_panel_visible:
-            self._extension_panel.show()
-            content_width = max(self.width() - self._view_state.extension_panel_width - 24, 640)
-            self._page_splitter.setSizes([content_width, self._view_state.extension_panel_width])
-            return
-        self._extension_panel.hide()
-        self._page_splitter.setSizes([1, 0])
+    def _extension_panel_hidden_sizes(self) -> tuple[int, int]:
+        return (1, 0)
 
     def _build_left(self) -> QWidget:
         panel = QWidget()

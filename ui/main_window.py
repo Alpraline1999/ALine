@@ -186,10 +186,6 @@ class _SharedTreePanel(QWidget):
 
         self._sync_tree_expand_toggle_button()
 
-    def set_data_actions_visible(self, visible: bool) -> None:
-        """保持兼容接口。共享树顶部已不再提供数据入口按钮。"""
-        pass
-
     @staticmethod
     def _tool_button_icon(icon_source):
         return icon_source.icon() if hasattr(icon_source, "icon") else icon_source

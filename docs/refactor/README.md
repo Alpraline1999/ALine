@@ -19,6 +19,7 @@
 13. [13-phase-11-large-curve-hot-path-and-memory-hardening.md](13-phase-11-large-curve-hot-path-and-memory-hardening.md)
 14. [14-phase-12-ui-page-decomposition-and-shell-normalization.md](14-phase-12-ui-page-decomposition-and-shell-normalization.md)
 15. [15-phase-13-codebase-normalization-and-ui-consistency.md](15-phase-13-codebase-normalization-and-ui-consistency.md)
+16. [16-phase-12-13-execution-summary.md](16-phase-12-13-execution-summary.md)
 
 ## 文档职责
 

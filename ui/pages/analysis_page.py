@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Set
 
-from PySide6.QtCore import QItemSelectionModel, QSignalBlocker, Qt, QTimer, Signal, QStringListModel
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer, Signal, QStringListModel
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QCompleter, QFileDialog, QHBoxLayout, QHeaderView, QListWidgetItem, QSplitter,
@@ -51,6 +51,7 @@ from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.notifications import show_error, show_warning
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, accent_color, apply_button_metrics, make_hint_label, make_section_label, make_hsep, placeholder_color
+from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 from core.extension_api import (
     build_extension_entry,
     extension_lines_picker_visible,
@@ -75,7 +76,7 @@ from .analysis_page_support import (
 )
 
 
-class AnalysisPage(QWidget):
+class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     """数据分析页 — 通过共享项目树选择分析数据。"""
 
     extensions_reloaded = Signal()
@@ -178,17 +179,11 @@ class AnalysisPage(QWidget):
             QTimer.singleShot(0, self._sync_input_panel_splitter_sizes)
 
     def _sync_input_panel_splitter_sizes(self) -> None:
-        if not hasattr(self, "_input_panel_splitter") or self._input_panel_splitter is None:
-            return
-        if self._view_state.input_panel_splitter_user_resized:
-            return
-        total_height = self._input_panel_splitter.height()
-        if total_height <= 0:
-            return
-        upper = max(1, int(total_height * 0.4))
-        lower = max(1, total_height - upper)
-        with QSignalBlocker(self._input_panel_splitter):
-            self._input_panel_splitter.setSizes([upper, lower])
+        sync_vertical_splitter_sizes(
+            getattr(self, "_input_panel_splitter", None),
+            user_resized=self._view_state.input_panel_splitter_user_resized,
+            upper_ratio=0.4,
+        )
 
     def _on_input_panel_splitter_moved(self, _pos: int, _index: int) -> None:
         self._view_state.input_panel_splitter_user_resized = True
@@ -271,23 +266,17 @@ class AnalysisPage(QWidget):
             ),
         ]
 
-    def supports_extension_panel_toggle(self) -> bool:
-        return True
+    def _extension_panel_splitter(self) -> QSplitter | None:
+        return getattr(self, "_page_splitter", None)
 
-    def is_extension_panel_visible(self) -> bool:
-        return bool(self._view_state.extension_panel_visible)
+    def _extension_panel_visible_sizes(self) -> tuple[int, int]:
+        return (
+            max(self.width() - self._view_state.extension_panel_width - 24, 640),
+            self._view_state.extension_panel_width,
+        )
 
-    def set_extension_panel_visible(self, visible: bool) -> None:
-        self._view_state.extension_panel_visible = bool(visible)
-        if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
-            return
-        if self._view_state.extension_panel_visible:
-            self._extension_panel.show()
-            content_width = max(self.width() - self._view_state.extension_panel_width - 24, 640)
-            self._page_splitter.setSizes([content_width, self._view_state.extension_panel_width])
-            return
-        self._extension_panel.hide()
-        self._page_splitter.setSizes([1, 0])
+    def _extension_panel_hidden_sizes(self) -> tuple[int, int]:
+        return (1, 0)
 
     def _build_left(self) -> QWidget:
         panel = CardWidget(self)

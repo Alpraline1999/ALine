@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, cast
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy, QSplitter, QFileDialog, QTreeWidgetItem, QAbstractItemView, QFormLayout, QTableWidgetItem, QHeaderView
-from PySide6.QtCore import Qt, Signal, QSize, QSignalBlocker, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QFont, QColor
 from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePushButton,
     LineEdit, SpinBox, ColorPickerButton, BodyLabel, CaptionLabel, SubtitleLabel,
@@ -31,6 +31,7 @@ from models.schemas import CalibrationData, DataFile, DataSeries
 from app.workspaces.digitize_workspace import DigitizeWorkspaceController, DigitizeWorkspaceState
 from processing.extension_tools import line_xy
 from ui.page_view_state import DigitizePageViewState
+from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 from .digitize_page_support import _InputDialog, _SUPPORTED_SOURCE_IMAGE_SUFFIXES
 
 
@@ -46,7 +47,7 @@ def _build_digitize_auto_preview_points(
     return list(zip(list(xs), list(ys)))
 
 
-class DigitizePage(QWidget):
+class DigitizePage(ExtensionPanelShellMixin, QWidget):
     """工作区页面 - 主功能区"""
 
     project_modified = Signal()  # 项目修改信号
@@ -117,16 +118,13 @@ class DigitizePage(QWidget):
             QTimer.singleShot(0, self._sync_right_panel_splitter_sizes)
 
     def _sync_right_panel_splitter_sizes(self) -> None:
-        if self._right_content_splitter is None or self._view_state.right_splitter_user_resized:
-            return
-        total_height = self._right_content_splitter.height()
-        if total_height <= 0:
-            return
-        upper = max(1, int(total_height * 0.35))
-        lower = max(1, total_height - upper)
-        with QSignalBlocker(self._right_content_splitter):
-            self._right_content_splitter.setSizes([upper, lower])
-        self._view_state.right_splitter_initialized = True
+        sync_vertical_splitter_sizes(
+            getattr(self, "_right_content_splitter", None),
+            user_resized=self._view_state.right_splitter_user_resized,
+            upper_ratio=0.35,
+        )
+        if self._right_content_splitter is not None and not self._view_state.right_splitter_user_resized:
+            self._view_state.right_splitter_initialized = True
 
     def _set_tool_status(self, text: str = "") -> None:
         if not hasattr(self, "_status_label") or self._status_label is None:
@@ -187,24 +185,18 @@ class DigitizePage(QWidget):
         self._refresh_digitize_extension_panel()
         self.set_extension_panel_visible(self._view_state.extension_panel_visible)
 
-    def supports_extension_panel_toggle(self) -> bool:
-        return True
+    def _extension_panel_splitter(self) -> QSplitter | None:
+        return getattr(self, "_splitter", None)
 
-    def is_extension_panel_visible(self) -> bool:
-        return bool(self._view_state.extension_panel_visible)
+    def _extension_panel_visible_sizes(self) -> tuple[int, int, int]:
+        return (
+            320,
+            max(self.width() - 320 - self._view_state.extension_panel_width - 24, 640),
+            self._view_state.extension_panel_width,
+        )
 
-    def set_extension_panel_visible(self, visible: bool) -> None:
-        self._view_state.extension_panel_visible = bool(visible)
-        if not hasattr(self, "_extension_panel") or self._splitter is None:
-            return
-        if self._view_state.extension_panel_visible:
-            self._extension_panel.show()
-            center_width = max(self.width() - 320 - self._view_state.extension_panel_width - 24, 640)
-            self._splitter.setSizes([320, center_width, self._view_state.extension_panel_width])
-            return
-        self._extension_panel.hide()
-        center_width = max(self.width() - 320 - 12, 760)
-        self._splitter.setSizes([320, center_width, 0])
+    def _extension_panel_hidden_sizes(self) -> tuple[int, int, int]:
+        return (320, max(self.width() - 320 - 12, 760), 0)
 
     def _setup_viewer_signals(self):
         self._image_viewer.calibration_complete.connect(self._on_calibration_complete)

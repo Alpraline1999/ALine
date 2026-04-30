@@ -42,3 +42,10 @@ class TestSettingsPageRefresh(unittest.TestCase):
         page._tmpl_card = None
         page._tmpl_list = None
         page.refresh_templates()
+
+    def test_refresh_templates_without_template_list_attribute_does_not_crash(self) -> None:
+        page = SettingsPage()
+        page._tmpl_card = None
+        if hasattr(page, "_tmpl_list"):
+            delattr(page, "_tmpl_list")
+        page.refresh_templates()

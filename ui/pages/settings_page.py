@@ -1447,8 +1447,9 @@ class SettingsPage(QWidget):
 
     def refresh_templates(self) -> None:
         """报告模板已迁入分析页；保留兼容入口以承接旧刷新调用。"""
-        if self._tmpl_list is not None:
-            self._tmpl_list.clear()
+        tmpl_list = getattr(self, "_tmpl_list", None)
+        if tmpl_list is not None:
+            tmpl_list.clear()
         self._refresh_ai_tools_panel()
 
     def _refresh_ai_tools_panel(self) -> None:
@@ -1588,7 +1589,10 @@ class SettingsPage(QWidget):
         from core.global_assets import global_assets
         from core.project_manager import project_manager
 
-        idx = self._tmpl_list.currentRow()
+        tmpl_list = getattr(self, "_tmpl_list", None)
+        if tmpl_list is None:
+            return
+        idx = tmpl_list.currentRow()
         templates = global_assets.list_report_templates()
         if idx < 0 or idx >= len(templates):
             return
@@ -1606,7 +1610,10 @@ class SettingsPage(QWidget):
         from core.global_assets import global_assets
         from core.project_manager import project_manager
 
-        idx = self._tmpl_list.currentRow()
+        tmpl_list = getattr(self, "_tmpl_list", None)
+        if tmpl_list is None:
+            return
+        idx = tmpl_list.currentRow()
         templates = global_assets.list_report_templates()
         if idx < 0 or idx >= len(templates):
             return

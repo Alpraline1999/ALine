@@ -8,7 +8,7 @@ import uuid
 import warnings
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -96,6 +96,7 @@ from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.theme import WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_MIN_WIDTH, WORKBENCH_TOOL_PANEL_WIDTH, WORKBENCH_WIDE_LABEL_WIDTH, apply_button_metrics, install_fluent_tooltip, make_hint_label, make_hsep, make_inline_label, make_section_label, preview_canvas_background_color, preview_canvas_foreground_color, preview_canvas_grid_color, secondary_text_style_sheet
 from app.workspaces.chart_workspace import ChartWorkspaceController, ChartWorkspaceState
+from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 from ui.page_view_state import ChartPageViewState
 from .chart_page_support import (
     HAS_MATPLOTLIB,
@@ -171,7 +172,7 @@ def _set_nested_mapping_value(target: Dict[str, Any], path: tuple[str, ...], val
     current[path[-1]] = copy.deepcopy(value)
 
 
-class ChartPage(QWidget):
+class ChartPage(ExtensionPanelShellMixin, QWidget):
     """数据可视化页面。"""
 
     extensions_reloaded = Signal()
@@ -256,17 +257,11 @@ class ChartPage(QWidget):
             QTimer.singleShot(0, self._sync_chart_left_splitter_sizes)
 
     def _sync_chart_left_splitter_sizes(self) -> None:
-        if not hasattr(self, "_chart_left_splitter") or self._chart_left_splitter is None:
-            return
-        if self._view_state.chart_left_splitter_user_resized:
-            return
-        total_height = self._chart_left_splitter.height()
-        if total_height <= 0:
-            return
-        upper = max(1, int(total_height * 0.4))
-        lower = max(1, total_height - upper)
-        with QSignalBlocker(self._chart_left_splitter):
-            self._chart_left_splitter.setSizes([upper, lower])
+        sync_vertical_splitter_sizes(
+            getattr(self, "_chart_left_splitter", None),
+            user_resized=self._view_state.chart_left_splitter_user_resized,
+            upper_ratio=0.4,
+        )
 
     def _on_chart_left_splitter_moved(self, _pos: int, _index: int) -> None:
         self._view_state.chart_left_splitter_user_resized = True
@@ -538,23 +533,17 @@ class ChartPage(QWidget):
             self,
         )
 
-    def supports_extension_panel_toggle(self) -> bool:
-        return True
+    def _extension_panel_splitter(self) -> QSplitter | None:
+        return getattr(self, "_page_splitter", None)
 
-    def is_extension_panel_visible(self) -> bool:
-        return bool(self._view_state.extension_panel_visible)
+    def _extension_panel_visible_sizes(self) -> tuple[int, int]:
+        return (
+            max(self.width() - self._view_state.extension_panel_width - 24, 760),
+            self._view_state.extension_panel_width,
+        )
 
-    def set_extension_panel_visible(self, visible: bool) -> None:
-        self._view_state.extension_panel_visible = bool(visible)
-        if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
-            return
-        if self._view_state.extension_panel_visible:
-            self._extension_panel.show()
-            content_width = max(self.width() - self._view_state.extension_panel_width - 24, 760)
-            self._page_splitter.setSizes([content_width, self._view_state.extension_panel_width])
-            return
-        self._extension_panel.hide()
-        self._page_splitter.setSizes([1, 0])
+    def _extension_panel_hidden_sizes(self) -> tuple[int, int]:
+        return (1, 0)
 
     def _chart_preview_navigation_mode(self) -> str:
         return preview_navigation_mode(getattr(self, "_chart_preview_nav_toolbar", None))
