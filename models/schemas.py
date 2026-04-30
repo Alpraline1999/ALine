@@ -380,15 +380,15 @@ class Project(BaseModel):
         return None
 
     def find_series(self, series_id: str) -> Optional[DataSeries]:
-        """在所有 Dataset 和 DataFile 中查找 DataSeries。"""
-        for ds in self.datasets:
-            for s in ds.series:
-                if s.id == series_id:
-                    return s
+        """优先在 DataFile 中查找 DataSeries，datasets 仅保留兼容回退。"""
         for df in getattr(self, "data_files", []):
             s = df.find_series(series_id)
             if s:
                 return s
+        for ds in self.datasets:
+            for s in ds.series:
+                if s.id == series_id:
+                    return s
         return None
 
     def find_analysis(self, analysis_id: str) -> Optional[AnalysisResult]:
@@ -404,7 +404,11 @@ class Project(BaseModel):
         return None
 
     def iter_all_series(self):
-        """遍历项目中所有 DataSeries（跨 Dataset）。"""
+        """优先遍历 DataFile 中的 DataSeries，datasets 仅保留兼容回退。"""
+        for df in self.data_files:
+            yield from df.series
+        if self.data_files:
+            return
         for ds in self.datasets:
             yield from ds.series
 

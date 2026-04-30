@@ -163,6 +163,7 @@ class ProjectManager:
             find_folder_by_group_type=self._find_folder_by_group_type,
             find_folder_by_name=self._find_folder_by_name,
             get_image=self.get_image,
+            sync_legacy_datasets=self.sync_legacy_datasets,
         )
         self._project_session = ProjectSession(
             list_projects=lambda: self._projects,
@@ -1105,58 +1106,44 @@ class ProjectManager:
     # ─────────────────────────────────────────────
 
     def add_dataset(self, name: str) -> Optional[Dataset]:
-        """在当前项目中新建 Dataset。"""
-        self._clear_last_operation_error()
-        if self.current_project is None:
+        """兼容入口：运行时实际创建 DataFile，并同步兼容 datasets 镜像。"""
+        data_file = self.add_data_file(DataFile(id=str(uuid.uuid4()), name=name))
+        if data_file is None or self.current_project is None:
             return None
-        ds = Dataset(id=str(uuid.uuid4()), name=name)
-        self.current_project.datasets.append(ds)
-        self.current_project.is_modified = True
-        return ds
+        self.sync_legacy_datasets(self.current_project)
+        return self.current_project.find_dataset(data_file.data_file_id)
 
     def remove_dataset(self, dataset_id: str) -> bool:
-        if self.current_project is None:
+        project = self.current_project
+        if project is None:
             return False
-        before = len(self.current_project.datasets)
-        self.current_project.datasets = [
-            d for d in self.current_project.datasets if d.id != dataset_id
-        ]
-        changed = len(self.current_project.datasets) < before
+        node = next((item for item in getattr(project.tree, "nodes", []) if item.kind == "data_file" and item.data_file_id == dataset_id), None)
+        if node is None:
+            return False
+        changed = self.delete_node(node.id)
         if changed:
-            self.current_project.is_modified = True
+            self.sync_legacy_datasets(project)
         return changed
 
     def rename_dataset(self, dataset_id: str, new_name: str) -> bool:
-        ds = self.current_project.find_dataset(dataset_id) if self.current_project else None
-        if ds is None:
+        project = self.current_project
+        if project is None:
             return False
-        ds.name = new_name
-        self.current_project.is_modified = True  # type: ignore
-        return True
+        node = next((item for item in getattr(project.tree, "nodes", []) if item.kind == "data_file" and item.data_file_id == dataset_id), None)
+        if node is None:
+            return False
+        changed = self.rename_node(node.id, new_name)
+        if changed:
+            self.sync_legacy_datasets(project)
+        return changed
 
     def add_series_to_dataset(self, dataset_id: str, series: DataSeries) -> bool:
-        """将 DataSeries 添加到指定 Dataset。"""
-        if self.current_project is None:
-            return False
-        ds = self.current_project.find_dataset(dataset_id)
-        if ds is None:
-            return False
-        ds.series.append(series)
-        self.current_project.is_modified = True
-        return True
+        """兼容入口：运行时实际追加到 DataFile。"""
+        return self.add_series_to_data_file(dataset_id, series)
 
     def remove_series(self, dataset_id: str, series_id: str) -> bool:
-        if self.current_project is None:
-            return False
-        ds = self.current_project.find_dataset(dataset_id)
-        if ds is None:
-            return False
-        before = len(ds.series)
-        ds.series = [s for s in ds.series if s.id != series_id]
-        changed = len(ds.series) < before
-        if changed:
-            self.current_project.is_modified = True
-        return changed
+        del dataset_id
+        return self.delete_series(series_id)
 
     def _find_series_owner(self, series_id: str):
         p = self.current_project
@@ -1204,7 +1191,7 @@ class ProjectManager:
             x_label=x_label,
             y_label=y_label,
         )
-        return series if self.add_series_to_dataset(dataset_id, series) else None
+        return series if self.add_series_to_data_file(dataset_id, series) else None
 
     def _find_curve_owner(self, curve_id: str):
         p = self.current_project
@@ -1371,27 +1358,16 @@ class ProjectManager:
         return changed
 
     def sync_legacy_datasets(self, project: Optional[Project] = None) -> None:
-        """保存前将 data_files[*].series 同步回 datasets（确保旧 PyLine 可读）。"""
+        """将 data_files[*].series 同步回 datasets，作为兼容镜像保留。"""
         p = project or self.current_project
         if p is None:
             return
-        # 清理旧 datasets 列表，重建
-        existing_by_df_id = {df.id: df for df in p.data_files}
-        # 找到所有 DataFileNode
-        if p.tree is None:
-            return
-        for node in p.tree.nodes:
-            if node.kind == "data_file":
-                df = existing_by_df_id.get(node.data_file_id)
-                if df is None:
-                    continue
-                # 查找 datasets 中是否已存在同名
-                existing_ds = next((d for d in p.datasets if d.name == df.name), None)
-                if existing_ds is None:
-                    from models.schemas import Dataset
-                    existing_ds = Dataset(name=df.name)
-                    p.datasets.append(existing_ds)
-                existing_ds.series = list(df.series)
+        from models.schemas import Dataset
+
+        p.datasets = [
+            Dataset(id=df.id, name=df.name, series=list(df.series))
+            for df in p.data_files
+        ]
 
     # ─────────────────────────────────────────────
     # v0.2 树节点 CRUD

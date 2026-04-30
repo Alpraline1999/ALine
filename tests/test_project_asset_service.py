@@ -114,6 +114,7 @@ class TestProjectAssetService(unittest.TestCase):
             find_folder_by_group_type=lambda _group: types.SimpleNamespace(id="datasets-root"),
             find_folder_by_name=lambda _name: None,
             get_image=lambda image_id: next((item for item in self.project.images if item.id == image_id), None),
+            sync_legacy_datasets=lambda _project: self.calls.append("sync"),
         )
         defaults.update(overrides)
         return ProjectAssetService(**defaults)

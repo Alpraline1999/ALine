@@ -573,10 +573,10 @@ class ProcessPage(QWidget):
 
         ds_root = QTreeWidgetItem(["📁  数据系列"])
         ds_root.setExpanded(True)
-        for ds in p.datasets:
-            for s in ds.series:
+        for data_file in p.data_files:
+            for s in data_file.series:
                 if s.x:
-                    it = QTreeWidgetItem([f"  {ds.name} / {s.name}"])
+                    it = QTreeWidgetItem([f"  {data_file.name} / {s.name}"])
                     it.setData(0, Qt.ItemDataRole.UserRole, ("series", s.id))
                     ds_root.addChild(it)
         self._src_tree.addTopLevelItem(ds_root)

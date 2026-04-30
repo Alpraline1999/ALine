@@ -18,6 +18,7 @@ class ProjectAssetService:
     find_folder_by_group_type: Callable[[str], object | None]
     find_folder_by_name: Callable[[str], object | None]
     get_image: Callable[[str], object | None]
+    sync_legacy_datasets: Callable[[Project | None], None]
 
     def add_data_file(
         self,
@@ -44,6 +45,7 @@ class ProjectAssetService:
         order = project.tree.get_siblings_max_order(parent_id) + 1
         node = DataFileNode(name=data_file.name, parent_id=parent_id, data_file_id=data_file.id, order=order)
         project.tree.nodes.append(node)
+        self.sync_legacy_datasets(project)
         project.is_modified = True
         return node
 
@@ -64,6 +66,7 @@ class ProjectAssetService:
         if not self.ensure_unique_series_name(data_file.name, data_file.series, series.name, owner_label="数据文件"):
             return False
         data_file.series.append(series)
+        self.sync_legacy_datasets(project)
         project.is_modified = True
         return True
 
@@ -84,6 +87,7 @@ class ProjectAssetService:
         series.name = new_name
         project = self.get_current_project()
         if project is not None:
+            self.sync_legacy_datasets(project)
             project.is_modified = True
         return True
 
@@ -96,6 +100,7 @@ class ProjectAssetService:
         owner.series = [item for item in owner.series if item.id != series_id]
         changed = len(owner.series) < before
         if changed:
+            self.sync_legacy_datasets(project)
             project.is_modified = True
         return changed
 
@@ -114,6 +119,7 @@ class ProjectAssetService:
             return False
         owner.series = [item for item in owner.series if item.id != series_id]
         target.series.append(series)
+        self.sync_legacy_datasets(project)
         project.is_modified = True
         return True
 
@@ -168,10 +174,6 @@ class ProjectAssetService:
             for series in data_file.series:
                 if series.id == series_id:
                     return "data_file", data_file, series
-        for dataset in project.datasets:
-            for series in dataset.series:
-                if series.id == series_id:
-                    return "dataset", dataset, series
         return None, None, None
 
     def _find_curve_owner(self, curve_id: str):
