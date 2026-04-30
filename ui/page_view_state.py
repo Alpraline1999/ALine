@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -43,3 +44,16 @@ class ProcessPageViewState:
 @dataclass(slots=True)
 class SettingsPageViewState:
     extension_height_refresh_pending: bool = False
+
+
+@dataclass(slots=True)
+class DataPageViewState:
+    pending_import_states: dict[str, Any] = field(default_factory=dict)
+    external_browser_dir: str | None = None
+    show_hidden_browser_entries: bool = False
+    data_file_preview_node_id: str | None = None
+    preview_image_path: str | None = None
+    current_source_preview_total_rows: int = 0
+    fluent_tooltip: Any = None
+    fluent_tooltip_views: dict[Any, Any] = field(default_factory=dict)
+    shortcut_bindings: Any = None

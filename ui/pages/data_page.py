@@ -90,6 +90,7 @@ from .data_page_support import (
     _TYPE_ROOT,
     _TYPE_SERIES,
 )
+from .data_page_state_bridge import DataPageStateBridge
 
 
 class _TextActionLabel(CaptionLabel):
@@ -244,24 +245,97 @@ class DataPage(QWidget):
     def _current_extension_config_id(self, value):
         self._workspace_state.current_extension_config_id = value
 
+    @property
+    def _pending_import_states(self):
+        return self._page_state_bridge.pending_import_states
+
+    @_pending_import_states.setter
+    def _pending_import_states(self, value):
+        self._page_state_bridge.pending_import_states = value
+
+    @property
+    def _external_browser_dir(self):
+        return self._page_state_bridge.external_browser_dir
+
+    @_external_browser_dir.setter
+    def _external_browser_dir(self, value):
+        self._page_state_bridge.external_browser_dir = value
+
+    @property
+    def _show_hidden_browser_entries(self):
+        return self._page_state_bridge.show_hidden_browser_entries
+
+    @_show_hidden_browser_entries.setter
+    def _show_hidden_browser_entries(self, value):
+        self._page_state_bridge.show_hidden_browser_entries = value
+
+    @property
+    def _data_file_preview_node_id(self):
+        return self._page_state_bridge.data_file_preview_node_id
+
+    @_data_file_preview_node_id.setter
+    def _data_file_preview_node_id(self, value):
+        self._page_state_bridge.data_file_preview_node_id = value
+
+    @property
+    def _preview_image_path(self):
+        return self._page_state_bridge.preview_image_path
+
+    @_preview_image_path.setter
+    def _preview_image_path(self, value):
+        self._page_state_bridge.preview_image_path = value
+
+    @property
+    def _current_source_preview_total_rows(self):
+        return self._page_state_bridge.current_source_preview_total_rows
+
+    @_current_source_preview_total_rows.setter
+    def _current_source_preview_total_rows(self, value):
+        self._page_state_bridge.current_source_preview_total_rows = value
+
+    @property
+    def _fluent_tooltip(self):
+        return self._page_state_bridge.fluent_tooltip
+
+    @_fluent_tooltip.setter
+    def _fluent_tooltip(self, value):
+        self._page_state_bridge.fluent_tooltip = value
+
+    @property
+    def _fluent_tooltip_views(self):
+        return self._page_state_bridge.fluent_tooltip_views
+
+    @_fluent_tooltip_views.setter
+    def _fluent_tooltip_views(self, value):
+        self._page_state_bridge.fluent_tooltip_views = value
+
+    @property
+    def _shortcut_bindings(self):
+        return self._page_state_bridge.shortcut_bindings
+
+    @_shortcut_bindings.setter
+    def _shortcut_bindings(self, value):
+        self._page_state_bridge.shortcut_bindings = value
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # 共享树/预览状态走 DataWorkspaceState，DataPage 自身只保留页面装配状态。
         self._workspace_state = DataWorkspaceState()
         self._workspace_controller = DataWorkspaceController(self._workspace_state)
-        self._pending_import_states: dict[str, _PendingImportQueueState] = {
+        self._page_state_bridge = DataPageStateBridge()
+        self._pending_import_states = {
             "source_files": _PendingImportQueueState(),
             "datasets": _PendingImportQueueState(),
             "images": _PendingImportQueueState(),
         }
         self._source_favorite_paths: list[str] = get_data_page_source_favorites()
-        self._external_browser_dir: Optional[Path] = None
+        self._external_browser_dir = None
         self._show_hidden_browser_entries = False
-        self._data_file_preview_node_id: Optional[str] = None
-        self._preview_image_path: Optional[str] = None
+        self._data_file_preview_node_id = None
+        self._preview_image_path = None
         self._current_source_preview_total_rows = 0
         self._fluent_tooltip = None
-        self._fluent_tooltip_views: dict[QWidget, TreeWidget] = {}
+        self._fluent_tooltip_views = {}
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
