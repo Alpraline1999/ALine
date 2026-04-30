@@ -10,7 +10,7 @@ from types import ModuleType
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
 import hashlib
 
-from extensions.processing.extension_tools import normalize_line, series_payloads_to_lines
+from core.line_tools import normalize_line, series_payloads_to_lines
 
 
 XY = Tuple[List[float], List[float]]

@@ -69,10 +69,7 @@ ALLOWED_UI_DIRECT_IMPORTS = {
     },
 }
 
-ALLOWED_CORE_EXTENSION_IMPORTS = {
-    "core/analysis_engine.py": {"extensions.processing.extension_tools"},
-    "core/extension_api.py": {"extensions.processing.extension_tools"},
-}
+ALLOWED_CORE_EXTENSION_IMPORTS = {}
 
 ALLOWED_MAIN_WINDOW_PRIVATE_PAGE_ACCESSES = set()
 

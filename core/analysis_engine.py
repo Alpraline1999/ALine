@@ -11,7 +11,7 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.extension_api import extension_registry, invoke_analysis_extension_handler
-from extensions.processing.extension_tools import line_from_xy
+from core.line_tools import line_from_xy
 
 # ─────────────────────────────────────────────────────────────
 # 曲线拟合
@@ -1014,4 +1014,3 @@ _DEFAULT_REPORT_TEMPLATE = """\
 - 统计结果: {{n}}, {{x_mean}}, {{x_std}}, {{x_min}}, {{x_max}}, {{y_mean}}, {{y_std}}, {{y_min}}, {{y_max}}
 - 相关性/误差: {{r}}, {{mae}}, {{rmse}}, {{mean_error}}, {{max_abs_error}}, {{relative_mae}}
 """
-
