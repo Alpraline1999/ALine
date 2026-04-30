@@ -24,6 +24,8 @@ def _load_command_service_module():
             self.added: list[tuple[str, str]] = []
             self.renamed_series: list[tuple[str, str]] = []
             self.removed_empty_folder_args: list[str | None] = []
+            self.deleted_series: list[str] = []
+            self.deleted_curves: list[str] = []
             self.return_node = types.SimpleNamespace(id="node-1")
 
         def delete_node(self, node_id: str) -> None:
@@ -43,6 +45,14 @@ def _load_command_service_module():
         def remove_empty_folders(self, root_id: str | None = None):
             self.removed_empty_folder_args.append(root_id)
             return ["f1", "f2"]
+
+        def delete_series(self, node_id: str) -> bool:
+            self.deleted_series.append(node_id)
+            return True
+
+        def delete_curve(self, node_id: str) -> bool:
+            self.deleted_curves.append(node_id)
+            return True
 
     fake_pm_module.project_manager = _FakeProjectManager()
     sys.modules["core.project_manager"] = fake_pm_module
@@ -64,13 +74,24 @@ project_manager = module.project_manager
 
 
 class TestProjectTreeCommandService(unittest.TestCase):
+    def setUp(self) -> None:
+        project_manager.deleted.clear()
+        project_manager.added.clear()
+        project_manager.renamed_series.clear()
+        project_manager.removed_empty_folder_args.clear()
+        project_manager.deleted_series.clear()
+        project_manager.deleted_curves.clear()
+
     def test_delete_node_confirms_then_refreshes(self) -> None:
         calls: list[str] = []
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: True,
+            confirm_batch_delete=lambda *_args: True,
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -88,9 +109,12 @@ class TestProjectTreeCommandService(unittest.TestCase):
         calls: list[str] = []
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
             prompt_text=lambda *_args: ("dataset-a", True),
             prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -108,9 +132,12 @@ class TestProjectTreeCommandService(unittest.TestCase):
         calls: list[str] = []
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("series-b", True),
+            choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
             notify_warning=lambda *_args: None,
             notify_success=lambda *_args: None,
             refresh=lambda: calls.append("refresh"),
@@ -128,9 +155,12 @@ class TestProjectTreeCommandService(unittest.TestCase):
         calls: list[tuple[str, str]] = []
         service = ProjectTreeCommandService(
             confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
             prompt_text=lambda *_args: ("", False),
             prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("", False),
             create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
             notify_warning=lambda *_args: None,
             notify_success=lambda title, content: calls.append((title, content)),
             refresh=lambda: calls.append(("refresh", "")),
@@ -145,6 +175,85 @@ class TestProjectTreeCommandService(unittest.TestCase):
         self.assertEqual(("refresh", ""), calls[0])
         self.assertEqual(("modified", ""), calls[1])
         self.assertEqual(("清理完成", "已移除 2 个空文件夹"), calls[2])
+
+    def test_delete_virtual_series_deletes_then_refreshes(self) -> None:
+        calls: list[str] = []
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: True,
+            confirm_batch_delete=lambda *_args: True,
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("", False),
+            create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
+            notify_warning=lambda *_args: None,
+            notify_success=lambda *_args: None,
+            refresh=lambda: calls.append("refresh"),
+            select_node=lambda node_id: calls.append(f"select:{node_id}"),
+            project_modified=lambda: calls.append("modified"),
+            last_error_message=lambda: "",
+        )
+
+        service.delete_virtual("series", "s99", "Series 99")
+
+        self.assertEqual(["s99"], project_manager.deleted_series)
+        self.assertEqual(["refresh", "modified"], calls)
+
+    def test_delete_batch_deletes_all_payloads(self) -> None:
+        calls: list[str] = []
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("", False),
+            create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda *_args: False,
+            notify_warning=lambda *_args: None,
+            notify_success=lambda *_args: None,
+            refresh=lambda: calls.append("refresh"),
+            select_node=lambda node_id: calls.append(f"select:{node_id}"),
+            project_modified=lambda: calls.append("modified"),
+            last_error_message=lambda: "",
+        )
+
+        service.delete_batch([
+            {"kind": "series", "node_id": "s1", "name": "S1"},
+            {"kind": "curve", "node_id": "c1", "name": "C1"},
+            {"kind": "data_file", "node_id": "d1", "name": "D1"},
+        ])
+
+        self.assertEqual(["s1"], project_manager.deleted_series)
+        self.assertEqual(["c1"], project_manager.deleted_curves)
+        self.assertEqual(["d1"], project_manager.deleted)
+        self.assertEqual(["refresh", "modified"], calls)
+
+    def test_move_batch_uses_target_selection_and_warns_on_failures(self) -> None:
+        calls: list[tuple[str, str]] = []
+        service = ProjectTreeCommandService(
+            confirm_delete=lambda *_args: False,
+            confirm_batch_delete=lambda *_args: True,
+            prompt_text=lambda *_args: ("", False),
+            prompt_existing_text=lambda *_args: ("", False),
+            choose_item=lambda *_args: ("目标A", True),
+            create_child_folder=lambda *_args: None,
+            move_node_to_target=lambda kind, node_id, target_id: node_id == "ok1",
+            notify_warning=lambda title, content: calls.append((title, content)),
+            notify_success=lambda *_args: None,
+            refresh=lambda: calls.append(("refresh", "")),
+            select_node=lambda node_id: calls.append((f"select:{node_id}", "")),
+            project_modified=lambda: calls.append(("modified", "")),
+            last_error_message=lambda: "",
+        )
+
+        service.move_batch(
+            [{"kind": "series", "node_id": "ok1", "name": "OK"}, {"kind": "curve", "node_id": "bad1", "name": "BAD"}],
+            [("目标A", "target-a"), ("目标B", "target-b")],
+        )
+
+        self.assertEqual(("refresh", ""), calls[0])
+        self.assertEqual(("modified", ""), calls[1])
+        self.assertEqual(("批量移动未完成", "有 1 项移动失败"), calls[2])
 
 
 if __name__ == "__main__":

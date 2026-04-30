@@ -10,9 +10,12 @@ from models.schemas import DataFile
 @dataclass(slots=True)
 class ProjectTreeCommandService:
     confirm_delete: Callable[[str, str], bool]
+    confirm_batch_delete: Callable[[str, str], bool]
     prompt_text: Callable[[str, str, str], tuple[str, bool]]
     prompt_existing_text: Callable[[str, str, str], tuple[str, bool]]
+    choose_item: Callable[[str, str, list[str]], tuple[str, bool]]
     create_child_folder: Callable[[str, str], object | None]
+    move_node_to_target: Callable[[str, str, str], bool]
     notify_warning: Callable[[str, str], None]
     notify_success: Callable[[str, str], None]
     refresh: Callable[[], None]
@@ -77,3 +80,59 @@ class ProjectTreeCommandService:
         self.refresh()
         self.project_modified()
         self.notify_success("清理完成", f"已移除 {len(removed_ids)} 个空文件夹")
+
+    def delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
+        if not self.confirm_delete("确认删除", f"确定要删除「{node_name}」吗？"):
+            return
+        if kind == "series":
+            changed = project_manager.delete_series(node_id)
+        else:
+            changed = project_manager.delete_curve(node_id)
+        if changed:
+            self.refresh()
+            self.project_modified()
+
+    def delete_batch(self, payloads: list[dict[str, object]]) -> None:
+        count = len(payloads)
+        names = [str(item["name"]) for item in payloads[:5]]
+        summary = "\n".join(f"- {name}" for name in names)
+        if count > 5:
+            summary += f"\n- ... 另有 {count - 5} 项"
+        if not self.confirm_batch_delete("确认批量删除", f"确定要删除选中的 {count} 项吗？\n\n{summary}"):
+            return
+
+        changed = False
+        for payload in payloads:
+            kind = str(payload["kind"])
+            node_id = str(payload["node_id"])
+            if kind == "series":
+                changed = project_manager.delete_series(node_id) or changed
+            elif kind == "curve":
+                changed = project_manager.delete_curve(node_id) or changed
+            else:
+                changed = project_manager.delete_node(node_id) or changed
+        if changed:
+            self.refresh()
+            self.project_modified()
+
+    def move_batch(self, payloads: list[dict[str, object]], choices: list[tuple[str, str]]) -> None:
+        labels = [label for label, _ in choices]
+        selected, ok = self.choose_item("批量移动到", "目标父级:", labels)
+        if not ok or not selected:
+            return
+        target_id = next((target_id for label, target_id in choices if label == selected), None)
+        if target_id is None:
+            return
+
+        changed = False
+        failed = 0
+        for payload in payloads:
+            moved = self.move_node_to_target(str(payload["kind"]), str(payload["node_id"]), target_id)
+            changed = moved or changed
+            if not moved:
+                failed += 1
+        if changed:
+            self.refresh()
+            self.project_modified()
+        if failed:
+            self.notify_warning("批量移动未完成", self.last_error_message() or f"有 {failed} 项移动失败")

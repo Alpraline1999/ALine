@@ -358,9 +358,12 @@ class ProjectTreeWidget(QWidget):
         self._page_dispatcher = ProjectTreePageDispatcher(self.node_selected, self.node_activated)
         self._command_service = ProjectTreeCommandService(
             confirm_delete=self._confirm_tree_delete,
+            confirm_batch_delete=self._confirm_tree_delete,
             prompt_text=self._prompt_tree_text,
             prompt_existing_text=self._prompt_tree_existing_text,
+            choose_item=self._choose_tree_item,
             create_child_folder=self._create_child_folder,
+            move_node_to_target=self._move_node_to_target,
             notify_warning=self._notify_tree_warning,
             notify_success=self._notify_tree_success,
             refresh=self.refresh,
@@ -1336,6 +1339,9 @@ class ProjectTreeWidget(QWidget):
             position=InfoBarPosition.TOP,
         )
 
+    def _choose_tree_item(self, title: str, label: str, items: list[str]) -> tuple[str, bool]:
+        return SelectionDialog.get_item(self._dialog_parent(), title, label, items)
+
     def _cmd_import_data_file(self, parent_id: Optional[str] = None) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self._dialog_parent(),
@@ -1450,67 +1456,13 @@ class ProjectTreeWidget(QWidget):
         self._command_service.prune_empty_folders(root_id, scope_label=scope_label)
 
     def _cmd_delete_batch(self, payloads: List[Dict[str, object]]) -> None:
-        count = len(payloads)
-        names = [str(item["name"]) for item in payloads[:5]]
-        summary = "\n".join(f"- {name}" for name in names)
-        if count > 5:
-            summary += f"\n- ... 另有 {count - 5} 项"
-        box = MessageBox("确认批量删除", f"确定要删除选中的 {count} 项吗？\n\n{summary}", self._dialog_parent())
-        if not box.exec():
-            return
-
-        changed = False
-        for payload in payloads:
-            kind = str(payload["kind"])
-            node_id = str(payload["node_id"])
-            if kind == "series":
-                changed = project_manager.delete_series(node_id) or changed
-            elif kind == "curve":
-                changed = project_manager.delete_curve(node_id) or changed
-            else:
-                changed = project_manager.delete_node(node_id) or changed
-        if changed:
-            self.refresh()
-            self.project_modified.emit()
+        self._command_service.delete_batch(payloads)
 
     def _cmd_move_batch(self, payloads: List[Dict[str, object]], choices: List[Tuple[str, str]]) -> None:
-        labels = [label for label, _ in choices]
-        selected, ok = SelectionDialog.get_item(self._dialog_parent(), "批量移动到", "目标父级:", labels)
-        if not ok or not selected:
-            return
-        target_id = next((target_id for label, target_id in choices if label == selected), None)
-        if target_id is None:
-            return
-
-        changed = False
-        failed = 0
-        for payload in payloads:
-            moved = self._move_node_to_target(str(payload["kind"]), str(payload["node_id"]), target_id)
-            changed = moved or changed
-            if not moved:
-                failed += 1
-        if changed:
-            self.refresh()
-            self.project_modified.emit()
-        if failed:
-            InfoBar.warning(
-                "批量移动未完成",
-                project_manager.get_last_error_message() or f"有 {failed} 项移动失败",
-                parent=self._dialog_parent(),
-                position=InfoBarPosition.TOP,
-            )
+        self._command_service.move_batch(payloads, choices)
 
     def _cmd_delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
-        box = MessageBox("确认删除", f'确定要删除「{node_name}」吗？', self._dialog_parent())
-        if not box.exec():
-            return
-        if kind == "series":
-            changed = project_manager.delete_series(node_id)
-        else:
-            changed = project_manager.delete_curve(node_id)
-        if changed:
-            self.refresh()
-            self.project_modified.emit()
+        self._command_service.delete_virtual(kind, node_id, node_name)
 
     def _can_edit_global_asset(self, kind: str, node_id: str) -> bool:
         if kind == "global_report_template":
