@@ -9283,10 +9283,6 @@ class TestMainWindow(unittest.TestCase):
         open_mock.assert_called_once_with("/tmp/demo.aline")
         opened_mock.assert_called_once_with("/tmp/demo.aline")
 
-    def test_ai_panel_is_disabled(self):
-        self.assertIsNone(self.win._ai_panel)
-        self.assertTrue(self.win._tree_panel.ai_toggle_btn.isHidden())
-
     def test_tree_panel_has_tree_widget(self):
         from ui.widgets.project_tree import ProjectTreeWidget
         self.assertIsInstance(self.win._tree_panel.tree, ProjectTreeWidget)
@@ -9532,16 +9528,6 @@ class TestMainWindow(unittest.TestCase):
         if node:
             self.win._on_tree_node_selected("data_file", node.id)
             self.assertIs(self.win.stackedWidget.currentWidget(), self.win.data_page)
-
-    def test_ai_tool_runner_reports_disabled(self):
-        result = self.win._run_ai_tool("list_tree_nodes")
-        self.assertIn("AI 功能已暂停", result)
-
-    def test_ai_tool_catalog_is_hidden(self):
-        self.assertEqual(self.win._available_tools_for_page(self.win.analysis_page), [])
-
-    def test_ai_request_reports_disabled(self):
-        self.assertEqual(self.win._run_ai_request("hello"), "AI 功能已暂停")
 
     def test_tree_node_selected_routes_to_process_page(self):
         self.win.switchTo(self.win.process_page)

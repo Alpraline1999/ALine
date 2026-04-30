@@ -78,7 +78,6 @@ class SettingsPage(QWidget):
     shortcuts_changed = Signal()  # 快捷键保存后发出
     tree_display_mode_changed = Signal(str)
     page_tree_focus_mode_changed = Signal(bool)
-    ai_panel_visibility_changed = Signal(bool)
     extensions_reloaded = Signal()
     project_modified = Signal()
     assets_modified = Signal()
@@ -688,10 +687,6 @@ class SettingsPage(QWidget):
         self._ai_system_prompt_edit.setFixedHeight(96)
         form.addRow("系统提示:", self._ai_system_prompt_edit)
 
-        self._ai_show_panel_cb = CheckBox("显示右侧 AI 助手栏", self._ai_card)
-        self._ai_show_panel_cb.setChecked(True)
-        ai_layout.addWidget(self._ai_show_panel_cb)
-
         ai_layout.addLayout(form)
 
         ai_btn_row = QHBoxLayout()
@@ -1286,7 +1281,6 @@ class SettingsPage(QWidget):
             temperature=self._parse_float(self._ai_temperature_edit.text(), 0.7, 0.0, 2.0),
             top_p=self._parse_float(self._ai_top_p_edit.text(), 1.0, 0.0, 1.0),
             max_tokens=self._parse_int(self._ai_max_tokens_edit.text(), 2048, minimum=1),
-            show_assistant=self._ai_show_panel_cb.isChecked(),
             system_prompt=self._ai_system_prompt_edit.toPlainText().strip(),
             ollama_keep_alive=self._ai_ollama_keep_alive_edit.text().strip() or "5m",
             ollama_num_ctx=self._parse_int(self._ai_ollama_num_ctx_edit.text(), 4096, minimum=1),
@@ -1307,7 +1301,6 @@ class SettingsPage(QWidget):
         self._ai_system_prompt_edit.setPlainText(cfg.system_prompt)
         self._ai_ollama_keep_alive_edit.setText(cfg.ollama_keep_alive)
         self._ai_ollama_num_ctx_edit.setText(str(cfg.ollama_num_ctx))
-        self._ai_show_panel_cb.setChecked(bool(cfg.show_assistant))
         self._on_ai_provider_changed(idx)
 
     def _on_ai_provider_changed(self, idx: int) -> None:
@@ -1343,7 +1336,6 @@ class SettingsPage(QWidget):
     def _save_ai_config(self) -> None:
         cfg = self._collect_ai_config()
         cfg.save()
-        self.ai_panel_visibility_changed.emit(cfg.show_assistant)
         InfoBar.success("已保存", "AI 配置已保存", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
     def _refresh_available_models(self) -> None:

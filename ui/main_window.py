@@ -1,5 +1,4 @@
 import asyncio
-import json
 from typing import Protocol, cast
 
 from PySide6.QtCore import QTimer, Qt
@@ -25,7 +24,6 @@ from .dialogs.fluent_dialogs import TextInputDialog
 from .dialogs.project_tree_manage_dialog import ProjectTreeManageDialog
 from .notifications import show_error, show_success, show_warning
 from .widgets.project_tree import ProjectTreeWidget
-from .widgets.ai_assistant_panel import AIAssistantPanel
 from ai.agent import ALineAgent
 from ai.command_layer import CommandDispatcher
 from core.global_assets import global_assets
@@ -302,7 +300,6 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree_manage_btn.clicked.connect(self._open_project_tree_manage_dialog)
         self._tree_panel.extension_toggle_btn.clicked.connect(self._toggle_current_page_extension_panel)
 
-        self._ai_panel = None
         self._set_shared_extension_panel_visible(False)
         self._update_tree_panel_visibility(self.home_page)
 
@@ -803,126 +800,6 @@ class MainWindow(FluentWindow):
         page = self.stackedWidget.currentWidget()
         if hasattr(page, 'on_tree_node_selected'):
             cast(_TreeSelectablePage, page).on_tree_node_selected(kind, node_id)
-
-    def _on_ai_toggle_btn_toggled(self, checked: bool) -> None:
-        del checked
-        if self._ai_panel is not None:
-            self._ai_panel.hide()
-
-    def _on_ai_panel_visibility_changed(self, visible: bool) -> None:
-        del visible
-
-    def _describe_node_for_ai(self, kind: str, node_id: str) -> str:
-        if not node_id:
-            return "未选择节点"
-        if kind in ("series", "curve"):
-            series = project_manager.get_series_from_node(kind, node_id)
-            if series is not None:
-                return f"{kind}: {series.name}"
-        node = project_manager.get_node_by_id(node_id)
-        if node is not None:
-            return f"{kind}: {node.name}"
-        return f"{kind}: {node_id}"
-
-    def _build_ai_context_text(self, page) -> str:
-        if page is None:
-            return "暂无页面上下文"
-        if page is self.data_page:
-            selected_type = getattr(page, "_selected_type", None)
-            selected_id = getattr(page, "_selected_id", None)
-            return f"数据页当前预览类型: {selected_type or '无'}\n当前预览 ID: {selected_id or '无'}"
-        if page is self.chart_page:
-            chart_series = getattr(page, "_chart_series", [])
-            return f"图表工作集条目数: {len(chart_series)}"
-        if page is self.process_page:
-            ops = getattr(page, "_ops", [])
-            selected_src_id = getattr(page, "_selected_src_id", None)
-            return f"处理链操作数: {len(ops)}\n当前输入 ID: {selected_src_id or '无'}"
-        if page is self.analysis_page:
-            inputs = getattr(page, "_selected_inputs", [])
-            result = getattr(page, "_result", None)
-            report_name = getattr(page, "_current_report_template_name", "默认模板")
-            analysis_type = result.get("analysis_type") if isinstance(result, dict) else "未运行"
-            return f"分析输入数: {len(inputs)}\n当前分析类型: {analysis_type}\n当前报告模板: {report_name}"
-        if page is self.digitize_page:
-            image_id = getattr(page, "_current_image_id", None)
-            curve_id = getattr(page, "_current_curve_id", None)
-            export_target = getattr(page, "_export_target_id", None)
-            return f"当前图片 ID: {image_id or '无'}\n当前曲线 ID: {curve_id or '无'}\n导出目标 ID: {export_target or '无'}"
-        return "暂无页面上下文"
-
-    def _tool_context_for_current_page(self, page) -> dict:
-        return {
-            "selected_kind": getattr(self, "_last_ai_selected_kind", None),
-            "selected_node_id": getattr(self, "_last_ai_node_id", None),
-            "current_page_label": self._page_label_for_ai(page),
-            "current_node_label": getattr(self._ai_panel, "_current_node", "未选择节点"),
-            "context_text": self._build_ai_context_text(page),
-            "project_manager": project_manager,
-            "chart_page": self.chart_page if page is self.chart_page else None,
-            "process_page": self.process_page if page is self.process_page else None,
-            "analysis_page": self.analysis_page if page is self.analysis_page else None,
-            "digitize_page": self.digitize_page if page is self.digitize_page else None,
-        }
-
-    def _available_tools_for_page(self, page) -> list[dict]:
-        del page
-        return []
-
-    def _default_ai_tool_params(self, tool_name: str, context: dict) -> dict:
-        selected_kind = context.get("selected_kind")
-        selected_node_id = context.get("selected_node_id")
-        params: dict = {}
-        if selected_kind and selected_node_id:
-            series_list = project_manager.get_all_series_from_node(selected_kind, selected_node_id)
-            if series_list:
-                first_series = series_list[0]
-                if tool_name in {"apply_pipeline", "fit_curve", "detect_peaks", "compute_statistics", "export_series"}:
-                    params["series_id"] = first_series.id
-                if tool_name == "compute_correlation" and len(series_list) > 1:
-                    params["series_id1"] = series_list[0].id
-                    params["series_id2"] = series_list[1].id
-        if tool_name.startswith("global_skill_"):
-            params.setdefault("task", "请基于当前 ALine 页面上下文执行该 Skill。")
-            params.setdefault("payload", {"context_text": context.get("context_text", "")})
-        if tool_name.startswith("global_agent_"):
-            params.setdefault("task", context.get("context_text", "请基于当前上下文执行该 Agent。"))
-        return params
-
-    def _run_ai_tool(self, tool_name: str) -> str:
-        del tool_name
-        return json.dumps({"status": "disabled", "message": "AI 功能已暂停"}, ensure_ascii=False)
-
-    def _run_ai_request(self, prompt: str) -> str:
-        del prompt
-        return "AI 功能已暂停"
-
-    def _page_label_for_ai(self, page) -> str:
-        if page is self.data_page:
-            return "数据管理"
-        if page is self.chart_page:
-            return "可视化"
-        if page is self.process_page:
-            return "数据处理"
-        if page is self.analysis_page:
-            return "数据分析"
-        if page is self.digitize_page:
-            return "图片取点"
-        if page is self.settings_page:
-            return "设置"
-        return "主页"
-
-    def _update_ai_panel_context(self, page=None, selected_kind: str | None = None, node_id: str | None = None) -> None:
-        if self._ai_panel is None:
-            return
-        page = page or self.stackedWidget.currentWidget()
-        self._ai_panel.set_current_page(self._page_label_for_ai(page))
-        if selected_kind and node_id:
-            self._last_ai_selected_kind = selected_kind
-            self._last_ai_node_id = node_id
-            self._ai_panel.set_selected_node(self._describe_node_for_ai(selected_kind, node_id))
-        self._ai_panel.set_context_text(self._build_ai_context_text(page))
-        self._ai_panel.set_tool_runner(self._run_ai_tool, self._available_tools_for_page(page))
 
     # ─────────────────────────────────────────────────────────
     # 数据页路由（保留）
