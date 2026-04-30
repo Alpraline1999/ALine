@@ -12,7 +12,6 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
     ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action, FluentIcon as FIF)
 
 from core.exporter import Exporter
-from core.builtin_extensions import register_core_builtin_extensions
 from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, secondary_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.extension_panel import ExtensionConfigPanel
@@ -101,7 +100,6 @@ class DigitizePage(QWidget):
         self._sort_col = -1  # -1表示未排序
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._shortcut_bindings = ShortcutBindingSet()
-        register_core_builtin_extensions(extension_registry)
         self.setup_ui()
         self._setup_viewer_signals()
         self._setup_shortcuts()

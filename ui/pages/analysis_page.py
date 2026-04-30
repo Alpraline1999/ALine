@@ -35,7 +35,6 @@ from ui.dialogs.export_flow import (
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from app.workspaces.analysis_workspace import AnalysisWorkspaceController, AnalysisWorkspaceState
-from core.builtin_extensions import register_core_builtin_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
@@ -197,7 +196,6 @@ class AnalysisPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        register_core_builtin_extensions(extension_registry)
         self._workspace_state = AnalysisWorkspaceState()
         self._workspace_controller = AnalysisWorkspaceController(self._workspace_state)
         self._extension_panel_visible = False

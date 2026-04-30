@@ -19,7 +19,9 @@ def _default_asset_catalog() -> object:
 
 def _default_extension_runtime() -> object:
     from core.extension_api import extension_registry
+    from core.extension_bootstrap import ensure_builtin_extensions_loaded
 
+    ensure_builtin_extensions_loaded(extension_registry)
     return extension_registry
 
 
