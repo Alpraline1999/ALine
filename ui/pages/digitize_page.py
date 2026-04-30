@@ -821,33 +821,38 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
             entry = build_extension_entry(extension)
             if not entry.get("listed", True):
                 continue
-            entry["label"] = str(entry.get("name") or entry.get("type") or "数字化扩展")
+                entry["label"] = str(entry.get("name") or entry.get("type") or "数字化扩展")
             entries.append(entry)
         return entries
+
+    def _digitize_extension_entries_with_fallback(self) -> tuple[list[dict], list[str]]:
+        entries = self._digitize_extension_entries()
+        if entries:
+            return entries, [str(entry.get("type") or "") for entry in entries if str(entry.get("type") or "")]
+        fallback_entries = [
+            {"type": COLOR_DIGITIZE_EXTENSION_TYPE, "label": "颜色识别", "name": "颜色识别"},
+            {"type": SHAPE_DIGITIZE_EXTENSION_TYPE, "label": "图形识别", "name": "图形识别"},
+        ]
+        return fallback_entries, [COLOR_DIGITIZE_EXTENSION_TYPE, SHAPE_DIGITIZE_EXTENSION_TYPE]
 
     def _refresh_digitize_extension_choices(self) -> None:
         if self._digitize_extension_controls is None:
             return
         current_type = self._current_digitize_extension_type()
-        entries = self._digitize_extension_entries()
-        self._auto_mode_type_ids = [str(entry.get("type") or "") for entry in entries if str(entry.get("type") or "")]
-        if not entries:
-            entries = [
-                {"type": COLOR_DIGITIZE_EXTENSION_TYPE, "label": "颜色识别", "name": "颜色识别"},
-                {"type": SHAPE_DIGITIZE_EXTENSION_TYPE, "label": "图形识别", "name": "图形识别"},
-            ]
-            self._auto_mode_type_ids = [COLOR_DIGITIZE_EXTENSION_TYPE, SHAPE_DIGITIZE_EXTENSION_TYPE]
+        entries, auto_mode_type_ids = self._digitize_extension_entries_with_fallback()
+        self._auto_mode_type_ids = auto_mode_type_ids
         target_type = current_type if current_type in self._auto_mode_type_ids else self._auto_mode_type_ids[0]
         self._digitize_extension_controls.set_entries(entries, current_type=target_type)
         self._refresh_digitize_extension_panel()
 
-    def _refresh_digitize_extension_panel(self) -> None:
+    def _refresh_digitize_extension_panel(self, current_type: str | None = None) -> None:
         if not hasattr(self, "_extension_panel"):
             return
-        type_id = self._current_digitize_extension_type()
+        type_id = current_type if current_type is not None else self._current_digitize_extension_type()
+        entries, _ = self._digitize_extension_entries_with_fallback()
         self._extension_panel.set_entries(
-            self._digitize_extension_entries(),
-            current_type=type_id if extension_registry.get_digitize(type_id) else None,
+            entries,
+            current_type=type_id,
         )
 
     def _current_digitize_extension_type(self) -> str:
@@ -925,11 +930,11 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         )
 
     def _on_digitize_extension_selection_changed(self, type_id: str) -> None:
-        del type_id
+        selected_type = str(type_id or "").strip() or None
         if self._active_tool in {"color_pick", "crop_template"}:
             self._on_tool_clicked(None)
         self._clear_pending_digitize_interaction()
-        self._refresh_digitize_extension_panel()
+        self._refresh_digitize_extension_panel(selected_type)
 
     def _on_digitize_interactive_field_requested(self, key: str, field: object) -> None:
         if self._current_image_id is None:
@@ -1691,6 +1696,11 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
             image_path,
             params,
         )
+        try:
+            self._auto_detect_future.result(timeout=0.02)
+        except TimeoutError:
+            pass
+        self._poll_auto_detect(job_id, extension.name)
         QTimer.singleShot(0, lambda job_id=job_id, extension_name=extension.name: self._poll_auto_detect(job_id, extension_name))
 
 

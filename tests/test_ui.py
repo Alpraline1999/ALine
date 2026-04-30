@@ -8863,7 +8863,7 @@ class TestDigitizePage(unittest.TestCase):
             DigitizeExtension(
                 type="ui_digitize_probe",
                 name="UI 数字化探针",
-                handler=lambda figure, params: [[12.0], [34.0]],
+                handler=lambda figure, params: [[12.0, 34.0]],
             )
         )
         try:
