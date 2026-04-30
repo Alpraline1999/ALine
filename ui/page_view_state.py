@@ -31,3 +31,15 @@ class MainWindowViewState:
     tree_panel_user_hidden: bool = False
     tree_panel_width: int = 260
     shared_extension_panel_visible: bool = False
+
+
+@dataclass(slots=True)
+class ProcessPageViewState:
+    extension_panel_visible: bool = False
+    extension_panel_width: int = 360
+    selected_input_splitter_user_resized: bool = False
+
+
+@dataclass(slots=True)
+class SettingsPageViewState:
+    extension_height_refresh_pending: bool = False

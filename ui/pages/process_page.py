@@ -51,6 +51,7 @@ from ui.widgets.matplotlib_preview import (
     zoom_figure_axes,
 )
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
+from ui.page_view_state import ProcessPageViewState
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 from models.schemas import DataFile, DataSeries, SavedPipeline
@@ -182,8 +183,7 @@ class ProcessPage(QWidget):
         ensure_configured_extensions_loaded()
         self._workspace_state = ProcessWorkspaceState()
         self._workspace_controller = ProcessWorkspaceController(self._workspace_state)
-        self._extension_panel_visible = False
-        self._extension_panel_width = 360
+        self._view_state = ProcessPageViewState()
         self._src_xs: List[float] = []
         self._src_ys: List[float] = []
         self._out_xs: List[float] = []
@@ -226,13 +226,13 @@ class ProcessPage(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if not getattr(self, "_selected_input_splitter_user_resized", False):
+        if not self._view_state.selected_input_splitter_user_resized:
             QTimer.singleShot(0, self._sync_selected_input_splitter_sizes)
 
     def _sync_selected_input_splitter_sizes(self) -> None:
         if not hasattr(self, "_selected_input_splitter") or self._selected_input_splitter is None:
             return
-        if getattr(self, "_selected_input_splitter_user_resized", False):
+        if self._view_state.selected_input_splitter_user_resized:
             return
         try:
             total_height = self._selected_input_splitter.height()
@@ -249,7 +249,7 @@ class ProcessPage(QWidget):
             return
 
     def _on_selected_input_splitter_moved(self, _pos: int, _index: int) -> None:
-        self._selected_input_splitter_user_resized = True
+        self._view_state.selected_input_splitter_user_resized = True
 
     # ─────────────────────────────────────────────────────────
     # UI 构建
@@ -276,13 +276,13 @@ class ProcessPage(QWidget):
         self._extension_panel.apply_requested.connect(self._on_processing_extension_apply)
         self._extension_panel.configs_changed.connect(self.assets_modified.emit)
         self._extension_panel.reload_requested.connect(self._reload_processing_extensions)
-        self._extension_panel.setMinimumWidth(self._extension_panel_width)
-        self._extension_panel.setMaximumWidth(self._extension_panel_width)
+        self._extension_panel.setMinimumWidth(self._view_state.extension_panel_width)
+        self._extension_panel.setMaximumWidth(self._view_state.extension_panel_width)
         self._page_splitter.addWidget(self._extension_panel)
         self._page_splitter.setStretchFactor(0, 1)
         self._page_splitter.setStretchFactor(1, 0)
         self._refresh_processing_extensions()
-        self.set_extension_panel_visible(self._extension_panel_visible)
+        self.set_extension_panel_visible(self._view_state.extension_panel_visible)
         self._apply_preview_host_background()
 
     def _setup_shortcuts(self) -> None:
@@ -338,16 +338,16 @@ class ProcessPage(QWidget):
         return True
 
     def is_extension_panel_visible(self) -> bool:
-        return bool(self._extension_panel_visible)
+        return bool(self._view_state.extension_panel_visible)
 
     def set_extension_panel_visible(self, visible: bool) -> None:
-        self._extension_panel_visible = bool(visible)
+        self._view_state.extension_panel_visible = bool(visible)
         if not hasattr(self, "_extension_panel") or not hasattr(self, "_page_splitter"):
             return
-        if self._extension_panel_visible:
+        if self._view_state.extension_panel_visible:
             self._extension_panel.show()
-            content_width = max(self.width() - self._extension_panel_width - 24, 640)
-            self._page_splitter.setSizes([content_width, self._extension_panel_width])
+            content_width = max(self.width() - self._view_state.extension_panel_width - 24, 640)
+            self._page_splitter.setSizes([content_width, self._view_state.extension_panel_width])
             return
         self._extension_panel.hide()
         self._page_splitter.setSizes([1, 0])
@@ -401,7 +401,6 @@ class ProcessPage(QWidget):
         self._selected_input_splitter.setHandleWidth(6)
         self._selected_input_splitter.setChildrenCollapsible(False)
         self._selected_input_splitter.splitterMoved.connect(self._on_selected_input_splitter_moved)
-        self._selected_input_splitter_user_resized = False
         mv.addWidget(self._selected_input_splitter, 1)
 
         selected_section = QWidget(self._selected_input_splitter)

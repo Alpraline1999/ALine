@@ -32,6 +32,7 @@ from core.extension_loader import get_extension_load_status
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.navigation_stack import PivotStackWidget, SegmentedStackWidget
+from ui.page_view_state import SettingsPageViewState
 from core.shortcut_manager import shortcut_manager
 from core.ui_preferences import (
     TreeNameDisplayMode,
@@ -86,7 +87,7 @@ class SettingsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._extension_height_watch_targets: list[QWidget] = []
-        self._extension_height_refresh_pending = False
+        self._view_state = SettingsPageViewState()
         self._title_label = None
         self._theme_label = None
         self._tree_display_mode_label = None
@@ -216,9 +217,9 @@ class SettingsPage(QWidget):
         widget.installEventFilter(self)
 
     def _schedule_extension_category_tab_heights_refresh(self) -> None:
-        if self._extension_height_refresh_pending:
+        if self._view_state.extension_height_refresh_pending:
             return
-        self._extension_height_refresh_pending = True
+        self._view_state.extension_height_refresh_pending = True
         QTimer.singleShot(0, self._refresh_extension_category_tab_heights)
 
     @staticmethod
@@ -1072,7 +1073,7 @@ class SettingsPage(QWidget):
         self._schedule_extension_category_tab_heights_refresh()
 
     def _refresh_extension_category_tab_heights(self) -> None:
-        self._extension_height_refresh_pending = False
+        self._view_state.extension_height_refresh_pending = False
         for tabs in (self._extension_tabs, self._external_extension_tabs):
             if tabs is None:
                 continue
