@@ -31,6 +31,10 @@
 25. [25-phase-21-ui-monolith-completion-and-workspace-surface-hardening.md](25-phase-21-ui-monolith-completion-and-workspace-surface-hardening.md)
 26. [26-phase-22-large-workspace-performance-and-data-virtualization.md](26-phase-22-large-workspace-performance-and-data-virtualization.md)
 27. [27-phase-22-execution-summary.md](27-phase-22-execution-summary.md)
+28. [28-phase-23-runtime-regression-and-contract-guardrails.md](28-phase-23-runtime-regression-and-contract-guardrails.md)
+29. [29-phase-24-multiline-processing-performance-and-numeric-primitives.md](29-phase-24-multiline-processing-performance-and-numeric-primitives.md)
+30. [30-phase-25-extension-tests-and-module-surface-normalization.md](30-phase-25-extension-tests-and-module-surface-normalization.md)
+31. [31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md](31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md)
 
 ## 文档职责
 
@@ -85,6 +89,18 @@
 - `26-phase-22-large-workspace-performance-and-data-virtualization.md`
   - 定义大工作区、超大曲线与大数据量链路的性能与虚拟化阶段。
   - 该阶段负责建立 profiling 样本、收口 workspace virtualization / progressive rendering，并固定“非热点不强制 numpy 化”的规则。
+- `28-phase-23-runtime-regression-and-contract-guardrails.md`
+  - 定义 `Phase 22` 之后的运行时回归扫尾与契约护栏阶段。
+  - 该阶段负责收口 late-stage refactor 引入的回调签名漂移、workspace state proxy 漏接、过期测试契约和小范围死代码。
+- `29-phase-24-multiline-processing-performance-and-numeric-primitives.md`
+  - 定义多曲线处理性能与共享数值 primitive 收口阶段。
+  - 该阶段负责继续优化 `multi_curve_mean`、`pairwise_compute`、对齐/插值共享 helper 与多输入 pipeline 的复制预算。
+- `30-phase-25-extension-tests-and-module-surface-normalization.md`
+  - 定义扩展测试面、模块导出和小范围命名一致性阶段。
+  - 该阶段负责更新过期 runtime 测试、补齐 `dialogs` / `widgets` 入口，并统一低风险命名分裂。
+- `31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md`
+  - 定义项目树与页面交互面继续拆分的阶段。
+  - 该阶段负责收口导入/导出 target binding、树命令绑定点和页面目标节点解析。
 
 ## 阶段进入规则
 

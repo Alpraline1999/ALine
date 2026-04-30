@@ -100,6 +100,14 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _current_report_template_id(self, value):
         self._workspace_state.current_report_template_id = value
 
+    @property
+    def _selected_tree_node_id(self):
+        return self._workspace_state.selected_tree_node_id
+
+    @_selected_tree_node_id.setter
+    def _selected_tree_node_id(self, value):
+        self._workspace_state.selected_tree_node_id = value
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._workspace_state = AnalysisWorkspaceState()

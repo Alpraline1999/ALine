@@ -1523,10 +1523,13 @@ class ProjectTreeWidget(QWidget):
         dialog.load_file(file_path)
         return dialog
 
-    def _lock_source_file_import_dialog_target(self, dialog, *, target_data_file_id: Optional[str]) -> None:
+    def _lock_source_file_import_dialog_target(self, dialog, target_data_file_id: Optional[str] = None) -> None:
         combo = getattr(dialog, "_data_file_target_combo", None)
-        keys = list(getattr(dialog, "_data_file_target_keys", []))
-        if combo is None or not keys:
+        raw_keys = getattr(dialog, "_data_file_target_keys", None)
+        if combo is None or not isinstance(raw_keys, (list, tuple)):
+            return
+        keys = list(raw_keys)
+        if not keys:
             return
         target_index = 0
         if target_data_file_id:

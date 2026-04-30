@@ -616,6 +616,16 @@ class TestProjectTreeWidget(unittest.TestCase):
 
         self.assertNotIn("面板配置探针", labels)
 
+    def test_lock_source_file_import_dialog_target_accepts_positional_target_id(self):
+        dialog = mock.Mock()
+        dialog._data_file_target_combo = mock.Mock()
+        dialog._data_file_target_keys = ["df-1", "df-2"]
+
+        self.widget._lock_source_file_import_dialog_target(dialog, "df-2")
+
+        dialog._data_file_target_combo.setCurrentIndex.assert_called_once_with(1)
+        dialog._data_file_target_combo.setEnabled.assert_called_once_with(False)
+
 
 class TestNavigationStack(unittest.TestCase):
 
@@ -1384,7 +1394,7 @@ class TestNavigationStack(unittest.TestCase):
         dialog.get_file_name.return_value = "imported.csv"
 
         with mock.patch("ui.widgets.project_tree.QFileDialog.getOpenFileName", return_value=("/tmp/imported.csv", "数据文件")), \
-             mock.patch.object(self.widget, "_create_source_file_import_dialog", return_value=dialog):
+             mock.patch.object(self.widget._command_service, "create_source_file_import_dialog", return_value=dialog):
             self.widget._cmd_import_data_file(target_folder.id)
 
         node = next((item for item in self.p.tree.nodes if item.kind == "data_file" and item.name == "imported.csv"), None)
@@ -7623,6 +7633,16 @@ class TestAnalysisPage(unittest.TestCase):
         node = next((n for n in self.p.tree.nodes if n.kind == "analysis_result" and n.name == "拟合结果B"), None)
         self.assertIsNotNone(node)
         self.assertEqual(node.parent_id, target_folder.id)
+
+    def test_preferred_analysis_result_target_uses_workspace_tree_selection(self):
+        analysis_root = self.pm._find_folder_by_group_type("analysis_result_group")
+        self.assertIsNotNone(analysis_root)
+        target_folder = self.pm.add_folder("分析子目录", parent_id=analysis_root.id)
+        self.assertIsNotNone(target_folder)
+
+        self.page.on_tree_node_selected("folder", target_folder.id)
+
+        self.assertEqual(target_folder.id, self.page._preferred_analysis_result_target_node_id())
 
     def test_curve_fit_result_can_export_series_with_export_plan(self):
         self.page.on_tree_node_activated("series", self.s.id)
