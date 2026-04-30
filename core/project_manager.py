@@ -13,12 +13,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from core.global_assets import global_assets
-from core.project_asset_service import ProjectAssetService
-from core.project_backup_manager import ProjectBackupManager
-from core.project_migration_service import ProjectMigrationService
-from core.project_repository import ProjectRepository
-from core.project_session import ProjectSession
-from core.project_tree_service import ProjectTreeService
+from core.project_services import build_project_services
 from models.schemas import (
     AnalysisResult,
     AnalysisResultNode,
@@ -121,61 +116,17 @@ class ProjectManager:
         self._projects: List[Project] = []
         self._current_project_id: Optional[str] = None
         self._last_operation_error: str = ""
-        from core.recent_projects import add_recent
-
-        self._project_repository = ProjectRepository(
+        services = build_project_services(
+            self,
             project_file_suffix=_PROJECT_FILE_SUFFIX,
             aline_version=_ALINE_VERSION,
-            normalize_path=self._normalize_path,
-            sync_legacy_datasets=self.sync_legacy_datasets,
-            sync_project_backups=self._sync_project_backups,
-            add_recent_project=add_recent,
         )
-        self._project_migration_service = ProjectMigrationService(
-            ensure_project_tree_groups=self._ensure_project_tree_groups,
-            migrate_project_assets_to_global=self._migrate_project_assets_to_global,
-        )
-        self._project_backup_manager = ProjectBackupManager(self)
-        self._project_tree_service = ProjectTreeService(
-            get_current_project=lambda: self.current_project,
-            clear_last_error=self._clear_last_operation_error,
-            ensure_project_tree=self._project_migration_service.migrate_to_v2,
-            canonical_group_type=self._canonical_group_type,
-            ensure_unique_tree_child_name=self._ensure_unique_tree_child_name,
-            rename_source_file=self.rename_source_file,
-            rename_image=self.rename_image,
-            rename_picture=self.rename_picture,
-            delete_backup_if_managed=self._delete_backup_if_managed,
-            delete_picture_backup_if_managed=self._delete_picture_backup_if_managed,
-            delete_source_file_backup_if_managed=self._delete_source_file_backup_if_managed,
-            node_collection_group_type=self._node_collection_group_type,
-            sync_picture_storage=self._sync_picture_storage,
-            sync_source_file_storage=self._sync_source_file_storage,
-        )
-        self._project_asset_service = ProjectAssetService(
-            get_current_project=lambda: self.current_project,
-            clear_last_error=self._clear_last_operation_error,
-            ensure_project_tree=self._project_migration_service.migrate_to_v2,
-            ensure_unique_tree_child_name=self._ensure_unique_tree_child_name,
-            next_unique_tree_child_name=self._next_unique_tree_child_name,
-            ensure_unique_series_name=self._ensure_unique_series_name,
-            ensure_unique_curve_name=self._ensure_unique_curve_name,
-            find_folder_by_group_type=self._find_folder_by_group_type,
-            find_folder_by_name=self._find_folder_by_name,
-            get_image=self.get_image,
-            sync_legacy_datasets=self.sync_legacy_datasets,
-        )
-        self._project_session = ProjectSession(
-            list_projects=lambda: self._projects,
-            get_current_project=lambda: self.current_project,
-            get_current_project_id=lambda: self._current_project_id,
-            set_current_project_id=self.set_current_project,
-            create_project=self.create_new,
-            open_project=self.open,
-            save_project=self.save,
-            close_current_project_cb=self.close_current_project,
-            close_project_cb=self.close_project,
-        )
+        self._project_repository = services.repository
+        self._project_migration_service = services.migration_service
+        self._project_backup_manager = services.backup_manager
+        self._project_tree_service = services.tree_service
+        self._project_asset_service = services.asset_service
+        self._project_session = services.session
 
     def get_last_error_message(self) -> str:
         return self._last_operation_error
