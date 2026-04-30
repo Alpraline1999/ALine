@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Optional, cast
 
@@ -968,7 +969,7 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         scope_row.addWidget(self._export_scope_label)
         self._export_scope_combo = ComboBox(tab)
         self._export_scope_combo.addItems(["当前曲线", "全部曲线"])
-        self._export_scope_combo.currentIndexChanged.connect(lambda: self._refresh_export_name_suggestion())
+        self._export_scope_combo.currentIndexChanged.connect(self._on_export_scope_changed)
         scope_row.addWidget(self._export_scope_combo)
         layout.addLayout(scope_row)
 
@@ -995,6 +996,10 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         layout.addStretch()
         self._refresh_export_name_suggestion(force=True)
         return tab
+
+    def _on_export_scope_changed(self, index: int) -> None:
+        del index
+        self._refresh_export_name_suggestion()
 
     def _border_color(self):
         return border_color()
@@ -1707,7 +1712,7 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         except TimeoutError:
             pass
         self._poll_auto_detect(job_id, extension.name)
-        QTimer.singleShot(0, lambda job_id=job_id, extension_name=extension.name: self._poll_auto_detect(job_id, extension_name))
+        QTimer.singleShot(0, partial(self._poll_auto_detect, job_id, extension.name))
 
 
     def _on_apply_auto_points(self):
@@ -1756,7 +1761,7 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         if future is None or job_id != self._auto_detect_job_id:
             return
         if not future.done():
-            QTimer.singleShot(50, lambda job_id=job_id, extension_name=extension_name: self._poll_auto_detect(job_id, extension_name))
+            QTimer.singleShot(50, partial(self._poll_auto_detect, job_id, extension_name))
             return
 
         try:
