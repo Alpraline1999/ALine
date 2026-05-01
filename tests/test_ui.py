@@ -1706,6 +1706,41 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._theme_label.styleSheet(), body_text_style_sheet())
         self.assertEqual(self.page._extension_hint.styleSheet(), placeholder_text_style_sheet(font_size=11))
 
+    def test_setting_card_titles_and_descriptions_use_shared_styles(self):
+        from PySide6.QtWidgets import QLabel
+        from ui.theme import body_text_style_sheet, placeholder_text_style_sheet
+
+        def _page_label_text_style(text: str) -> str:
+            return next(label.styleSheet() for label in self.page.findChildren(QLabel) if label.text() == text)
+
+        self.page.update_theme_colors()
+
+        for title_text in (
+            "主题",
+            "项目树长名称显示",
+            "项目树页面专注模式",
+            "新手引导",
+            "扩展状态",
+            "应用扩展设置",
+            "刷新外部扩展扫描",
+            "浮点参数显示小数位",
+            "快捷键映射",
+        ):
+            self.assertEqual(_page_label_text_style(title_text), body_text_style_sheet())
+
+        for description_text in (
+            "切换浅色、深色或跟随系统。",
+            "控制项目树长名称使用自动换行还是省略显示。",
+            "开启后，功能页中的共享项目树只显示当前页面直接相关的节点。",
+            "点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数字化页面的 TeachingTip 状态。",
+            "查看当前扩展加载情况与失败详情。",
+            "保存当前启用状态与目录配置，并重新加载扩展。",
+            "按当前目录配置重新探测外部扩展，不会修改保存设置。",
+            "控制扩展 number 参数使用 DoubleSpinBox 时默认显示的小数位数。",
+            "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击“应用快捷键”保存。",
+        ):
+            self.assertEqual(_page_label_text_style(description_text), placeholder_text_style_sheet(font_size=11))
+
     def test_extension_section_titles_refresh_with_theme(self):
         from ui.theme import body_text_style_sheet, card_title_style_sheet, placeholder_text_style_sheet
         from PySide6.QtWidgets import QLabel

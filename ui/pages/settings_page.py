@@ -1,4 +1,4 @@
-from typing import Literal, cast
+from typing import Callable, Literal, cast
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel,
@@ -88,6 +88,7 @@ class SettingsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._extension_height_watch_targets: list[QWidget] = []
+        self._theme_style_actions: list[Callable[[], None]] = []
         self._view_state = SettingsPageViewState()
         self._title_label = None
         self._theme_label = None
@@ -166,6 +167,54 @@ class SettingsPage(QWidget):
     def _notification_parent(self) -> QWidget:
         parent = notification_parent(self)
         return parent if isinstance(parent, QWidget) else self
+
+    def _register_theme_style_action(self, action: Callable[[], None]) -> None:
+        self._theme_style_actions.append(action)
+        action()
+
+    def _bind_theme_label_style(self, label: QLabel | None, style_factory: Callable[[], str]) -> QLabel | None:
+        if label is None:
+            return None
+        self._register_theme_style_action(
+            lambda label=label, style_factory=style_factory: label.setStyleSheet(style_factory())
+        )
+        return label
+
+    def _bind_setting_card_styles(
+        self,
+        card: QWidget | None,
+        *,
+        title_style: Callable[[], str] | None = None,
+        content_style: Callable[[], str] | None = None,
+    ) -> None:
+        if card is None:
+            return
+        title_label = getattr(card, "titleLabel", None)
+        content_label = getattr(card, "contentLabel", None)
+        if title_style is not None and isinstance(title_label, QLabel):
+            self._bind_theme_label_style(title_label, title_style)
+        if content_style is not None and isinstance(content_label, QLabel):
+            self._bind_theme_label_style(content_label, content_style)
+
+    def _bind_theme_text_in_widget(
+        self,
+        widget: QWidget | None,
+        text: str,
+        style_factory: Callable[[], str],
+        *,
+        first_only: bool = False,
+    ) -> None:
+        if widget is None:
+            return
+
+        def _apply() -> None:
+            matches = [label for label in widget.findChildren(QLabel) if label.text() == text]
+            if first_only and matches:
+                matches = matches[:1]
+            for label in matches:
+                label.setStyleSheet(style_factory())
+
+        self._register_theme_style_action(_apply)
 
     def setup_ui(self):
         tabs = PivotStackWidget(self)
@@ -304,7 +353,7 @@ class SettingsPage(QWidget):
             page_layout.setContentsMargins(0, 0, 0, 0)
             page_layout.setSpacing(6)
             empty_hint = BodyLabel(f"当前未发现{label}。", page)
-            empty_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+            self._bind_theme_label_style(empty_hint, lambda: placeholder_text_style_sheet(font_size=11))
             page_layout.addWidget(empty_hint)
             empty_hints[category] = empty_hint
 
@@ -342,12 +391,18 @@ class SettingsPage(QWidget):
 
         appearance_group = SettingCardGroup("外观", content)
         self._appearance_card = appearance_group
-        self._appearance_title = appearance_group.titleLabel
-        self._appearance_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._appearance_title = self._bind_theme_label_style(
+            appearance_group.titleLabel,
+            lambda: card_title_style_sheet(font_size=18),
+        )
 
         theme_card = SettingCard(FIF.BRUSH, "主题", "切换浅色、深色或跟随系统。", appearance_group)
         self._theme_label = theme_card.titleLabel
-        self._theme_label.setStyleSheet(body_text_style_sheet())
+        self._bind_setting_card_styles(
+            theme_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self.theme_combo = ComboBox(theme_card)
         self.theme_combo.setMinimumWidth(148)
         self.theme_combo.addItems(["浅色", "深色", "跟随系统"])
@@ -358,7 +413,11 @@ class SettingsPage(QWidget):
 
         tree_mode_card = SettingCard(FIF.INFO, "项目树长名称显示", "控制项目树长名称使用自动换行还是省略显示。", appearance_group)
         self._tree_display_mode_label = tree_mode_card.titleLabel
-        self._tree_display_mode_label.setStyleSheet(body_text_style_sheet())
+        self._bind_setting_card_styles(
+            tree_mode_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._tree_display_mode_combo = ComboBox(tree_mode_card)
         self._tree_display_mode_combo.setMinimumWidth(148)
         self._tree_display_mode_combo.addItems(["自动换行", "部分隐藏"])
@@ -378,9 +437,12 @@ class SettingsPage(QWidget):
         self._page_tree_focus_mode_card = focus_mode_card
         self._page_tree_focus_mode_checkbox = focus_mode_card
         self._page_tree_focus_mode_label = focus_mode_card.titleLabel
-        self._page_tree_focus_mode_label.setStyleSheet(body_text_style_sheet())
         self._page_tree_focus_mode_hint = focus_mode_card.contentLabel
-        self._page_tree_focus_mode_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._bind_setting_card_styles(
+            focus_mode_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         focus_mode_card.setChecked(is_page_tree_focus_mode_enabled())
         focus_mode_card.checkedChanged.connect(self._on_page_tree_focus_mode_changed)
         appearance_group.addSettingCard(focus_mode_card)
@@ -392,9 +454,12 @@ class SettingsPage(QWidget):
             appearance_group,
         )
         self._onboarding_label = onboarding_card.titleLabel
-        self._onboarding_label.setStyleSheet(body_text_style_sheet())
         self._onboarding_hint = onboarding_card.contentLabel
-        self._onboarding_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._bind_setting_card_styles(
+            onboarding_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._replay_onboarding_btn = PushButton("重新显示引导", onboarding_card)
         self._replay_onboarding_btn.clicked.connect(self.replay_onboarding_requested.emit)
         self._attach_setting_card_control(onboarding_card, self._replay_onboarding_btn)
@@ -419,9 +484,16 @@ class SettingsPage(QWidget):
 
         extension_group = SettingCardGroup("扩展", content)
         self._extension_card = extension_group
-        self._extension_title = extension_group.titleLabel
-        self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._extension_title = self._bind_theme_label_style(
+            extension_group.titleLabel,
+            lambda: card_title_style_sheet(font_size=18),
+        )
         self._extension_status_card = SettingCard(FIF.INFO, "扩展状态", "查看当前扩展加载情况与失败详情。", extension_group)
+        self._bind_setting_card_styles(
+            self._extension_status_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._extension_status_summary_btn = PushButton("", self._extension_status_card)
         self._extension_status_summary_btn.setFlat(True)
         self._extension_status_summary_btn.clicked.connect(self._show_extension_status_details)
@@ -429,6 +501,11 @@ class SettingsPage(QWidget):
         extension_group.addSettingCard(self._extension_status_card)
 
         self._extension_actions_card = SettingCard(FIF.SYNC, "应用扩展设置", "保存当前启用状态与目录配置，并重新加载扩展。", extension_group)
+        self._bind_setting_card_styles(
+            self._extension_actions_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", self._extension_actions_card)
         self._save_extension_settings_btn.clicked.connect(self._save_extension_settings)
         self._attach_setting_card_control(self._extension_actions_card, self._save_extension_settings_btn)
@@ -436,15 +513,21 @@ class SettingsPage(QWidget):
         layout.addWidget(extension_group)
 
         self._builtin_extension_card = SettingCardGroup("内置扩展", content)
-        self._builtin_extension_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._bind_theme_label_style(
+            self._builtin_extension_card.titleLabel,
+            lambda: card_title_style_sheet(font_size=18),
+        )
         self._builtin_extensions_enabled_checkbox = SwitchSettingCard(
             FIF.DOWNLOAD,
             "启用内置扩展",
             "关闭后保留内置扩展配置，但不参与加载。",
             parent=self._builtin_extension_card,
         )
-        self._builtin_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
-        self._builtin_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._bind_setting_card_styles(
+            self._builtin_extensions_enabled_checkbox,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._builtin_extensions_enabled_checkbox.checkedChanged.connect(self._on_builtin_extensions_enabled_changed)
         self._extension_hint = self._builtin_extensions_enabled_checkbox.contentLabel
         self._builtin_extension_card.addSettingCard(self._builtin_extensions_enabled_checkbox)
@@ -455,6 +538,16 @@ class SettingsPage(QWidget):
             self._builtin_extension_card,
         )
         self._builtin_extension_management_card.setExpand(False)
+        self._bind_theme_text_in_widget(
+            self._builtin_extension_management_card,
+            "扩展管理",
+            lambda: card_title_style_sheet(font_size=18),
+        )
+        self._bind_theme_text_in_widget(
+            self._builtin_extension_management_card,
+            "按类别管理内置扩展的启用状态。",
+            lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._extension_tabs = self._build_extension_category_tabs(
             self._builtin_extension_management_card,
             empty_hints=self._extension_empty_hints,
@@ -467,15 +560,21 @@ class SettingsPage(QWidget):
         layout.addWidget(self._builtin_extension_card)
 
         self._external_extension_card = SettingCardGroup("外部扩展", content)
-        self._external_extension_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._bind_theme_label_style(
+            self._external_extension_card.titleLabel,
+            lambda: card_title_style_sheet(font_size=18),
+        )
         self._external_extensions_enabled_checkbox = SwitchSettingCard(
             FIF.FOLDER,
             "启用外部扩展",
             "关闭后保留目录配置，但不加载外部扩展。",
             parent=self._external_extension_card,
         )
-        self._external_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
-        self._external_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._bind_setting_card_styles(
+            self._external_extensions_enabled_checkbox,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._external_extensions_enabled_checkbox.checkedChanged.connect(self._on_external_extensions_enabled_changed)
         self._external_extension_card.addSettingCard(self._external_extensions_enabled_checkbox)
         self._external_extensions_dirs_card = _MutableFolderListSettingCard(
@@ -485,6 +584,17 @@ class SettingsPage(QWidget):
             directory="~/.config/aline/extensions",
             parent=self._external_extension_card,
         )
+        self._bind_theme_text_in_widget(
+            self._external_extensions_dirs_card,
+            "外部扩展目录",
+            body_text_style_sheet,
+            first_only=True,
+        )
+        self._bind_theme_text_in_widget(
+            self._external_extensions_dirs_card,
+            "可添加多个文件夹；保存后会统一扫描并重载。",
+            lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._external_extension_card.addSettingCard(self._external_extensions_dirs_card)
 
         external_refresh_card = SettingCard(
@@ -492,6 +602,11 @@ class SettingsPage(QWidget):
             "刷新外部扩展扫描",
             "按当前目录配置重新探测外部扩展，不会修改保存设置。",
             self._external_extension_card,
+        )
+        self._bind_setting_card_styles(
+            external_refresh_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
         )
         self._refresh_external_extensions_btn = PushButton("立即刷新", external_refresh_card)
         self._refresh_external_extensions_btn.clicked.connect(self._refresh_external_extension_specs)
@@ -504,6 +619,16 @@ class SettingsPage(QWidget):
             self._external_extension_card,
         )
         self._external_extension_management_card.setExpand(False)
+        self._bind_theme_text_in_widget(
+            self._external_extension_management_card,
+            "扩展管理",
+            lambda: card_title_style_sheet(font_size=18),
+        )
+        self._bind_theme_text_in_widget(
+            self._external_extension_management_card,
+            "按类别管理外部扩展的启用状态。",
+            lambda: placeholder_text_style_sheet(font_size=11),
+        )
         self._external_extension_tabs = self._build_extension_category_tabs(
             self._external_extension_management_card,
             empty_hints=self._external_extension_empty_hints,
@@ -516,12 +641,20 @@ class SettingsPage(QWidget):
         layout.addWidget(self._external_extension_card)
 
         self._extension_other_settings_card = SettingCardGroup("其他设置", content)
-        self._extension_other_settings_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._bind_theme_label_style(
+            self._extension_other_settings_card.titleLabel,
+            lambda: card_title_style_sheet(font_size=18),
+        )
         self._external_extension_number_decimals_card = SettingCard(
             FIF.INFO,
             "浮点参数显示小数位",
             "控制扩展 number 参数使用 DoubleSpinBox 时默认显示的小数位数。",
             self._extension_other_settings_card,
+        )
+        self._bind_setting_card_styles(
+            self._external_extension_number_decimals_card,
+            title_style=body_text_style_sheet,
+            content_style=lambda: placeholder_text_style_sheet(font_size=11),
         )
         decimals_slider = Slider(Qt.Orientation.Horizontal, self._external_extension_number_decimals_card)
         decimals_slider.setRange(0, 12)
@@ -531,7 +664,7 @@ class SettingsPage(QWidget):
         decimals_slider.valueChanged.connect(self._on_external_extension_number_decimals_changed)
         self._external_extension_number_decimals_slider = decimals_slider
         decimals_value = BodyLabel("6", self._external_extension_number_decimals_card)
-        decimals_value.setStyleSheet(secondary_text_style_sheet(font_size=12))
+        self._bind_theme_label_style(decimals_value, lambda: secondary_text_style_sheet(font_size=12))
         decimals_value.setMinimumWidth(24)
         self._external_extension_number_decimals_value_label = decimals_value
         decimals_row = self._build_setting_card_row(self._external_extension_number_decimals_card, decimals_slider, decimals_value)
@@ -560,7 +693,7 @@ class SettingsPage(QWidget):
 
         self._shortcuts_card = SettingCardGroup("快捷键", content)
         self._shortcuts_title = self._shortcuts_card.titleLabel
-        self._shortcuts_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._bind_theme_label_style(self._shortcuts_title, lambda: card_title_style_sheet(font_size=18))
 
         sc_content = QWidget(self._shortcuts_card)
         sc_form = QFormLayout(sc_content)
@@ -578,10 +711,10 @@ class SettingsPage(QWidget):
             self._apply_shortcut_edit_style(edit, focused=False)
             edit.installEventFilter(self)
             row_lbl = BodyLabel(label + ":", sc_content)
-            row_lbl.setStyleSheet(body_text_style_sheet())
+            self._bind_theme_label_style(row_lbl, body_text_style_sheet)
 
             conflict_lbl = BodyLabel("", sc_content)
-            conflict_lbl.setStyleSheet(error_text_style_sheet(font_size=10))
+            self._bind_theme_label_style(conflict_lbl, lambda: error_text_style_sheet(font_size=10))
             conflict_lbl.setVisible(False)
 
             edit_col = QWidget(sc_content)
@@ -617,6 +750,17 @@ class SettingsPage(QWidget):
             self._shortcuts_card,
         )
         self._shortcuts_editor_card = shortcuts_editor_card
+        self._bind_theme_text_in_widget(
+            shortcuts_editor_card,
+            "快捷键映射",
+            body_text_style_sheet,
+            first_only=True,
+        )
+        self._bind_theme_text_in_widget(
+            shortcuts_editor_card,
+            "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击“应用快捷键”保存。",
+            lambda: placeholder_text_style_sheet(font_size=11),
+        )
         shortcuts_editor_card.setExpand(True)
         filter_container = QWidget(shortcuts_editor_card)
         filter_layout = QVBoxLayout(filter_container)
@@ -658,12 +802,12 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(ai_layout)
 
         ai_title = BodyLabel("AI 接口", self._ai_card)
-        ai_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._bind_theme_label_style(ai_title, lambda: card_title_style_sheet(font_size=18))
         ai_layout.addWidget(ai_title)
 
         self._ai_provider_hint = BodyLabel("", self._ai_card)
         self._ai_provider_hint.setWordWrap(True)
-        self._ai_provider_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        self._bind_theme_label_style(self._ai_provider_hint, lambda: placeholder_text_style_sheet(font_size=11))
         ai_layout.addWidget(self._ai_provider_hint)
 
         form = QFormLayout()
@@ -751,15 +895,15 @@ class SettingsPage(QWidget):
         self._apply_card_layout_metrics(ai_tools_layout)
 
         ai_tools_title = BodyLabel("AI 工具管理", self._ai_tools_card)
-        ai_tools_title.setStyleSheet(card_title_style_sheet(font_size=18))
+        self._bind_theme_label_style(ai_tools_title, lambda: card_title_style_sheet(font_size=18))
         ai_tools_layout.addWidget(ai_tools_title)
 
         self._ai_tools_project_label = BodyLabel("当前项目: 未打开", self._ai_tools_card)
-        self._ai_tools_project_label.setStyleSheet(body_text_style_sheet())
+        self._bind_theme_label_style(self._ai_tools_project_label, body_text_style_sheet)
         ai_tools_layout.addWidget(self._ai_tools_project_label)
 
         self._ai_tools_summary_label = BodyLabel("内置 0 · Prompt 0 · Skill 0 · Agent 0", self._ai_tools_card)
-        self._ai_tools_summary_label.setStyleSheet(secondary_text_style_sheet())
+        self._bind_theme_label_style(self._ai_tools_summary_label, secondary_text_style_sheet)
         ai_tools_layout.addWidget(self._ai_tools_summary_label)
 
         # 工具选择下拉框
@@ -780,14 +924,17 @@ class SettingsPage(QWidget):
         detail_name_row = QHBoxLayout()
         detail_name_row.addWidget(BodyLabel("名称:", self._ai_tool_detail_card))
         self._ai_tool_detail_name = BodyLabel("—", self._ai_tool_detail_card)
-        self._ai_tool_detail_name.setStyleSheet(f"{body_text_style_sheet()} font-weight: bold;")
+        self._bind_theme_label_style(
+            self._ai_tool_detail_name,
+            lambda: f"{body_text_style_sheet()} font-weight: bold;",
+        )
         detail_name_row.addWidget(self._ai_tool_detail_name, 1)
         detail_layout.addLayout(detail_name_row)
 
         detail_type_row = QHBoxLayout()
         detail_type_row.addWidget(BodyLabel("类型:", self._ai_tool_detail_card))
         self._ai_tool_detail_type = BodyLabel("—", self._ai_tool_detail_card)
-        self._ai_tool_detail_type.setStyleSheet(secondary_text_style_sheet())
+        self._bind_theme_label_style(self._ai_tool_detail_type, secondary_text_style_sheet)
         detail_type_row.addWidget(self._ai_tool_detail_type, 1)
         detail_layout.addLayout(detail_type_row)
 
@@ -903,91 +1050,17 @@ class SettingsPage(QWidget):
 
     def _update_colors(self):
         """更新界面颜色以适应新主题"""
-        def _style_label_by_text(widget, text: str, style: str) -> None:
-            if widget is None:
-                return
-            for label in widget.findChildren(QLabel):
-                if label.text() == text:
-                    label.setStyleSheet(style)
+        for action in self._theme_style_actions:
+            action()
 
-        def _style_first_label_by_text(widget, text: str, style: str) -> None:
-            if widget is None:
-                return
-            for label in widget.findChildren(QLabel):
-                if label.text() == text:
-                    label.setStyleSheet(style)
-                    return
-
-        if self._appearance_title is not None:
-            self._appearance_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        if self._theme_label is not None:
-            self._theme_label.setStyleSheet(body_text_style_sheet())
-        if self._tree_display_mode_label is not None:
-            self._tree_display_mode_label.setStyleSheet(body_text_style_sheet())
-        if self._onboarding_label is not None:
-            self._onboarding_label.setStyleSheet(body_text_style_sheet())
-        if self._onboarding_hint is not None:
-            self._onboarding_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        if self._extension_title is not None:
-            self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        if self._extension_hint is not None:
-            self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        if self._builtin_extension_card is not None:
-            self._builtin_extension_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
-        if self._builtin_extensions_enabled_checkbox is not None:
-            self._builtin_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
-            self._builtin_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        _style_label_by_text(self._builtin_extension_management_card, "扩展管理", card_title_style_sheet(font_size=18))
-        _style_label_by_text(self._builtin_extension_management_card, "按类别管理内置扩展的启用状态。", placeholder_text_style_sheet(font_size=11))
-        if self._external_extension_card is not None:
-            self._external_extension_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
-        if self._external_extensions_enabled_checkbox is not None:
-            self._external_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
-            self._external_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        if self._external_extensions_dirs_card is not None:
-            _style_first_label_by_text(self._external_extensions_dirs_card, "外部扩展目录", body_text_style_sheet())
-            _style_label_by_text(self._external_extensions_dirs_card, "可添加多个文件夹；保存后会统一扫描并重载。", placeholder_text_style_sheet(font_size=11))
-        _style_label_by_text(self._external_extension_management_card, "扩展管理", card_title_style_sheet(font_size=18))
-        _style_label_by_text(self._external_extension_management_card, "按类别管理外部扩展的启用状态。", placeholder_text_style_sheet(font_size=11))
-        if self._extension_other_settings_card is not None:
-            self._extension_other_settings_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
-        if self._external_extension_number_decimals_card is not None:
-            self._external_extension_number_decimals_card.titleLabel.setStyleSheet(body_text_style_sheet())
-        if self._external_extensions_dir_label is not None:
-            self._external_extensions_dir_label.setStyleSheet(body_text_style_sheet())
-        for hint in self._extension_empty_hints.values():
-            hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
         if self._lang_title is not None:
             self._lang_title.setStyleSheet(card_title_style_sheet(font_size=18))
         if self._lang_placeholder is not None:
             self._lang_placeholder.setStyleSheet(placeholder_text_style_sheet(font_size=12, italic=True))
-        if self._shortcuts_title:
-            self._shortcuts_title.setStyleSheet(card_title_style_sheet(font_size=18))
         self._apply_shortcut_filter_style()
-        # 快捷键行标签
-        for lbl in self._shortcut_labels:
-            lbl.setStyleSheet(body_text_style_sheet())
-        for lbl in self._conflict_labels.values():
-            lbl.setStyleSheet(error_text_style_sheet(font_size=10))
         # QKeySequenceEdit 样式
         for edit in self._shortcut_edits.values():
             self._apply_shortcut_edit_style(edit, focused=edit.hasFocus())
-        # hint label（找到快捷键卡片下方的说明标签）
-        if self._shortcuts_card is not None:
-            for lbl in self._shortcuts_card.findChildren(BodyLabel):
-                ss = lbl.styleSheet()
-                if 'font-size: 11px' in ss:
-                    lbl.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        if hasattr(self, "_ai_provider_hint") and self._ai_provider_hint is not None:
-            self._ai_provider_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
-        if hasattr(self, "_ai_tools_project_label") and self._ai_tools_project_label is not None:
-            self._ai_tools_project_label.setStyleSheet(body_text_style_sheet())
-        if hasattr(self, "_ai_tools_summary_label") and self._ai_tools_summary_label is not None:
-            self._ai_tools_summary_label.setStyleSheet(secondary_text_style_sheet())
-        if hasattr(self, "_ai_tool_detail_name") and self._ai_tool_detail_name is not None:
-            self._ai_tool_detail_name.setStyleSheet(f"{body_text_style_sheet()} font-weight: bold;")
-        if hasattr(self, "_ai_tool_detail_type") and self._ai_tool_detail_type is not None:
-            self._ai_tool_detail_type.setStyleSheet(secondary_text_style_sheet())
 
     def update_theme_colors(self) -> None:
         self._update_colors()
@@ -1116,14 +1189,17 @@ class SettingsPage(QWidget):
         for tabs in (self._extension_tabs, self._external_extension_tabs):
             if tabs is None:
                 continue
-            tabs.adjustSize()
-            tabs.updateGeometry()
-            tabs.setMinimumHeight(
-                max(
-                    tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
-                    tabs.navigationWidget.sizeHint().height(),
+            try:
+                tabs.adjustSize()
+                tabs.updateGeometry()
+                tabs.setMinimumHeight(
+                    max(
+                        tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                        tabs.navigationWidget.sizeHint().height(),
+                    )
                 )
-            )
+            except RuntimeError:
+                continue
 
     def _on_builtin_extensions_enabled_changed(self, *_args) -> None:
         enabled = bool(

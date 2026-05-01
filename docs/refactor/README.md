@@ -36,6 +36,11 @@
 30. [30-phase-25-extension-tests-and-module-surface-normalization.md](30-phase-25-extension-tests-and-module-surface-normalization.md)
 31. [31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md](31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md)
 32. [32-phase-27-ui-theme-and-paint-regression-audit.md](32-phase-27-ui-theme-and-paint-regression-audit.md)
+33. [33-phase-28-settings-style-contract-and-ui-lifecycle-hardening.md](33-phase-28-settings-style-contract-and-ui-lifecycle-hardening.md)
+34. [34-phase-29-project-tree-and-settings-surface-decomposition.md](34-phase-29-project-tree-and-settings-surface-decomposition.md)
+35. [35-phase-30-extension-digitize-and-ai-surface-consolidation.md](35-phase-30-extension-digitize-and-ai-surface-consolidation.md)
+36. [36-phase-31-quality-gate-closure-and-extension-coverage.md](36-phase-31-quality-gate-closure-and-extension-coverage.md)
+37. [37-phase-32-remaining-monolith-and-service-decomposition.md](37-phase-32-remaining-monolith-and-service-decomposition.md)
 
 ## 文档职责
 
@@ -105,6 +110,21 @@
 - `32-phase-27-ui-theme-and-paint-regression-audit.md`
   - 定义主题切换链路、页面局部主题刷新、自定义绘制/委托运行时安全的全面检查阶段。
   - 该阶段负责建立 theme switch 性能样本、paint/delegate/import 安全扫描和 settings/UI 主题一致性检查矩阵。
+- `33-phase-28-settings-style-contract-and-ui-lifecycle-hardening.md`
+  - 定义 Settings/UI 样式契约与延后 UI 刷新生命周期硬化阶段。
+  - 该阶段负责统一设置卡片标题/说明样式约定，并收口 delayed refresh 的销毁期 guard。
+- `34-phase-29-project-tree-and-settings-surface-decomposition.md`
+  - 定义共享项目树与设置面第二轮深拆阶段。
+  - 该阶段负责提取 project tree 的 delegate/menu/command support，以及 settings page 的 tab/section/support 模块。
+- `35-phase-30-extension-digitize-and-ai-surface-consolidation.md`
+  - 定义扩展、数字化与 AI 单一包面收口阶段。
+  - 该阶段负责处理薄封装层、双重包面、重复定义和受控 adapter 策略。
+- `36-phase-31-quality-gate-closure-and-extension-coverage.md`
+  - 定义质量门槛回绿、扩展覆盖与升级警告清理阶段。
+  - 该阶段负责修复预存 backend 失败、建立基础扩展测试夹具并清理 `numpy 2.0` 兼容警告。
+- `37-phase-32-remaining-monolith-and-service-decomposition.md`
+  - 定义剩余 monolith 与服务编排中心的第二轮拆分阶段。
+  - 该阶段负责继续拆 `ProjectManager`、`ai.command_layer`、`DataPage` 和 `ChartPage`。
 
 ## 阶段进入规则
 
