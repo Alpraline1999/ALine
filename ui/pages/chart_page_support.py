@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from core.extension_api import PlotExtension, PlotExtensionContext
 from models.schemas import FigureState
-from qfluentwidgets import FluentIcon as FIF
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QSizePolicy, QWidget
+from qfluentwidgets import BodyLabel, FluentIcon as FIF, LineEdit, ToolButton
 from ui.matplotlib_fonts import bootstrap_matplotlib_qtagg
 
 _matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtagg()
@@ -112,3 +114,31 @@ _BASE_PLOT_STYLE_EXTENSION = PlotExtension(
     source_kind="base",
     hidden=True,
 )
+
+
+def set_compact_edit_width(edit: LineEdit, width: int = 96) -> None:
+    edit.setMaximumWidth(width)
+
+
+def connect_line_edit_commit(edit: LineEdit, slot) -> None:
+    edit.editingFinished.connect(slot)
+
+
+def alpha_slider_value(alpha: float) -> int:
+    return int(round(max(0.0, min(1.0, alpha)) * 100.0))
+
+
+def alpha_from_slider_value(value: int) -> float:
+    return max(0.0, min(1.0, float(value) / 100.0))
+
+
+def set_square_tool_button(button: ToolButton, size: int) -> None:
+    button.setFixedSize(size, size)
+
+
+def make_style_form_label(text: str, parent: Optional[QWidget] = None, *, minimum_width: int = 0) -> BodyLabel:
+    label = BodyLabel(text, parent)
+    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    label.setMinimumWidth(max(minimum_width, label.sizeHint().width()))
+    label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+    return label

@@ -119,6 +119,12 @@ from .chart_page_support import (
     _STYLE_MARKERS,
     _TICK_DIRECTION_CHOICES,
     _THEME_HINTS,
+    alpha_from_slider_value,
+    alpha_slider_value,
+    connect_line_edit_commit,
+    make_style_form_label,
+    set_compact_edit_width,
+    set_square_tool_button,
 )
 
 _CHART_RENDER_DECIMATION_POLICY = RenderDecimationPolicy(max_points=2500)
@@ -625,19 +631,19 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
 
     @staticmethod
     def _set_compact_edit_width(edit: LineEdit, width: int = 96) -> None:
-        edit.setMaximumWidth(width)
+        set_compact_edit_width(edit, width)
 
     @staticmethod
     def _connect_line_edit_commit(edit: LineEdit, slot) -> None:
-        edit.editingFinished.connect(slot)
+        connect_line_edit_commit(edit, slot)
 
     @staticmethod
     def _alpha_slider_value(alpha: float) -> int:
-        return int(round(_clamp_float(alpha, 0.0, 1.0) * 100.0))
+        return alpha_slider_value(_clamp_float(alpha, 0.0, 1.0))
 
     @staticmethod
     def _alpha_from_slider_value(value: int) -> float:
-        return _clamp_float(float(value) / 100.0, 0.0, 1.0)
+        return _clamp_float(alpha_from_slider_value(value), 0.0, 1.0)
 
     def _update_style_opacity_value_label(self, value: Optional[int] = None) -> None:
         if not hasattr(self, "_style_opacity_value_label"):
@@ -695,15 +701,11 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
 
     @staticmethod
     def _set_square_tool_button(button: ToolButton) -> None:
-        button.setFixedSize(WORKBENCH_BUTTON_HEIGHT, WORKBENCH_BUTTON_HEIGHT)
+        set_square_tool_button(button, WORKBENCH_BUTTON_HEIGHT)
 
     @staticmethod
     def _make_style_form_label(text: str, parent: Optional[QWidget] = None, *, minimum_width: int = 0) -> BodyLabel:
-        label = BodyLabel(text, parent)
-        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        label.setMinimumWidth(max(minimum_width, label.sizeHint().width()))
-        label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        return label
+        return make_style_form_label(text, parent, minimum_width=minimum_width)
 
     def _create_style_tab_page(self, parent: QWidget) -> tuple[SmoothScrollArea, QWidget, QVBoxLayout]:
         scroll = SmoothScrollArea(parent)

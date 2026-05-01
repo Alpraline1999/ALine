@@ -4977,6 +4977,21 @@ class TestChartPage(unittest.TestCase):
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
 
+    def test_chart_style_helpers_delegate_to_shared_support(self):
+        from ui.pages.chart_page import ChartPage
+        from ui.pages.chart_page_support import (
+            alpha_from_slider_value,
+            alpha_slider_value,
+            make_style_form_label,
+        )
+
+        self.assertEqual(ChartPage._alpha_slider_value(0.37), alpha_slider_value(0.37))
+        self.assertAlmostEqual(ChartPage._alpha_from_slider_value(37), alpha_from_slider_value(37))
+        label = ChartPage._make_style_form_label("颜色:", self.page)
+        helper_label = make_style_form_label("颜色:", self.page)
+        self.assertEqual(label.text(), helper_label.text())
+        self.assertEqual(label.minimumWidth(), helper_label.minimumWidth())
+
     def test_chart_preview_uses_shared_navigation_controls(self):
         if self.page._figure is None or self.page._canvas is None:
             self.skipTest("matplotlib unavailable")
