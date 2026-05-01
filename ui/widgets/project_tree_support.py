@@ -4,7 +4,7 @@ from math import ceil
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QTextDocument, QTextOption
-from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets import Action, FluentIcon as FIF, RoundMenu
 
 
 def _series_color_icon(color_str: str) -> QPixmap:
@@ -89,6 +89,19 @@ def _global_asset_sort_key(asset) -> tuple[int, int, str, str]:
     builtin_rank = 0 if bool(getattr(asset, "is_builtin", False)) else 1
     name_key = _sort_text_key(getattr(asset, "name", "") or getattr(asset, "id", ""))
     return (builtin_rank, name_key[0], name_key[1], name_key[2])
+
+
+def add_menu_action(menu: RoundMenu, icon, text: str, callback) -> Action:
+    action = Action(icon, text, triggered=callback)
+    menu.addAction(action)
+    return action
+
+
+def append_menu_section(menu: RoundMenu, entries) -> None:
+    if menu.actions():
+        menu.addSeparator()
+    for icon, text, callback in entries:
+        add_menu_action(menu, icon, text, callback)
 
 
 _PROJECT_ICON = getattr(FIF, "ZIP_FOLDER", getattr(FIF, "LIBRARY", FIF.FOLDER))

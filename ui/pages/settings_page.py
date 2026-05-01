@@ -7,10 +7,9 @@ from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     BodyLabel, SubtitleLabel, TitleLabel, SmoothScrollArea,
     LineEdit, PrimaryPushButton, InfoBar, InfoBarPosition, PlainTextEdit,
-    CheckBox, FolderListSettingCard, SettingCard, SettingCardGroup, ExpandGroupSettingCard,
+    CheckBox, SettingCard, SettingCardGroup, ExpandGroupSettingCard,
     Slider, SwitchSettingCard,
     FluentIcon as FIF)
-from qfluentwidgets.common.config import ConfigItem, qconfig
 
 from ui.theme import (
     accent_color,
@@ -47,31 +46,11 @@ from core.ai.providers import (
     list_builtin_models,
     list_provider_keys,
 )
-
-
-_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 60750
-_EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER = 3
-
-
-class _MutableFolderListSettingCard(FolderListSettingCard):
-
-    def __init__(self, title: str, content: str | None, folders: list[str], *, directory: str, parent: QWidget | None = None):
-        self._config_item = ConfigItem("SettingsPage", "externalExtensionDirs", list(folders or []))
-        super().__init__(self._config_item, title, content or "", directory=directory, parent=parent)
-
-    def setFolders(self, folders: list[str]) -> None:
-        normalized = [str(folder).strip() for folder in folders if str(folder).strip()]
-        self.folders = normalized
-        qconfig.set(self.configItem, list(self.folders))
-        while self.viewLayout.count():
-            item = self.viewLayout.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                widget.deleteLater()
-        add_folder_item = getattr(self, "_FolderListSettingCard__addFolderItem")
-        for folder in self.folders:
-            add_folder_item(folder)
-        self._adjustViewSize()
+from ui.pages.settings_page_support import (
+    MutableFolderListSettingCard,
+    build_extension_category_tabs,
+    build_extensions_tab,
+)
 
 
 class SettingsPage(QWidget):
@@ -345,6 +324,7 @@ class SettingsPage(QWidget):
         empty_hints: dict[str, BodyLabel],
         option_layouts: dict[str, QVBoxLayout],
     ) -> SegmentedStackWidget:
+        return build_extension_category_tabs(self, parent, empty_hints=empty_hints, option_layouts=option_layouts)
         tabs = SegmentedStackWidget(parent)
         tabs.setMaximumHeight(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
         for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展"), ("digitize", "数字化扩展")):
@@ -470,6 +450,7 @@ class SettingsPage(QWidget):
         return outer
 
     def _build_extensions_tab(self) -> QWidget:
+        return build_extensions_tab(self)
         outer = SmoothScrollArea()
         outer.setWidgetResizable(True)
         outer.setFrameShape(QFrame.Shape.NoFrame)
@@ -1190,7 +1171,7 @@ class SettingsPage(QWidget):
                 tabs.updateGeometry()
                 tabs.setMinimumHeight(
                     max(
-                        tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER,
+                        tabs.sizeHint().height() * 3,
                         tabs.navigationWidget.sizeHint().height(),
                     )
                 )

@@ -319,6 +319,19 @@ class TestProjectTreeWidget(unittest.TestCase):
         finally:
             extension_registry.unregister_processing("tree_extension_config_hidden")
 
+    def test_project_tree_menu_helper_appends_sections(self):
+        from qfluentwidgets import FluentIcon as FIF, RoundMenu
+        from ui.widgets.project_tree_support import append_menu_section
+
+        menu = RoundMenu()
+        seen = []
+
+        append_menu_section(menu, [(FIF.INFO, "第一项", lambda: seen.append("a")), (FIF.SYNC, "第二项", lambda: seen.append("b"))])
+        self.assertEqual([action.text() for action in menu.actions()], ["第一项", "第二项"])
+        menu.actions()[0].trigger()
+        menu.actions()[1].trigger()
+        self.assertEqual(seen, ["a", "b"])
+
     def test_builtin_report_template_cannot_be_renamed_or_deleted(self):
         restore_assets = _patch_global_assets()
         try:

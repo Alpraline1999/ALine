@@ -50,6 +50,8 @@ from .project_tree_support import (
     _SOURCE_IMAGE_SUFFIXES,
     _SYNTHETIC_GLOBAL_KINDS,
     _extension_config_name_key,
+    add_menu_action,
+    append_menu_section,
     _global_asset_sort_key,
     _series_color_icon,
     _sort_text_key,
@@ -1492,19 +1494,13 @@ class ProjectTreeWidget(QWidget):
             _walk(self._tree.topLevelItem(index))
 
     def _add_menu_action(self, menu: RoundMenu, icon, text: str, callback) -> Action:
-        action = Action(icon, text)
-        action.triggered.connect(lambda checked=False: callback())
-        menu.addAction(action)
-        return action
+        return add_menu_action(menu, icon, text, callback)
 
     def _append_menu_section(self, menu: RoundMenu, entries: List[Tuple[object, str, object]]) -> None:
         visible_entries = [entry for entry in entries if entry is not None]
         if not visible_entries:
             return
-        if menu.actions():
-            menu.addSeparator()
-        for icon, text, callback in visible_entries:
-            self._add_menu_action(menu, icon, text, callback)
+        append_menu_section(menu, visible_entries)
 
     @staticmethod
     def _supports_source_file_dataset_import(file_path: str) -> bool:
