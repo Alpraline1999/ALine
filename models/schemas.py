@@ -125,6 +125,8 @@ class AnalysisResult(BaseModel):
     params: Dict[str, Any] = {}
     result_series_id: Optional[str] = None  # 计算结果曲线 → DataSeries.id
     summary: Dict[str, Any] = {}            # 拟合参数、R²、峰值列表等
+    input_snapshots: List[Dict[str, Any]] = []  # 输入数据快照：[{name, kind, source_path, series_id}]
+    template_snapshot: Dict[str, Any] = {}      # 报告模板快照：{template_id, template_name}
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 

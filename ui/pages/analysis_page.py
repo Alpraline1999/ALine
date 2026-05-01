@@ -2134,12 +2134,27 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             series = project_manager.get_series_from_node(item["kind"], item["node_id"])
             if series is not None:
                 input_series_ids.append(series.id)
+        input_snapshots = []
+        for item in list(active_view.get("inputs") or []) if isinstance(active_view, dict) else []:
+            if isinstance(item, dict):
+                series = project_manager.get_series_from_node(item.get("kind", ""), item.get("node_id", ""))
+                input_snapshots.append({
+                    "name": item.get("label", ""),
+                    "kind": item.get("kind", ""),
+                    "source_path": series.source_file_path if series else "",
+                    "series_id": series.id if series else "",
+                })
+        template_id = self._workspace_state.current_report_template_id if hasattr(self, "_workspace_state") else ""
+        template_name = self._workspace_state.current_report_template_name if hasattr(self, "_workspace_state") else ""
+
         ar = AnalysisResult(
             name=clean_name,
             analysis_type=active_result.get("analysis_type", "analysis"),
             input_series_ids=input_series_ids,
             params=dict(active_view.get("params") or {}) if isinstance(active_view, dict) else self._current_analysis_params(),
             summary=dict(active_result),
+            input_snapshots=input_snapshots,
+            template_snapshot={"template_id": template_id, "template_name": template_name},
         )
         if not project_manager.add_analysis(ar, parent_id=save_plan.target_parent_id):
             InfoBar.error("保存失败", "未能保存分析结果到目标位置", parent=self, position=InfoBarPosition.TOP)

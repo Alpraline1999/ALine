@@ -1,8 +1,12 @@
-# Phase 8 Task 1: 处理/分析批量工作流 — 文档与计划
+# Phase 8 Task 1: AnalysisResult 来源追溯字段
 
-Phase 8 要求提升 process_page / analysis_page 的批量执行和结果可追溯性。
+## 目标
 
-由于两个页面均为遗留 monolith (process_page: 1925 行, analysis_page: 2897 行)，
-批量工作流改造需要显著的页面重构作为前提。
+提升分析结果的追溯性: 记录每份结果来自哪组输入、参数和模板。
 
-转入功能优化后续阶段，随 legacy monolith 拆分推进。
+## 实施
+
+1. `models/schemas.py` 的 AnalysisResult 添加:
+   - `input_snapshots: list[dict]` — 输入数据快照（名称、来源路径等）
+   - `template_snapshot: dict` — 报告模板快照
+2. `analysis_page.py` _save_result 在创建 AnalysisResult 时填入追溯信息
