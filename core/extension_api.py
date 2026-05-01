@@ -388,6 +388,7 @@ class ProcessingExtension:
     source_kind: str = "builtin"
     tool_tier: str = "tool"
     hidden: bool = False
+    capabilities: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -433,6 +434,7 @@ class AnalysisExtension:
     source_kind: str = "builtin"
     tool_tier: str = "tool"
     hidden: bool = False
+    capabilities: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -478,6 +480,7 @@ class PlotExtension:
     source_kind: str = "builtin"
     tool_tier: str = "tool"
     hidden: bool = False
+    capabilities: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -522,6 +525,7 @@ class DigitizeExtension:
     source_kind: str = "builtin"
     tool_tier: str = "tool"
     hidden: bool = False
+    capabilities: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tool_tier", normalize_extension_tool_tier(self.tool_tier))
@@ -1057,6 +1061,7 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "normalized_config_fields": normalized_config_fields,
         "lines_number": list(lines_number) if lines_number is not None else None,
         "report_placeholders": [dict(item) for item in getattr(extension, "report_placeholders", []) or [] if isinstance(item, dict)],
+        "capabilities": set(str(c) for c in getattr(extension, "capabilities", set()) or set()),
     }
 
 
