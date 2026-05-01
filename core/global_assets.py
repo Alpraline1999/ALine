@@ -289,6 +289,20 @@ class GlobalAssetManager:
         self.save()
         return True
 
+    def duplicate_saved_pipeline(self, pipeline_id: str, new_name: str) -> Optional[SavedPipeline]:
+        """Copy a saved pipeline with a new name."""
+        item = self.get_saved_pipeline(pipeline_id)
+        if item is None:
+            return None
+        import uuid
+        dup = SavedPipeline(
+            id=str(uuid.uuid4()),
+            name=new_name,
+            ops=list(item.ops),
+            description=item.description,
+        )
+        return self.add_saved_pipeline(dup)
+
     def list_figure_templates(self) -> List[FigureConfig]:
         return list(self.data.figure_templates)
 
@@ -334,6 +348,24 @@ class GlobalAssetManager:
             return False
         self.save()
         return True
+
+    def duplicate_figure_template(self, template_id: str, new_name: str) -> Optional[FigureConfig]:
+        """Copy a figure template with a new name."""
+        item = self.get_figure_template(template_id)
+        if item is None:
+            return None
+        import uuid
+        from models.schemas import FigureConfig
+        dup = FigureConfig(
+            id=str(uuid.uuid4()),
+            name=new_name,
+            figure_state=copy.deepcopy(getattr(item, "figure_state", {})),
+            plot_style_extras=copy.deepcopy(getattr(item, "plot_style_extras", {})),
+            curve_styles=copy.deepcopy(getattr(item, "curve_styles", {})),
+            applied_extensions=copy.deepcopy(getattr(item, "applied_extensions", [])),
+            is_builtin=False,
+        )
+        return self.add_figure_template(dup)
 
     def list_report_templates(self, include_builtin: bool = False) -> List[ReportTemplate]:
         user_templates = list(self.data.report_templates)
@@ -613,6 +645,23 @@ class GlobalAssetManager:
             return False
         self.save()
         return True
+
+    def duplicate_extension_config(self, config_id: str, new_name: str) -> Optional[ExtensionConfigPreset]:
+        """Copy an extension config with a new name."""
+        item = self.get_extension_config(config_id)
+        if item is None:
+            return None
+        try:
+            return self.add_extension_config(
+                category=item.category,
+                extension_type=item.extension_type,
+                extension_name=item.extension_name,
+                extension_version=item.extension_version,
+                name=new_name,
+                options=copy.deepcopy(item.options),
+            )
+        except ValueError:
+            return None
 
     def get_plot_theme(self, theme_key: str) -> Optional[PlotTheme]:
         for item in self.list_plot_themes(include_builtin=True):
