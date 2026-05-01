@@ -8,6 +8,21 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
+@dataclass
+class TaskProgress:
+    """后台任务进度模型。
+
+    供后续异步执行框架使用；当前仅定义模型不做执行集成。
+    """
+    task_id: str
+    task_type: str = ""
+    status: str = "running"  # running / completed / failed / cancelled
+    progress_text: str = ""
+    progress_percent: float = 0.0
+    result: Any = None
+    error: Optional[str] = None
+
+
 class PatchAuthority(Enum):
     """扩展 patch 的决策等级。
 
@@ -18,6 +33,7 @@ class PatchAuthority(Enum):
     AUTHORITATIVE = "authoritative"
 
 __all__ = [
+    "TaskProgress",
     "PatchAuthority",
     "merge_nested_dict",
     "normalize_plot_extension_phases",
