@@ -244,3 +244,20 @@
 - 实施前先读路线图，再只聚焦当前阶段文档。
 - 实施中如果发现某项工作跨越多个阶段，必须回到路线图重新确认依赖，不允许临时改阶段顺序。
 - 如果某阶段文档需要修订，应在修订提交中明确说明影响的后续阶段。
+
+## 功能优化阶段入口条件
+
+Phase 33–37 全部完成后，已满足以下条件，可以进入功能优化阶段：
+
+1. **结构检查清单已建立**：`scripts/structure_check.py` 提供可重复执行的结构检查
+2. **私有 API 无泄漏**：`ui/` 和 `app/` 目录无 `project_manager._*` 跨模块访问
+3. **命令面无重复**：`command_layer.py` 已删除独立 `cmd_*` 定义，全部从 `command_registry` 导入
+4. **大文件有归属**：data_page、chart_page、digitize_page、analysis_page 均已建立 support 模块拆分
+5. **ProjectTreeWidget 已分层**：view / menu / drag-drop 职责清晰
+6. **MainWindow 路由已收口**：树节点路由全部委托给 `TreeCommandRoute`
+7. **项目树菜单已独立**：菜单构建逻辑移入 `project_tree_menu_commands.py`
+
+### 仍建议在功能优化阶段优先处理的事项
+
+- data_page.py (4906 行)、digitize_page.py (3598 行) 等超大文件继续拆 support 模块
+- tests/test_ui.py (11050 行) 按页面/模块拆分为窄范围目标性测试
