@@ -40,7 +40,13 @@ class SeriesArrayView(Sequence[float]):
     def __bool__(self) -> bool:
         return self._array.size > 0
 
-    def __array__(self, dtype: Any = None) -> np.ndarray:
+    def __array__(self, dtype: Any = None, copy: Any = None) -> np.ndarray:
+        if copy is False:
+            if dtype is None:
+                return self._array
+            return self._array.astype(dtype, copy=False)
+        if copy is True:
+            return np.array(self._array, dtype=dtype, copy=True)
         return np.asarray(self._array, dtype=dtype)
 
     def __eq__(self, other: Any) -> bool:

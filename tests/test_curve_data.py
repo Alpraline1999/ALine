@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import warnings
 
 import numpy as np
 
@@ -18,6 +19,11 @@ class TestCurveData(unittest.TestCase):
         self.assertEqual(ys, [3.0, 4.0])
         self.assertEqual(np.asarray(xs).tolist(), [1.0, 2.0])
         self.assertEqual(np.asarray(ys).tolist(), [3.0, 4.0])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self.assertEqual(np.array(xs, copy=False).tolist(), [1.0, 2.0])
+            self.assertEqual(np.array(ys, copy=False).tolist(), [3.0, 4.0])
+        self.assertEqual(caught, [])
         self.assertEqual(list(xs[:1]), [1.0])
 
     def test_curve_buffer_roundtrip(self) -> None:
