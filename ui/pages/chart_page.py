@@ -2002,7 +2002,25 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         for index, entry in enumerate(self._applied_plot_extensions):
             item = QListWidgetItem(self._applied_plot_extension_label(entry, index))
             item.setData(Qt.ItemDataRole.UserRole, entry.get("id"))
-            item.setToolTip(json.dumps(dict(entry.get("options") or {}), ensure_ascii=False, indent=2))
+            tooltip_parts = []
+            options = dict(entry.get("options") or {})
+            if options:
+                tooltip_parts.append("参数:")
+                for key, value in options.items():
+                    tooltip_parts.append(f"  {key}: {value}")
+            impact_fields = []
+            if entry.get("figure_state"):
+                impact_fields.append("绘图状态")
+            if entry.get("plot_style_extras"):
+                impact_fields.append("绘图样式")
+            if entry.get("curve_styles"):
+                impact_fields.append("曲线样式")
+            if impact_fields:
+                tooltip_parts.append(f"影响范围: {', '.join(impact_fields)}")
+            authority = entry.get("authority", "advisory")
+            if authority != "advisory":
+                tooltip_parts.append("接管模式: 强制覆盖")
+            item.setToolTip("\n".join(tooltip_parts) if tooltip_parts else "无参数")
             self._plot_extension_applied_list.addItem(item)
             if entry.get("id") == target_instance_id:
                 target_row = index
@@ -3177,6 +3195,15 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
         self._redraw_now()
+
+    def _invert_curve_visibility(self) -> None:
+        """Invert visibility for all curves."""
+        for curve in self._chart_series:
+            curve["visible"] = not bool(curve.get("visible", True))
+            self._record_curve_style_changes(self._curve_key(curve), {"visible"})
+        self._refresh_chart_list()
+        self._redraw_now()
+
     def _find_chart_curve(self, curve_key: str) -> Optional[dict]:
         for curve in self._chart_series:
             if self._curve_key(curve) == curve_key:
@@ -3235,11 +3262,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         reset_action.triggered.connect(lambda checked=False: self._reset_curve_display_name(curve))
         menu.addAction(reset_action)
 
-        # 新增“仅显示选中”功能
-        show_only_action = Action(getattr(FIF, "VIEW", FIF.SEARCH), "仅显示选中")
-        show_only_action.triggered.connect(self._show_only_selected_curve)
-        menu.addAction(show_only_action)
-
         menu.addSeparator()
         hide_action = Action(getattr(FIF, 'CANCEL', FIF.CLOSE), '隐藏已选中')
         hide_action.triggered.connect(lambda: self._set_selected_visibility(False))
@@ -3253,6 +3275,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         show_all_action = Action(FIF.ZOOM_FIT, '全部显示')
         show_all_action.triggered.connect(self._show_all_curves)
         menu.addAction(show_all_action)
+        invert_action = Action(getattr(FIF, 'SYNC', FIF.SYNC), '反选显示状态')
+        invert_action.triggered.connect(self._invert_curve_visibility)
+        menu.addAction(invert_action)
         menu.exec(self._chart_list.mapToGlobal(pos))
 
     def _show_only_selected_curve(self):
