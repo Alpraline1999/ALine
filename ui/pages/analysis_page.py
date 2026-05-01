@@ -64,7 +64,7 @@ from ui.page_view_state import AnalysisPageViewState
 from .analysis_page_support import (
     Figure,
     FigureCanvas,
-    _HAS_MPL,
+    HAS_MATPLOTLIB,
     _PREFERRED_ANALYSIS_ORDER,
     _SelectableResultList,
     _SelectableResultTable,
@@ -133,6 +133,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._workspace_state.selected_tree_node_id = None
         self._report_placeholder_entries = list_report_template_placeholders()
         self._next_temporary_result_number = 1
+        self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._apply_report_preview_theme()
@@ -143,6 +144,9 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         QTimer.singleShot(0, self._sync_input_panel_splitter_sizes)
+        if self._theme_refresh_pending:
+            self._theme_refresh_pending = False
+            QTimer.singleShot(0, self._refresh_result_views)
         self._onboarding_controller.schedule_auto_start()
 
     def resizeEvent(self, event) -> None:
@@ -522,7 +526,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         plot_layout = QVBoxLayout(plot_widget)
         plot_layout.setContentsMargins(0, 0, 0, 0)
         plot_layout.setSpacing(0)
-        if _HAS_MPL:
+        if HAS_MATPLOTLIB:
             figure = Figure(figsize=(6, 4))
             canvas = FigureCanvas(figure)
             canvas.setMinimumHeight(300)
@@ -1888,7 +1892,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _draw_result(self, t: str, selected: list, r: dict, figure=None, canvas=None, normalized: Optional[Dict[str, Any]] = None):
         figure = self._figure if figure is None else figure
         canvas = self._canvas if canvas is None else canvas
-        if not _HAS_MPL or figure is None or canvas is None:
+        if not HAS_MATPLOTLIB or figure is None or canvas is None:
             return
         figure.clear()
         ax = figure.add_subplot(111)
@@ -2869,9 +2873,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     # 外部接口
     # ─────────────────────────────────────────────────────────
 
-    def update_theme(self):
-        self._apply_report_preview_theme()
-        self._apply_result_canvas_background(self._canvas)
+    def _refresh_result_views(self) -> None:
         for view in self._analysis_tab_views.values():
             self._apply_result_canvas_background(view.get("canvas"))
             result = view.get("result")
@@ -2883,3 +2885,12 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                 view.get("selected") or [],
                 result,
             )
+
+    def update_theme(self):
+        self._apply_report_preview_theme()
+        self._apply_result_canvas_background(self._canvas)
+        if not self.isVisible():
+            self._theme_refresh_pending = True
+            return
+        self._theme_refresh_pending = False
+        QTimer.singleShot(0, self._refresh_result_views)

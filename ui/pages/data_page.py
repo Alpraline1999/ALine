@@ -336,6 +336,7 @@ class DataPage(QWidget):
         self._current_source_preview_total_rows = 0
         self._fluent_tooltip = None
         self._fluent_tooltip_views = {}
+        self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
@@ -344,6 +345,9 @@ class DataPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if self._theme_refresh_pending:
+            self._theme_refresh_pending = False
+            QTimer.singleShot(0, self._draw_preview)
         self._onboarding_controller.schedule_auto_start()
 
     # ─────────────────────────────────────────────────────────
@@ -4836,8 +4840,13 @@ class DataPage(QWidget):
 
     def update_theme(self):
         self._apply_preview_host_background()
-        if self._preview_figure is not None and self._preview_canvas is not None:
-            self._draw_preview()
+        if self._preview_figure is None or self._preview_canvas is None:
+            return
+        if not self.isVisible():
+            self._theme_refresh_pending = True
+            return
+        self._theme_refresh_pending = False
+        QTimer.singleShot(0, self._draw_preview)
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
         """共享树选中节点 → 显示预览。"""

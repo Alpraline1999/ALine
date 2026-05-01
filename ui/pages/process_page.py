@@ -61,7 +61,7 @@ from processing.pipeline_extension import build_pipeline_extension_definition
 from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 
 _matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtagg()
-_HAS_MPL = _matplotlib is not None
+HAS_MATPLOTLIB = _matplotlib is not None
 
 
 # ── 操作定义 ─────────────────────────────────────────────────
@@ -207,6 +207,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._run_timer.setSingleShot(True)
         self._run_timer.setInterval(300)
         self._run_timer.timeout.connect(self._run_pipeline_now)
+        self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
         self._setup_ui()
         self._setup_shortcuts()
@@ -217,6 +218,9 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         QTimer.singleShot(0, self._sync_selected_input_splitter_sizes)
+        if self._theme_refresh_pending:
+            self._theme_refresh_pending = False
+            QTimer.singleShot(0, self._draw_preview)
         self._onboarding_controller.schedule_auto_start()
 
     def resizeEvent(self, event) -> None:
@@ -533,7 +537,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         rv.setContentsMargins(14, 14, 14, 14)
         rv.setSpacing(8)
         rv.addWidget(make_section_label("处理预览"))
-        if _HAS_MPL:
+        if HAS_MATPLOTLIB:
             self._figure = Figure(figsize=(5, 4))
             self._canvas = FigureCanvas(self._figure)
             self._preview_nav_toolbar = create_navigation_toolbar(
@@ -1272,7 +1276,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         return rebuilt, warnings
 
     def _draw_preview(self):
-        if not _HAS_MPL or self._figure is None:
+        if not HAS_MATPLOTLIB or self._figure is None:
             return
         self._figure.clear()
         ax = self._figure.add_subplot(111)
@@ -1793,8 +1797,13 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
 
     def update_theme(self):
         self._apply_preview_host_background()
-        if self._canvas is not None and self._figure is not None:
-            self._draw_preview()
+        if self._canvas is None or self._figure is None:
+            return
+        if not self.isVisible():
+            self._theme_refresh_pending = True
+            return
+        self._theme_refresh_pending = False
+        QTimer.singleShot(0, self._draw_preview)
 
 
 # ─────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ from qfluentwidgets import (
 from ui.matplotlib_fonts import bootstrap_matplotlib_qtagg
 
 _matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtagg()
-_HAS_MPL = _matplotlib is not None
+HAS_MATPLOTLIB = _matplotlib is not None
 
 _PREFERRED_ANALYSIS_ORDER = (
     "curve_fit",

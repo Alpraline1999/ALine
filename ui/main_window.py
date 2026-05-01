@@ -728,13 +728,13 @@ class MainWindow(FluentWindow):
     def _on_theme_changed(self, index: int):
         themes = [Theme.LIGHT, Theme.DARK, Theme.AUTO]
         setTheme(themes[index])
-        QTimer.singleShot(100, self._update_all_pages_theme)
+        QTimer.singleShot(0, self._update_all_pages_theme)
 
     def _update_all_pages_theme(self):
         self.home_page.update_theme()
         self.settings_page.update_theme_colors()
         self.digitize_page.update_theme_colors()
-        self.chart_page.request_redraw()
+        self.chart_page.update_theme()
         self.data_page.update_theme()
         self.process_page.update_theme()
         self.analysis_page.update_theme()

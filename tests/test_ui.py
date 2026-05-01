@@ -10484,6 +10484,19 @@ class TestChartPageV3(unittest.TestCase):
         self.page.on_tree_node_activated("data_file", node.id)
         self.assertGreater(len(self.page._chart_series), 0)
 
+    def test_update_theme_defers_chart_redraw_to_event_loop(self):
+        if self.page._figure is None or self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page.show()
+        QApplication.processEvents()
+
+        with mock.patch.object(self.page, "_redraw_now") as redraw:
+            self.page.update_theme()
+            self.assertEqual(redraw.call_count, 0)
+            QApplication.processEvents()
+            self.assertEqual(redraw.call_count, 1)
+
     def test_dedup_same_series(self):
         self.page.on_tree_node_activated("series", self.s.id)
         count1 = len(self.page._chart_series)

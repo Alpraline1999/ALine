@@ -225,6 +225,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._chart_list_tooltip = None
         self._selected_tree_kind: Optional[str] = None
         self._selected_tree_id: Optional[str] = None
+        self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
 
         self._redraw_timer = QTimer(self)
@@ -247,6 +248,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         super().showEvent(event)
         self._update_plot_extension_help_area_height()
         QTimer.singleShot(0, self._sync_chart_left_splitter_sizes)
+        if self._theme_refresh_pending:
+            self._theme_refresh_pending = False
+            self._redraw_timer.start(0)
         self._onboarding_controller.schedule_auto_start()
 
     def resizeEvent(self, event) -> None:
@@ -3950,7 +3954,14 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         InfoBar.success("已导出到图片集", Path(file_path).name, parent=self, position=InfoBarPosition.TOP)
 
     def update_theme(self) -> None:
-        self._redraw_now()
+        self._apply_preview_host_background()
+        if self._figure is None or self._canvas is None:
+            return
+        if not self.isVisible():
+            self._theme_refresh_pending = True
+            return
+        self._theme_refresh_pending = False
+        self._redraw_timer.start(0)
 
     @property
     def _chart_series(self):
