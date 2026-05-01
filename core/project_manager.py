@@ -6,13 +6,20 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import uuid
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from core.global_assets import global_assets
+from core.project_name_rules import (
+    ensure_non_empty_name as _ensure_non_empty_name_rule,
+    ensure_unique_tree_child_name as _ensure_unique_tree_child_name_rule,
+    has_tree_child_name_conflict as _has_tree_child_name_conflict_rule,
+    next_unique_tree_child_name as _next_unique_tree_child_name_rule,
+    split_name_suffix as _split_name_suffix_rule,
+    normalize_name_key as _normalize_name_key_rule,
+)
 from core.project_services import build_project_services
 from models.schemas import (
     AnalysisResult,
@@ -140,12 +147,13 @@ class ProjectManager:
 
     @staticmethod
     def _normalize_name_key(name: str) -> str:
-        return re.sub(r"\s+", " ", (name or "").strip()).casefold()
+        return _normalize_name_key_rule(name)
 
     def _ensure_non_empty_name(self, name: str, *, label: str = "名称") -> bool:
-        if self._normalize_name_key(name):
+        ok, error = _ensure_non_empty_name_rule(name, label=label)
+        if ok:
             return True
-        return self._fail_operation(f"{label}不能为空")
+        return self._fail_operation(error or f"{label}不能为空")
 
     def _find_tree_linked_node(
         self,
@@ -169,25 +177,16 @@ class ProjectManager:
         project: Optional[Project] = None,
     ) -> bool:
         p = project or self.current_project
-        if p is None or p.tree is None:
-            return self._ensure_non_empty_name(name)
-        if not self._ensure_non_empty_name(name):
-            return False
-        if self._has_tree_child_name_conflict(
+        ok, error = _ensure_unique_tree_child_name_rule(
+            p,
             parent_id,
             name,
             node_kind=node_kind,
             exclude_node_id=exclude_node_id,
-            project=p,
-        ):
-            parent = p.tree.get_node(parent_id) if parent_id else None
-            scope_label = "当前层级"
-            if parent is not None and getattr(parent, "kind", None) == "folder":
-                scope_label = f"文件夹“{parent.name or '未命名文件夹'}”"
-            return self._fail_operation(
-                f"{scope_label}下已存在名为“{name.strip()}”的节点，请先重命名后再试。"
-            )
-        return True
+        )
+        if ok:
+            return True
+        return self._fail_operation(error or "名称冲突")
 
     def _has_tree_child_name_conflict(
         self,
@@ -199,30 +198,17 @@ class ProjectManager:
         project: Optional[Project] = None,
     ) -> bool:
         p = project or self.current_project
-        if p is None or p.tree is None:
-            return False
-        normalized = self._normalize_name_key(name)
-        for sibling in p.tree.get_children(parent_id):
-            if exclude_node_id is not None and sibling.id == exclude_node_id:
-                continue
-            if node_kind is not None and getattr(sibling, "kind", None) != node_kind:
-                continue
-            if self._normalize_name_key(getattr(sibling, "name", "")) == normalized:
-                return True
-        return False
+        return _has_tree_child_name_conflict_rule(
+            p,
+            parent_id,
+            name,
+            node_kind=node_kind,
+            exclude_node_id=exclude_node_id,
+        )
 
     @staticmethod
     def _split_name_suffix(name: str) -> tuple[str, str]:
-        clean_name = (name or "").strip()
-        if not clean_name:
-            return "", ""
-        suffixes = Path(clean_name).suffixes
-        suffix = "".join(suffixes)
-        if suffix and clean_name.endswith(suffix):
-            stem = clean_name[: -len(suffix)]
-            if stem:
-                return stem, suffix
-        return clean_name, ""
+        return _split_name_suffix_rule(name)
 
     def _next_unique_tree_child_name(
         self,
@@ -234,32 +220,14 @@ class ProjectManager:
         project: Optional[Project] = None,
     ) -> str:
         candidate = (name or "").strip()
-        if not candidate:
-            return candidate
         p = project or self.current_project
-        if p is None or p.tree is None:
-            return candidate
-        if not self._has_tree_child_name_conflict(
+        return _next_unique_tree_child_name_rule(
+            p,
             parent_id,
             candidate,
             node_kind=node_kind,
             exclude_node_id=exclude_node_id,
-            project=p,
-        ):
-            return candidate
-        stem, suffix = self._split_name_suffix(candidate)
-        index = 1
-        while True:
-            renamed = f"{stem}_{index}{suffix}"
-            if not self._has_tree_child_name_conflict(
-                parent_id,
-                renamed,
-                node_kind=node_kind,
-                exclude_node_id=exclude_node_id,
-                project=p,
-            ):
-                return renamed
-            index += 1
+        )
 
     def format_tree_path_label(
         self,

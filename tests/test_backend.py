@@ -314,6 +314,23 @@ class TestProjectManager(unittest.TestCase):
         self.assertIn(("分析结果", "analysis_result_group", None), folder_map)
         self.assertEqual(len(folder_map), 5)
 
+    def test_project_name_rules_are_shared_between_project_manager_and_helper(self):
+        from core.project_name_rules import ensure_unique_tree_child_name, next_unique_tree_child_name
+
+        p = self.pm.create_new("name_rules")
+        self.pm.migrate_to_v3(p)
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        folder = self.pm.add_folder("batch.csv", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(folder)
+
+        ok, error = ensure_unique_tree_child_name(p, datasets_root.id, "batch.csv", node_kind="folder")
+        self.assertFalse(ok)
+        self.assertIsNotNone(error)
+        self.assertIn("已存在", error)
+        self.assertEqual(next_unique_tree_child_name(p, datasets_root.id, "batch.csv", node_kind="folder"), "batch_1.csv")
+
     def test_add_source_files_creates_managed_nodes_under_source_group(self):
         p = self.pm.create_new("source_files")
         with tempfile.TemporaryDirectory() as temp_dir:
