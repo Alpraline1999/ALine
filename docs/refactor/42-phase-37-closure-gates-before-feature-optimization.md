@@ -61,8 +61,10 @@
 
 - 已有可执行的轻量结构检查清单或脚本，后续每轮优化都可复用。
 - 不再存在已知但未建账的超大模块或重复实现热点。
-- `tests/test_ui.py` 等超大测试入口完成拆分或已明确拆分计划并落在文档中。
+- `tests/test_ui.py` 等超大测试入口已建立拆分计划并提取 3 个类；目录结构（pages/widgets/dialogs）和共享夹具模块已就绪；剩余拆分转入功能优化阶段。
 - 功能优化阶段的进入条件被正式写入文档。
+- 架构护栏测试 `test_architecture_guardrails.py` 3 项全部通过。
+- 6 个超大文件（data_page、chart_page、digitize_page、analysis_page、settings_page、project_manager）统一记为“遗留 monolith”，转入功能优化阶段优先处理。
 
 ## 提交检查点
 

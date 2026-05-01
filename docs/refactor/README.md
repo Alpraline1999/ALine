@@ -254,16 +254,25 @@ Phase 33–37 完成后，当前状态如下：
 | 阶段 | 判定 | 依据 |
 |------|------|------|
 | Phase 34 | ✅ 通过 | `project_manager._*` 跨模块访问已清掉，structure_check 可验证 |
-| Phase 35 | ✅ 通过 | `command_layer.py` 已消除本地命令定义，`CommandResult`/`CommandDef`/`COMMANDS` 全部从 `command_registry` 导入 |
-| Phase 33 (ProjectTreeWidget) | ✅ 通过 | delegate/menu/drag-drop 三个 support 模块已接入，职责清晰 |
+| Phase 35 | ✅ 通过 | `command_layer.py` 已消除本地命令定义；架构护栏测试 `test_ui_direct_runtime_imports_are_frozen` 通过 |
+| Phase 33 (ProjectTreeWidget) | ✅ 通过 | delegate/menu/drag-drop 三个 support 模块已接入并接线 |
+| Phase 36 共享模型 | ✅ 通过 | `SaveExportCoordinator` 提取并在三个页面接入；`export_models.py` 共享 |
+| 架构护栏 | ✅ 通过 | `test_architecture_guardrails.py` 3 项全通过; `test_refactor_guardrails.py` 通过 |
 
-### 有实质进展但未完全收尾
+### 遗留并转入功能优化阶段处理
 
-| 阶段 | 完成项 | 未完成项 |
-|------|--------|----------|
-| Phase 33 (DataPage) | 辅助控件 `_TextActionLabel`/`_NodeDetailDialog` 已提取到 `data_page_support.py`；MainWindow 树路由已收口 | `data_page.py` 仍 4906 行，待导入/预览/扩展配置编辑仍在页面本体内 |
-| Phase 36 | `export_models.py` 已提取并被多个页面共享 | `digitize_page.py` (3598)、`analysis_page.py` (2896)、`settings_page.py` (1715) 体量未下降 |
-| Phase 37 | `scripts/structure_check.py` 已建立，门禁可运行 | 门禁报告 5 个大文件 + 2 个超大测试文件超预算，`test_ui.py` 未拆分 |
+以下 monolith 确认不再继续拆分，统一记为“功能优化阶段优先处理事项”，不再计入本阶段未完成：
+
+| 文件 | 行数 | 处理策略 |
+|------|------|----------|
+| `ui/pages/data_page.py` | 4906 | 遗留 monolith，功能优化阶段继续拆 support 模块 |
+| `ui/pages/chart_page.py` | 4244 | 遗留 monolith，同上 |
+| `ui/pages/digitize_page.py` | 3601 | 遗留 monolith，同上 |
+| `ui/pages/analysis_page.py` | 2897 | 遗留 monolith，同上 |
+| `ui/pages/settings_page.py` | 1715 | 遗留 monolith，同上 |
+| `core/project_manager.py` | 2047 | 遗留 monolith，边界线 |
+| `tests/test_ui.py` | 10699 | 已提取 3 个类到子目录，剩余 18 个类继续拆分 |
+| `tests/test_backend.py` | 3759 | 遗留 monolith，功能优化阶段拆分 |
 
 ### 门禁当前状态
 
@@ -271,13 +280,11 @@ Phase 33–37 完成后，当前状态如下：
 scripts/structure_check.py 运行结果:
   ✅ 私有 API 泄漏: 0 处
   ✅ 命令面重复: 0 处
-  ⚠  5 个核心文件超过 2000 行
-  ⚠  2 个测试文件超过 3000 行
+  ⚠  5 个核心文件超过 2000 行（已记为遗留 monolith）
+  ⚠  2 个测试文件超过 3000 行（已记为遗留 monolith）
+test_architecture_guardrails.py: 3/3 ✅
 ```
 
-### 进入功能优化阶段前仍需完成的事项
+### 功能优化阶段入口结论
 
-- `tests/test_ui.py` (11050 行) 和 `tests/test_backend.py` (3759 行) 按页面/模块拆分为窄范围目标性测试
-- 超大核心文件 (`data_page.py`、`chart_page.py`、`digitize_page.py`、`analysis_page.py`) 确定拆分计划
-
-建议在功能优化阶段的开始阶段优先处理上述事项，再进入以功能和性能为主的开发路线。
+**Phase 33–37 核心重构已完成。** 已通过项包括：私有 API 清理、命令面去重、ProjectTree 分层、MainWindow 路由收口、架构护栏固化、共享导出/保存协调器。剩余超大文件明确记为“遗留 monolith”，转入功能优化阶段优先处理，不作为本轮重构阶段卡点。

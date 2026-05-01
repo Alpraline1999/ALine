@@ -43,6 +43,7 @@ ALLOWED_UI_DIRECT_IMPORTS = {
         ("core.extension_api", "extension_registry"),
         ("core.project_manager", "project_manager"),
     },
+    "ui/pages/save_export_coordinator.py": {("core.project_manager", "project_manager")},
     "ui/pages/settings_page.py": {
         ("core.global_assets", "global_assets"),
         ("core.project_manager", "project_manager"),
@@ -50,6 +51,12 @@ ALLOWED_UI_DIRECT_IMPORTS = {
     "ui/widgets/extension_options_form.py": {("core.global_assets", "global_assets")},
     "ui/widgets/extension_panel.py": {("core.global_assets", "global_assets")},
     "ui/widgets/project_tree.py": {
+        ("core.extension_api", "extension_registry"),
+        ("core.global_assets", "global_assets"),
+        ("core.project_manager", "project_manager"),
+    },
+    "ui/widgets/project_tree_drag_drop.py": {("core.project_manager", "project_manager")},
+    "ui/widgets/project_tree_menu_commands.py": {
         ("core.extension_api", "extension_registry"),
         ("core.global_assets", "global_assets"),
         ("core.project_manager", "project_manager"),
