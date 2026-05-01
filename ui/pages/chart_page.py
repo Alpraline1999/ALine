@@ -61,9 +61,9 @@ from core.extension_api import (
     build_extension_entry,
     compare_extension_versions,
     extension_registry,
+    reload_configured_extensions,
 )
-from core.extension_invoker import invoke_plot_extension_handler
-from core.extension_loader import reload_configured_extensions
+from core.extension_runtime import invoke_plot_extension_handler
 from core.shortcut_manager import ShortcutBindingSet
 from core.rendering import RenderDecimationPolicy, decimate_xy_for_rendering
 from core.project_manager import project_manager

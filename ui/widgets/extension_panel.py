@@ -27,11 +27,12 @@ from qfluentwidgets import (
 from core.global_assets import global_assets
 from core.extension_api import (
     compare_extension_versions,
+    format_extension_load_report,
     extension_entry_display_info,
     extension_entry_parameter_help_text,
+    get_extension_load_status,
     normalize_extension_version,
 )
-from core.extension_loader import format_extension_load_report, get_extension_load_status
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit

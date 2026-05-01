@@ -2134,7 +2134,7 @@ class TestAnalysisEngine(unittest.TestCase):
             invoke_digitize_extension_handler,
             invoke_plot_extension_handler,
         )
-        from core.extension_invoker import invoke_processing_extension_handler
+        from core.extension_runtime import invoke_processing_extension_handler
         from processing.extension_tools import line_xy
 
         registry = ExtensionRegistry()
@@ -2307,6 +2307,22 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(entry["function_label"], "数字化扩展")
         self.assertEqual(entry["resolved_options"], {})
         self.assertNotIn("default_options", entry)
+
+    def test_builtin_color_digitize_reuses_shared_auto_extractor(self):
+        from digitize.auto_extractor import AutoExtractor as SharedAutoExtractor
+        from extensions.digitize import color_detect
+        from processing.extension_tools import line_xy
+
+        self.assertIs(color_detect.AutoExtractor, SharedAutoExtractor)
+
+        with mock.patch.object(SharedAutoExtractor, "extract", return_value=[(10.0, 12.0), (15.0, 18.0)]) as extract_mock:
+            line = color_detect._color_digitize(
+                "demo.png",
+                {"sampled_color": {"r": 1, "g": 2, "b": 3}, "tolerance": 20, "step": 5},
+            )
+
+        extract_mock.assert_called_once()
+        self.assertEqual(line_xy(line), ([10.0, 15.0], [12.0, 18.0]))
 
     def test_build_extension_entry_normalizes_interactive_digitize_fields_and_unknown_source_kind(self):
         from core.extension_api import DigitizeExtension, ExtensionConfigField, build_extension_entry

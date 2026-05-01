@@ -7,7 +7,7 @@ from qfluentwidgets import (PrimaryPushButton, PushButton, FluentIcon as FIF,
     BodyLabel, LargeTitleLabel, SubtitleLabel, SmoothScrollArea,
     InfoBar, TeachingTipTailPosition, isDarkTheme, IconWidget, SingleDirectionScrollArea)
 
-from core.extension_loader import get_extension_load_status
+from core.extension_api import get_extension_load_status
 from core.ui_preferences import is_home_onboarding_completed, set_home_onboarding_completed
 from ui.theme import (
     accent_color,
