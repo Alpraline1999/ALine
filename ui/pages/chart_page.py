@@ -3146,6 +3146,27 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     def _selected_curve(self) -> Optional[dict]:
         return self._curve_from_item(self._chart_list.currentItem())
 
+
+    def _selected_curves(self) -> list[dict]:
+        """Return all selected curves."""
+        items = self._chart_list.selectedItems()
+        return [c for item in items if (c := self._curve_from_item(item)) is not None]
+
+    def _set_selected_visibility(self, visible: bool) -> None:
+        """Unified helper: set visibility of selected curves."""
+        for curve in self._selected_curves():
+            curve["visible"] = visible
+            self._record_curve_style_changes(self._curve_key(curve), {"visible"})
+        self._refresh_chart_list()
+        self._redraw_now()
+
+    def _show_all_curves(self) -> None:
+        """Show all curves."""
+        for curve in self._chart_series:
+            curve["visible"] = True
+            self._record_curve_style_changes(self._curve_key(curve), {"visible"})
+        self._refresh_chart_list()
+        self._redraw_now()
     def _find_chart_curve(self, curve_key: str) -> Optional[dict]:
         for curve in self._chart_series:
             if self._curve_key(curve) == curve_key:
@@ -3209,6 +3230,19 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         show_only_action.triggered.connect(self._show_only_selected_curve)
         menu.addAction(show_only_action)
 
+        menu.addSeparator()
+        hide_action = Action(getattr(FIF, 'CANCEL', FIF.CLOSE), '隐藏已选中')
+        hide_action.triggered.connect(lambda: self._set_selected_visibility(False))
+        menu.addAction(hide_action)
+        show_action = Action(FIF.VIEW, '显示已选中')
+        show_action.triggered.connect(lambda: self._set_selected_visibility(True))
+        menu.addAction(show_action)
+        show_only_action = Action(getattr(FIF, 'VIEW', FIF.SEARCH), '仅显示选中')
+        show_only_action.triggered.connect(self._show_only_selected_curve)
+        menu.addAction(show_only_action)
+        show_all_action = Action(FIF.ZOOM_FIT, '全部显示')
+        show_all_action.triggered.connect(self._show_all_curves)
+        menu.addAction(show_all_action)
         menu.exec(self._chart_list.mapToGlobal(pos))
 
     def _show_only_selected_curve(self):

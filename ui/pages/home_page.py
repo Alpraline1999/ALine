@@ -126,11 +126,13 @@ class _HomeLinkCardView(SingleDirectionScrollArea):
 
 
 class _HomeBannerWidget(QWidget):
+    _ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(_HOME_BANNER_HEIGHT)
-        self._background = QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "aline_home_background.png"))
-        self._card_icon_path = str(Path(__file__).resolve().parents[2] / "assets" / "aline_icon.png")
+        self._background = QPixmap(self._current_background_asset_path())
+        self._card_icon_path = str(self._ASSETS_DIR / "aline_icon.png")
         self._link_cards = []
         self._link_card_view = None
         self._hero_title = None
@@ -252,16 +254,28 @@ class _HomeBannerWidget(QWidget):
 
         gradient = QLinearGradient(0, 0, 0, self.height())
         if isDarkTheme():
-            gradient.setColorAt(0.0, QColor(0, 0, 0, 196))
-            gradient.setColorAt(0.58, QColor(0, 0, 0, 92))
-            gradient.setColorAt(1.0, QColor(0, 0, 0, 42))
+            gradient.setColorAt(0.0, QColor(0, 0, 0, 120))
+            gradient.setColorAt(0.58, QColor(0, 0, 0, 60))
+            gradient.setColorAt(1.0, QColor(0, 0, 0, 20))
         else:
-            gradient.setColorAt(0.0, QColor(255, 255, 255, 232))
-            gradient.setColorAt(0.58, QColor(255, 255, 255, 150))
-            gradient.setColorAt(1.0, QColor(255, 255, 255, 46))
+            gradient.setColorAt(0.0, QColor(255, 255, 255, 180))
+            gradient.setColorAt(0.58, QColor(255, 255, 255, 100))
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 30))
         painter.fillPath(path, QBrush(gradient))
 
+    def _current_background_asset_path(self) -> str:
+        """返回当前主题对应的背景资源路径。"""
+        return str(self._ASSETS_DIR / ("aline_home_background_dark.png" if isDarkTheme() else "aline_home_background.png"))
+
+    def _reload_background_for_theme(self) -> None:
+        """按当前主题重新加载背景图片。"""
+        path = self._current_background_asset_path()
+        new_bg = QPixmap(path)
+        if not new_bg.isNull():
+            self._background = new_bg
+
     def update_theme(self) -> None:
+        self._reload_background_for_theme()
         if self._hero_title is not None:
             self._hero_title.setStyleSheet(f"font-size: 44px; font-weight: 700; color: {text_color()}; background: transparent;")
         if self._hero_subtitle is not None:
