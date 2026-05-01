@@ -245,21 +245,39 @@
 - 实施中如果发现某项工作跨越多个阶段，必须回到路线图重新确认依赖，不允许临时改阶段顺序。
 - 如果某阶段文档需要修订，应在修订提交中明确说明影响的后续阶段。
 
-## 功能优化阶段入口条件
+## 功能优化阶段入口判定
 
-Phase 33–37 完成后，以下条件已完成验收，可以进入功能优化阶段：
+Phase 33–37 完成后，当前状态如下：
 
-### 已验证通过的条件
+### 可判定通过
 
-1. **结构检查清单已建立**：`scripts/structure_check.py` 提供可重复执行的结构检查（大文件预算、私有 API、命令面重复、超大测试文件）
-2. **私有 API 无泄漏**：`ui/` 和 `app/` 目录无 `project_manager._*` 跨模块访问
-3. **命令面唯一源**：`command_layer.py` (205 行) 已从 `command_registry` 导入 `CommandResult`、`CommandDef`、`COMMANDS`，无独立命令定义
-4. **ProjectTreeWidget 已分层**：view / menu / drag-drop / delegate 四个职责清晰，对应独立的 support 模块
-5. **MainWindow 路由已收口**：树节点路由全部委托给 `TreeCommandRoute`
-6. **项目树菜单已独立**：菜单构建逻辑移入 `project_tree_menu_commands.py`
-7. **导出模型已共享**：`DataExportPlan` 等模型类提取到 `export_models.py`，被多个页面/对话框共享
+| 阶段 | 判定 | 依据 |
+|------|------|------|
+| Phase 34 | ✅ 通过 | `project_manager._*` 跨模块访问已清掉，structure_check 可验证 |
+| Phase 35 | ✅ 通过 | `command_layer.py` 已消除本地命令定义，`CommandResult`/`CommandDef`/`COMMANDS` 全部从 `command_registry` 导入 |
+| Phase 33 (ProjectTreeWidget) | ✅ 通过 | delegate/menu/drag-drop 三个 support 模块已接入，职责清晰 |
 
-### 尚未但建议在功能优化阶段优先处理的事项
+### 有实质进展但未完全收尾
 
-- `data_page.py` (4906 行)、`chart_page.py` (4244 行)、`digitize_page.py` (3598 行) 等超过 2000 行的核心文件继续拆分为 support 模块
+| 阶段 | 完成项 | 未完成项 |
+|------|--------|----------|
+| Phase 33 (DataPage) | 辅助控件 `_TextActionLabel`/`_NodeDetailDialog` 已提取到 `data_page_support.py`；MainWindow 树路由已收口 | `data_page.py` 仍 4906 行，待导入/预览/扩展配置编辑仍在页面本体内 |
+| Phase 36 | `export_models.py` 已提取并被多个页面共享 | `digitize_page.py` (3598)、`analysis_page.py` (2896)、`settings_page.py` (1715) 体量未下降 |
+| Phase 37 | `scripts/structure_check.py` 已建立，门禁可运行 | 门禁报告 5 个大文件 + 2 个超大测试文件超预算，`test_ui.py` 未拆分 |
+
+### 门禁当前状态
+
+```
+scripts/structure_check.py 运行结果:
+  ✅ 私有 API 泄漏: 0 处
+  ✅ 命令面重复: 0 处
+  ⚠  5 个核心文件超过 2000 行
+  ⚠  2 个测试文件超过 3000 行
+```
+
+### 进入功能优化阶段前仍需完成的事项
+
 - `tests/test_ui.py` (11050 行) 和 `tests/test_backend.py` (3759 行) 按页面/模块拆分为窄范围目标性测试
+- 超大核心文件 (`data_page.py`、`chart_page.py`、`digitize_page.py`、`analysis_page.py`) 确定拆分计划
+
+建议在功能优化阶段的开始阶段优先处理上述事项，再进入以功能和性能为主的开发路线。
