@@ -25,6 +25,21 @@ class TreeCommandRoute:
     def dispatch_activated(self, kind: str, node_id: str) -> None:
         self._handle_activated(kind, node_id)
 
+    def dispatch_send_to_visualize(self, data_type: str, obj_id: str) -> None:
+        """发送数据到可视化页。"""
+        self.switch_to(self.chart_page)
+        if data_type == "picture" and hasattr(self.chart_page, "on_tree_node_activated"):
+            self.chart_page.on_tree_node_activated("picture", obj_id)
+            return
+        if hasattr(self.chart_page, 'receive_data'):
+            self.chart_page.receive_data(data_type, obj_id)
+
+    def dispatch_send_to_process(self, data_type: str, obj_id: str) -> None:
+        """发送数据到处理页。"""
+        self.switch_to(self.process_page)
+        if hasattr(self.process_page, 'receive_data'):
+            self.process_page.receive_data(data_type, obj_id)
+
     def _dispatch_activation_to_current_page(self, kind: str, node_id: str) -> bool:
         page = self.current_page()
         if kind == "data_file" and page is not self.process_page:
