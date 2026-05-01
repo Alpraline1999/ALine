@@ -41,6 +41,11 @@
 35. [35-phase-30-extension-digitize-and-ai-surface-consolidation.md](35-phase-30-extension-digitize-and-ai-surface-consolidation.md)
 36. [36-phase-31-quality-gate-closure-and-extension-coverage.md](36-phase-31-quality-gate-closure-and-extension-coverage.md)
 37. [37-phase-32-remaining-monolith-and-service-decomposition.md](37-phase-32-remaining-monolith-and-service-decomposition.md)
+38. [38-phase-33-data-workspace-and-tree-surface-decomposition.md](38-phase-33-data-workspace-and-tree-surface-decomposition.md)
+39. [39-phase-34-project-manager-facade-and-private-api-cleanup.md](39-phase-34-project-manager-facade-and-private-api-cleanup.md)
+40. [40-phase-35-ai-command-surface-consolidation.md](40-phase-35-ai-command-surface-consolidation.md)
+41. [41-phase-36-workbench-page-shell-completion.md](41-phase-36-workbench-page-shell-completion.md)
+42. [42-phase-37-closure-gates-before-feature-optimization.md](42-phase-37-closure-gates-before-feature-optimization.md)
 
 ## 文档职责
 
@@ -125,6 +130,21 @@
 - `37-phase-32-remaining-monolith-and-service-decomposition.md`
   - 定义剩余 monolith 与服务编排中心的第二轮拆分阶段。
   - 该阶段负责继续拆 `ProjectManager`、`ai.command_layer`、`DataPage` 和 `ChartPage`。
+- `38-phase-33-data-workspace-and-tree-surface-decomposition.md`
+  - 定义数据工作台、项目树和主窗口树路由的第三轮深拆阶段。
+  - 该阶段负责继续收口 `DataPage`、`ProjectTreeWidget` 和 `MainWindow` 的 surface 边界。
+- `39-phase-34-project-manager-facade-and-private-api-cleanup.md`
+  - 定义 `ProjectManager` 第二轮 façade 收口与私有 API 清理阶段。
+  - 该阶段负责消除页面/对话框对 `project_manager._*` 的跨模块依赖，并继续缩减核心编排中心。
+- `40-phase-35-ai-command-surface-consolidation.md`
+  - 定义 AI 命令注册、运行时分发和动态工具目录的一体化收口阶段。
+  - 该阶段负责消除 `command_layer` / `command_registry` 双源定义，并明确 dispatcher / provider / executor 边界。
+- `41-phase-36-workbench-page-shell-completion.md`
+  - 定义剩余工作台页面、共享控件和对话框的收尾深拆阶段。
+  - 该阶段负责处理 `DigitizePage`、`AnalysisPage`、`ProcessPage`、`SettingsPage`、`extension_options_form`、`import/export flow` 等高复杂度 UI surface。
+- `42-phase-37-closure-gates-before-feature-optimization.md`
+  - 定义进入功能优化阶段前的结构闭环和质量门槛固化阶段。
+  - 该阶段负责沉淀大文件预算、结构检查清单、超大测试文件拆分和 UI 一致性收尾规则。
 
 ## 阶段进入规则
 
@@ -202,6 +222,22 @@
 - 后置到 `Phase 17` 的长流程业务编排收口：
   - `analysis_engine` / `import_dialog` / `export_flow` / `data_engine` 长分支与长函数重构
   - 结果模型、导入解析、导出计划与扩展入口边界统一
+- 后置到 `Phase 33` 的数据工作台与项目树深拆：
+  - `DataPage` / `ProjectTreeWidget` / `MainWindow` 树路由 surface 继续收口
+  - source browser / pending import / preview / tree menu / drag-drop 细分边界
+- 后置到 `Phase 34` 的 `ProjectManager` façade 收口：
+  - 私有 helper 泄漏清理
+  - naming / group query / target resolution / session contract public 化
+- 后置到 `Phase 35` 的 AI 命令面收口：
+  - `command_layer` / `command_registry` 去重
+  - dynamic tool provider / executor 边界明确
+- 后置到 `Phase 36` 的剩余页面与共享 UI surface 收尾：
+  - `DigitizePage` / `AnalysisPage` / `ProcessPage` / `SettingsPage`
+  - `extension_options_form` / `import_dialog` / `export_flow` / `image_viewer`
+- 后置到 `Phase 37` 的功能优化前闭环：
+  - 结构检查清单与大文件预算
+  - 超大测试文件拆分
+  - UI 一致性和主题联动收尾
 
 ## 使用方式
 
