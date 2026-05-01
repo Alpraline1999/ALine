@@ -4,9 +4,21 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+
+class PatchAuthority(Enum):
+    """扩展 patch 的决策等级。
+
+    ADVISORY:      建议值。不覆盖用户手动修改的同字段。
+    AUTHORITATIVE: 强制值。可覆盖用户手动修改，需 UI 中提示。
+    """
+    ADVISORY = "advisory"
+    AUTHORITATIVE = "authoritative"
 
 __all__ = [
+    "PatchAuthority",
     "merge_nested_dict",
     "normalize_plot_extension_phases",
     "PlotExtensionContext",

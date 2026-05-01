@@ -1754,6 +1754,19 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 entries.append(entry)
         return entries
 
+    @staticmethod
+    def _patch_can_override(layer: Dict[str, Any], field_sequence: int) -> bool:
+        """判断扩展 layer 是否有权覆盖指定字段。
+
+        - advisory（默认）：仅当扩展 sequence 大于 manual version 时覆盖
+        - authoritative：总是覆盖
+        """
+        authority = str(layer.get("authority") or "advisory")
+        if authority == "authoritative":
+            return True
+        sequence = int(layer.get("sequence") or 0)
+        return sequence > field_sequence
+
     def _effective_plot_figure_state_payload(
         self,
         base_payload: Dict[str, Any],
@@ -1761,10 +1774,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     ) -> Dict[str, Any]:
         merged = dict(base_payload)
         for layer in extension_layers:
-            sequence = int(layer.get("sequence") or 0)
             for key, value in dict(layer.get("figure_state") or {}).items():
                 clean_key = str(key)
-                if sequence > self._figure_state_change_versions.get(clean_key, 0):
+                if self._patch_can_override(layer, self._figure_state_change_versions.get(clean_key, 0)):
                     merged[clean_key] = copy.deepcopy(value)
         return merged
 
@@ -1775,10 +1787,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     ) -> Dict[str, Any]:
         merged = copy.deepcopy(base_extras)
         for layer in extension_layers:
-            sequence = int(layer.get("sequence") or 0)
             flattened = _flatten_nested_mapping(dict(layer.get("plot_style_extras") or {}))
             for path, value in flattened.items():
-                if sequence > self._manual_plot_style_version(path):
+                if self._patch_can_override(layer, self._manual_plot_style_version(path)):
                     _set_nested_mapping_value(merged, path, value)
         return merged
 
@@ -1789,7 +1800,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     ) -> Dict[str, Dict[str, Any]]:
         merged = {identity: copy.deepcopy(payload) for identity, payload in base_payloads.items()}
         for layer in extension_layers:
-            sequence = int(layer.get("sequence") or 0)
             for curve_identity, patch in dict(layer.get("curve_styles") or {}).items():
                 clean_identity = str(curve_identity or "").strip()
                 if not clean_identity:
@@ -1798,7 +1808,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 target_versions = self._curve_style_change_versions.get(clean_identity, {})
                 for key, value in dict(patch or {}).items():
                     clean_key = str(key)
-                    if sequence > target_versions.get(clean_key, 0):
+                    if self._patch_can_override(layer, target_versions.get(clean_key, 0)):
                         target_payload[clean_key] = copy.deepcopy(value)
         return merged
 
