@@ -878,7 +878,7 @@ class TestNavigationStack(unittest.TestCase):
 
         self.widget._update_wrapped_item_size_hint_for_item(root)
 
-        self.assertEqual(type(self.widget._tree.itemDelegate()).__name__, "_ProjectTreeWrapAnywhereDelegate")
+        self.assertEqual(type(self.widget._tree.itemDelegate()).__name__, "ProjectTreeWrapAnywhereDelegate")
         self.assertGreater(root.sizeHint(0).height(), self.widget._tree.fontMetrics().lineSpacing() + 10)
 
     def test_wrapped_delegate_preserves_selected_text_render_in_dark_theme(self):
