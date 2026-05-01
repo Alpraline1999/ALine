@@ -10,41 +10,13 @@ from qfluentwidgets import BodyLabel, CaptionLabel, CheckBox, ComboBox, LineEdit
 
 from core.project_manager import project_manager
 from ui.widgets.focus_commit import install_click_away_focus_commit
-
-
-@dataclass(frozen=True)
-class DataExportPlan:
-    export_name: str
-    target_data_file_id: Optional[str] = None
-    new_parent_id: Optional[str] = None
-    new_data_file_name: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class DataCreateTargetOption:
-    label: str
-    parent_id: Optional[str] = None
-    ensure_parent_id: Optional[Callable[[], Optional[str]]] = None
-
-
-@dataclass(frozen=True)
-class BatchDataExportPlan:
-    export_names: List[str]
-    target_data_file_id: Optional[str] = None
-    new_parent_id: Optional[str] = None
-    new_data_file_name: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class PictureExportPlan:
-    export_name: str
-    target_folder_id: Optional[str]
-
-
-@dataclass(frozen=True)
-class AnalysisResultSavePlan:
-    result_name: str
-    target_parent_id: Optional[str]
+from .export_models import (
+    DataExportPlan,
+    DataCreateTargetOption,
+    BatchDataExportPlan,
+    PictureExportPlan,
+    AnalysisResultSavePlan,
+)
 
 
 @dataclass(frozen=True)
