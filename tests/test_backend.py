@@ -2671,17 +2671,22 @@ class TestCommandLayer(unittest.TestCase):
         # Patch global project_manager reference in both modules
         import core.project_manager as pm_module
         import ai.command_layer as cl_module
+        import ai.command_registry as cr_module
         self._orig_pm = pm_module.project_manager
         self._orig_cl_pm = cl_module.project_manager
+        self._orig_cr_pm = cr_module.project_manager
         pm_module.project_manager = self.pm
         cl_module.project_manager = self.pm
+        cr_module.project_manager = self.pm
         self._cl = cl_module
 
     def tearDown(self):
         import core.project_manager as pm_module
         import ai.command_layer as cl_module
+        import ai.command_registry as cr_module
         pm_module.project_manager = self._orig_pm
         cl_module.project_manager = self._orig_cl_pm
+        cr_module.project_manager = self._orig_cr_pm
         self._restore_assets()
 
     def test_get_project_summary(self):
@@ -2696,6 +2701,27 @@ class TestCommandLayer(unittest.TestCase):
         self.assertTrue(r.success)
         self.assertEqual(len(r.data), 1)
         self.assertEqual(r.data[0]["name"], "data.csv")
+
+    def test_series_lookup_prefers_exact_then_normalized_and_reports_ambiguity(self):
+        from ai.command_series_lookup import resolve_series
+        from models.schemas import DataFile, DataSeries
+
+        exact, error = resolve_series(self.pm.current_project, "col1")
+        self.assertIsNotNone(exact)
+        self.assertIsNone(error)
+
+        normalized, error = resolve_series(self.pm.current_project, " col1 ")
+        self.assertIs(normalized, exact)
+        self.assertIsNone(error)
+
+        self.pm.current_project.data_files[0].series[0].name = "Alpha Beta"
+        other = DataSeries(name="AlphaBeta", x=[1.0, 2.0], y=[3.0, 4.0])
+        self.pm.add_data_file(DataFile(name="alpha.csv", series=[other]))
+        ambiguous, error = resolve_series(self.pm.current_project, "alpha beta")
+
+        self.assertIsNone(ambiguous)
+        self.assertIsNotNone(error)
+        self.assertIn("不唯一", error)
 
     def test_create_folder(self):
         from ai.command_layer import cmd_create_folder
