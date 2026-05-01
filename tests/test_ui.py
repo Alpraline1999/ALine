@@ -1741,6 +1741,14 @@ class TestSettingsPage(unittest.TestCase):
         ):
             self.assertEqual(_page_label_text_style(description_text), placeholder_text_style_sheet(font_size=11))
 
+    def test_extension_category_height_refresh_is_lifecycle_safe(self):
+        self.page._schedule_extension_category_tab_heights_refresh()
+        self.page._extension_tabs.deleteLater()
+        self.page._external_extension_tabs.deleteLater()
+        QApplication.processEvents()
+
+        self.page._refresh_extension_category_tab_heights()
+
     def test_extension_section_titles_refresh_with_theme(self):
         from ui.theme import body_text_style_sheet, card_title_style_sheet, placeholder_text_style_sheet
         from PySide6.QtWidgets import QLabel

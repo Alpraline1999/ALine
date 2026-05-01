@@ -1053,10 +1053,6 @@ class SettingsPage(QWidget):
         for action in self._theme_style_actions:
             action()
 
-        if self._lang_title is not None:
-            self._lang_title.setStyleSheet(card_title_style_sheet(font_size=18))
-        if self._lang_placeholder is not None:
-            self._lang_placeholder.setStyleSheet(placeholder_text_style_sheet(font_size=12, italic=True))
         self._apply_shortcut_filter_style()
         # QKeySequenceEdit 样式
         for edit in self._shortcut_edits.values():
