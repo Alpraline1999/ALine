@@ -1,6 +1,12 @@
-# Phase 6 Task 1: 数据导入链路优化 — 路径提示增强
+# Phase 6 Task 1: DataSeries 来源追踪字段
 
-Phase 6 要求优化 DataPage 导入流程。由于 DataPage 是遗留 monolith (4906 行)，
-当前最小安全改动仅限非侵入的 UI 提示增强。
+## 目标
 
-转入功能优化后续阶段，随 DataPage 拆分推进。
+添加 DataSeries 来源追踪能力，记录每条数据列的来源文件和导入参数。
+
+## 实施
+
+1. 在 `models/schemas.py` 的 `DataSeries` 添加:
+   - `source_file_path: str = ""` — 来源文件路径
+   - `import_params: dict = field(default_factory=dict)` — 导入参数快照
+2. DataPage/import_dialog 在创建 DataSeries 时填入来源信息

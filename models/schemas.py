@@ -102,6 +102,8 @@ class DataSeries(BaseModel):
     source: str = "manual"
     # "manual" | "imported_file" | "computed" | "pyline_curve_copy"
     source_curve_id: Optional[str] = None  # 来源于 PyLine Curve 时记录原始 id
+    source_file_path: str = ""  # 来源文件路径（用于追溯）
+    import_params: dict = {}     # 导入参数快照（如解析方式、跳过行数等）
 
 
 class Dataset(BaseModel):

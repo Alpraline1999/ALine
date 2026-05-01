@@ -523,6 +523,7 @@ class ImportDialog(QDialog):
                 x_label=variable_names[x_idx] if x_idx < len(variable_names) else "x",
                 y_label=col_name,
                 source="imported_file",
+                source_file_path=str(self._file_path or ""),
             ))
 
         return series_list
