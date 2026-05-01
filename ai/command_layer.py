@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from ai import command_registry
+from ai.command_series_lookup import resolve_series
 from core.global_assets import global_assets
 from ai.skill_runner import skill_runner
 from core.ai_client import AIClient
@@ -35,66 +36,6 @@ class CommandDef:
     handler: Callable[[dict], CommandResult]
     desc: str
     params_schema: Dict[str, Any] = field(default_factory=dict)
-
-
-def _normalize_series_key(value: str) -> str:
-    return "".join(ch for ch in value.strip().lower() if not ch.isspace())
-
-
-def _iter_project_series(project):
-    seen_ids = set()
-    for dataset in getattr(project, "datasets", []):
-        for series in dataset.series:
-            if series.id in seen_ids:
-                continue
-            seen_ids.add(series.id)
-            yield series, dataset.name
-    for data_file in getattr(project, "data_files", []):
-        for series in data_file.series:
-            if series.id in seen_ids:
-                continue
-            seen_ids.add(series.id)
-            yield series, data_file.name
-
-
-def _resolve_series(project, series_key: str):
-    clean_key = str(series_key or "").strip()
-    if not clean_key:
-        return None, "缺少系列标识"
-
-    series = project.find_series(clean_key)
-    if series is not None:
-        return series, None
-
-    exact_matches = []
-    normalized_matches = []
-    normalized_key = _normalize_series_key(clean_key)
-    for item, owner_name in _iter_project_series(project):
-        scoped_name = f"{owner_name} / {item.name}" if owner_name else item.name
-        if item.name == clean_key or scoped_name == clean_key:
-            exact_matches.append(item)
-            continue
-        item_name_key = _normalize_series_key(item.name)
-        scoped_name_key = _normalize_series_key(scoped_name)
-        if normalized_key in {item_name_key, scoped_name_key}:
-            normalized_matches.append(item)
-
-    matches = exact_matches or normalized_matches
-    unique_matches = []
-    seen_ids = set()
-    for item in matches:
-        if item.id in seen_ids:
-            continue
-        seen_ids.add(item.id)
-        unique_matches.append(item)
-
-    if len(unique_matches) == 1:
-        return unique_matches[0], None
-    if len(unique_matches) > 1:
-        names = "、".join(item.name for item in unique_matches[:5])
-        return None, f"系列标识不唯一: {clean_key}，匹配到 {names}"
-    return None, f"找不到系列: {clean_key}"
-
 
 # ─────────────────────────────────────────────────────────────
 # Command handlers
@@ -146,7 +87,7 @@ def cmd_apply_pipeline(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series, error = _resolve_series(p, series_id)
+    series, error = resolve_series(p, series_id)
     if series is None:
         return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     from processing.data_engine import apply_pipeline
@@ -170,7 +111,7 @@ def cmd_fit_curve(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series, error = _resolve_series(p, series_id)
+    series, error = resolve_series(p, series_id)
     if series is None:
         return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     try:
@@ -196,7 +137,7 @@ def cmd_detect_peaks(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series, error = _resolve_series(p, series_id)
+    series, error = resolve_series(p, series_id)
     if series is None:
         return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     try:
@@ -219,7 +160,7 @@ def cmd_compute_statistics(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series, error = _resolve_series(p, series_id)
+    series, error = resolve_series(p, series_id)
     if series is None:
         return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     from core.analysis_engine import compute_statistics
@@ -234,8 +175,8 @@ def cmd_compute_correlation(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    s1, error1 = _resolve_series(p, series_id1)
-    s2, error2 = _resolve_series(p, series_id2)
+    s1, error1 = resolve_series(p, series_id1)
+    s2, error2 = resolve_series(p, series_id2)
     if s1 is None or s2 is None:
         return CommandResult(success=False, error=error1 or error2 or "找不到指定系列")
     try:
@@ -294,7 +235,7 @@ def cmd_export_series(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series, error = _resolve_series(p, series_id)
+    series, error = resolve_series(p, series_id)
     if series is None:
         return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     try:
@@ -317,7 +258,7 @@ def cmd_apply_pipeline_persist(params: dict) -> CommandResult:
     p = project_manager.current_project
     if p is None:
         return CommandResult(success=False, error="没有打开的项目")
-    series, error = _resolve_series(p, series_id)
+    series, error = resolve_series(p, series_id)
     if series is None:
         return CommandResult(success=False, error=error or f"找不到系列: {series_id}")
     ops = project_manager.load_pipeline(pipeline_id)
