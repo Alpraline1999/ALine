@@ -2150,7 +2150,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         return project_manager.get_analysis_result_target_folder_id(None)
 
     def _ensure_analysis_result_folder(self) -> Optional[str]:
-        dataset_root = project_manager._find_folder_by_group_type("datasets")
+        dataset_root = project_manager.find_folder_by_group_type("datasets")
         if dataset_root is None:
             return None
         for node in project_manager.get_children(dataset_root.id):
@@ -2226,7 +2226,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _preferred_analysis_export_target_node_id(self) -> Optional[str]:
         return next(
             (item["node_id"] for item in self._selected_inputs if item.get("kind") == "data_file"),
-            getattr(project_manager._find_folder_by_group_type("datasets"), "id", None),
+            getattr(project_manager.find_folder_by_group_type("datasets"), "id", None),
         )
 
     def _export_current_series(self, series, *, title: str) -> bool:

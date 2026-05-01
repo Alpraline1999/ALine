@@ -943,7 +943,7 @@ def _node_belongs_to_group(node_id: str, group_type: str) -> bool:
     current = project.tree.get_node(node_id)
     while current is not None:
         if current.kind == "folder":
-            canonical = project_manager._canonical_group_type(getattr(current, "group_type", None))
+            canonical = project_manager.canonical_group_type(getattr(current, "group_type", None))
             if canonical is not None:
                 return canonical == group_type
         parent_id = getattr(current, "parent_id", None)

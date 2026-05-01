@@ -1937,7 +1937,7 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         self._last_export_suggestion = suggestion
 
     def _ensure_digitize_result_folder(self) -> str | None:
-        dataset_root = project_manager._find_folder_by_group_type("datasets")
+        dataset_root = project_manager.find_folder_by_group_type("datasets")
         if dataset_root is None:
             return None
         for node in project_manager.get_children(dataset_root.id):
@@ -1953,7 +1953,7 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
             return
 
         default_name = self._sanitize_export_name(self._export_name_edit.text().strip() or self._suggest_export_name())
-        preferred_target_node_id = self._export_target_id or getattr(project_manager._find_folder_by_group_type("datasets"), "id", None)
+        preferred_target_node_id = self._export_target_id or getattr(project_manager.find_folder_by_group_type("datasets"), "id", None)
         export_plan = choose_data_export_plan(
             self,
             title="导出为数据列",
@@ -2374,7 +2374,7 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
             if new_id:
                 project_manager.set_current_project(new_id)
             else:
-                project_manager._current_project_id = None
+                project_manager.clear_current_project()
         if self._current_image_id is not None:
             for img in project.images:
                 if img.id == self._current_image_id:

@@ -1496,7 +1496,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         )
         if export_plan is None:
             return
-        normalized_names = [project_manager._normalize_name_key(name) for name in export_plan.export_names]
+        normalized_names = [project_manager.normalize_name_key(name) for name in export_plan.export_names]
         if any(not name for name in normalized_names) or len(set(normalized_names)) != len(normalized_names):
             InfoBar.error("批量导出失败", "批量导出名称不能为空且不能重复", parent=self, position=InfoBarPosition.TOP)
             return
@@ -1519,8 +1519,8 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             if target_file is None:
                 InfoBar.error("批量导出失败", "未找到目标数据文件", parent=self, position=InfoBarPosition.TOP)
                 return
-            existing_names = {project_manager._normalize_name_key(series.name) for series in target_file.series}
-            conflict_names = [series.name for series in named_series if project_manager._normalize_name_key(series.name) in existing_names]
+            existing_names = {project_manager.normalize_name_key(series.name) for series in target_file.series}
+            conflict_names = [series.name for series in named_series if project_manager.normalize_name_key(series.name) in existing_names]
             if conflict_names:
                 InfoBar.error(
                     "批量导出失败",

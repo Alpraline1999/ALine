@@ -149,6 +149,11 @@ class ProjectManager:
     def _normalize_name_key(name: str) -> str:
         return _normalize_name_key_rule(name)
 
+    @staticmethod
+    def normalize_name_key(name: str) -> str:
+        """Public facade: 标准化名称用于比较（去除空格、统一大小写）。"""
+        return _normalize_name_key_rule(name)
+
     def _ensure_non_empty_name(self, name: str, *, label: str = "名称") -> bool:
         ok, error = _ensure_non_empty_name_rule(name, label=label)
         if ok:
@@ -352,6 +357,31 @@ class ProjectManager:
     def set_current_project(self, project_id: str) -> None:
         if self.get_project(project_id):
             self._current_project_id = project_id
+
+    def clear_current_project(self) -> None:
+        """Public facade: 清除当前项目选择。"""
+        self._current_project_id = None
+
+    def find_folder_by_group_type(self, group_type: str, parent_id: Optional[str] = None):
+        """Public facade: 按 group_type 查找文件夹节点。"""
+        return self._find_folder_by_group_type(group_type, parent_id)
+
+    @staticmethod
+    def canonical_group_type(group_type: Optional[str]) -> Optional[str]:
+        """Public facade: 标准化 group_type。"""
+        if group_type is None:
+            return None
+        canonical_map = {
+            "dataset_set": "datasets",
+            "image_set": "images",
+            "picture_set": "pictures",
+            "tool_set": "tools",
+            "template_group": "figure_template_group",
+            "figure_template_group": "figure_template_group",
+            "report_template_group": "report_template_group",
+            "ai_group": "ai_group",
+        }
+        return canonical_map.get(group_type, group_type)
 
     # ─────────────────────────────────────────────
     # 创建 / 打开 / 保存 / 关闭
