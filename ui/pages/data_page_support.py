@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Optional
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QWidget
+from qfluentwidgets import CaptionLabel, MessageBoxBase, PlainTextEdit, SubtitleLabel
 
 from ui.matplotlib_fonts import bootstrap_matplotlib_qtagg
 
@@ -37,6 +42,48 @@ _FOLDER_GROUP_LABELS = {
     "skill_group": "Skills",
     "agent_group": "Agents",
 }
+
+
+class _TextActionLabel(CaptionLabel):
+    """可点击的文本标签。"""
+    clicked = Signal()
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setText(text)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self.isEnabled() and event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if self.isEnabled() and event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _NodeDetailDialog(MessageBoxBase):
+    """节点详情对话框。"""
+    def __init__(self, title: str, detail_text: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._title_label = SubtitleLabel(title, self.widget)
+        self.viewLayout.addWidget(self._title_label)
+
+        self._detail_edit = PlainTextEdit(self.widget)
+        self._detail_edit.setReadOnly(True)
+        self._detail_edit.setPlainText(detail_text)
+        self._detail_edit.setMinimumSize(620, 420)
+        self.viewLayout.addWidget(self._detail_edit)
+
+        self.widget.setMinimumWidth(660)
+        self.yesButton.setText("关闭")
+        self.cancelButton.hide()
 
 
 @dataclass

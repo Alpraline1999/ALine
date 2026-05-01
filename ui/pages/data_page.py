@@ -77,10 +77,12 @@ from .data_page_support import (
     _EXTENSION_FIELD_HELP_EXPANDED_HEIGHT,
     _FOLDER_GROUP_LABELS,
     _MATPLOTLIB_ERROR,
+    _NodeDetailDialog,
     _NodePreviewState,
     _PendingImportQueueState,
     _SOURCE_IMAGE_SUFFIXES,
     _TABULAR_PREVIEW_SUFFIXES,
+    _TextActionLabel,
     _TEXT_PREVIEW_SUFFIXES,
     _TYPE_ANALYSIS,
     _TYPE_ANALYSIS_ROOT,
@@ -91,46 +93,6 @@ from .data_page_support import (
     _TYPE_SERIES,
 )
 from .data_page_state_bridge import DataPageStateBridge
-
-
-class _TextActionLabel(CaptionLabel):
-    clicked = Signal()
-
-    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.setText(text)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-    def mouseReleaseEvent(self, event) -> None:
-        if self.isEnabled() and event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        if self.isEnabled() and event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
-            self.clicked.emit()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-
-class _NodeDetailDialog(MessageBoxBase):
-    def __init__(self, title: str, detail_text: str, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self._title_label = SubtitleLabel(title, self.widget)
-        self.viewLayout.addWidget(self._title_label)
-
-        self._detail_edit = PlainTextEdit(self.widget)
-        self._detail_edit.setReadOnly(True)
-        self._detail_edit.setPlainText(detail_text)
-        self._detail_edit.setMinimumSize(620, 420)
-        self.viewLayout.addWidget(self._detail_edit)
-
-        self.widget.setMinimumWidth(660)
-        self.yesButton.setText("关闭")
-        self.cancelButton.hide()
 
 
 class DataPage(QWidget):
