@@ -247,17 +247,19 @@
 
 ## 功能优化阶段入口条件
 
-Phase 33–37 全部完成后，已满足以下条件，可以进入功能优化阶段：
+Phase 33–37 完成后，以下条件已完成验收，可以进入功能优化阶段：
 
-1. **结构检查清单已建立**：`scripts/structure_check.py` 提供可重复执行的结构检查
+### 已验证通过的条件
+
+1. **结构检查清单已建立**：`scripts/structure_check.py` 提供可重复执行的结构检查（大文件预算、私有 API、命令面重复、超大测试文件）
 2. **私有 API 无泄漏**：`ui/` 和 `app/` 目录无 `project_manager._*` 跨模块访问
-3. **命令面无重复**：`command_layer.py` 已删除独立 `cmd_*` 定义，全部从 `command_registry` 导入
-4. **大文件有归属**：data_page、chart_page、digitize_page、analysis_page 均已建立 support 模块拆分
-5. **ProjectTreeWidget 已分层**：view / menu / drag-drop 职责清晰
-6. **MainWindow 路由已收口**：树节点路由全部委托给 `TreeCommandRoute`
-7. **项目树菜单已独立**：菜单构建逻辑移入 `project_tree_menu_commands.py`
+3. **命令面唯一源**：`command_layer.py` (205 行) 已从 `command_registry` 导入 `CommandResult`、`CommandDef`、`COMMANDS`，无独立命令定义
+4. **ProjectTreeWidget 已分层**：view / menu / drag-drop / delegate 四个职责清晰，对应独立的 support 模块
+5. **MainWindow 路由已收口**：树节点路由全部委托给 `TreeCommandRoute`
+6. **项目树菜单已独立**：菜单构建逻辑移入 `project_tree_menu_commands.py`
+7. **导出模型已共享**：`DataExportPlan` 等模型类提取到 `export_models.py`，被多个页面/对话框共享
 
-### 仍建议在功能优化阶段优先处理的事项
+### 尚未但建议在功能优化阶段优先处理的事项
 
-- data_page.py (4906 行)、digitize_page.py (3598 行) 等超大文件继续拆 support 模块
-- tests/test_ui.py (11050 行) 按页面/模块拆分为窄范围目标性测试
+- `data_page.py` (4906 行)、`chart_page.py` (4244 行)、`digitize_page.py` (3598 行) 等超过 2000 行的核心文件继续拆分为 support 模块
+- `tests/test_ui.py` (11050 行) 和 `tests/test_backend.py` (3759 行) 按页面/模块拆分为窄范围目标性测试

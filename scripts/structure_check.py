@@ -77,7 +77,7 @@ def check_private_api_leak():
 
 
 def check_command_duplication():
-    """检查 command_layer 与 command_registry 的重复。"""
+    """检查 command_layer 与 command_registry 的重复（def cmd_* + COMMANDS schema + class）。"""
     print("=" * 60)
     print("[3/4] 重复 Command Surface 检查")
     print("=" * 60)
@@ -87,19 +87,72 @@ def check_command_duplication():
         print("  - ai/command_layer.py 或 ai/command_registry.py 不存在，跳过")
         print()
         return
+
     layer_text = layer_path.read_text()
+    reg_text = reg_path.read_text()
+
+    # 检查 1: def cmd_* 函数定义
     layer_defs = {line for line in layer_text.splitlines() if line.startswith("def cmd_")}
-    reg_defs = {line for line in reg_path.read_text().splitlines() if line.startswith("def cmd_")}
+    reg_defs = {line for line in reg_text.splitlines() if line.startswith("def cmd_")}
+
+    # 检查 2: class CommandResult / CommandDef（非 Dispatcher）
+    layer_classes = {line.strip() for line in layer_text.splitlines()
+                     if line.strip().startswith("class ") and line.strip() in ("class CommandResult:", "class CommandDef:")}
+    reg_classes = {line.strip() for line in reg_text.splitlines()
+                   if line.strip().startswith("class ") and line.strip() in ("class CommandResult:", "class CommandDef:")}
+
+    # 检查 3: COMMANDS 字典键
+    layer_keys = _extract_commands_keys(layer_text)
+    reg_keys = _extract_commands_keys(reg_text)
+
+    errors = []
+
+    # 报告 def cmd_*
     in_layer_only = layer_defs - reg_defs
     if in_layer_only:
-        print(f"  !!  command_layer.py 中有 {len(in_layer_only)} 个独有定义:")
-        for d in sorted(in_layer_only):
-            print(f"    - {d}")
-    elif not layer_defs:
-        print("  OK command_layer.py 已无独立 cmd_* 定义（全部从 registry 导入）")
+        errors.append(f"command_layer.py 有 {len(in_layer_only)} 个独有 cmd_* 定义")
+
+    # 报告 class 定义
+    layer_only_classes = layer_classes - reg_classes
+    if layer_only_classes:
+        errors.append(f"command_layer.py 有独立 class 定义: {', '.join(sorted(layer_only_classes))}")
+
+    # 报告 COMMANDS schema
+    if layer_keys and reg_keys:
+        only_in_layer = layer_keys - reg_keys
+        only_in_reg = reg_keys - layer_keys
+        if only_in_layer:
+            errors.append(f"command_layer.py 的 COMMANDS 有 {len(only_in_layer)} 个独有键: {', '.join(sorted(only_in_layer)[:5])}")
+        if only_in_reg:
+            errors.append(f"command_registry.py 的 COMMANDS 有 {len(only_in_reg)} 个独有键: {', '.join(sorted(only_in_reg)[:5])}")
+
+    if errors:
+        print(f"  !!  发现 {len(errors)} 项重复问题:")
+        for err in errors:
+            print(f"    - {err}")
+    elif not layer_defs and not layer_classes and not layer_keys:
+        print("  OK command_layer.py 已无独立命令定义（全部从 registry 导入）")
     else:
         print("  OK command_layer.py 与 command_registry.py 定义一致")
-    print()
+
+
+def _extract_commands_keys(text: str) -> set[str]:
+    """从 COMMANDS 字典文本中提取键名。"""
+    import re
+    keys: set[str] = set()
+    in_commands = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "COMMANDS: Dict[str, CommandDef] = {" or stripped == "COMMANDS = {" or stripped == "COMMANDS: Dict[str, \"CommandDef\"] = {":
+            in_commands = True
+            continue
+        if in_commands:
+            if stripped == "}":
+                break
+            m = re.match(r'\s*"([^"]+)":\s*CommandDef\(', stripped)
+            if m:
+                keys.add(m.group(1))
+    return keys
 
 
 def check_test_file_size():
