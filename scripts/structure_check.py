@@ -156,7 +156,7 @@ def _extract_commands_keys(text: str) -> set[str]:
 
 
 def check_test_file_size():
-    """检查超大测试文件。"""
+    """检查超大测试文件（包括子目录）。"""
     print("=" * 60)
     print("[4/4] 超大测试文件检查")
     print("=" * 60)
@@ -165,10 +165,13 @@ def check_test_file_size():
         print("  - tests/ 目录不存在，跳过")
         print()
         return
-    for f in sorted(tests_dir.glob("test_*.py")):
-        lines = len(f.read_text().splitlines())
+    checked = 0
+    for py_file in sorted(tests_dir.rglob("test_*.py")):
+        lines = len(py_file.read_text().splitlines())
+        checked += 1
         if lines > 3000:
-            print(f"  !!  {f.name} ({lines} 行) 超过 3000 行预算")
+            print(f"  !!  {py_file.relative_to(REPO_ROOT)} ({lines} 行) 超过 3000 行预算")
+    print(f"  - 共检查 {checked} 个测试文件")
     print()
 
 
