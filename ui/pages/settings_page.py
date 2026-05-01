@@ -1,6 +1,7 @@
 from typing import Literal, cast
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
+                               QLabel,
                                QFrame, QFormLayout, QKeySequenceEdit)
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
@@ -902,6 +903,21 @@ class SettingsPage(QWidget):
 
     def _update_colors(self):
         """更新界面颜色以适应新主题"""
+        def _style_label_by_text(widget, text: str, style: str) -> None:
+            if widget is None:
+                return
+            for label in widget.findChildren(QLabel):
+                if label.text() == text:
+                    label.setStyleSheet(style)
+
+        def _style_first_label_by_text(widget, text: str, style: str) -> None:
+            if widget is None:
+                return
+            for label in widget.findChildren(QLabel):
+                if label.text() == text:
+                    label.setStyleSheet(style)
+                    return
+
         if self._appearance_title is not None:
             self._appearance_title.setStyleSheet(card_title_style_sheet(font_size=18))
         if self._theme_label is not None:
@@ -916,6 +932,27 @@ class SettingsPage(QWidget):
             self._extension_title.setStyleSheet(card_title_style_sheet(font_size=18))
         if self._extension_hint is not None:
             self._extension_hint.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        if self._builtin_extension_card is not None:
+            self._builtin_extension_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
+        if self._builtin_extensions_enabled_checkbox is not None:
+            self._builtin_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
+            self._builtin_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        _style_label_by_text(self._builtin_extension_management_card, "扩展管理", card_title_style_sheet(font_size=18))
+        _style_label_by_text(self._builtin_extension_management_card, "按类别管理内置扩展的启用状态。", placeholder_text_style_sheet(font_size=11))
+        if self._external_extension_card is not None:
+            self._external_extension_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
+        if self._external_extensions_enabled_checkbox is not None:
+            self._external_extensions_enabled_checkbox.titleLabel.setStyleSheet(body_text_style_sheet())
+            self._external_extensions_enabled_checkbox.contentLabel.setStyleSheet(placeholder_text_style_sheet(font_size=11))
+        if self._external_extensions_dirs_card is not None:
+            _style_first_label_by_text(self._external_extensions_dirs_card, "外部扩展目录", body_text_style_sheet())
+            _style_label_by_text(self._external_extensions_dirs_card, "可添加多个文件夹；保存后会统一扫描并重载。", placeholder_text_style_sheet(font_size=11))
+        _style_label_by_text(self._external_extension_management_card, "扩展管理", card_title_style_sheet(font_size=18))
+        _style_label_by_text(self._external_extension_management_card, "按类别管理外部扩展的启用状态。", placeholder_text_style_sheet(font_size=11))
+        if self._extension_other_settings_card is not None:
+            self._extension_other_settings_card.titleLabel.setStyleSheet(card_title_style_sheet(font_size=18))
+        if self._external_extension_number_decimals_card is not None:
+            self._external_extension_number_decimals_card.titleLabel.setStyleSheet(body_text_style_sheet())
         if self._external_extensions_dir_label is not None:
             self._external_extensions_dir_label.setStyleSheet(body_text_style_sheet())
         for hint in self._extension_empty_hints.values():

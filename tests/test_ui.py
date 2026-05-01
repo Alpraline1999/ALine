@@ -827,6 +827,32 @@ class TestNavigationStack(unittest.TestCase):
         self.assertLessEqual(root.sizeHint(0).width(), max(120, self.widget._tree.viewport().width()))
         self.assertLess(root.sizeHint(0).width(), self.widget._tree.fontMetrics().horizontalAdvance(root.text(0)))
 
+    def test_wrapped_delegate_paints_long_labels_without_import_errors(self):
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        self.widget.set_name_display_mode("wrap")
+        self.p.name = "eta1_wave_data_elevation_profile_reference_baseline_measurement"
+        self.widget.resize(240, 480)
+        self.widget._tree.resize(240, 480)
+        self.widget.refresh()
+
+        root = self.widget._tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+
+        image = QImage(320, 100, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
+        painter = QPainter(image)
+        try:
+            option = QStyleOptionViewItem()
+            option.rect = QRect(0, 0, 320, 100)
+            option.widget = self.widget._tree
+            delegate = self.widget._tree.itemDelegate()
+            delegate.paint(painter, option, self.widget._tree.indexFromItem(root, 0))
+        finally:
+            painter.end()
+
     def test_wrapped_delegate_breaks_long_single_token_labels(self):
         self.widget.set_name_display_mode("wrap")
         self.p.name = "eta1_wave_data_elevation_profile_reference_baseline_measurement"
@@ -1679,6 +1705,29 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(self.page._appearance_title.styleSheet(), card_title_style_sheet(font_size=18))
         self.assertEqual(self.page._theme_label.styleSheet(), body_text_style_sheet())
         self.assertEqual(self.page._extension_hint.styleSheet(), placeholder_text_style_sheet(font_size=11))
+
+    def test_extension_section_titles_refresh_with_theme(self):
+        from ui.theme import body_text_style_sheet, card_title_style_sheet, placeholder_text_style_sheet
+        from PySide6.QtWidgets import QLabel
+
+        def _label_text_style(widget, text: str) -> str:
+            return next(label.styleSheet() for label in widget.findChildren(QLabel) if label.text() == text)
+
+        self.page.update_theme_colors()
+
+        self.assertEqual(self.page._builtin_extension_card.titleLabel.styleSheet(), card_title_style_sheet(font_size=18))
+        self.assertEqual(self.page._builtin_extensions_enabled_checkbox.titleLabel.styleSheet(), body_text_style_sheet())
+        self.assertEqual(self.page._builtin_extensions_enabled_checkbox.contentLabel.styleSheet(), placeholder_text_style_sheet(font_size=11))
+        self.assertEqual(self.page._external_extension_card.titleLabel.styleSheet(), card_title_style_sheet(font_size=18))
+        self.assertEqual(self.page._external_extensions_enabled_checkbox.titleLabel.styleSheet(), body_text_style_sheet())
+        self.assertEqual(self.page._external_extensions_enabled_checkbox.contentLabel.styleSheet(), placeholder_text_style_sheet(font_size=11))
+        self.assertEqual(_label_text_style(self.page._external_extensions_dirs_card, "外部扩展目录"), body_text_style_sheet())
+        self.assertEqual(_label_text_style(self.page._external_extensions_dirs_card, "可添加多个文件夹；保存后会统一扫描并重载。"), placeholder_text_style_sheet(font_size=11))
+        builtin_manage_title = next(label for label in self.page._builtin_extension_management_card.findChildren(QLabel) if label.text() == "扩展管理")
+        external_manage_title = next(label for label in self.page._external_extension_management_card.findChildren(QLabel) if label.text() == "扩展管理")
+        self.assertEqual(builtin_manage_title.styleSheet(), card_title_style_sheet(font_size=18))
+        self.assertEqual(external_manage_title.styleSheet(), card_title_style_sheet(font_size=18))
+        self.assertEqual(self.page._extension_other_settings_card.titleLabel.styleSheet(), card_title_style_sheet(font_size=18))
 
     def test_settings_page_uses_setting_card_containers(self):
         from qfluentwidgets import ExpandGroupSettingCard, FolderListSettingCard, SettingCardGroup, SwitchSettingCard
@@ -9252,6 +9301,22 @@ class TestMainWindow(unittest.TestCase):
             right_group.indexOf(self.win._tree_panel.tree_expand_toggle_btn),
             right_group.indexOf(self.win._tree_panel.tree_manage_btn),
         )
+
+    def test_theme_combo_uses_single_main_window_theme_path(self):
+        current_index = self.win.settings_page.theme_combo.currentIndex()
+        target_index = 0 if current_index != 0 else 1
+
+        with mock.patch("ui.main_window.setTheme") as main_set_theme, \
+             mock.patch("ui.pages.settings_page.setTheme") as page_set_theme, \
+             mock.patch.object(self.win, "_update_all_pages_theme") as update_all_mock:
+            self.win.settings_page.theme_combo.setCurrentIndex(target_index)
+            QApplication.processEvents()
+
+        main_set_theme.assert_called_once()
+        page_set_theme.assert_not_called()
+        update_all_mock.assert_called_once()
+        self.win.settings_page.theme_combo.setCurrentIndex(current_index)
+        QApplication.processEvents()
 
     def test_tree_panel_expand_toggle_button_switches_tooltip_after_click(self):
         self.win.resize(1320, 900)

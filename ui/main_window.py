@@ -316,6 +316,10 @@ class MainWindow(FluentWindow):
     def _setup_theme_watcher(self):
         theme_combo = self.settings_page.theme_combo
         if theme_combo is not None:
+            try:
+                theme_combo.currentIndexChanged.disconnect(self.settings_page.on_theme_changed)
+            except (TypeError, RuntimeError):
+                pass
             theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         shortcut_manager.shortcuts_changed.connect(self.apply_shortcuts)
         self.settings_page.tree_display_mode_changed.connect(self._tree_panel.tree.set_name_display_mode)

@@ -35,6 +35,7 @@
 29. [29-phase-24-multiline-processing-performance-and-numeric-primitives.md](29-phase-24-multiline-processing-performance-and-numeric-primitives.md)
 30. [30-phase-25-extension-tests-and-module-surface-normalization.md](30-phase-25-extension-tests-and-module-surface-normalization.md)
 31. [31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md](31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md)
+32. [32-phase-27-ui-theme-and-paint-regression-audit.md](32-phase-27-ui-theme-and-paint-regression-audit.md)
 
 ## 文档职责
 
@@ -101,6 +102,9 @@
 - `31-phase-26-project-tree-and-ui-interaction-surface-decomposition.md`
   - 定义项目树与页面交互面继续拆分的阶段。
   - 该阶段负责收口导入/导出 target binding、树命令绑定点和页面目标节点解析。
+- `32-phase-27-ui-theme-and-paint-regression-audit.md`
+  - 定义主题切换链路、页面局部主题刷新、自定义绘制/委托运行时安全的全面检查阶段。
+  - 该阶段负责建立 theme switch 性能样本、paint/delegate/import 安全扫描和 settings/UI 主题一致性检查矩阵。
 
 ## 阶段进入规则
 

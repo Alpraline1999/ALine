@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QRectF, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAbstractTextDocumentLayout, QDesktopServices, QFontMetrics, QPalette
+from PySide6.QtGui import QAbstractTextDocumentLayout, QDesktopServices, QFontMetrics, QPainter, QPalette, QTextDocument, QTextOption
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QFileDialog, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
 from qfluentwidgets import (
     Action, FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip,
