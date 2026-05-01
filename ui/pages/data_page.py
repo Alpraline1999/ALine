@@ -10,7 +10,7 @@ import math
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal, QUrl
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontMetrics, QIntValidator, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,

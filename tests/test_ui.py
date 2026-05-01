@@ -4422,6 +4422,19 @@ class TestDataPage(unittest.TestCase):
         self.assertIn("#1e1e1e", self.page._plot_preview_panel.styleSheet())
         self.assertIn("#1e1e1e", self.page._preview_canvas.styleSheet())
 
+    def test_hidden_update_theme_flushes_preview_on_show(self):
+        if self.page._preview_figure is None or self.page._preview_canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        with mock.patch.object(self.page, "_draw_preview") as draw_preview:
+            self.page.update_theme()
+            self.assertEqual(draw_preview.call_count, 0)
+
+            self.page.show()
+            QApplication.processEvents()
+
+        self.assertEqual(draw_preview.call_count, 1)
+
     def test_source_browser_breadcrumb_can_navigate_to_parent(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
