@@ -10,7 +10,7 @@ from qfluentwidgets import (CardWidget, ToolButton, ToggleToolButton, TogglePush
     LineEdit, SpinBox, ColorPickerButton, BodyLabel,
     PushButton as FPushButton, TableWidget, ComboBox, TreeWidget,
     Slider, TabCloseButtonDisplayMode, PrimaryPushButton,
-    MessageBox, InfoBar, RoundMenu,
+    MessageBox, InfoBar, InfoBarPosition, RoundMenu,
     ToolTipFilter, ToolTipPosition, TeachingTipTailPosition, Action, FluentIcon as FIF)
 
 from core.exporter import Exporter
@@ -21,6 +21,7 @@ from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_curve_file_export_plan, choose_data_export_plan, curve_export_file_filter
+from ui.pages.save_export_coordinator import SaveExportCoordinator
 from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
@@ -98,6 +99,13 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         self._sort_col = -1  # -1表示未排序
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._shortcut_bindings = ShortcutBindingSet()
+        self._save_export_coordinator = SaveExportCoordinator(
+            get_children=project_manager.get_children,
+            add_folder=project_manager.add_folder,
+            notify_info=lambda title, msg: InfoBar.info(title, msg, parent=self, position=InfoBarPosition.TOP),
+            notify_warning=lambda title, msg: InfoBar.warning(title, msg, parent=self, position=InfoBarPosition.TOP),
+            notify_error=lambda title, msg: InfoBar.error(title, msg, parent=self, position=InfoBarPosition.TOP),
+        )
         self.setup_ui()
         self._setup_viewer_signals()
         self._setup_shortcuts()
@@ -1937,14 +1945,9 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         self._last_export_suggestion = suggestion
 
     def _ensure_digitize_result_folder(self) -> str | None:
-        dataset_root = project_manager.find_folder_by_group_type("datasets")
-        if dataset_root is None:
-            return None
-        for node in project_manager.get_children(dataset_root.id):
-            if node.kind == "folder" and node.name == "数字化结果":
-                return node.id
-        folder = project_manager.add_folder("数字化结果", parent_id=dataset_root.id)
-        return folder.id if folder is not None else dataset_root.id
+        return self._save_export_coordinator.find_or_create_folder(
+            "数字化结果", fallback=self._save_export_coordinator.find_folder()
+        )
 
     def _on_export_to_data_file(self):
         curves = self._get_export_curves()

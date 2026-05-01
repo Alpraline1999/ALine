@@ -27,6 +27,7 @@ from ui.dialogs.export_flow import (
     choose_analysis_result_save_plan,
     choose_data_export_plan,
 )
+from ui.pages.save_export_coordinator import SaveExportCoordinator
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from app.workspaces.analysis_workspace import AnalysisWorkspaceController, AnalysisWorkspaceState
@@ -135,6 +136,13 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._next_temporary_result_number = 1
         self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
+        self._save_export_coordinator = SaveExportCoordinator(
+            get_children=project_manager.get_children,
+            add_folder=project_manager.add_folder,
+            notify_info=lambda title, msg: InfoBar.info(title, msg, parent=self, position=InfoBarPosition.TOP),
+            notify_warning=lambda title, msg: InfoBar.warning(title, msg, parent=self, position=InfoBarPosition.TOP),
+            notify_error=lambda title, msg: InfoBar.error(title, msg, parent=self, position=InfoBarPosition.TOP),
+        )
         self._setup_ui()
         self._apply_report_preview_theme()
         self._setup_shortcuts()
@@ -2150,14 +2158,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         return project_manager.get_analysis_result_target_folder_id(None)
 
     def _ensure_analysis_result_folder(self) -> Optional[str]:
-        dataset_root = project_manager.find_folder_by_group_type("datasets")
-        if dataset_root is None:
-            return None
-        for node in project_manager.get_children(dataset_root.id):
-            if node.kind == "folder" and node.name == "分析结果":
-                return node.id
-        folder = project_manager.add_folder("分析结果", parent_id=dataset_root.id)
-        return folder.id if folder is not None else None
+        return self._save_export_coordinator.find_or_create_folder("分析结果")
 
     def _current_analysis_result_payload(self) -> Dict[str, Any]:
         result = dict(self._result or {}) if isinstance(self._result, dict) else {}

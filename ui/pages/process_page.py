@@ -45,6 +45,7 @@ from ui.theme import (
 from ui.matplotlib_fonts import bootstrap_matplotlib_qtagg
 from ui.dialogs.fluent_dialogs import TextInputDialog
 from ui.dialogs.export_flow import choose_data_export_batch_plan, choose_data_export_plan
+from ui.pages.save_export_coordinator import SaveExportCoordinator
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
@@ -215,6 +216,13 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._run_timer.timeout.connect(self._run_pipeline_now)
         self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
+        self._save_export_coordinator = SaveExportCoordinator(
+            get_children=project_manager.get_children,
+            add_folder=project_manager.add_folder,
+            notify_info=lambda title, msg: InfoBar.info(title, msg, parent=self, position=InfoBarPosition.TOP),
+            notify_warning=lambda title, msg: InfoBar.warning(title, msg, parent=self, position=InfoBarPosition.TOP),
+            notify_error=lambda title, msg: InfoBar.error(title, msg, parent=self, position=InfoBarPosition.TOP),
+        )
         self._setup_ui()
         self._setup_shortcuts()
         self._refresh_tree()
