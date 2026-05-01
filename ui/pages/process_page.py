@@ -29,6 +29,7 @@ from core.extension_api import (
     reload_configured_extensions,
 )
 from core.shortcut_manager import ShortcutBindingSet
+from core.task_runner import TaskManager
 from app.workspaces.process_workspace import ProcessWorkspaceController, ProcessWorkspaceState
 from ui.theme import (
     WORKBENCH_BUTTON_HEIGHT,
@@ -213,7 +214,8 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._run_timer = QTimer(self)
         self._run_timer.setSingleShot(True)
         self._run_timer.setInterval(300)
-        self._run_timer.timeout.connect(self._run_pipeline_now)
+        self._run_timer.timeout.connect(self._trigger_pipeline_run)
+        self._task_manager = TaskManager(self)
         self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
         self._save_export_coordinator = SaveExportCoordinator(
@@ -1206,6 +1208,55 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
     def _run_pipeline(self):
         """防抖入口：重置 300ms 计时器，停止高频连续触发。"""
         self._run_timer.start()
+
+    def _trigger_pipeline_run(self) -> None:
+        """触发 pipeline 执行：小输入同步，大输入后台异步。"""
+        if len(self._selected_inputs) >= 3 and self._out_series_batch:
+            # 批量大输入 -> 后台执行
+            import uuid
+            job_id = str(uuid.uuid4())
+            self._task_manager.run(
+                "process_pipeline", job_id,
+                self._build_output_series_batch,
+                args=(self._preview_input_payloads(), self._selected_inputs),
+            )
+            task = self._task_manager.get_task("process_pipeline")
+            if task is not None:
+                task.progress_changed.connect(self._on_pipeline_progress)
+                task.finished.connect(lambda tid, result: self._on_pipeline_finished(tid, result, job_id))
+                task.error_occurred.connect(lambda tid, err: self._on_pipeline_error(tid, err, job_id))
+                self._set_stats_message("正在后台处理…")
+        else:
+            self._run_pipeline_now()
+
+    def _on_pipeline_progress(self, task_id: str, text: str, percent: float) -> None:
+        self._set_stats_message(text)
+
+    def _on_pipeline_finished(self, task_id: str, result: Any, expected_job_id: str) -> None:
+        """后台 pipeline 完成回调。"""
+        current = self._task_manager._current_job_ids.get("process_pipeline")
+        if current != expected_job_id:
+            return  # 过期结果
+        if result is None:
+            return
+        out_series_batch, warnings = result if isinstance(result, tuple) else (result, [])
+        self._out_series_batch = out_series_batch
+        self._pipeline_warnings = warnings
+        preview_series = out_series_batch[0] if out_series_batch else None
+        self._out_xs = list(preview_series.x) if preview_series is not None else []
+        self._out_ys = list(preview_series.y) if preview_series is not None else []
+        self._draw_preview()
+        self._update_stats()
+        self._update_save_action_presentation()
+
+    def _on_pipeline_error(self, task_id: str, error: str, expected_job_id: str) -> None:
+        current = self._task_manager._current_job_ids.get("process_pipeline")
+        if current != expected_job_id:
+            return
+        self._out_series_batch = []
+        self._out_xs = []
+        self._out_ys = []
+        self._set_stats_message(f"处理错误: {error}", is_error=True)
 
     def _run_pipeline_now(self):
         if not self._src_series_batch:
