@@ -3263,30 +3263,32 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         menu.addAction(reset_action)
 
         menu.addSeparator()
-        hide_action = Action(getattr(FIF, 'CANCEL', FIF.CLOSE), '隐藏已选中')
+        hide_action = Action('隐藏已选中')
         hide_action.triggered.connect(lambda: self._set_selected_visibility(False))
         menu.addAction(hide_action)
-        show_action = Action(FIF.VIEW, '显示已选中')
+        show_action = Action('显示已选中')
         show_action.triggered.connect(lambda: self._set_selected_visibility(True))
         menu.addAction(show_action)
-        show_only_action = Action(getattr(FIF, 'VIEW', FIF.SEARCH), '仅显示选中')
+        show_only_action = Action('仅显示选中')
         show_only_action.triggered.connect(self._show_only_selected_curve)
         menu.addAction(show_only_action)
-        show_all_action = Action(FIF.ZOOM_FIT, '全部显示')
+        show_all_action = Action('全部显示')
         show_all_action.triggered.connect(self._show_all_curves)
         menu.addAction(show_all_action)
-        invert_action = Action(getattr(FIF, 'SYNC', FIF.SYNC), '反选显示状态')
+        invert_action = Action('反选显示状态')
         invert_action.triggered.connect(self._invert_curve_visibility)
         menu.addAction(invert_action)
         menu.exec(self._chart_list.mapToGlobal(pos))
 
     def _show_only_selected_curve(self):
-        selected_curve = self._selected_curve()
-        if selected_curve is None:
+        """仅显示选中曲线（基于多选集合）。"""
+        selected = self._selected_curves()
+        if not selected:
             return
-        selected_key = self._curve_key(selected_curve)
+        selected_keys = {self._curve_key(c) for c in selected}
         for curve in self._chart_series:
-            curve["visible"] = (self._curve_key(curve) == selected_key)
+            curve["visible"] = self._curve_key(curve) in selected_keys
+            self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
         self._redraw_now()
 
@@ -3407,21 +3409,12 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._redraw_now()
 
     def _toggle_selected_visibility(self) -> None:
-        selected_items = self._chart_list.selectedItems()
-        if not selected_items:
+        """工具栏按钮：反转选中曲线的可见性（统一底层 helper）。"""
+        curves = self._selected_curves()
+        if not curves:
             return
-        # 以第一个选中项的 visible 状态为基准，全部反转
-        first_curve = self._curve_from_item(selected_items[0])
-        if first_curve is None:
-            return
-        new_visible = not bool(first_curve.get("visible", True))
-        for item in selected_items:
-            curve = self._curve_from_item(item)
-            if curve is not None:
-                curve["visible"] = new_visible
-                self._record_curve_style_changes(self._curve_key(curve), {"visible"})
-        self._refresh_chart_list()
-        self._redraw_now()
+        new_visible = not bool(curves[0].get("visible", True))
+        self._set_selected_visibility(new_visible)
 
     def _redraw(self) -> None:
         self._redraw_timer.start()
