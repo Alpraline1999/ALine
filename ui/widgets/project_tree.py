@@ -644,6 +644,13 @@ class ProjectTreeWidget(QWidget):
                 return True
             if event.type() == QEvent.Type.MouseButtonPress:
                 self._hide_fluent_tooltip()
+                item = self._tree.itemAt(event.pos())
+                if event.button() == Qt.MouseButton.LeftButton:
+                    branch_key = self._project_branch_toggle_key(item, event.pos().x())
+                    if branch_key is not None:
+                        if item is not None:
+                            item.setExpanded(not item.isExpanded())
+                        return True
                 if event.button() == Qt.MouseButton.LeftButton and self._tree.itemAt(event.pos()) is None:
                     self._clear_drag_source_item()
                     return False

@@ -396,6 +396,28 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertTrue(root_children)
         self.assertTrue(all(not child.isExpanded() for child in root_children))
 
+    def test_project_root_branch_toggle_uses_single_click_cycle(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtTest import QTest
+
+        self.widget.refresh()
+        self.widget.show()
+        QApplication.processEvents()
+
+        project_root = self.widget._tree.topLevelItem(0)
+        self.assertIsNotNone(project_root)
+        branch_rect = self.widget._tree.visualItemRect(project_root)
+        branch_point = QPoint(24, branch_rect.center().y())
+
+        self.assertTrue(project_root.isExpanded())
+        QTest.mouseClick(self.widget._tree.viewport(), Qt.MouseButton.LeftButton, pos=branch_point)
+        QApplication.processEvents()
+        self.assertFalse(project_root.isExpanded())
+
+        QTest.mouseClick(self.widget._tree.viewport(), Qt.MouseButton.LeftButton, pos=branch_point)
+        QApplication.processEvents()
+        self.assertTrue(project_root.isExpanded())
+
     def test_root_group_folder_uses_category_label_instead_of_node_id(self):
         source_root = self.pm._find_folder_by_group_type("source_files")
         self.assertIsNotNone(source_root)
