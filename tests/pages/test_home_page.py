@@ -126,6 +126,8 @@ class TestHomePage(unittest.TestCase):
             self.assertGreater(page._no_recent.width(), 1000)
             self.assertLess(page._no_recent.height(), 40)
             self.assertEqual(page._no_recent.x(), _HOME_CONTENT_MARGIN)
+            self.assertLess(page._content_widget.height(), 260)
+            self.assertLess(page._recent_label.height(), 30)
         finally:
             page.deleteLater()
 

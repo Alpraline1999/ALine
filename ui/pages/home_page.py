@@ -308,6 +308,7 @@ class HomePage(QWidget):
         self._guide_toggle_btn = None
         self._status_bar = None
         self._extension_status_btn = None
+        self._page_layout = None
         self._content_widget = None
         self._content_layout = None
         self._recent_scroll = None
@@ -326,6 +327,7 @@ class HomePage(QWidget):
         page_layout = QVBoxLayout(self)
         page_layout.setSpacing(0)
         page_layout.setContentsMargins(0, 0, 0, 0)
+        self._page_layout = page_layout
 
         self._banner = _HomeBannerWidget(self)
         page_layout.addWidget(self._banner)
@@ -361,6 +363,7 @@ class HomePage(QWidget):
         layout.addSpacing(12)
         recent_header = QHBoxLayout()
         self._recent_label = BodyLabel("最近项目", self)
+        self._recent_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         recent_header.addWidget(self._recent_label)
         recent_header.addStretch()
         layout.addLayout(recent_header)
@@ -434,6 +437,17 @@ class HomePage(QWidget):
         if self._content_layout is None or self._recent_scroll is None or self._no_recent is None:
             return
 
+        if self._content_widget is not None:
+            self._content_widget.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding if has_recent else QSizePolicy.Policy.Preferred,
+            )
+            if has_recent:
+                self._content_widget.setMaximumHeight(16777215)
+            else:
+                self._content_widget.setMaximumHeight(self._content_widget.sizeHint().height())
+        if self._page_layout is not None and self._content_widget is not None:
+            self._page_layout.setStretchFactor(self._content_widget, 1 if has_recent else 0)
         self._no_recent.setVisible(not has_recent)
         self._recent_scroll.setVisible(has_recent)
         self._recent_scroll.setSizePolicy(
@@ -443,6 +457,7 @@ class HomePage(QWidget):
         recent_scroll_index = self._content_layout.indexOf(self._recent_scroll)
         if recent_scroll_index >= 0:
             self._content_layout.setStretch(recent_scroll_index, 1 if has_recent else 0)
+        self._content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._content_layout.invalidate()
         self._content_widget.updateGeometry()
 
