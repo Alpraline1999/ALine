@@ -41,6 +41,13 @@ class TestUISmoke(unittest.TestCase):
         win = MainWindow()
         self.assertIsNotNone(win.stackedWidget)
 
+    def test_settings_and_project_tree_construct(self) -> None:
+        from ui.pages.settings_page import SettingsPage
+        from ui.widgets.project_tree import ProjectTreeWidget
+
+        self.assertIsNotNone(SettingsPage())
+        self.assertIsNotNone(ProjectTreeWidget())
+
     def test_support_pages_construct(self) -> None:
         from ui.pages.analysis_page import AnalysisPage
         from ui.pages.chart_page import ChartPage

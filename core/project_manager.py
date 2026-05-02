@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -20,6 +21,7 @@ from core.project_name_rules import (
     split_name_suffix as _split_name_suffix_rule,
     normalize_name_key as _normalize_name_key_rule,
 )
+from core.project_session import ProjectSession
 from core.project_services import build_project_services
 from models.schemas import (
     AnalysisResult,

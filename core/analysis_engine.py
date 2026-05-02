@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import re
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 

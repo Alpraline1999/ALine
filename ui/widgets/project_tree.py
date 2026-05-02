@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -13,7 +14,7 @@ from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QSize, Qt, QTime
 from PySide6.QtGui import QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    FluentIcon as FIF, InfoBar, InfoBarPosition, RoundMenu, ToolTip,
+    FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip,
 )
 from PySide6.QtWidgets import QTreeWidgetItem
 
@@ -207,6 +208,8 @@ class ProjectTreeWidget(QWidget):
             _parse_extension_config_group_node_id=self._parse_extension_config_group_node_id,
             _cmd_create_extension_config=self._cmd_create_extension_config,
             _cmd_duplicate_extension_config=self._cmd_duplicate_extension_config,
+            _cmd_export_extension_config=self._cmd_export_extension_config,
+            _cmd_set_default_extension_config=self._cmd_set_default_extension_config,
             _cmd_delete=self._cmd_delete,
             _cmd_delete_batch=self._cmd_delete_batch,
             _cmd_delete_virtual=self._cmd_delete_virtual,
@@ -1501,6 +1504,29 @@ class ProjectTreeWidget(QWidget):
         new_id = global_assets.create_extension_config(config.extension_type, name=f"{config.name} (副本)", preset=config)
         if new_id:
             self.refresh()
+
+    def _cmd_export_extension_config(self, config_id: str) -> None:
+        from core.global_assets import global_assets
+        config_payload = global_assets.export_extension_config_to_json(config_id)
+        if config_payload is None:
+            return
+        default_name = f"{str(config_payload.get('name') or 'extension_config').strip()}.json"
+        file_path, _ = QFileDialog.getSaveFileName(self, "导出扩展配置", default_name, "JSON (*.json)")
+        if not file_path:
+            return
+        try:
+            with open(file_path, "w", encoding="utf-8") as handle:
+                json.dump(config_payload, handle, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            self._notify_tree_warning("导出失败", str(exc))
+            return
+        self._notify_tree_success("已导出", file_path)
+
+    def _cmd_set_default_extension_config(self, config_id: str) -> None:
+        from core.global_assets import global_assets
+        if global_assets.set_extension_default_config(config_id) is None:
+            return
+        self.refresh()
 
     def _extension_config_default_name(self, extension_type: str) -> str:
         entry = build_extension_entry(extension_type)

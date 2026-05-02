@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -880,6 +881,28 @@ class GlobalAssetManager:
             if self.get_extension_config(cfg.id) is None:
                 self.data.extension_configs.append(cfg)
         self.save()
+
+    def export_extension_config_to_json(self, config_id: str) -> Optional[dict]:
+        """Export a single extension config to a JSON-serializable dict."""
+        item = self.get_extension_config(config_id)
+        if item is None:
+            return None
+        return item.model_dump()
+
+    def set_extension_default_config(self, config_id: str) -> Optional[ExtensionConfigPreset]:
+        """Mark a single extension config as the default config for its category/type."""
+        target = self.get_extension_config(config_id)
+        if target is None:
+            return None
+        normalized_category = _normalize_extension_category(target.category)
+        normalized_type = _normalize_extension_type(target.extension_type)
+        for item in self.data.extension_configs:
+            if _normalize_extension_category(item.category) == normalized_category and _normalize_extension_type(item.extension_type) == normalized_type:
+                item.is_default = item.id == target.id
+                if item.is_default:
+                    item.name = _DEFAULT_EXTENSION_CONFIG_NAME
+        self.save()
+        return target
 
 
 global_assets = GlobalAssetManager()

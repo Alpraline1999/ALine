@@ -14,6 +14,8 @@
 8. [07-phase-7-global-assets-and-template-workflow.md](07-phase-7-global-assets-and-template-workflow.md)
 9. [08-phase-8-process-analysis-batch-and-traceability.md](08-phase-8-process-analysis-batch-and-traceability.md)
 10. [09-phase-9-ai-module-deactivation-and-redesign-prep.md](09-phase-9-ai-module-deactivation-and-redesign-prep.md)
+11. [10-phase-10-static-runtime-guardrails.md](10-phase-10-static-runtime-guardrails.md)
+12. [11-phase-11-visualization-performance-and-large-modules.md](11-phase-11-visualization-performance-and-large-modules.md)
 
 ## 当前阶段定位
 
@@ -50,6 +52,14 @@
   - `ai.command_registry` 仍是现存单一命令源
   - `ai.command_layer` / `ai.agent` / settings 中的 AI 管理入口存在兼容漂移风险
   - 主窗口层已经不应继续在启动链路中硬依赖 AI 模块
+- 本轮额外静态审查已确认，“重构后支撑模块拆分 + 页面壳层收口”之外，还存在一类需要单独治理的问题：
+  - 漏导入或重命名残留导致的 `NameError` / `F821`
+  - helper/support 模块抽出后，页面层保留了已失效的旧符号引用
+  - 这类问题已经在 `project_manager.py`、`global_assets.py`、`settings_page.py`、`project_tree.py`、`project_tree_menu_commands.py` 等处出现，不属于单点偶发
+- 当前剩余优化热点仍较明确：
+  - `ui/pages/chart_page.py` 仍是大曲线与主题切换的主要性能瓶颈
+  - `ui/pages/data_page.py`、`ui/pages/digitize_page.py`、`ui/pages/analysis_page.py`、`ui/pages/settings_page.py` 仍偏大，后续功能继续叠加时有再次失控风险
+  - 仅依赖人工点击回归，已经不足以覆盖“重构后模块接口漂移”这类错误
 - 鉴于后续可能完全重做 AI 模块，现阶段更合理的策略是：
   - 先把 AI 从主启动链路和日常用户路径中彻底解耦/禁用
   - 再单独规划新的 AI 架构、命令模型与 UI 交互面

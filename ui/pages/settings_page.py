@@ -323,36 +323,6 @@ class SettingsPage(QWidget):
         option_layouts: dict[str, QVBoxLayout],
     ) -> SegmentedStackWidget:
         return build_extension_category_tabs(self, parent, empty_hints=empty_hints, option_layouts=option_layouts)
-        tabs = SegmentedStackWidget(parent)
-        tabs.setMaximumHeight(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
-        for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展"), ("digitize", "数字化扩展")):
-            page = QWidget(parent)
-            page_layout = QVBoxLayout(page)
-            page_layout.setContentsMargins(0, 0, 0, 0)
-            page_layout.setSpacing(6)
-            empty_hint = BodyLabel(f"当前未发现{label}。", page)
-            self._bind_theme_label_style(empty_hint, lambda: placeholder_text_style_sheet(font_size=11))
-            page_layout.addWidget(empty_hint)
-            empty_hints[category] = empty_hint
-
-            options_scroll = SmoothScrollArea(page)
-            options_scroll.setWidgetResizable(True)
-            options_scroll.setFrameShape(QFrame.Shape.NoFrame)
-            options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            options_scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
-
-            options_widget = QWidget(options_scroll)
-            options_layout = QVBoxLayout(options_widget)
-            options_layout.setContentsMargins(0, 0, 0, 0)
-            options_layout.setSpacing(6)
-            options_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-            options_scroll.setWidget(options_widget)
-            page_layout.addWidget(options_scroll, 1)
-            option_layouts[category] = options_layout
-
-            tabs.addTab(page, label, route_key=category)
-        tabs.setMinimumHeight(max(tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER, tabs.navigationWidget.sizeHint().height()))
-        return tabs
 
     def _build_general_tab(self) -> QWidget:
         outer = SmoothScrollArea()
@@ -556,7 +526,7 @@ class SettingsPage(QWidget):
         )
         self._external_extensions_enabled_checkbox.checkedChanged.connect(self._on_external_extensions_enabled_changed)
         self._external_extension_card.addSettingCard(self._external_extensions_enabled_checkbox)
-        self._external_extensions_dirs_card = _MutableFolderListSettingCard(
+        self._external_extensions_dirs_card = MutableFolderListSettingCard(
             "外部扩展目录",
             "可添加多个文件夹；保存后会统一扫描并重载。",
             [],

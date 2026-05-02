@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+import time
 import uuid
 import warnings
 from typing import Any, Dict, List, Optional
@@ -258,7 +259,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         QTimer.singleShot(0, self._sync_chart_left_splitter_sizes)
         if self._theme_refresh_pending:
             self._theme_refresh_pending = False
-            self._redraw_timer.start(0)
+            self._redraw("theme")
         self._onboarding_controller.schedule_auto_start()
 
     def resizeEvent(self, event) -> None:
@@ -957,6 +958,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._theme_hint_label = make_hint_label("", page)
         layout.addWidget(self._theme_hint_label)
         self._theme_hint_label.hide()
+        self._render_hint_label = make_hint_label("", page)
+        layout.addWidget(self._render_hint_label)
+        self._render_hint_label.hide()
 
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("基础配置", page))
@@ -1598,7 +1602,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._set_current_curve_item_by_key(snapshot.selected_curve_key)
         self._refresh_plot_extension_list()
         self._refresh_style_extension_panel()
-        self._redraw_now()
+        self._redraw()
 
     def _load_picture_snapshot_from_node(self, node_id: str) -> bool:
         picture, snapshot = self._picture_snapshot_for_node(node_id)
@@ -1651,7 +1655,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             }, redraw=False) or added
         if added:
             self._refresh_chart_list()
-            self._redraw_now()
+            self._redraw()
 
     def add_series_to_chart(self, series_data: dict, redraw: bool = True) -> bool:
         obj_id = series_data.get("obj_id", "")
@@ -1664,7 +1668,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._chart_series.append(payload)
         if redraw:
             self._refresh_chart_list()
-            self._redraw_now()
+            self._redraw()
         return True
 
     @staticmethod
@@ -2066,7 +2070,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             return False
         self._applied_plot_extensions = [entry for entry in self._applied_plot_extensions if entry.get("id") != instance_id]
         self._refresh_style_extension_panel()
-        self._redraw_now()
+        self._redraw()
         extension = extension_registry.get_plot(str(target.get("type") or ""))
         InfoBar.success(
             "已撤销",
@@ -2091,7 +2095,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         removed_count = len(self._applied_plot_extensions)
         self._applied_plot_extensions = []
         self._refresh_style_extension_panel()
-        self._redraw_now()
+        self._redraw()
         InfoBar.success(
             "已清除",
             f"已移除 {removed_count} 个绘图扩展",
@@ -2341,7 +2345,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._applied_plot_style_ref = make_plot_style_asset_key("theme", theme.id or theme.name)
         self._current_plot_theme_id = theme.id
         self._apply_plot_style_payload(state.model_dump(), source="manual")
-        self._redraw_now()
+        self._redraw()
         self._refresh_style_extension_panel()
 
     def _apply_plot_extension(self, type_id: str) -> None:
@@ -2360,7 +2364,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._applied_plot_extensions.append(applied)
         self._refresh_style_extension_panel()
         self._refresh_plot_extension_list(selected_instance_id=str(applied.get("id") or ""))
-        self._redraw_now()
+        self._redraw()
 
     def load_plot_theme(self, theme_id: str) -> None:
         self.load_plot_style(theme_id)
@@ -2423,7 +2427,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         payload.update(copy.deepcopy(dict(figure.style_extras or {})))
         self._apply_plot_style_payload(payload, source="manual")
         self._refresh_style_extension_panel()
-        self._redraw_now()
+        self._redraw()
 
     def _build_figure_config(self, name: str, figure_id: Optional[str] = None) -> Optional[FigureConfig]:
         clean_name = name.strip()
@@ -2606,7 +2610,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._active_curve_style_template_id = template.id
         self._active_curve_style_ref = template.id
         self._refresh_curve_style_template_combo()
-        self._redraw_now()
+        self._redraw()
 
     def _current_curve_style(self, curve: Optional[dict] = None) -> Optional[CurveStyle]:
         target_curve = curve or self._selected_curve()
@@ -2788,7 +2792,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             else None
         )
         self._apply_plot_style_payload(payload, source="manual")
-        self._redraw_now()
+        self._redraw()
 
     def _current_plot_style_payload(self) -> Dict[str, Any]:
         payload = self._sync_state_from_controls().model_dump()
@@ -3188,7 +3192,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             curve["visible"] = visible
             self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _show_all_curves(self) -> None:
         """Show all curves."""
@@ -3196,7 +3200,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             curve["visible"] = True
             self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _hide_all_curves(self) -> None:
         """Hide all curves."""
@@ -3204,7 +3208,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             curve["visible"] = False
             self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _invert_curve_visibility(self) -> None:
         """Invert visibility for all curves."""
@@ -3212,7 +3216,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             curve["visible"] = not bool(curve.get("visible", True))
             self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _find_chart_curve(self, curve_key: str) -> Optional[dict]:
         for curve in self._chart_series:
@@ -3238,12 +3242,12 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     def _set_curve_display_name(self, curve: dict, display_name: str) -> None:
         curve["display_name"] = display_name.strip() or curve.get("name", "")
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _reset_curve_display_name(self, curve: dict) -> None:
         curve["display_name"] = curve.get("name", "")
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _rename_selected_curve_display_name(self) -> None:
         curve = self._selected_curve()
@@ -3307,7 +3311,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             curve["visible"] = self._curve_key(curve) in selected_keys
             self._record_curve_style_changes(self._curve_key(curve), {"visible"})
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _refresh_chart_list(self) -> None:
         current_name = self._style_target
@@ -3385,7 +3389,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._curve_style_change_versions.clear()
         self._style_target = None
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _on_remove_selected(self) -> None:
         curve = self._selected_curve()
@@ -3398,7 +3402,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         if self._style_target == target_key:
             self._style_target = None
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _move_selected_curve_up(self) -> None:
         self._move_selected_curve("up")
@@ -3423,7 +3427,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._chart_series[current_index],
         )
         self._refresh_chart_list()
-        self._redraw_now()
+        self._redraw()
 
     def _toggle_selected_visibility(self) -> None:
         """工具栏按钮：反转选中曲线的可见性（统一底层 helper）。"""
@@ -3433,28 +3437,65 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         new_visible = not bool(curves[0].get("visible", True))
         self._set_selected_visibility(new_visible)
 
-    def _schedule_redraw(self) -> None:
-        """调度重绘：大曲线先做 decimated 预览再完整重绘。"""
-        total_points = sum(
-            len(curve.get("xs", curve.get("x", [])))
-            for curve in self._chart_series
-        )
-        if total_points > 10000:
-            # 大曲线: 立即渲染 decimated 预览，再异步调度完整重绘
-            self._decimated_redraw()
-            self._redraw_timer.start()
-        else:
-            self._redraw_timer.start()
+    def _chart_total_points(self) -> int:
+        return sum(len(curve.get("xs", curve.get("x", []))) for curve in self._chart_series)
 
-    def _decimated_redraw(self) -> None:
+    @staticmethod
+    def _redraw_reason_priority(reason: str) -> int:
+        return 0 if reason == "theme" else 1
+
+    def _queue_redraw_reason(self, reason: str) -> str:
+        normalized = "theme" if reason == "theme" else "data"
+        current = self._view_state.pending_redraw_reason
+        if not current or self._redraw_reason_priority(normalized) >= self._redraw_reason_priority(current):
+            self._view_state.pending_redraw_reason = normalized
+        return self._view_state.pending_redraw_reason or normalized
+
+    def _record_render_summary(
+        self,
+        *,
+        reason: str,
+        mode: str,
+        total_points: int,
+        elapsed_ms: Optional[float],
+    ) -> None:
+        self._view_state.last_render_reason = reason
+        self._view_state.last_render_mode = mode
+        self._view_state.last_render_total_points = total_points
+        self._view_state.last_render_elapsed_ms = max(0.0, float(elapsed_ms or 0.0))
+        if hasattr(self, "_render_hint_label") and self._render_hint_label is not None:
+            if mode == "preview":
+                text = f"最近渲染：预览 · {reason} · {total_points:,} 点"
+            else:
+                text = f"最近渲染：完整 · {reason} · {total_points:,} 点 · {self._view_state.last_render_elapsed_ms:.1f} ms"
+            self._render_hint_label.setText(text)
+            self._render_hint_label.show()
+
+    def render_diagnostics(self) -> Dict[str, Any]:
+        return {
+            "pending_reason": self._view_state.pending_redraw_reason,
+            "last_reason": self._view_state.last_render_reason,
+            "last_mode": self._view_state.last_render_mode,
+            "last_total_points": self._view_state.last_render_total_points,
+            "last_elapsed_ms": self._view_state.last_render_elapsed_ms,
+        }
+
+    def _schedule_redraw(self, reason: str = "data") -> None:
+        """调度重绘：区分主题刷新与数据重绘，并为大曲线保留预览阶段。"""
+        queued_reason = self._queue_redraw_reason(reason)
+        total_points = self._chart_total_points()
+        if total_points > 10000:
+            self._decimated_redraw(reason=queued_reason, total_points=total_points)
+            self._redraw_timer.start(80 if queued_reason == "theme" else self._redraw_timer.interval())
+        else:
+            self._redraw_timer.start(0 if queued_reason == "theme" else self._redraw_timer.interval())
+
+    def _decimated_redraw(self, *, reason: str = "data", total_points: Optional[int] = None) -> None:
         """仅渲染大曲线的抽样预览（快速响应）。"""
         if not HAS_MATPLOTLIB or self._figure is None or self._canvas is None:
             return
         from core.rendering import decimate_xy_for_rendering
-        total_pts = sum(
-            len(curve.get("xs", curve.get("x", [])))
-            for curve in self._chart_series
-        )
+        total_pts = total_points if total_points is not None else self._chart_total_points()
         self._figure.clear()
         axis = self._figure.add_subplot(111)
         dark = isDarkTheme()
@@ -3478,12 +3519,13 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             axis.text(0.5, 0.5, "（无可见曲线）", ha="center", va="center", color=fg, transform=axis.transAxes)
         axis.set_title(f"预览模式 ({total_pts:,} 点 → 精简)", color=fg, fontsize=10)
         self._canvas.draw()
+        self._record_render_summary(reason=reason, mode="preview", total_points=total_pts, elapsed_ms=None)
 
-    def _redraw(self) -> None:
-        self._schedule_redraw()
+    def _redraw(self, reason: str = "data") -> None:
+        self._schedule_redraw(reason=reason)
 
-    def request_redraw(self) -> None:
-        self._redraw()
+    def request_redraw(self, reason: str = "data") -> None:
+        self._redraw(reason=reason)
 
     @staticmethod
     def _apply_text_style(text_obj, *, font_family: str, font_size: int, color: Optional[str] = None) -> None:
@@ -3539,6 +3581,10 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             return
 
         self._redraw_timer.stop()
+        reason = self._view_state.pending_redraw_reason or "data"
+        self._view_state.pending_redraw_reason = ""
+        total_points = self._chart_total_points()
+        started = time.perf_counter()
         manual_state = self._sync_state_from_controls().model_copy(deep=True)
         manual_state_payload = manual_state.model_dump()
         manual_plot_style_extras = copy.deepcopy(self._plot_style_extras)
@@ -3853,6 +3899,8 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._canvas.draw()
         self._canvas.updateGeometry()
         self._sync_chart_preview_nav_toggle_states()
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self._record_render_summary(reason=reason, mode="full", total_points=total_points, elapsed_ms=elapsed_ms)
 
     def _on_current_changed(self, current, _prev) -> None:
         curve = self._curve_from_item(current)
@@ -3951,7 +3999,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         if not color_obj.isValid():
             return
         self._apply_base_curve_style_options({"color": color_obj.name(QColor.NameFormat.HexRgb)})
-        self._redraw_now()
+        self._redraw()
 
     def _on_style_reset_color(self) -> None:
         if not self._style_target:
@@ -3961,7 +4009,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             if self._curve_key(curve) == self._style_target:
                 self._update_color_btn(curve.get("color") or "#888888")
                 break
-        self._redraw_now()
+        self._redraw()
 
     def _on_style_line_changed(self, idx: int) -> None:
         if not self._style_target:
@@ -3972,13 +4020,13 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 "marker": _STYLE_MARKERS[idx],
             }
         )
-        self._redraw_now()
+        self._redraw()
 
     def _on_style_visibility_changed(self, _state: int) -> None:
         if not self._style_target:
             return
         self._apply_base_curve_style_options({"visible": bool(self._style_visible_cb.isChecked())})
-        self._redraw_now()
+        self._redraw()
 
     def _on_style_metrics_changed(self) -> None:
         if not self._style_target:
@@ -4086,9 +4134,10 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             return
         if not self.isVisible():
             self._theme_refresh_pending = True
+            self._queue_redraw_reason("theme")
             return
         self._theme_refresh_pending = False
-        self._redraw_timer.start(0)
+        self._redraw("theme")
 
     @property
     def _chart_series(self):

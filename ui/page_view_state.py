@@ -10,6 +10,11 @@ class ChartPageViewState:
     extension_panel_width: int = 360
     chart_left_splitter_user_resized: bool = False
     chart_list_tooltip_visible: bool = False
+    pending_redraw_reason: str = ""
+    last_render_reason: str = ""
+    last_render_mode: str = ""
+    last_render_total_points: int = 0
+    last_render_elapsed_ms: float = 0.0
 
 
 @dataclass(slots=True)

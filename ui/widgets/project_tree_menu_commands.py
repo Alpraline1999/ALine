@@ -47,6 +47,8 @@ class ProjectTreeMenuBuilder:
         _parse_extension_config_group_node_id: Callable,
         _cmd_create_extension_config: Callable,
         _cmd_duplicate_extension_config: Callable,
+        _cmd_export_extension_config: Callable,
+        _cmd_set_default_extension_config: Callable,
         _cmd_delete: Callable,
         _cmd_delete_batch: Callable,
         _cmd_delete_virtual: Callable,
@@ -98,6 +100,8 @@ class ProjectTreeMenuBuilder:
         self._parse_extension_config_group_node_id = _parse_extension_config_group_node_id
         self._cmd_create_extension_config = _cmd_create_extension_config
         self._cmd_duplicate_extension_config = _cmd_duplicate_extension_config
+        self._cmd_export_extension_config = _cmd_export_extension_config
+        self._cmd_set_default_extension_config = _cmd_set_default_extension_config
         self._cmd_delete = _cmd_delete
         self._cmd_delete_batch = _cmd_delete_batch
         self._cmd_delete_virtual = _cmd_delete_virtual
@@ -154,7 +158,7 @@ class ProjectTreeMenuBuilder:
         manage_entries: list[tuple[object, str, object]] = []
 
         if kind in self._SYNTHETIC_GLOBAL_KINDS:
-            self._build_global_kind_menu(menu, kind, node_id, item, manage_entries)
+            self._build_global_kind_menu(menu, pos, kind, node_id, item, manage_entries)
             return
 
         self._build_node_menu(
@@ -208,7 +212,7 @@ class ProjectTreeMenuBuilder:
         self._append_tree_scope_actions(menu, separated=True)
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
-    def _build_global_kind_menu(self, menu: RoundMenu, kind: str, node_id: str, item, manage_entries: list) -> None:
+    def _build_global_kind_menu(self, menu: RoundMenu, pos, kind: str, node_id: str, item, manage_entries: list) -> None:
         if kind == "global_pipeline":
             manage_entries.append((FIF.DEVELOPER_TOOLS, "加载到处理页", self._page_dispatcher.make_activation_callback(kind, node_id)))
         elif kind == "global_report_template":
@@ -223,6 +227,9 @@ class ProjectTreeMenuBuilder:
         elif kind == "global_extension_config":
             manage_entries.append((getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "在数据管理页查看/编辑", self._page_dispatcher.make_activation_callback(kind, node_id)))
             manage_entries.append((FIF.COPY, "创建副本", lambda: self._cmd_duplicate_extension_config(node_id)))
+            manage_entries.append((FIF.SAVE, "导出", lambda: self._cmd_export_extension_config(node_id)))
+            if not bool(getattr(item, "is_default", False)):
+                manage_entries.append((getattr(FIF, "PIN", FIF.SETTING), "设为默认", lambda: self._cmd_set_default_extension_config(node_id)))
         elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
             manage_entries.append((FIF.EDIT, "在设置中查看", self._page_dispatcher.make_activation_callback(kind, node_id)))
         if self._can_edit_global_asset(kind, node_id):

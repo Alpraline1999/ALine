@@ -7,12 +7,28 @@
   2. project_manager._* 私有 API 泄漏
   3. 重复 command surface 检测
   4. 超大测试文件警告
+  5. 未定义名称检查（F821）
+  6. 关键 UI 导入/构造烟测
 """
 import os
+import re
+import subprocess
 from pathlib import Path
+import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+F821_TARGETS = [
+    "core",
+    "ui",
+    "app",
+    "ai",
+    "models",
+    "processing",
+    "extensions",
+    "scripts",
+    "build.py",
+]
 
 
 def check_file_size():
@@ -43,6 +59,7 @@ def check_file_size():
     else:
         print("  OK 所有文件均在预算内")
     print()
+    return len(over_limit)
 
 
 def check_private_api_leak():
@@ -74,6 +91,7 @@ def check_private_api_leak():
     else:
         print("  OK 未发现 project_manager._* 跨模块访问")
     print()
+    return len(leaks)
 
 
 def check_command_duplication():
@@ -86,7 +104,7 @@ def check_command_duplication():
     if not layer_path.exists() or not reg_path.exists():
         print("  - ai/command_layer.py 或 ai/command_registry.py 不存在，跳过")
         print()
-        return
+        return 0
 
     layer_text = layer_path.read_text()
     reg_text = reg_path.read_text()
@@ -134,11 +152,11 @@ def check_command_duplication():
         print("  OK command_layer.py 已无独立命令定义（全部从 registry 导入）")
     else:
         print("  OK command_layer.py 与 command_registry.py 定义一致")
-
+    print()
+    return len(errors)
 
 def _extract_commands_keys(text: str) -> set[str]:
     """从 COMMANDS 字典文本中提取键名。"""
-    import re
     keys: set[str] = set()
     in_commands = False
     for line in text.splitlines():
@@ -173,13 +191,87 @@ def check_test_file_size():
             print(f"  !!  {py_file.relative_to(REPO_ROOT)} ({lines} 行) 超过 3000 行预算")
     print(f"  - 共检查 {checked} 个测试文件")
     print()
+    return checked
 
 
-if __name__ == "__main__":
+def _run_subprocess(command: list[str], *, env: dict[str, str] | None = None) -> tuple[int, str]:
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    output = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
+    return completed.returncode, output
+
+
+def check_undefined_names() -> int:
+    print("=" * 60)
+    print("[5/6] 未定义名称检查 (ruff F821)")
+    print("=" * 60)
+    command = [sys.executable, "-m", "ruff", "check", "--select", "F821", *F821_TARGETS]
+    code, output = _run_subprocess(command)
+    if code == 0:
+        print("  OK F821 检查通过")
+        print()
+        return 0
+    print("  !!  发现未定义名称问题:")
+    if output:
+        for line in output.splitlines():
+            print(f"    {line}")
+    print()
+    return 1
+
+
+def check_ui_smoke_imports() -> int:
+    print("=" * 60)
+    print("[6/6] 关键 UI 导入/构造烟测")
+    print("=" * 60)
+    env = os.environ.copy()
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    smoke_code = """
+from PySide6.QtWidgets import QApplication
+from ui.main_window import MainWindow
+from ui.pages.settings_page import SettingsPage
+from ui.widgets.project_tree import ProjectTreeWidget
+
+app = QApplication.instance() or QApplication([])
+win = MainWindow()
+settings = SettingsPage()
+tree = ProjectTreeWidget()
+print("ui-smoke-ok")
+win.close()
+settings.close()
+tree.close()
+"""
+    command = [sys.executable, "-c", smoke_code]
+    code, output = _run_subprocess(command, env=env)
+    if code == 0:
+        print("  OK 主窗口/设置页/项目树构造通过")
+        print()
+        return 0
+    print("  !!  UI 烟测失败:")
+    if output:
+        for line in output.splitlines():
+            print(f"    {line}")
+    print()
+    return 1
+
+
+def main() -> int:
     check_file_size()
-    check_private_api_leak()
-    check_command_duplication()
+    hard_failures = 0
+    hard_failures += check_private_api_leak()
+    hard_failures += check_command_duplication()
     check_test_file_size()
+    hard_failures += check_undefined_names()
+    hard_failures += check_ui_smoke_imports()
     print("=" * 60)
     print("结构检查完成")
     print("=" * 60)
+    return 1 if hard_failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
