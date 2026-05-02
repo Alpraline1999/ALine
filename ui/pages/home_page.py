@@ -327,6 +327,7 @@ class HomePage(QWidget):
         page_layout = QVBoxLayout(self)
         page_layout.setSpacing(0)
         page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._page_layout = page_layout
 
         self._banner = _HomeBannerWidget(self)

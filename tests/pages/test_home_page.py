@@ -121,6 +121,8 @@ class TestHomePage(unittest.TestCase):
             QApplication.processEvents()
             self.assertFalse(page._no_recent.isHidden())
             self.assertTrue(page._recent_scroll.isHidden())
+            self.assertEqual(page._banner.y(), 0)
+            self.assertEqual(page._content_widget.y(), page._banner.height())
             self.assertEqual(page._recent_scroll.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Preferred)
             self.assertEqual(page._content_layout.stretch(page._content_layout.indexOf(page._recent_scroll)), 0)
             self.assertGreater(page._no_recent.width(), 1000)
