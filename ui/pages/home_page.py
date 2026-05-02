@@ -367,7 +367,9 @@ class HomePage(QWidget):
 
         # 无最近项目占位
         self._no_recent = make_empty_state_label("暂无最近项目", self)
-        layout.addWidget(self._no_recent, alignment=Qt.AlignLeft)
+        self._no_recent.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._no_recent.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self._no_recent)
 
         # 最近项目scroll区域
         self._recent_scroll = SmoothScrollArea(self)

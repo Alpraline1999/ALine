@@ -111,15 +111,21 @@ class TestHomePage(unittest.TestCase):
 
     def test_home_page_recent_section_uses_compact_layout_when_empty(self):
         from PySide6.QtWidgets import QSizePolicy
-        from ui.pages.home_page import HomePage
+        from ui.pages.home_page import HomePage, _HOME_CONTENT_MARGIN
 
         with mock.patch("ui.pages.home_page.load_recent", return_value=[]):
             page = HomePage()
         try:
+            page.resize(1200, 900)
+            page.show()
+            QApplication.processEvents()
             self.assertFalse(page._no_recent.isHidden())
             self.assertTrue(page._recent_scroll.isHidden())
             self.assertEqual(page._recent_scroll.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Preferred)
             self.assertEqual(page._content_layout.stretch(page._content_layout.indexOf(page._recent_scroll)), 0)
+            self.assertGreater(page._no_recent.width(), 1000)
+            self.assertLess(page._no_recent.height(), 40)
+            self.assertEqual(page._no_recent.x(), _HOME_CONTENT_MARGIN)
         finally:
             page.deleteLater()
 
