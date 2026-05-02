@@ -309,6 +309,7 @@ class HomePage(QWidget):
         self._status_bar = None
         self._extension_status_btn = None
         self._content_widget = None
+        self._content_layout = None
         self._recent_scroll = None
         self._recent_items_widget = None
         self._recent_items_layout = None
@@ -334,6 +335,7 @@ class HomePage(QWidget):
         layout = QVBoxLayout(self._content_widget)
         layout.setSpacing(20)
         layout.setContentsMargins(_HOME_CONTENT_MARGIN, 20, _HOME_CONTENT_MARGIN, 40)
+        self._content_layout = layout
         page_layout.addWidget(self._content_widget, 1)
 
         # 按钮区域
@@ -426,17 +428,31 @@ class HomePage(QWidget):
         if self._banner is not None:
             self._banner.update_theme()
 
+    def _set_recent_section_mode(self, has_recent: bool) -> None:
+        if self._content_layout is None or self._recent_scroll is None or self._no_recent is None:
+            return
+
+        self._no_recent.setVisible(not has_recent)
+        self._recent_scroll.setVisible(has_recent)
+        self._recent_scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding if has_recent else QSizePolicy.Policy.Preferred,
+        )
+        recent_scroll_index = self._content_layout.indexOf(self._recent_scroll)
+        if recent_scroll_index >= 0:
+            self._content_layout.setStretch(recent_scroll_index, 1 if has_recent else 0)
+        self._content_layout.invalidate()
+        self._content_widget.updateGeometry()
+
     def refresh_recent(self):
         """刷新最近项目列表"""
         recents = load_recent()
 
         if not recents:
-            self._no_recent.show()
-            self._recent_scroll.hide()
+            self._set_recent_section_mode(False)
             return
 
-        self._no_recent.hide()
-        self._recent_scroll.show()
+        self._set_recent_section_mode(True)
 
         # 清除旧条目（保留 stretch）
         while self._recent_items_layout.count() > 1:

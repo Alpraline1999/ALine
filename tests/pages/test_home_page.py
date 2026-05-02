@@ -95,10 +95,31 @@ class TestHomePage(unittest.TestCase):
         from PySide6.QtWidgets import QSizePolicy
         from ui.pages.home_page import HomePage
 
-        page = HomePage()
+        with mock.patch(
+            "ui.pages.home_page.load_recent",
+            return_value=[{"name": "示例项目", "path": "/tmp/example.aline", "opened_at": "2026-04-23 10:20:30"}],
+        ):
+            page = HomePage()
         try:
             self.assertEqual(page._recent_scroll.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Expanding)
             self.assertEqual(page._recent_scroll.maximumHeight(), 16777215)
+            self.assertFalse(page._recent_scroll.isHidden())
+            self.assertTrue(page._no_recent.isHidden())
+            self.assertEqual(page._content_layout.stretch(page._content_layout.indexOf(page._recent_scroll)), 1)
+        finally:
+            page.deleteLater()
+
+    def test_home_page_recent_section_uses_compact_layout_when_empty(self):
+        from PySide6.QtWidgets import QSizePolicy
+        from ui.pages.home_page import HomePage
+
+        with mock.patch("ui.pages.home_page.load_recent", return_value=[]):
+            page = HomePage()
+        try:
+            self.assertFalse(page._no_recent.isHidden())
+            self.assertTrue(page._recent_scroll.isHidden())
+            self.assertEqual(page._recent_scroll.sizePolicy().verticalPolicy(), QSizePolicy.Policy.Preferred)
+            self.assertEqual(page._content_layout.stretch(page._content_layout.indexOf(page._recent_scroll)), 0)
         finally:
             page.deleteLater()
 
