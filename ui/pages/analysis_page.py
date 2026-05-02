@@ -33,6 +33,7 @@ from core.analysis_engine import list_report_template_placeholders, run_analysis
 from app.workspaces.analysis_workspace import AnalysisWorkspaceController, AnalysisWorkspaceState
 from core.report_templates import DEFAULT_REPORT_TEMPLATE
 from core.shortcut_manager import ShortcutBindingSet
+from core.task_runner import TaskManager
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
@@ -136,6 +137,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._next_temporary_result_number = 1
         self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
+        self._task_manager = TaskManager(self)
         self._save_export_coordinator = SaveExportCoordinator(
             get_children=project_manager.get_children,
             add_folder=project_manager.add_folder,

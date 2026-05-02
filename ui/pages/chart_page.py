@@ -66,6 +66,7 @@ from core.extension_api import (
 from core.extension_runtime import invoke_plot_extension_handler
 from core.shortcut_manager import ShortcutBindingSet
 from core.rendering import RenderDecimationPolicy, decimate_xy_for_rendering
+from core.task_runner import TaskManager
 from core.project_manager import project_manager
 from models.schemas import (
     AxisConfig,
@@ -224,6 +225,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._legend_anchor_x_draft = ""
         self._legend_anchor_y_draft = ""
         self._preserve_partial_legend_anchor_draft = False
+        self._task_manager = TaskManager(self)
         self._display_dpi = 100.0
         self._display_canvas_size: Optional[tuple[int, int]] = None
         self._canvas_host: Optional[QScrollArea] = None
