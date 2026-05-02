@@ -700,14 +700,10 @@ class ProjectTreeWidget(QWidget):
         return w.exec()
 
     def _prompt_tree_text(self, title: str, label: str, placeholder: str) -> tuple[str, bool]:
-        dlg = TextInputDialog(title, label, placeholder, parent=self._dialog_parent())
-        ok = dlg.exec()
-        return dlg.lineEdit.text().strip(), ok
+        return TextInputDialog.get_text(self._dialog_parent(), title, label, placeholder=placeholder)
 
     def _prompt_tree_existing_text(self, title: str, label: str, text: str) -> tuple[str, bool]:
-        dlg = TextInputDialog(title, label, text, parent=self._dialog_parent())
-        ok = dlg.exec()
-        return dlg.lineEdit.text().strip(), ok
+        return TextInputDialog.get_text(self._dialog_parent(), title, label, text=text)
 
     def _notify_tree_warning(self, title: str, content: str) -> None:
         InfoBar.warning(title, content, parent=self._dialog_parent(), position=InfoBarPosition.TOP, duration=3000)
@@ -716,9 +712,7 @@ class ProjectTreeWidget(QWidget):
         InfoBar.success(title, content, parent=self._dialog_parent(), position=InfoBarPosition.TOP, duration=3000)
 
     def _choose_tree_item(self, title: str, label: str, items: list[str]) -> tuple[str, bool]:
-        dlg = SelectionDialog(title, label, items, parent=self._dialog_parent())
-        ok = dlg.exec()
-        return dlg.get_selected_item(), ok
+        return SelectionDialog.get_item(self._dialog_parent(), title, label, items)
 
     def _choose_tree_files(self, title: str, file_filter: str) -> list[str]:
         paths, _ = QFileDialog.getOpenFileNames(self._dialog_parent(), title, "", file_filter)

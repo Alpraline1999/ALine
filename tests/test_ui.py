@@ -1006,6 +1006,32 @@ class TestNavigationStack(unittest.TestCase):
         self.assertEqual(moved_nodes[next(node.id for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id)], target_folder.id)
         self.assertEqual(moved_nodes[second.id], target_folder.id)
 
+    def test_project_tree_dialog_adapters_use_current_dialog_apis(self):
+        with mock.patch("ui.widgets.project_tree.SelectionDialog.get_item", return_value=("目标A", True)) as get_item_mock, \
+                mock.patch("ui.widgets.project_tree.TextInputDialog.get_text", side_effect=[("新建名", True), ("旧名", True)]) as get_text_mock:
+            self.assertEqual(self.widget._choose_tree_item("移动到", "目标父级:", ["目标A"]), ("目标A", True))
+            self.assertEqual(self.widget._prompt_tree_text("新建子文件夹", "文件夹名称:", "输入子文件夹名称"), ("新建名", True))
+            self.assertEqual(self.widget._prompt_tree_existing_text("重命名文件夹", "名称:", "原名"), ("旧名", True))
+
+        get_item_mock.assert_called_once()
+        get_text_mock.assert_has_calls([
+            mock.call(self.widget._dialog_parent(), "新建子文件夹", "文件夹名称:", placeholder="输入子文件夹名称"),
+            mock.call(self.widget._dialog_parent(), "重命名文件夹", "名称:", text="原名"),
+        ])
+
+    def test_cmd_move_virtual_uses_selection_dialog(self):
+        dataset_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(dataset_root)
+        target_folder = self.widget._create_child_folder(dataset_root.id, "菜单目标")
+        self.assertIsNotNone(target_folder)
+        node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+
+        self.widget.refresh()
+        with mock.patch("ui.widgets.project_tree.SelectionDialog.get_item", return_value=(self.widget._folder_path_label(target_folder.id), True)):
+            self.widget._cmd_move_virtual("data_file", node.id, [(self.widget._folder_path_label(target_folder.id), target_folder.id)])
+
+        self.assertEqual(node.parent_id, target_folder.id)
+
     def test_public_batch_manage_helpers_follow_selection(self):
         from models.schemas import DataFile, DataSeries
 
@@ -10711,4 +10737,3 @@ class TestSettingsPageV3(unittest.TestCase):
 
     def test_report_template_card_hidden(self):
         self.assertTrue(self.page._tmpl_card.isHidden())
-
