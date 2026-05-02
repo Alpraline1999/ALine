@@ -548,14 +548,17 @@ class ProjectTreeWidget(QWidget):
             for item in plot_configs:
                 ext_group.addChild(item)
             root.addChild(ext_group)
-        ai_group = self._make_synthetic_item("AI 配置", "global_group", "__global_ai_configs__", FIF.ROBOT)
-        for prompt in sorted(global_assets.list_ai_prompts(), key=lambda p: _sort_text_key(p.name)):
-            ai_group.addChild(self._make_synthetic_item(prompt.name, "global_ai_prompt", prompt.id, FIF.CHAT))
-        for skill in sorted(global_assets.list_ai_skills(), key=lambda s: _sort_text_key(s.name)):
-            ai_group.addChild(self._make_synthetic_item(skill.name, "global_ai_skill", skill.id, FIF.DEVELOPER_TOOLS))
-        for agent in sorted(global_assets.list_ai_agents(), key=lambda a: _sort_text_key(a.name)):
-            ai_group.addChild(self._make_synthetic_item(agent.name, "global_ai_agent", agent.id, FIF.ROBOT))
-        root.addChild(ai_group)
+        try:
+            ai_group = self._make_synthetic_item("AI 配置", "global_group", "__global_ai_configs__", FIF.ROBOT)
+            for prompt in sorted(global_assets.list_ai_prompts(), key=lambda p: _sort_text_key(p.name)):
+                ai_group.addChild(self._make_synthetic_item(prompt.name, "global_ai_prompt", prompt.id, FIF.CHAT))
+            for skill in sorted(global_assets.list_ai_skills(), key=lambda s: _sort_text_key(s.name)):
+                ai_group.addChild(self._make_synthetic_item(skill.name, "global_ai_skill", skill.id, FIF.DEVELOPER_TOOLS))
+            for agent in sorted(global_assets.list_ai_agents(), key=lambda a: _sort_text_key(a.name)):
+                ai_group.addChild(self._make_synthetic_item(agent.name, "global_ai_agent", agent.id, FIF.ROBOT))
+            root.addChild(ai_group)
+        except Exception:
+            pass  # AI 模块不可用时不显示 AI 配置节点
         # 补回 plot_group
         root.insertChild(1, plot_group)
         self._tree.addTopLevelItem(root)
