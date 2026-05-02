@@ -16,6 +16,8 @@
 10. [09-phase-9-ai-module-deactivation-and-redesign-prep.md](09-phase-9-ai-module-deactivation-and-redesign-prep.md)
 11. [10-phase-10-static-runtime-guardrails.md](10-phase-10-static-runtime-guardrails.md)
 12. [11-phase-11-visualization-performance-and-large-modules.md](11-phase-11-visualization-performance-and-large-modules.md)
+13. [12-phase-12-home-empty-state-and-entry-layout.md](12-phase-12-home-empty-state-and-entry-layout.md)
+14. [13-phase-13-project-tree-dragdrop-regression-and-guardrails.md](13-phase-13-project-tree-dragdrop-regression-and-guardrails.md)
 
 ## 当前阶段定位
 
@@ -60,6 +62,9 @@
   - `ui/pages/chart_page.py` 仍是大曲线与主题切换的主要性能瓶颈
   - `ui/pages/data_page.py`、`ui/pages/digitize_page.py`、`ui/pages/analysis_page.py`、`ui/pages/settings_page.py` 仍偏大，后续功能继续叠加时有再次失控风险
   - 仅依赖人工点击回归，已经不足以覆盖“重构后模块接口漂移”这类错误
+- 新一轮问题核查又确认了两类尚未收口的优化项：
+  - 首页最近项目为空时，按钮区/最近项目标题/空状态提示仍沿用“列表填充剩余高度”的布局策略，页面不够靠上紧凑
+  - 项目树拖放 helper 在拆分后残留旧私有方法名 `_drag_source_item_for_drop`，导致节点拖拽移动在运行时直接报错
 - 鉴于后续可能完全重做 AI 模块，现阶段更合理的策略是：
   - 先把 AI 从主启动链路和日常用户路径中彻底解耦/禁用
   - 再单独规划新的 AI 架构、命令模型与 UI 交互面
