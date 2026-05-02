@@ -13,8 +13,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal, Optional
 
-from core.ai_client import AIClient, AIConfig
-from ai.command_layer import CommandDispatcher, COMMANDS
+from core.ai_client import AIClient
+from ai.command_layer import CommandDispatcher
 
 
 @dataclass
@@ -99,7 +99,7 @@ class ALineAgent:
         yield AgentEvent(type="error", content="达到最大轮次限制，请重新提问")
 
     def _build_system_prompt(self) -> str:
-        from ai.command_layer import cmd_get_project_summary
+        from ai.command_registry import cmd_get_project_summary
         result = cmd_get_project_summary({})
         project_info = json.dumps(result.data or {}, ensure_ascii=False, indent=2)
         return (

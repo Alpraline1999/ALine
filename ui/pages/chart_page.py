@@ -3198,6 +3198,14 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._refresh_chart_list()
         self._redraw_now()
 
+    def _hide_all_curves(self) -> None:
+        """Hide all curves."""
+        for curve in self._chart_series:
+            curve["visible"] = False
+            self._record_curve_style_changes(self._curve_key(curve), {"visible"})
+        self._refresh_chart_list()
+        self._redraw_now()
+
     def _invert_curve_visibility(self) -> None:
         """Invert visibility for all curves."""
         for curve in self._chart_series:
@@ -3265,6 +3273,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         menu.addAction(reset_action)
 
         menu.addSeparator()
+        # ── 选中生效 ──
         hide_action = Action('隐藏已选中')
         hide_action.triggered.connect(lambda: self._set_selected_visibility(False))
         menu.addAction(hide_action)
@@ -3274,9 +3283,15 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         show_only_action = Action('仅显示选中')
         show_only_action.triggered.connect(self._show_only_selected_curve)
         menu.addAction(show_only_action)
+
+        menu.addSeparator()
+        # ── 全部生效 ──
         show_all_action = Action('全部显示')
         show_all_action.triggered.connect(self._show_all_curves)
         menu.addAction(show_all_action)
+        hide_all_action = Action('全部隐藏')
+        hide_all_action.triggered.connect(self._hide_all_curves)
+        menu.addAction(hide_all_action)
         invert_action = Action('反选显示状态')
         invert_action.triggered.connect(self._invert_curve_visibility)
         menu.addAction(invert_action)

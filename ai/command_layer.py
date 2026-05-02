@@ -21,7 +21,23 @@ from core.project_manager import project_manager
 # Command types — 从 command_registry 导入唯一源
 # ─────────────────────────────────────────────────────────────
 
-from ai.command_registry import CommandResult, CommandDef
+from ai.command_registry import COMMANDS, CommandResult, CommandDef
+
+__all__ = [
+    "COMMANDS",
+    "CommandResult",
+    "CommandDef",
+    "CommandDispatcher",
+]
+
+
+def __getattr__(name: str) -> Any:
+    """兼容旧导入路径，转发 cmd_* 到 command_registry。"""
+    if name.startswith("cmd_") and hasattr(command_registry, name):
+        return getattr(command_registry, name)
+    if name == "COMMANDS":
+        return command_registry.COMMANDS
+    raise AttributeError(name)
 
 # ─────────────────────────────────────────────────────────────
 # CommandDispatcher

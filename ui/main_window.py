@@ -26,14 +26,9 @@ from .dialogs.project_tree_manage_dialog import ProjectTreeManageDialog
 from .notifications import show_error, show_success, show_warning
 from .widgets.project_tree import ProjectTreeWidget
 from .tree_command_route import TreeCommandRoute
-from ai.agent import ALineAgent
-from ai.command_layer import CommandDispatcher
 from core.global_assets import global_assets
 from core.project_manager import project_manager
 from core.ui_preferences import is_page_tree_focus_mode_enabled, reset_all_onboarding_progress
-from core.ai_client import AIConfig
-from core.ai.tool_executor import execute_tool
-from core.ai.tool_registry import TOOLS
 from core.shortcut_manager import ShortcutBindingSet, shortcut_manager
 
 # 页面 2-6 默认显示完整共享树，主页和设置页不显示。
