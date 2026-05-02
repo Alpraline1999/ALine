@@ -850,5 +850,36 @@ class GlobalAssetManager:
         self.save()
         return True
 
+    def export_to_json(self) -> dict:
+        """Export all global assets to a JSON-serializable dict."""
+        return self.data.model_dump()
+
+    def import_from_json(self, data: dict, *, merge: bool = True) -> None:
+        """Import global assets from a JSON-serializable dict.
+
+        Args:
+            data: Dict from export_to_json() or equivalent structure.
+            merge: If True, merge into existing assets. If False, replace.
+        """
+        if not merge:
+            self.data = GlobalAssets.model_validate(data)
+            self.save()
+            return
+        # Merge mode: append non-duplicate assets
+        imported = GlobalAssets.model_validate(data)
+        for pipe in imported.saved_pipelines or []:
+            if self.get_saved_pipeline(pipe.id) is None:
+                self.data.saved_pipelines.append(pipe)
+        for tmpl in imported.figure_templates or []:
+            if self.get_figure_template(tmpl.id) is None:
+                self.data.figure_templates.append(tmpl)
+        for rpt in imported.report_templates or []:
+            if self.get_report_template(rpt.id) is None:
+                self.data.report_templates.append(rpt)
+        for cfg in imported.extension_configs or []:
+            if self.get_extension_config(cfg.id) is None:
+                self.data.extension_configs.append(cfg)
+        self.save()
+
 
 global_assets = GlobalAssetManager()

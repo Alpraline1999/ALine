@@ -3433,8 +3433,54 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         new_visible = not bool(curves[0].get("visible", True))
         self._set_selected_visibility(new_visible)
 
+    def _schedule_redraw(self) -> None:
+        """调度重绘：大曲线先做 decimated 预览再完整重绘。"""
+        total_points = sum(
+            len(curve.get("xs", curve.get("x", [])))
+            for curve in self._chart_series
+        )
+        if total_points > 10000:
+            # 大曲线: 立即渲染 decimated 预览，再异步调度完整重绘
+            self._decimated_redraw()
+            self._redraw_timer.start()
+        else:
+            self._redraw_timer.start()
+
+    def _decimated_redraw(self) -> None:
+        """仅渲染大曲线的抽样预览（快速响应）。"""
+        if not HAS_MATPLOTLIB or self._figure is None or self._canvas is None:
+            return
+        from core.rendering import decimate_xy_for_rendering
+        total_pts = sum(
+            len(curve.get("xs", curve.get("x", [])))
+            for curve in self._chart_series
+        )
+        self._figure.clear()
+        axis = self._figure.add_subplot(111)
+        dark = isDarkTheme()
+        bg = "#1e1e1e" if dark else "#ffffff"
+        fg = "#cccccc" if dark else "#222222"
+        self._figure.patch.set_facecolor(bg)
+        axis.set_facecolor(bg)
+        axis.tick_params(colors=fg, labelcolor=fg)
+        rendered = 0
+        for curve in self._chart_series:
+            if not curve.get("visible", True):
+                continue
+            xs = curve.get("xs", curve.get("x", []))
+            ys = curve.get("ys", curve.get("y", []))
+            if not xs or not ys:
+                continue
+            xs_dec, ys_dec = decimate_xy_for_rendering(list(xs), list(ys), max_points=200)
+            axis.plot(xs_dec, ys_dec, linewidth=1.2, alpha=0.7)
+            rendered += 1
+        if rendered == 0:
+            axis.text(0.5, 0.5, "（无可见曲线）", ha="center", va="center", color=fg, transform=axis.transAxes)
+        axis.set_title(f"预览模式 ({total_pts:,} 点 → 精简)", color=fg, fontsize=10)
+        self._canvas.draw()
+
     def _redraw(self) -> None:
-        self._redraw_timer.start()
+        self._schedule_redraw()
 
     def request_redraw(self) -> None:
         self._redraw()

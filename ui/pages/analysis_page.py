@@ -1807,32 +1807,28 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                 return
 
             t = analysis_type
-            self._set_analysis_status("正在运行分析…")
             self._run_analysis_btn.setEnabled(False)
             inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
 
-            # 大输入走后台异步，小输入保持同步
-            total_points = sum(len(xs) for xs, _, _ in selected)
-            if total_points > 50000:
-                import uuid
-                job_id = str(uuid.uuid4())
-                self._task_manager.run(
-                    "analysis", job_id, _run_analysis_inner,
-                    args=(t, inputs, effective_extension_options),
-                )
-                task = self._task_manager.get_task("analysis")
-                if task is not None:
-                    task.finished.connect(lambda tid, result: self._on_analysis_finished(tid, result, t, selected, job_id))
-                    task.error_occurred.connect(lambda tid, err: self._on_analysis_error(tid, err, job_id))
-            else:
-                self._result = run_analysis(t, inputs, effective_extension_options)
-                self._show_result(t, selected)
-                self._run_analysis_btn.setEnabled(True)
+            # 全部走后台异步，带进度反馈
+            import uuid
+            job_id = str(uuid.uuid4())
+            self._task_manager.run(
+                "analysis", job_id, _run_analysis_inner,
+                args=(t, inputs, effective_extension_options),
+            )
+            task = self._task_manager.get_task("analysis")
+            if task is not None:
+                task.progress_changed.connect(lambda tid, text, pct: self._set_analysis_status(text))
+                task.finished.connect(lambda tid, result: self._on_analysis_finished(tid, result, t, selected, job_id))
+                task.error_occurred.connect(lambda tid, err: self._on_analysis_error(tid, err, job_id))
+            self._set_analysis_status("正在运行分析…")
         except Exception as e:
             message = show_error(self, "分析失败", e)
-            preview_view = self._analysis_tab_views.get("current")
-            if preview_view is not None and preview_view.get("summary_table") is not None:
-                self._set_summary_rows(preview_view["summary_table"], [("错误", message)])
+            if hasattr(self, "_analysis_tab_views"):
+                preview_view = self._analysis_tab_views.get("current")
+                if preview_view is not None and preview_view.get("summary_table") is not None:
+                    self._set_summary_rows(preview_view["summary_table"], [("错误", message)])
             self._set_analysis_status(f"分析失败: {message}")
             self._run_analysis_btn.setEnabled(True)
 
@@ -1842,6 +1838,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._result = result
         self._show_result(t, selected)
         self._run_analysis_btn.setEnabled(True)
+        self._set_analysis_status("分析完成")
 
     def _on_analysis_error(self, task_id: str, error: str, expected_job_id: str) -> None:
         if self._task_manager._current_job_ids.get("analysis") != expected_job_id:
@@ -2881,6 +2878,17 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         view["selected"] = list(selected)
         view["inputs"] = [dict(item) for item in inputs]
         view["params"] = dict(analysis.params or {})
+        # 来源追溯信息
+        snapshots = getattr(analysis, "input_snapshots", []) or []
+        template_info = getattr(analysis, "template_snapshot", {}) or {}
+        status_parts = []
+        if snapshots:
+            names = [s.get("name", "") for s in snapshots if s.get("name")]
+            status_parts.append(f"来源: {', '.join(names[:3])}{'…' if len(names) > 3 else ''}")
+        if template_info.get("template_name"):
+            status_parts.append(f"模板: {template_info['template_name']}")
+        if status_parts:
+            self._set_analysis_status(" | ".join(status_parts))
         self._render_result_view(view, analysis_type, selected, result)
         tab_index = self._analysis_tab_keys.index(analysis.id)
         if set_active:

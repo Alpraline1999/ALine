@@ -1127,6 +1127,24 @@ def extension_entry_display_info(
     if version_label:
         panel_title_parts.append(version_label)
 
+    # 能力/兼容性摘要
+    caps = set(str(c) for c in entry.get("capabilities", set()) or set())
+    caps_parts = []
+    if entry.get("supports_progress"):
+        caps_parts.append("进度")
+    if entry.get("supports_cancel"):
+        caps_parts.append("取消")
+    if entry.get("post_render_mutation"):
+        caps_parts.append("后处理")
+    capabilities_label = "、".join(caps_parts) if caps_parts else ""
+    api_ver = str(entry.get("api_version") or "").strip()
+    min_ver = str(entry.get("min_app_version") or "").strip()
+    tested = list(entry.get("tested_app_range") or [])
+    authority = str(entry.get("style_authority") or "advisory")
+    authority_label = "强制接管" if authority == "authoritative" else ""
+    authoritative_fields = set(str(f) for f in entry.get("authoritative_fields", set()) or set())
+    auth_fields_label = f"接管字段: {', '.join(sorted(authoritative_fields))}" if authoritative_fields else ""
+
     return {
         "category_label": resolved_category,
         "name": name,
@@ -1136,6 +1154,12 @@ def extension_entry_display_info(
         "description": description,
         "panel_title": "·".join(panel_title_parts),
         "data_title": f"{resolved_category}·{name}",
+        "capabilities_label": capabilities_label,
+        "api_version_label": f"API v{api_ver}" if api_ver else "",
+        "min_app_version_label": f"最低 App v{min_ver}" if min_ver else "",
+        "tested_range_label": f"验证版本: {', '.join(tested)}" if tested else "",
+        "authority_label": authority_label,
+        "auth_fields_label": auth_fields_label,
     }
 
 
