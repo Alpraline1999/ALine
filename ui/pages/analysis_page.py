@@ -31,6 +31,11 @@ from ui.pages.save_export_coordinator import SaveExportCoordinator
 from models.schemas import DataSeries
 from core.analysis_engine import list_report_template_placeholders, run_analysis
 from app.workspaces.analysis_workspace import AnalysisWorkspaceController, AnalysisWorkspaceState
+
+
+def _run_analysis_inner(t: str, inputs: list, options) -> Any:
+    """Module-level wrapper for background task execution."""
+    return run_analysis(t, inputs, options)
 from core.report_templates import DEFAULT_REPORT_TEMPLATE
 from core.shortcut_manager import ShortcutBindingSet
 from core.task_runner import TaskManager
@@ -1788,8 +1793,6 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         analysis_type = self._current_analysis_type()
         extension_options: Optional[Dict[str, Any]] = None
         effective_extension_options: Optional[Dict[str, Any]] = None
-        override_cursor = False
-        run_started = False
         try:
             input_payloads: List[dict]
             if extension_registry.get_analysis(analysis_type) is not None:
@@ -1804,25 +1807,47 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                 return
 
             t = analysis_type
-            self._set_analysis_status("正在运行分析，结果生成后会创建新的临时标签。")
+            self._set_analysis_status("正在运行分析…")
             self._run_analysis_btn.setEnabled(False)
-            run_started = True
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            override_cursor = True
             inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
-            self._result = run_analysis(t, inputs, effective_extension_options)
-            self._show_result(t, selected)
+
+            # 大输入走后台异步，小输入保持同步
+            total_points = sum(len(xs) for xs, _, _ in selected)
+            if total_points > 50000:
+                import uuid
+                job_id = str(uuid.uuid4())
+                self._task_manager.run(
+                    "analysis", job_id, _run_analysis_inner,
+                    args=(t, inputs, effective_extension_options),
+                )
+                task = self._task_manager.get_task("analysis")
+                if task is not None:
+                    task.finished.connect(lambda tid, result: self._on_analysis_finished(tid, result, t, selected, job_id))
+                    task.error_occurred.connect(lambda tid, err: self._on_analysis_error(tid, err, job_id))
+            else:
+                self._result = run_analysis(t, inputs, effective_extension_options)
+                self._show_result(t, selected)
+                self._run_analysis_btn.setEnabled(True)
         except Exception as e:
             message = show_error(self, "分析失败", e)
             preview_view = self._analysis_tab_views.get("current")
             if preview_view is not None and preview_view.get("summary_table") is not None:
                 self._set_summary_rows(preview_view["summary_table"], [("错误", message)])
             self._set_analysis_status(f"分析失败: {message}")
-        finally:
-            if override_cursor:
-                QApplication.restoreOverrideCursor()
-            if run_started:
-                self._run_analysis_btn.setEnabled(True)
+            self._run_analysis_btn.setEnabled(True)
+
+    def _on_analysis_finished(self, task_id: str, result: Any, t: str, selected: list, expected_job_id: str) -> None:
+        if self._task_manager._current_job_ids.get("analysis") != expected_job_id:
+            return
+        self._result = result
+        self._show_result(t, selected)
+        self._run_analysis_btn.setEnabled(True)
+
+    def _on_analysis_error(self, task_id: str, error: str, expected_job_id: str) -> None:
+        if self._task_manager._current_job_ids.get("analysis") != expected_job_id:
+            return
+        self._set_analysis_status(f"分析失败: {error}")
+        self._run_analysis_btn.setEnabled(True)
 
     # ─────────────────────────────────────────────────────────
     # 结果显示

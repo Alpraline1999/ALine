@@ -210,18 +210,7 @@ class SettingsPage(QWidget):
         self._load_extension_settings()
         self._schedule_extension_category_tab_heights_refresh()
         self._install_tooltip_filters()
-        # AI 配置延迟加载：不阻塞启动，仅在首次切换到 AI 设置页时加载
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(2000, self._lazy_init_ai)
         self._click_away_focus_commit = install_click_away_focus_commit(self)
-
-    def _lazy_init_ai(self) -> None:
-        """延迟初始化 AI 配置，仅在用户首次切换到 AI 设置页时加载。"""
-        try:
-            self._load_ai_config()
-            self._refresh_ai_tools_panel()
-        except Exception:
-            pass  # AI 模块不可用时静默跳过
 
     def _install_tooltip_filters(self) -> None:
         for widget in self.findChildren(QWidget):

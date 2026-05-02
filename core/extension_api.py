@@ -391,6 +391,9 @@ class ProcessingExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     supports_progress: bool = False
+    supports_cancel: bool = False
+    min_app_version: str = ""
+    tested_app_range: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -439,6 +442,9 @@ class AnalysisExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     supports_progress: bool = False
+    supports_cancel: bool = False
+    min_app_version: str = ""
+    tested_app_range: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -487,6 +493,9 @@ class PlotExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     supports_progress: bool = False
+    supports_cancel: bool = False
+    min_app_version: str = ""
+    tested_app_range: list[str] = field(default_factory=list)
     style_authority: str = "advisory"
     authoritative_fields: set[str] = field(default_factory=set)
     post_render_mutation: bool = False
@@ -537,6 +546,9 @@ class DigitizeExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     supports_progress: bool = False
+    supports_cancel: bool = False
+    min_app_version: str = ""
+    tested_app_range: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tool_tier", normalize_extension_tool_tier(self.tool_tier))
@@ -1075,6 +1087,9 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "capabilities": set(str(c) for c in getattr(extension, "capabilities", set()) or set()),
         "api_version": str(getattr(extension, "api_version", "") or ""),
         "supports_progress": bool(getattr(extension, "supports_progress", False)),
+        "supports_cancel": bool(getattr(extension, "supports_cancel", False)),
+        "min_app_version": str(getattr(extension, "min_app_version", "") or ""),
+        "tested_app_range": list(str(v) for v in getattr(extension, "tested_app_range", []) or []),
         "style_authority": str(getattr(extension, "style_authority", "advisory")),
         "authoritative_fields": set(str(f) for f in getattr(extension, "authoritative_fields", set()) or set()),
         "post_render_mutation": bool(getattr(extension, "post_render_mutation", False)),
