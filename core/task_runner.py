@@ -100,6 +100,9 @@ class TaskManager(QObject):
         target: Callable[..., Any],
         args: tuple = (),
         kwargs: Optional[dict] = None,
+        *,
+        on_finished: Optional[Callable[[str, Any], None]] = None,
+        on_error: Optional[Callable[[str, str], None]] = None,
     ) -> BackgroundTask:
         """启动任务，自动取消同一 type 的旧任务。
 
@@ -117,6 +120,10 @@ class TaskManager(QObject):
         task = BackgroundTask(self)
         task.finished.connect(self._on_task_finished)
         task.error_occurred.connect(self._on_task_error)
+        if on_finished is not None:
+            task.finished.connect(on_finished)
+        if on_error is not None:
+            task.error_occurred.connect(on_error)
         self._tasks[job_id] = task
         task.run(job_id, target, args, kwargs)
         # 用 QTimer 做清理保护

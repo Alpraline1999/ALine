@@ -892,7 +892,69 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             except ValueError:
                 continue
             items.append({"line_name": line_name, "line": line_value})
-        return items
+        if items:
+            return items
+
+        analysis_type = str(result.get("analysis_type") or "").strip()
+        if analysis_type == "curve_fit":
+            fit_x = list(result.get("fit_x") or [])
+            fit_y = list(result.get("fit_y") or [])
+            if len(fit_x) == len(fit_y) and fit_x:
+                return [{"line_name": "拟合曲线", "line": line_from_xy(fit_x, fit_y)}]
+        elif analysis_type == "error_compare":
+            error_x = list(result.get("error_x") or [])
+            error_y = list(result.get("error_y") or [])
+            if len(error_x) == len(error_y) and error_x:
+                return [{"line_name": "误差曲线", "line": line_from_xy(error_x, error_y)}]
+        elif analysis_type == "peak_detect":
+            peak_points = [
+                (float(point["x"]), float(point["y"]))
+                for point in list(result.get("peaks") or [])
+                if isinstance(point, dict) and point.get("x") is not None and point.get("y") is not None
+            ]
+            valley_points = [
+                (float(point["x"]), float(point["y"]))
+                for point in list(result.get("valleys") or [])
+                if isinstance(point, dict) and point.get("x") is not None and point.get("y") is not None
+            ]
+            merged_points = sorted(
+                [
+                    {"type": "波峰", "x": point[0], "y": point[1]}
+                    for point in peak_points
+                ] + [
+                    {"type": "波谷", "x": point[0], "y": point[1]}
+                    for point in valley_points
+                ],
+                key=lambda item: (float(item["x"]), item["type"] != "波峰"),
+            )
+            fallback_items: List[Dict[str, Any]] = []
+            if merged_points:
+                fallback_items.append(
+                    {
+                        "line_name": "峰谷点",
+                        "line": line_from_xy(
+                            [float(point["x"]) for point in merged_points],
+                            [float(point["y"]) for point in merged_points],
+                        ),
+                    }
+                )
+            if peak_points:
+                fallback_items.append(
+                    {
+                        "line_name": "波峰点",
+                        "line": line_from_xy([point[0] for point in peak_points], [point[1] for point in peak_points]),
+                    }
+                )
+            if valley_points:
+                fallback_items.append(
+                    {
+                        "line_name": "波谷点",
+                        "line": line_from_xy([point[0] for point in valley_points], [point[1] for point in valley_points]),
+                    }
+                )
+            if fallback_items:
+                return fallback_items
+        return []
 
     @staticmethod
     def _resolve_analysis_series_line(series: Dict[str, Any], line_lookup: Dict[str, Any]) -> Any:
@@ -1324,20 +1386,21 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _refresh_result_action_buttons(self) -> None:
         if not hasattr(self, "_export_result_btn") or self._export_result_btn is None:
             return
-        result = self._current_analysis_result_payload()
-        has_lines = bool(result and self._analysis_result_lines(result))
+        has_lines = bool(self._analysis_output_series_options())
         self._export_result_btn.setVisible(has_lines)
         self._export_result_btn.setEnabled(has_lines)
 
     def _on_analysis_tab_changed(self, index: int) -> None:
-        key = self._analysis_tab_key_for_index(index)
-        if not key:
-            return
-        view = self._analysis_view_for_key(key)
+        del index
+        QTimer.singleShot(0, self._sync_current_analysis_tab_state)
+
+    def _sync_current_analysis_tab_state(self) -> None:
+        view = self._active_analysis_view()
         if view is None:
             return
         self._sync_state_from_analysis_view(view)
         self._update_result_action_buttons()
+        self._refresh_result_action_buttons()
 
     def _on_analysis_tab_close_requested(self, index: int) -> None:
         if index <= 0:
@@ -1844,12 +1907,14 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             self._task_manager.run(
                 "analysis", job_id, _run_analysis_inner,
                 args=(t, inputs, effective_extension_options),
+                on_finished=lambda tid, result, analysis_type=t, selected_inputs=selected, expected_job_id=job_id: self._on_analysis_finished(
+                    tid, result, analysis_type, selected_inputs, expected_job_id
+                ),
+                on_error=lambda tid, err, expected_job_id=job_id: self._on_analysis_error(tid, err, expected_job_id),
             )
             task = self._task_manager.get_task("analysis")
             if task is not None:
                 task.progress_changed.connect(lambda tid, text, pct: self._set_analysis_status(text))
-                task.finished.connect(lambda tid, result: self._on_analysis_finished(tid, result, t, selected, job_id))
-                task.error_occurred.connect(lambda tid, err: self._on_analysis_error(tid, err, job_id))
             self._set_analysis_status("正在运行分析…")
         except Exception as e:
             message = show_error(self, "分析失败", e)
@@ -1907,6 +1972,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._draw_result(t, selected, r, figure=view.get("figure"), canvas=view.get("canvas"), normalized=normalized)
         self._render_summary_view(view, t, r)
         self._refresh_report_result_selectors()
+        self._refresh_result_action_buttons()
 
     def _refresh_current_analysis_preview(self) -> None:
         view = self._analysis_tab_views.get("current")
@@ -2234,13 +2300,13 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         )
 
     def _current_analysis_result_payload(self) -> Dict[str, Any]:
-        result = dict(self._result or {}) if isinstance(self._result, dict) else {}
-        if result:
-            return result
         active_view = self._active_analysis_view()
         if isinstance(active_view, dict):
-            return dict(active_view.get("result") or {})
-        return {}
+            active_result = active_view.get("result")
+            if isinstance(active_result, dict) and active_result:
+                return dict(active_result)
+            return {}
+        return dict(self._result or {}) if isinstance(self._result, dict) else {}
 
     def _analysis_output_series_options(self) -> List[Dict[str, Any]]:
         result = self._current_analysis_result_payload()

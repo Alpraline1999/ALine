@@ -16,6 +16,7 @@ import tempfile
 import unittest
 import warnings
 import gc
+import time
 from pathlib import Path
 from typing import cast
 from unittest import mock
@@ -7299,6 +7300,19 @@ class TestAnalysisPage(unittest.TestCase):
             new_data_file_name=f"{name}.analysis",
         )
 
+    def _wait_for_analysis_completion(self, timeout: float = 20.0) -> None:
+        deadline = time.time() + timeout
+        task_finished = False
+        while time.time() < deadline:
+            QApplication.processEvents()
+            if not task_finished and self.page._task_manager.get_task("analysis") is None:
+                task_finished = True
+            if task_finished and self.page._analysis_tabs.currentIndex() != 0 and self.page._current_analysis_result_payload():
+                QApplication.processEvents()
+                return
+            time.sleep(0.05)
+        self.fail("analysis task did not finish in time")
+
     def test_page_creates_no_crash(self):
         self.assertIsNotNone(self.page)
 
@@ -7632,6 +7646,7 @@ class TestAnalysisPage(unittest.TestCase):
     def test_curve_fit_result_can_export_series_with_export_plan(self):
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
+        self._wait_for_analysis_completion()
 
         self.assertFalse(self.page._export_result_btn.isHidden())
         self.assertTrue(self.page._export_result_btn.isEnabled())
@@ -7661,6 +7676,7 @@ class TestAnalysisPage(unittest.TestCase):
         self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("peak_detect"))
         self.page.on_tree_node_activated("series", target.id)
         self.page._run_analysis()
+        self._wait_for_analysis_completion()
 
         self.assertFalse(self.page._export_result_btn.isHidden())
         self.assertTrue(self.page._export_result_btn.isEnabled())
@@ -7735,6 +7751,7 @@ class TestAnalysisPage(unittest.TestCase):
 
         self.page.on_tree_node_activated("series", self.s.id)
         self.page._run_analysis()
+        self._wait_for_analysis_completion()
         first_tab_index = self.page._analysis_tabs.currentIndex()
 
         self.page.on_tree_node_activated("series", other.id)
@@ -7742,6 +7759,7 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIsNotNone(current_item)
         self.page._on_input_list_item_clicked(current_item)
         self.page._run_analysis()
+        self._wait_for_analysis_completion()
 
         self.page._analysis_tabs.setCurrentIndex(first_tab_index)
         QApplication.processEvents()
@@ -7756,6 +7774,41 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertIsNotNone(data_file)
         exported_series = data_file.series[0]
         self.assertLess(min(exported_series.x), 5.0)
+
+    def test_saved_curve_fit_result_tab_can_export_series_after_restore(self):
+        from ui.dialogs.export_flow import AnalysisResultSavePlan
+
+        self.page.on_tree_node_activated("series", self.s.id)
+        self.page._run_analysis()
+        self._wait_for_analysis_completion()
+
+        with mock.patch(
+            "ui.pages.analysis_page.choose_analysis_result_save_plan",
+            return_value=AnalysisResultSavePlan(result_name="拟合结果保存", target_parent_id=self.pm._find_folder_by_group_type("analysis_result_group").id),
+        ):
+            self.page._save_result()
+
+        active_view = self.page._active_analysis_view()
+        self.assertIsNotNone(active_view)
+        saved_analysis_id = active_view.get("saved_analysis_id")
+        self.assertIsNotNone(saved_analysis_id)
+        analysis_node = next((node for node in self.p.tree.nodes if node.kind == "analysis_result" and node.analysis_id == saved_analysis_id), None)
+        self.assertIsNotNone(analysis_node)
+
+        self.page.load_analysis_result(analysis_node.id)
+        QApplication.processEvents()
+        self._wait_for_analysis_completion(timeout=2.0)
+
+        self.assertFalse(self.page._export_result_btn.isHidden())
+        with mock.patch(
+            "ui.pages.analysis_page.choose_data_export_plan",
+            return_value=self._analysis_export_plan("restore_export"),
+        ):
+            self.page._export_result_series()
+
+        data_file = next((item for item in self.p.data_files if item.name == "restore_export.analysis"), None)
+        self.assertIsNotNone(data_file)
+        self.assertEqual(data_file.series[0].name, "restore_export")
 
     def test_save_report_template_as_named(self):
         from core.global_assets import global_assets
