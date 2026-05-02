@@ -420,6 +420,12 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         result_actions.setContentsMargins(0, 0, 0, 0)
         result_actions.setSpacing(6)
         self._analysis_result_actions_layout = result_actions
+        self._rerun_result_btn = PushButton(FIF.PLAY, "复跑此配置")
+        self._rerun_result_btn.clicked.connect(self._rerun_current_analysis)
+        apply_button_metrics(self._rerun_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        self._rerun_result_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        result_actions.addWidget(self._rerun_result_btn, 1)
+
         self._save_result_btn = PushButton(FIF.SAVE, "保存分析结果")
         self._save_result_btn.clicked.connect(self._save_result)
         apply_button_metrics(self._save_result_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
@@ -1312,6 +1318,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         else:
             self._set_analysis_status("调整输入或参数后，点击“运行分析”生成新的结果标签。")
         self._refresh_result_action_buttons()
+        self._update_result_action_buttons()
         self._render_report_preview()
 
     def _refresh_result_action_buttons(self) -> None:
@@ -1330,6 +1337,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         if view is None:
             return
         self._sync_state_from_analysis_view(view)
+        self._update_result_action_buttons()
 
     def _on_analysis_tab_close_requested(self, index: int) -> None:
         if index <= 0:
@@ -1354,6 +1362,26 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _set_analysis_status(self, message: str) -> None:
         if hasattr(self, "_analysis_status_label"):
             self._analysis_status_label.setText(message)
+
+    def _update_result_action_buttons(self) -> None:
+        if not hasattr(self, "_rerun_result_btn"):
+            return
+        view = self._current_analysis_view() if hasattr(self, "_analysis_tabs") else None
+        can_rerun = bool(isinstance(view, dict) and (view.get("inputs") or view.get("selected")))
+        self._rerun_result_btn.setEnabled(can_rerun)
+
+    def _rerun_current_analysis(self) -> None:
+        view = self._current_analysis_view()
+        if not isinstance(view, dict):
+            return
+        inputs = [dict(item) for item in (view.get("inputs") or []) if isinstance(item, dict)]
+        if not inputs:
+            InfoBar.warning("提示", "当前结果没有可复跑的输入", parent=self, position=InfoBarPosition.TOP)
+            return
+        self._sync_state_from_analysis_view(view)
+        self._update_result_action_buttons()
+        self._set_analysis_status("已恢复当前配置，正在重新运行分析…")
+        self._run_analysis()
 
     def _current_analysis_view(self) -> Optional[Dict[str, Any]]:
         if not hasattr(self, "_analysis_tabs") or not self._analysis_tab_keys:
@@ -1920,6 +1948,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             self._result = None
             self._set_analysis_status("调整输入或参数后，点击“运行分析”生成新的结果标签。")
             self._render_report_preview()
+        self._update_result_action_buttons()
 
     def _draw_result(self, t: str, selected: list, r: dict, figure=None, canvas=None, normalized: Optional[Dict[str, Any]] = None):
         figure = self._figure if figure is None else figure

@@ -2944,6 +2944,21 @@ class DataPage(QWidget):
             meta_lines.append(f"ID: {info['type_id']}")
         if info.get("version_label"):
             meta_lines.append(f"版本: {info['version_label']}")
+        if info.get("api_version_label"):
+            meta_lines.append(info["api_version_label"])
+        if info.get("min_app_version_label"):
+            meta_lines.append(info["min_app_version_label"])
+        if info.get("tested_range_label"):
+            meta_lines.append(info["tested_range_label"])
+        capability_parts: list[str] = []
+        if info.get("capabilities_label"):
+            capability_parts.append(info["capabilities_label"])
+        if info.get("authority_label"):
+            capability_parts.append(info["authority_label"])
+        if info.get("auth_fields_label"):
+            capability_parts.append(info["auth_fields_label"])
+        if capability_parts:
+            meta_lines.append("能力/接管: " + "；".join(capability_parts))
         if info.get("description"):
             meta_lines.append(f"描述: {info['description']}")
         return {

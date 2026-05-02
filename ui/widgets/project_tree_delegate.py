@@ -36,19 +36,9 @@ class ProjectTreeWrapAnywhereDelegate(TreeItemDelegate):
 
         painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
         item_option.text = ""
+        super().paint(painter, item_option, index)
+
         style = item_option.widget.style() if item_option.widget is not None else QApplication.style()
-        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item_option, painter, item_option.widget)
-
-        if index.data(Qt.ItemDataRole.CheckStateRole) is not None:
-            self._drawCheckBox(painter, item_option, index)
-
-        if item_option.state & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver):
-            painter.save()
-            painter.setPen(Qt.PenStyle.NoPen)
-            self._drawBackground(painter, item_option, index)
-            self._drawIndicator(painter, item_option, index)
-            painter.restore()
-
         text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, item_option, item_option.widget)
         if not text_rect.isValid() or text_rect.width() <= 0:
             return
@@ -87,28 +77,12 @@ class ProjectTreeWrapAnywhereDelegate(TreeItemDelegate):
 
     def _drawCheckBox(self, painter, item_option, index):
         """Draw checkbox state for the item."""
-        check_state = index.data(Qt.ItemDataRole.CheckStateRole)
-        if check_state is None:
-            return
-        opt = QStyleOptionViewItem(item_option)
-        opt.rect = QRectF(opt.rect).toRect()
-        style = opt.widget.style() if opt.widget is not None else QApplication.style()
-        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        super()._drawCheckBox(painter, item_option, index)
 
     def _drawBackground(self, painter, item_option, index):
         """Draw selection or hover background."""
-        opt = QStyleOptionViewItem(item_option)
-        opt.rect = QRectF(opt.rect).toRect()
-        if item_option.state & QStyle.StateFlag.State_Selected:
-            color = item_option.palette.color(QPalette.ColorRole.Highlight)
-            painter.setBrush(color)
-            painter.drawRoundedRect(opt.rect.adjusted(2, 2, -2, -2), 4, 4)
+        super()._drawBackground(painter, item_option, index)
 
     def _drawIndicator(self, painter, item_option, index):
         """Draw focus indicator."""
-        if item_option.state & QStyle.StateFlag.State_HasFocus:
-            opt = QStyleOptionViewItem(item_option)
-            opt.rect = QRectF(opt.rect).toRect()
-            color = item_option.palette.color(QPalette.ColorRole.Highlight)
-            painter.setPen(color)
-            painter.drawRoundedRect(opt.rect.adjusted(2, 2, -2, -2), 4, 4)
+        super()._drawIndicator(painter, item_option, index)

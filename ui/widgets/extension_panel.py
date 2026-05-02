@@ -186,6 +186,10 @@ class ExtensionConfigPanel(QWidget):
         self._description_section_label = make_section_label("扩展说明", card)
         layout.addWidget(self._description_section_label)
         layout.addWidget(self._description_label)
+        self._meta_label = CaptionLabel("", card)
+        self._meta_label.setWordWrap(True)
+        self._meta_label.setStyleSheet(secondary_text_style_sheet(font_size=11))
+        layout.addWidget(self._meta_label)
 
         self._add_section_divider(layout, card)
         self._config_section_label = make_section_label("配置", card)
@@ -321,6 +325,7 @@ class ExtensionConfigPanel(QWidget):
         self._selector_row_widget.setVisible(not is_help_only)
         self._description_section_label.setVisible(is_help_only)
         self._description_label.setVisible(is_full or is_help_only)
+        self._meta_label.setVisible(is_full or is_help_only)
         self._config_section_label.setVisible(is_full and self._config_entry_visible)
         self._config_row_widget.setVisible((not is_help_only) and (self._config_entry_visible or is_compact))
         self._config_row_divider.setVisible((not is_help_only) and (self._config_entry_visible or is_compact))
@@ -601,6 +606,7 @@ class ExtensionConfigPanel(QWidget):
         else:
             self._current_entry_label.setText("当前扩展: 当前页没有可用扩展")
             self._description_label.setText("当前页没有可用扩展")
+        self._meta_label.setText("")
         self._config_help_label.setText("保留 {} 使用默认参数。")
         self._editor.set_fields([], {})
         self._editor.setEnabled(False)
@@ -660,6 +666,23 @@ class ExtensionConfigPanel(QWidget):
         self._description_label.setText(
             info.get("description") or ("在左侧选择扩展后，这里会显示扩展说明。" if self._panel_mode == "help_only" else "暂无说明")
         )
+        meta_parts: list[str] = []
+        if info.get("api_version_label"):
+            meta_parts.append(info["api_version_label"])
+        if info.get("min_app_version_label"):
+            meta_parts.append(info["min_app_version_label"])
+        if info.get("tested_range_label"):
+            meta_parts.append(info["tested_range_label"])
+        capability_parts: list[str] = []
+        if info.get("capabilities_label"):
+            capability_parts.append(info["capabilities_label"])
+        if info.get("authority_label"):
+            capability_parts.append(info["authority_label"])
+        if info.get("auth_fields_label"):
+            capability_parts.append(info["auth_fields_label"])
+        if capability_parts:
+            meta_parts.append("能力/接管: " + "；".join(capability_parts))
+        self._meta_label.setText(" | ".join(meta_parts))
 
     def _on_selection_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._entries):
