@@ -389,6 +389,8 @@ class ProcessingExtension:
     tool_tier: str = "tool"
     hidden: bool = False
     capabilities: set[str] = field(default_factory=set)
+    api_version: str = ""
+    supports_progress: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -435,6 +437,8 @@ class AnalysisExtension:
     tool_tier: str = "tool"
     hidden: bool = False
     capabilities: set[str] = field(default_factory=set)
+    api_version: str = ""
+    supports_progress: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -481,6 +485,11 @@ class PlotExtension:
     tool_tier: str = "tool"
     hidden: bool = False
     capabilities: set[str] = field(default_factory=set)
+    api_version: str = ""
+    supports_progress: bool = False
+    style_authority: str = "advisory"
+    authoritative_fields: set[str] = field(default_factory=set)
+    post_render_mutation: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines_number", normalize_extension_lines_number(self.lines_number))
@@ -526,6 +535,8 @@ class DigitizeExtension:
     tool_tier: str = "tool"
     hidden: bool = False
     capabilities: set[str] = field(default_factory=set)
+    api_version: str = ""
+    supports_progress: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tool_tier", normalize_extension_tool_tier(self.tool_tier))
@@ -1062,6 +1073,11 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "lines_number": list(lines_number) if lines_number is not None else None,
         "report_placeholders": [dict(item) for item in getattr(extension, "report_placeholders", []) or [] if isinstance(item, dict)],
         "capabilities": set(str(c) for c in getattr(extension, "capabilities", set()) or set()),
+        "api_version": str(getattr(extension, "api_version", "") or ""),
+        "supports_progress": bool(getattr(extension, "supports_progress", False)),
+        "style_authority": str(getattr(extension, "style_authority", "advisory")),
+        "authoritative_fields": set(str(f) for f in getattr(extension, "authoritative_fields", set()) or set()),
+        "post_render_mutation": bool(getattr(extension, "post_render_mutation", False)),
     }
 
 
