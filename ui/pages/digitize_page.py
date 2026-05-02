@@ -1946,7 +1946,10 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
 
     def _ensure_digitize_result_folder(self) -> str | None:
         return self._save_export_coordinator.find_or_create_folder(
-            "数字化结果", fallback=self._save_export_coordinator.find_folder()
+            "数字化结果",
+            parent_group_type="datasets",
+            folder_group_type="datasets",
+            fallback=self._save_export_coordinator.find_folder("datasets"),
         )
 
     def _on_export_to_data_file(self):

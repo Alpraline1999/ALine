@@ -2226,7 +2226,12 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         return project_manager.get_analysis_result_target_folder_id(None)
 
     def _ensure_analysis_result_folder(self) -> Optional[str]:
-        return self._save_export_coordinator.find_or_create_folder("分析结果")
+        return self._save_export_coordinator.find_or_create_folder(
+            "分析结果",
+            parent_group_type="datasets",
+            folder_group_type="datasets",
+            fallback=self._save_export_coordinator.find_folder("datasets"),
+        )
 
     def _current_analysis_result_payload(self) -> Dict[str, Any]:
         result = dict(self._result or {}) if isinstance(self._result, dict) else {}

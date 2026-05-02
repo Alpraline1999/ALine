@@ -916,9 +916,10 @@ class ProjectTreeWidget(QWidget):
 
     def _folder_icon(self, node, group_type: Optional[str]):
         from qfluentwidgets import FluentIcon as FIF
-        group_icon = _GROUP_ICON.get(str(group_type) if group_type else "")
-        if group_icon is not None:
-            return group_icon
+        if getattr(node, "parent_id", None) is None:
+            group_icon = _GROUP_ICON.get(str(group_type) if group_type else "")
+            if group_icon is not None:
+                return group_icon
         return FIF.FOLDER
 
     def _source_file_icon(self, node):

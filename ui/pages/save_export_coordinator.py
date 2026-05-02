@@ -37,6 +37,7 @@ class SaveExportCoordinator:
         folder_name: str,
         parent_group_type: str = "datasets",
         *,
+        folder_group_type: Optional[str] = None,
         fallback: Optional[str] = None,
     ) -> Optional[str]:
         """在指定分组下查找或创建文件夹。
@@ -44,6 +45,7 @@ class SaveExportCoordinator:
         Args:
             folder_name: 要查找/创建的文件夹名称
             parent_group_type: 父级分组的 group_type，默认 "datasets"
+            folder_group_type: 新建子文件夹的 group_type；默认与父分组一致
             fallback: 若创建失败时返回的 fallback 节点 ID
 
         Returns:
@@ -57,7 +59,11 @@ class SaveExportCoordinator:
             if node.kind == "folder" and getattr(node, "name", "") == folder_name:
                 return node.id
 
-        folder = self._add_folder(folder_name, parent_id=root.id)
+        folder = self._add_folder(
+            folder_name,
+            parent_id=root.id,
+            group_type=folder_group_type or parent_group_type,
+        )
         if folder is not None:
             return folder.id
         return fallback

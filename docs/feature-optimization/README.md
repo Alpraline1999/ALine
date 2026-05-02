@@ -18,6 +18,7 @@
 12. [11-phase-11-visualization-performance-and-large-modules.md](11-phase-11-visualization-performance-and-large-modules.md)
 13. [12-phase-12-home-empty-state-and-entry-layout.md](12-phase-12-home-empty-state-and-entry-layout.md)
 14. [13-phase-13-project-tree-dragdrop-regression-and-guardrails.md](13-phase-13-project-tree-dragdrop-regression-and-guardrails.md)
+15. [14-phase-14-project-tree-group-semantics-and-export-target-normalization.md](14-phase-14-project-tree-group-semantics-and-export-target-normalization.md)
 
 ## 当前阶段定位
 

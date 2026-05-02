@@ -1571,11 +1571,14 @@ class TestNavigationStack(unittest.TestCase):
         image_tree_item = self.widget._find_item(image_item.id)
         self.assertIsNotNone(image_tree_item)
 
-        self.assertEqual(self._icon_image(project_root.icon(0)), self._icon_image(getattr(FIF, "ZIP_FOLDER", getattr(FIF, "LIBRARY", FIF.FOLDER)).icon()))
-        self.assertEqual(self._icon_image(source_group.icon(0)), self._icon_image(getattr(FIF, "IOT", FIF.FOLDER).icon()))
-        self.assertEqual(self._icon_image(source_item.icon(0)), self._icon_image(getattr(FIF, "DOCUMENT", FIF.FOLDER).icon()))
-        self.assertEqual(self._icon_image(digitize_group.icon(0)), self._icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
-        self.assertEqual(self._icon_image(image_tree_item.icon(0)), self._icon_image(getattr(FIF, "PHOTO", FIF.PHOTO).icon()))
+        def _icon_image(icon):
+            return icon.pixmap(20, 20).toImage()
+
+        self.assertEqual(_icon_image(project_root.icon(0)), _icon_image(getattr(FIF, "ZIP_FOLDER", getattr(FIF, "LIBRARY", FIF.FOLDER)).icon()))
+        self.assertEqual(_icon_image(source_group.icon(0)), _icon_image(getattr(FIF, "IOT", FIF.FOLDER).icon()))
+        self.assertEqual(_icon_image(source_item.icon(0)), _icon_image(getattr(FIF, "DOCUMENT", FIF.FOLDER).icon()))
+        self.assertEqual(_icon_image(digitize_group.icon(0)), _icon_image(getattr(FIF, "LABEL", FIF.PHOTO).icon()))
+        self.assertEqual(_icon_image(image_tree_item.icon(0)), _icon_image(getattr(FIF, "PHOTO", FIF.PHOTO).icon()))
 
     def test_project_tree_child_folders_use_plain_folder_icon(self):
         from qfluentwidgets import FluentIcon as FIF
@@ -1583,30 +1586,47 @@ class TestNavigationStack(unittest.TestCase):
         source_root = self.pm._find_folder_by_group_type("source_files")
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         images_root = self.pm._find_folder_by_group_type("images")
+        pictures_root = self.pm._find_folder_by_group_type("pictures")
+        analysis_root = self.pm._find_folder_by_group_type("analysis_result_group")
         self.assertIsNotNone(source_root)
         self.assertIsNotNone(datasets_root)
         self.assertIsNotNone(images_root)
+        self.assertIsNotNone(pictures_root)
+        self.assertIsNotNone(analysis_root)
 
         source_child = self.pm.add_folder("源子文件夹", parent_id=source_root.id, group_type="source_files")
         dataset_child = self.pm.add_folder("数据子文件夹", parent_id=datasets_root.id, group_type="datasets")
         image_child = self.pm.add_folder("图像子文件夹", parent_id=images_root.id, group_type="images")
+        picture_child = self.pm.add_folder("图片子文件夹", parent_id=pictures_root.id, group_type="pictures")
+        analysis_child = self.pm.add_folder("分析子文件夹", parent_id=analysis_root.id, group_type="analysis_result_group")
         self.assertIsNotNone(source_child)
         self.assertIsNotNone(dataset_child)
         self.assertIsNotNone(image_child)
+        self.assertIsNotNone(picture_child)
+        self.assertIsNotNone(analysis_child)
 
         self.widget.refresh()
 
         source_child_item = self.widget._find_item(source_child.id)
         dataset_child_item = self.widget._find_item(dataset_child.id)
         image_child_item = self.widget._find_item(image_child.id)
+        picture_child_item = self.widget._find_item(picture_child.id)
+        analysis_child_item = self.widget._find_item(analysis_child.id)
         self.assertIsNotNone(source_child_item)
         self.assertIsNotNone(dataset_child_item)
         self.assertIsNotNone(image_child_item)
+        self.assertIsNotNone(picture_child_item)
+        self.assertIsNotNone(analysis_child_item)
 
-        expected_icon = self._icon_image(FIF.FOLDER.icon())
-        self.assertEqual(self._icon_image(source_child_item.icon(0)), expected_icon)
-        self.assertEqual(self._icon_image(dataset_child_item.icon(0)), expected_icon)
-        self.assertEqual(self._icon_image(image_child_item.icon(0)), expected_icon)
+        def _icon_image(icon):
+            return icon.pixmap(20, 20).toImage()
+
+        expected_icon = _icon_image(FIF.FOLDER.icon())
+        self.assertEqual(_icon_image(source_child_item.icon(0)), expected_icon)
+        self.assertEqual(_icon_image(dataset_child_item.icon(0)), expected_icon)
+        self.assertEqual(_icon_image(image_child_item.icon(0)), expected_icon)
+        self.assertEqual(_icon_image(picture_child_item.icon(0)), expected_icon)
+        self.assertEqual(_icon_image(analysis_child_item.icon(0)), expected_icon)
 
     def test_project_tree_image_source_file_uses_photo_icon(self):
         from qfluentwidgets import FluentIcon as FIF
@@ -7662,6 +7682,42 @@ class TestAnalysisPage(unittest.TestCase):
         self.assertEqual(exported_series.name, "峰值点A")
         self.assertEqual(exported_series.x, [1.0])
         self.assertEqual(exported_series.y, [2.0])
+
+    def test_analysis_result_export_auto_creates_dataset_folder(self):
+        from models.schemas import DataSeries
+        from ui.dialogs.export_flow import DataExportPlan
+
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+
+        captured = {}
+
+        def _capture_export_plan(*_args, **kwargs):
+            option = kwargs["create_target_options"][0]
+            parent_id = option.ensure_parent_id()
+            captured["parent_id"] = parent_id
+            return DataExportPlan(
+                export_name="分析导出A",
+                new_parent_id=parent_id,
+                new_data_file_name="分析导出A.analysis",
+            )
+
+        with mock.patch("ui.pages.analysis_page.choose_data_export_plan", side_effect=_capture_export_plan):
+            exported = self.page._export_current_series(
+                DataSeries(name="分析导出A", x=[0.0, 1.0], y=[1.0, 2.0], source="computed"),
+                title="导出分析结果",
+            )
+
+        self.assertTrue(exported)
+        folder = self.pm.get_node_by_id(captured["parent_id"])
+        self.assertIsNotNone(folder)
+        self.assertEqual(folder.kind, "folder")
+        self.assertEqual(folder.name, "分析结果")
+        self.assertEqual(getattr(folder, "group_type", None), "datasets")
+        self.assertEqual(self.pm._node_collection_group_type(folder.id), "datasets")
+        data_node = next((node for node in self.p.tree.nodes if node.kind == "data_file" and node.name == "分析导出A.analysis"), None)
+        self.assertIsNotNone(data_node)
+        self.assertEqual(data_node.parent_id, folder.id)
 
     def test_statistics_result_hides_export_curve_button_without_lines(self):
         self.page._type_combo.setCurrentIndex(self.page._analysis_type_ids.index("statistics"))
