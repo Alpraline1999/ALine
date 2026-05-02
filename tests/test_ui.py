@@ -1256,6 +1256,22 @@ class TestNavigationStack(unittest.TestCase):
         self.assertTrue(self.widget._perform_drop_move(None, target_item))
         self.assertEqual(node.parent_id, folder.id)
 
+    def test_drag_drop_helper_uses_remembered_drag_source(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        folder = self.widget._create_child_folder(datasets_root.id, "拖放目标")
+        self.assertIsNotNone(folder)
+        node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == self.df.id)
+
+        self.widget.refresh()
+        source_item = self.widget._find_item(node.id)
+        target_item = self.widget._find_item(folder.id)
+        helper = self.widget._drag_drop_helper
+        helper.remember_drag_source_item(source_item)
+
+        self.assertTrue(helper.perform_drop_move(None, target_item))
+        self.assertEqual(node.parent_id, folder.id)
+
     def test_drop_source_file_to_data_file_imports_series_without_moving_source_node(self):
         from models.schemas import DataSeries
 
@@ -10695,5 +10711,4 @@ class TestSettingsPageV3(unittest.TestCase):
 
     def test_report_template_card_hidden(self):
         self.assertTrue(self.page._tmpl_card.isHidden())
-
 

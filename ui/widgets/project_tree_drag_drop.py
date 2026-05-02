@@ -207,7 +207,7 @@ class ProjectTreeDragDropHelper:
         defer_view_refresh: bool = False,
     ) -> bool:
         """执行单节点拖放移动。"""
-        source_item = self._drag_source_item_for_drop(source_item)
+        source_item = self.drag_source_item_for_drop(source_item)
         source_data = self._item_role_data(source_item)
         if not source_data:
             return False
