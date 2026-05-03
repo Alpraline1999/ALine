@@ -9652,6 +9652,7 @@ class TestMainWindow(unittest.TestCase):
         project_item = self.win._tree_panel.tree._tree.topLevelItem(1)
         self.win._tree_panel.tree._on_item_clicked(project_item, 0)
         self.assertEqual(self.pm.current_project_id, other.id)
+        self.assertTrue(self.win.windowTitle().startswith(f"ALine - {other.name}"))
 
     def test_tree_node_selected_routes_to_data_page(self):
         """树信号路由到数据页"""

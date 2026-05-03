@@ -616,9 +616,15 @@ class ProjectTreeWidget(QWidget):
     def _activate_item_project(self, item: Optional[QTreeWidgetItem]) -> None:
         if item is None:
             return
+        previous_project_id = project_manager.current_project_id
         project_id = self._item_project_id(item)
         if project_id:
             project_manager.set_current_project(project_id)
+            if project_id != previous_project_id:
+                window = self.window()
+                update_window_title = getattr(window, "_update_window_title", None)
+                if callable(update_window_title):
+                    update_window_title()
 
     def _on_item_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         if self._renaming:
