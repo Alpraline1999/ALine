@@ -50,6 +50,7 @@ from ui.widgets.matplotlib_preview import (
     toggle_preview_pan_mode,
     zoom_figure_axes,
 )
+from ui.widgets.project_tree_support import folder_display_name, is_protected_folder
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from core.extension_api import (
@@ -2011,7 +2012,7 @@ class DataPage(QWidget):
         if node is None:
             return ""
         if getattr(node, "kind", None) == "folder":
-            return self._folder_group_label(getattr(node, "group_type", None)) or node.name
+            return folder_display_name(node) or node.name
         return node.name
 
     @staticmethod
@@ -2252,16 +2253,7 @@ class DataPage(QWidget):
         return None
 
     def _is_protected_folder_node(self, node) -> bool:
-        if node is None or getattr(node, "kind", None) != "folder":
-            return False
-        group_type = self._canonical_folder_group(getattr(node, "group_type", None))
-        if group_type in {"source_files", "datasets", "images", "pictures", "analysis_result_group"}:
-            return getattr(node, "parent_id", None) is None
-        return group_type in {
-            "tools", "pipeline_group", "figure_template_group",
-            "report_template_group", "ai_group", "prompt_group",
-            "skill_group", "agent_group",
-        }
+        return is_protected_folder(node)
 
     def _current_import_group(self) -> Optional[str]:
         node = self._current_tree_node()

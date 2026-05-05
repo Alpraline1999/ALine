@@ -64,6 +64,9 @@ class ProjectTreeMenuBuilder:
         _cmd_move_virtual: Callable,
         _open_picture_folder: Callable,
         _open_source_file_folder: Callable,
+        save_current_project: Callable,
+        save_current_project_as: Callable,
+        close_current_project: Callable,
         _SYNTHETIC_GLOBAL_KINDS: frozenset,
         _MANAGED_FOLDER_GROUP_TYPES: frozenset,
         _PICTURE_GROUP_ICON: object,
@@ -117,6 +120,9 @@ class ProjectTreeMenuBuilder:
         self._cmd_move_virtual = _cmd_move_virtual
         self._open_picture_folder = _open_picture_folder
         self._open_source_file_folder = _open_source_file_folder
+        self._save_current_project = save_current_project
+        self._save_current_project_as = save_current_project_as
+        self._close_current_project = close_current_project
         self._SYNTHETIC_GLOBAL_KINDS = _SYNTHETIC_GLOBAL_KINDS
         self._MANAGED_FOLDER_GROUP_TYPES = _MANAGED_FOLDER_GROUP_TYPES
         self._PICTURE_GROUP_ICON = _PICTURE_GROUP_ICON
@@ -138,6 +144,8 @@ class ProjectTreeMenuBuilder:
         # activate the project context
         self._activate_item_project(item)
         menu = RoundMenu(parent=self._dialog_parent())
+        import_entries: list[tuple[object, str, object]] = []
+        manage_entries: list[tuple[object, str, object]] = []
 
         batch_payloads = self._batch_action_payloads(selected_items)
         if len(batch_payloads) > 1:
@@ -150,12 +158,15 @@ class ProjectTreeMenuBuilder:
         kind, node_id = d
 
         if kind == "project":
-            self._append_tree_scope_actions(menu)
+            manage_entries.extend([
+                (FIF.SAVE, "保存项目", self._save_current_project),
+                (FIF.SAVE, "另存项目", self._save_current_project_as),
+                (FIF.CLOSE, "关闭项目", self._close_current_project),
+            ])
+            self._append_menu_section(menu, manage_entries)
+            self._append_tree_scope_actions(menu, separated=True)
             menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
-
-        import_entries: list[tuple[object, str, object]] = []
-        manage_entries: list[tuple[object, str, object]] = []
 
         if kind in self._SYNTHETIC_GLOBAL_KINDS:
             self._build_global_kind_menu(menu, pos, kind, node_id, item, manage_entries)
@@ -295,6 +306,9 @@ class ProjectTreeMenuBuilder:
                 (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
+            move_choices = self._move_target_choices("folder", node_id)
+            if move_choices:
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("folder", node_id, move_choices)))
         if managed_group_type in self._MANAGED_FOLDER_GROUP_TYPES:
             manage_entries.append((FIF.SYNC, "清理空子文件夹", lambda: self._cmd_prune_empty_folders(node_id, scope_label=item.text(0))))
 

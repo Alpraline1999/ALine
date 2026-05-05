@@ -429,6 +429,60 @@ class TestProjectTreeWidget(unittest.TestCase):
         child_labels = [project_root.child(i).text(0) for i in range(project_root.childCount())]
         self.assertIn("源文件", child_labels)
 
+    def test_child_folder_context_menu_exposes_manage_actions(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        child_folder = self.pm.add_folder("批次A", parent_id=datasets_root.id, group_type="datasets")
+        peer_folder = self.pm.add_folder("批次B", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(child_folder)
+        self.assertIsNotNone(peer_folder)
+
+        self.widget.refresh()
+        project_root = self.widget._tree.topLevelItem(0)
+        self.assertIsNotNone(project_root)
+        project_root.setExpanded(True)
+        datasets_item = self.widget._find_item(datasets_root.id)
+        self.assertIsNotNone(datasets_item)
+        datasets_item.setExpanded(True)
+        self.widget.show()
+        QApplication.processEvents()
+        item = self.widget._find_item(child_folder.id)
+        self.assertIsNotNone(item)
+        captured = {}
+
+        def _fake_exec(menu, *_args):
+            captured["actions"] = list(menu.actions())
+
+        with mock.patch("ui.widgets.project_tree_menu_commands.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+            rect = self.widget._tree.visualItemRect(item)
+            self.widget._on_context_menu(rect.center())
+
+        visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+        self.assertIn("重命名", visible_texts)
+        self.assertIn("删除", visible_texts)
+        self.assertIn("移动到...", visible_texts)
+
+    def test_project_root_context_menu_exposes_project_commands(self):
+        self.widget.refresh()
+        project_root = self.widget._tree.topLevelItem(0)
+        self.assertIsNotNone(project_root)
+        self.widget.show()
+        QApplication.processEvents()
+        captured = {}
+
+        def _fake_exec(menu, *_args):
+            captured["actions"] = list(menu.actions())
+
+        with mock.patch("ui.widgets.project_tree_menu_commands.RoundMenu.exec", autospec=True, side_effect=_fake_exec):
+            rect = self.widget._tree.visualItemRect(project_root)
+            self.widget._on_context_menu(rect.center())
+
+        visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
+        self.assertIn("保存项目", visible_texts)
+        self.assertIn("另存项目", visible_texts)
+        self.assertIn("关闭项目", visible_texts)
+        self.assertIn("清理空文件夹", visible_texts)
+
     def test_tree_sorts_siblings_with_folders_first_and_english_before_chinese(self):
         from models.schemas import DataFile, DataSeries
 
@@ -545,6 +599,50 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertEqual(self.pm.get_node_by_id(second_node.id).parent_id, target_folder.id)
         selected_ids = {item.data(0, Qt.ItemDataRole.UserRole)[1] for item in self.widget._tree.selectedItems()}
         self.assertEqual(selected_ids, {first_node.id, second_node.id})
+
+    def test_batch_drop_move_moves_multiple_folders(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        source_a = self.pm.add_folder("批次A", parent_id=datasets_root.id, group_type="datasets")
+        source_b = self.pm.add_folder("批次B", parent_id=datasets_root.id, group_type="datasets")
+        target_folder = self.pm.add_folder("批次目标", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(source_a)
+        self.assertIsNotNone(source_b)
+        self.assertIsNotNone(target_folder)
+
+        self.widget.refresh()
+
+        source_items = [self.widget._find_item(source_a.id), self.widget._find_item(source_b.id)]
+        self.assertTrue(all(item is not None for item in source_items))
+        target_item = self.widget._find_item(target_folder.id)
+        self.assertIsNotNone(target_item)
+
+        moved = self.widget._perform_batch_drop_move(source_items, target_item, defer_view_refresh=False)
+
+        self.assertTrue(moved)
+        self.assertEqual(self.pm.get_node_by_id(source_a.id).parent_id, target_folder.id)
+        self.assertEqual(self.pm.get_node_by_id(source_b.id).parent_id, target_folder.id)
+
+    def test_batch_delete_accepts_multiple_folders(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        folder_a = self.pm.add_folder("删除A", parent_id=datasets_root.id, group_type="datasets")
+        folder_b = self.pm.add_folder("删除B", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(folder_a)
+        self.assertIsNotNone(folder_b)
+
+        self.widget.refresh()
+        item_a = self.widget._find_item(folder_a.id)
+        item_b = self.widget._find_item(folder_b.id)
+        self.assertIsNotNone(item_a)
+        self.assertIsNotNone(item_b)
+        item_a.setSelected(True)
+        item_b.setSelected(True)
+
+        with mock.patch.object(self.widget, "_cmd_delete_batch") as delete_batch_mock:
+            self.widget.delete_selected_items()
+
+        delete_batch_mock.assert_called_once()
 
     def test_focus_selected_item_hides_unrelated_tree_branches(self):
         from models.schemas import DataFile, DataSeries
@@ -726,6 +824,25 @@ class TestNavigationStack(unittest.TestCase):
         moved = self.widget._move_node_to_target("source_file", node.id, folder.id)
         self.assertTrue(moved)
         self.assertEqual(node.parent_id, folder.id)
+
+    def test_source_file_drop_moves_between_source_folders(self):
+        source_root = self.pm._find_folder_by_group_type("source_files")
+        self.assertIsNotNone(source_root)
+        target_folder = self.widget._create_child_folder(source_root.id, "移动目标")
+        self.assertIsNotNone(target_folder)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "raw_drop.txt"
+            source_path.write_text("raw", encoding="utf-8")
+            node = self.pm.add_source_file(str(source_path))
+
+        source_item = self.widget._find_item(node.id)
+        target_item = self.widget._find_item(target_folder.id)
+        self.assertIsNotNone(source_item)
+        self.assertIsNotNone(target_item)
+
+        moved = self.widget._perform_drop_move(source_item, target_item, defer_view_refresh=False)
+        self.assertTrue(moved)
+        self.assertEqual(node.parent_id, target_folder.id)
 
     def test_dataset_folder_context_can_create_data_file(self):
         dataset_root = self.pm._find_folder_by_group_type("datasets")
@@ -4171,6 +4288,17 @@ class TestDataPage(unittest.TestCase):
         self.assertTrue(self.page._btn_delete_node.isEnabled())
         self.assertFalse(hasattr(self.page, "_btn_copy_to_data_file"))
 
+    def test_management_panel_shows_child_folder_name(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        child_folder = self.pm.add_folder("批次A", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(child_folder)
+
+        self.page.on_tree_node_selected("folder", child_folder.id)
+
+        self.assertEqual(self.page._manage_target_label.text(), "[文件夹] 批次A")
+        self.assertEqual(self.page._current_node_name(), "批次A")
+
     def test_management_target_label_opens_node_detail_dialog(self):
         node = next((n for n in self.p.tree.nodes if n.kind == "data_file"), None)
         self.assertIsNotNone(node)
@@ -4866,6 +4994,19 @@ class TestChartPage(unittest.TestCase):
         helper_label = make_style_form_label("颜色:", self.page)
         self.assertEqual(label.text(), helper_label.text())
         self.assertEqual(label.minimumWidth(), helper_label.minimumWidth())
+
+    def test_decimated_redraw_uses_render_policy(self):
+        if self.page._figure is None or self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        self.page._chart_series = [{"visible": True, "xs": [1, 2, 3], "ys": [1, 2, 3]}]
+
+        with mock.patch("core.rendering.decimate_xy_for_rendering", return_value=([1, 2], [1, 2], [0, 1])) as decimate_mock:
+            self.page._decimated_redraw()
+
+        decimate_mock.assert_called_once()
+        self.assertEqual(decimate_mock.call_args.kwargs, {})
+        self.assertEqual(len(decimate_mock.call_args.args), 3)
 
     def test_chart_preview_uses_shared_navigation_controls(self):
         if self.page._figure is None or self.page._canvas is None:

@@ -620,6 +620,35 @@ class MainWindow(FluentWindow):
         show_success(self, "已保存", file_path)
         return True
 
+    def _save_current_project_as_from_panel(self) -> bool:
+        project = project_manager.current_project
+        if project is None:
+            show_warning(self, "提示", "请先打开项目")
+            return False
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "另存项目",
+            f"{project.name}.aline",
+            "ALine 项目 (*.aline)",
+        )
+        if not file_path:
+            return False
+
+        try:
+            project_manager.save(file_path)
+        except Exception as exc:
+            show_error(self, "保存失败", exc)
+            return False
+
+        self.data_page.refresh()
+        self.digitize_page.refresh_project_tree()
+        self._tree_panel.tree.refresh()
+        self.settings_page.refresh_templates()
+        self._update_window_title()
+        show_success(self, "已另存", file_path)
+        return True
+
     def _close_current_project_from_panel(self) -> None:
         project = project_manager.current_project
         if project is None:

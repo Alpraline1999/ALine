@@ -20,6 +20,7 @@
 14. [13-phase-13-project-tree-dragdrop-regression-and-guardrails.md](13-phase-13-project-tree-dragdrop-regression-and-guardrails.md)
 15. [14-phase-14-project-tree-group-semantics-and-export-target-normalization.md](14-phase-14-project-tree-group-semantics-and-export-target-normalization.md)
 16. [15-phase-15-analysis-result-curve-export-and-output-lines-normalization.md](15-phase-15-analysis-result-curve-export-and-output-lines-normalization.md)
+17. [16-phase-16-chart-rendering-regression-and-project-tree-capability-unification.md](16-phase-16-chart-rendering-regression-and-project-tree-capability-unification.md)
 
 ## 当前阶段定位
 
@@ -67,6 +68,9 @@
 - 新一轮问题核查又确认了两类尚未收口的优化项：
   - 首页最近项目为空时，按钮区/最近项目标题/空状态提示仍沿用“列表填充剩余高度”的布局策略，页面不够靠上紧凑
   - 项目树拖放 helper 在拆分后残留旧私有方法名 `_drag_source_item_for_drop`，导致节点拖拽移动在运行时直接报错
+- 最新补充核查又确认，本轮还存在一组需要单独成 phase 收口的回归与契约漂移：
+  - 可视化页大点数预览路径仍残留 `decimate_xy_for_rendering(..., max_points=...)` 的旧接口调用，导致绘图运行时直接崩溃
+  - 项目树普通子文件夹与根分组文件夹的能力矩阵没有统一，已表现为右键菜单缺项、节点管理名称错误、批量操作范围过窄、源文件拖动移动失效、项目根节点命令缺失等一组关联问题
 - 鉴于后续可能完全重做 AI 模块，现阶段更合理的策略是：
   - 先把 AI 从主启动链路和日常用户路径中彻底解耦/禁用
   - 再单独规划新的 AI 架构、命令模型与 UI 交互面

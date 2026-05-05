@@ -84,6 +84,11 @@ class ProjectTreeDragDropHelper:
             parent_data = self._item_role_data(parent_item)
             if parent_data and parent_data[0] == "data_file":
                 return parent_data
+        if target_kind == "source_file":
+            parent_item = None if target_item is None else target_item.parent()
+            parent_data = self._item_role_data(parent_item)
+            if parent_data and parent_data[0] == "folder":
+                return parent_data
         return target_kind, target_id
 
     def perform_source_file_drop_action(
@@ -113,6 +118,19 @@ class ProjectTreeDragDropHelper:
             target_data_file_id = None if target_node is None else getattr(target_node, "data_file_id", None)
         elif target_kind == "folder":
             target_folder_id = target_id
+        elif target_kind == "source_file":
+            target_node = project_manager.get_node_by_id(target_id)
+            if target_node is not None:
+                target_folder_id = getattr(target_node, "parent_id", None)
+
+        if target_folder_id and self._folder_collection_group(target_folder_id) == "source_files":
+            if self._move_node_to_target("source_file", source_id, target_folder_id):
+                if defer_view_refresh:
+                    QTimer.singleShot(0, lambda node_id=source_id: self._finalize_drop_move(node_id))
+                else:
+                    self._finalize_drop_move(source_id)
+                self._project_modified()
+                return True
 
         if target_data_file_id or (target_folder_id and self._folder_collection_group(target_folder_id) == "datasets"):
             select_node_id = self._command_service.import_source_file_as_dataset(

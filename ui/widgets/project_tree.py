@@ -40,7 +40,6 @@ from .project_tree_support import (
     _OPEN_DIGITIZE_ACTION_ICON,
     _PROJECT_ICON,
     _PROJECT_ROLE,
-    _PROTECTED_GROUP_TYPES,
     _ROOT_GROUP_LABELS,
     _ROOT_GROUP_ORDER,
     _ROOT_GROUP_TYPES,
@@ -56,6 +55,8 @@ from .project_tree_support import (
     _series_color_icon,
     _sort_text_key,
     _wrap_text_height,
+    is_protected_folder,
+    is_root_group_folder,
 )
 from .project_tree_delegate import ProjectTreeWrapAnywhereDelegate
 from .project_tree_drag_drop import ProjectTreeDragDropHelper
@@ -130,6 +131,9 @@ class ProjectTreeWidget(QWidget):
         self._focused_item_key: Optional[str] = None
         self._fluent_tooltip: Optional[ToolTip] = None
         self._name_display_mode = "elide"
+        self._SYNTHETIC_GLOBAL_KINDS = _SYNTHETIC_GLOBAL_KINDS
+        self._MANAGED_FOLDER_GROUP_TYPES = _MANAGED_FOLDER_GROUP_TYPES
+        self._ROOT_GROUP_LABELS = _ROOT_GROUP_LABELS
         self._page_dispatcher = ProjectTreePageDispatcher(self.node_selected, self.node_activated)
         self._command_service = ProjectTreeCommandService(
             confirm_delete=self._confirm_tree_delete,
@@ -233,6 +237,9 @@ class ProjectTreeWidget(QWidget):
             _IMPORT_DATA_ACTION_ICON=_IMPORT_DATA_ACTION_ICON,
             _OPEN_DIGITIZE_ACTION_ICON=_OPEN_DIGITIZE_ACTION_ICON,
             _PICTURE_GROUP_ICON_v2=_PICTURE_GROUP_ICON,
+            save_current_project=self._save_current_project,
+            save_current_project_as=self._save_current_project_as,
+            close_current_project=self._close_current_project,
         )
 
         self.set_name_display_mode(get_tree_name_display_mode())
@@ -245,6 +252,60 @@ class ProjectTreeWidget(QWidget):
         """从 project_manager.projects 完整重建树。"""
         self._projects = project_manager.projects
         self._builder.build(self)
+
+    def _save_current_project(self) -> bool:
+        window = self.window()
+        handler = getattr(window, "_save_current_project_from_panel", None)
+        if callable(handler):
+            return bool(handler())
+        project = project_manager.current_project
+        if project is None:
+            return False
+        file_path = project.file_path
+        if not file_path:
+            return self._save_current_project_as()
+        try:
+            project_manager.save(file_path)
+        except Exception as exc:
+            InfoBar.error("保存失败", str(exc), parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+            return False
+        InfoBar.success("已保存", file_path, parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+        return True
+
+    def _save_current_project_as(self) -> bool:
+        window = self.window()
+        handler = getattr(window, "_save_current_project_as_from_panel", None)
+        if callable(handler):
+            return bool(handler())
+        project = project_manager.current_project
+        if project is None:
+            return False
+        file_path, _ = QFileDialog.getSaveFileName(
+            self._dialog_parent(),
+            "另存项目",
+            f"{project.name}.aline",
+            "ALine 项目 (*.aline)",
+        )
+        if not file_path:
+            return False
+        try:
+            project_manager.save(file_path)
+        except Exception as exc:
+            InfoBar.error("保存失败", str(exc), parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+            return False
+        InfoBar.success("已另存", file_path, parent=self._dialog_parent(), position=InfoBarPosition.TOP)
+        return True
+
+    def _close_current_project(self) -> None:
+        window = self.window()
+        handler = getattr(window, "_close_current_project_from_panel", None)
+        if callable(handler):
+            handler()
+            return
+        if project_manager.current_project is None:
+            return
+        project_manager.close_current_project()
+        self.refresh()
 
     def _schedule_wrapped_item_size_hint_update(self) -> None:
         QTimer.singleShot(0, self._update_wrapped_item_size_hints)
@@ -788,17 +849,39 @@ class ProjectTreeWidget(QWidget):
             for img in p.images:
                 if img.id != current_parent_id:
                     choices.append((img.name, img.id))
-        elif kind in {"data_file", "source_file", "image_work", "picture", "analysis_result"} and p.tree is not None:
+        elif kind == "folder" and p.tree is not None:
             node = p.tree.get_node(node_id)
             if node is None:
                 return []
-            required_group = {
-                "data_file": "datasets",
-                "source_file": "source_files",
-                "image_work": "images",
-                "picture": "pictures",
-                "analysis_result": "analysis_result_group",
-            }[kind]
+            required_group = self._folder_collection_group(node_id)
+            if required_group is None:
+                return []
+
+            def _is_descendant(candidate_id: str) -> bool:
+                current = p.tree.get_node(candidate_id)
+                while current is not None and getattr(current, "kind", None) == "folder":
+                    parent_id = getattr(current, "parent_id", None)
+                    if parent_id == node.id:
+                        return True
+                    current = p.tree.get_node(parent_id) if parent_id else None
+                return False
+
+            for folder in p.tree.nodes:
+                if folder.kind != "folder" or folder.id == node.id:
+                    continue
+                if self._folder_collection_group(folder.id) != required_group:
+                    continue
+                if _is_descendant(folder.id):
+                    continue
+                choices.append((self._folder_path_label(folder.id), folder.id))
+            choices.sort(key=lambda item: item[0])
+        elif kind in {"data_file", "source_file", "image_work", "picture", "analysis_result", "pipeline", "figure_template", "report_template", "ai_prompt", "ai_skill", "ai_agent", "ai_tool"} and p.tree is not None:
+            node = p.tree.get_node(node_id)
+            if node is None or getattr(node, "parent_id", None) is None:
+                return []
+            required_group = self._folder_collection_group(getattr(node, "parent_id", None))
+            if required_group is None:
+                return []
             for folder in p.tree.nodes:
                 if folder.kind != "folder":
                     continue
@@ -836,7 +919,6 @@ class ProjectTreeWidget(QWidget):
     def _batch_action_payloads(self, items: List[QTreeWidgetItem]) -> List[Dict[str, object]]:
         if len(items) < 2:
             return []
-        selected_keys = {self._item_key(item) for item in items}
         payloads: List[Dict[str, object]] = []
         expected_kind: Optional[str] = None
         expected_project_id: Optional[str] = None
@@ -845,7 +927,10 @@ class ProjectTreeWidget(QWidget):
             if not data:
                 return []
             kind, node_id = data
-            if kind not in {"series", "curve"}:
+            if kind in {"project", "global_root", "global_group"} or kind in self._SYNTHETIC_GLOBAL_KINDS:
+                return []
+            node = project_manager.get_node_by_id(node_id)
+            if kind == "folder" and self._is_protected_folder(node):
                 return []
             if expected_kind is None:
                 expected_kind = kind
@@ -856,14 +941,23 @@ class ProjectTreeWidget(QWidget):
         return payloads
 
     def _common_batch_move_choices(self, payloads: List[Dict[str, object]]) -> List[Tuple[str, str]]:
-        seen_ids: set[str] = set()
-        choices: List[Tuple[str, str]] = []
+        common_map: Optional[Dict[str, str]] = None
         for payload in payloads:
-            for label, choice_id in self._move_target_choices(str(payload["kind"]), str(payload["node_id"])):
-                if choice_id not in seen_ids:
-                    seen_ids.add(choice_id)
-                    choices.append((label, choice_id))
-        return choices
+            current_map = {
+                choice_id: label
+                for label, choice_id in self._move_target_choices(str(payload["kind"]), str(payload["node_id"]))
+            }
+            if common_map is None:
+                common_map = current_map
+                continue
+            common_map = {
+                choice_id: common_map.get(choice_id, label)
+                for choice_id, label in current_map.items()
+                if choice_id in common_map
+            }
+        if not common_map:
+            return []
+        return sorted(((label, choice_id) for choice_id, label in common_map.items()), key=lambda item: item[0])
 
     # ─────────────────────────────────────────────────────────
     # 树节点查找与查询
@@ -918,10 +1012,7 @@ class ProjectTreeWidget(QWidget):
         return None
 
     def _is_protected_folder(self, node) -> bool:
-        if node is None:
-            return False
-        group_type = getattr(node, "group_type", None)
-        return group_type in _PROTECTED_GROUP_TYPES
+        return is_protected_folder(node)
 
     def _dialog_parent(self) -> QWidget:
         window = self.window()
@@ -929,7 +1020,7 @@ class ProjectTreeWidget(QWidget):
 
     def _folder_icon(self, node, group_type: Optional[str]):
         from qfluentwidgets import FluentIcon as FIF
-        if getattr(node, "parent_id", None) is None:
+        if is_root_group_folder(node):
             group_icon = _GROUP_ICON.get(str(group_type) if group_type else "")
             if group_icon is not None:
                 return group_icon

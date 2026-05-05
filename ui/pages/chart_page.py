@@ -3512,7 +3512,11 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             ys = curve.get("ys", curve.get("y", []))
             if not xs or not ys:
                 continue
-            xs_dec, ys_dec = decimate_xy_for_rendering(list(xs), list(ys), max_points=200)
+            xs_dec, ys_dec, _ = decimate_xy_for_rendering(
+                list(xs),
+                list(ys),
+                RenderDecimationPolicy(max_points=200),
+            )
             axis.plot(xs_dec, ys_dec, linewidth=1.2, alpha=0.7)
             rendered += 1
         if rendered == 0:

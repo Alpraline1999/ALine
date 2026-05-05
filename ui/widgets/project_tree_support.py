@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import ceil
+from typing import Any
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QTextDocument, QTextOption
@@ -192,6 +193,48 @@ _MANAGED_FOLDER_GROUP_TYPES = frozenset({
     "pictures",
     "analysis_result_group",
 })
+
+
+def _canonical_folder_group(group_type: str | None) -> str | None:
+    if group_type in {"dataset_set", "datasets"}:
+        return "datasets"
+    if group_type in {"source_files"}:
+        return "source_files"
+    if group_type in {"image_set", "images"}:
+        return "images"
+    if group_type in {"picture_set", "pictures"}:
+        return "pictures"
+    if group_type in {"tool_set", "tools"}:
+        return "tools"
+    if group_type in {"template_group", "figure_template_group"}:
+        return "figure_template_group"
+    return group_type
+
+
+def is_root_group_folder(node: Any) -> bool:
+    if node is None or getattr(node, "kind", None) != "folder":
+        return False
+    group_type = _canonical_folder_group(getattr(node, "group_type", None))
+    return getattr(node, "parent_id", None) is None and group_type in _ROOT_GROUP_TYPES
+
+
+def is_protected_folder(node: Any) -> bool:
+    if node is None or getattr(node, "kind", None) != "folder":
+        return False
+    group_type = _canonical_folder_group(getattr(node, "group_type", None))
+    return getattr(node, "parent_id", None) is None and group_type in _PROTECTED_GROUP_TYPES
+
+
+def folder_display_name(node: Any) -> str:
+    if node is None:
+        return ""
+    name = str(getattr(node, "name", "") or "").strip()
+    if getattr(node, "kind", None) != "folder":
+        return name
+    if is_root_group_folder(node):
+        group_type = _canonical_folder_group(getattr(node, "group_type", None))
+        return _ROOT_GROUP_LABELS.get(group_type or "", name) or name
+    return name
 
 # QTreeWidgetItem UserRole 存储 (kind, id)
 _ROLE = Qt.ItemDataRole.UserRole
