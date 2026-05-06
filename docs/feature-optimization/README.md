@@ -23,6 +23,7 @@
 17. [16-phase-16-chart-rendering-regression-and-project-tree-capability-unification.md](16-phase-16-chart-rendering-regression-and-project-tree-capability-unification.md)
 18. [17-phase-17-project-tree-root-cleanup-and-multi-select-focus-mode.md](17-phase-17-project-tree-root-cleanup-and-multi-select-focus-mode.md)
 19. [18-phase-18-unsaved-project-close-confirmation-and-cancel-path.md](18-phase-18-unsaved-project-close-confirmation-and-cancel-path.md)
+20. [19-phase-19-extension-config-tree-ownership-and-grouping-normalization.md](19-phase-19-extension-config-tree-ownership-and-grouping-normalization.md)
 
 ## 当前阶段定位
 
@@ -78,6 +79,8 @@
   - 项目树专注模式当前仅支持单节点，不支持多选节点联合专注，已与现有多选管理能力脱节
 - 最新交互核查还补充出一个需要进入下一阶段收口的关闭流程问题：
   - 关闭未保存项目时，确认弹窗目前只有“保存 / 不保存”两条路径，缺少“取消关闭”选项，用户无法中止关闭操作并保持当前项目状态不变
+- 最新功能核查还补充出一个扩展配置管理结构问题：
+  - 项目树中的扩展配置目前仍按扩展类别扁平挂载，未按具体扩展节点归属管理，导致配置所有权、查找路径和后续管理动作都不清晰
 - 鉴于后续可能完全重做 AI 模块，现阶段更合理的策略是：
   - 先把 AI 从主启动链路和日常用户路径中彻底解耦/禁用
   - 再单独规划新的 AI 架构、命令模型与 UI 交互面

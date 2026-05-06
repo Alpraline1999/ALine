@@ -314,6 +314,26 @@ class TestProjectTreeWidget(unittest.TestCase):
                 created = global_assets.get_extension_config_by_name("processing", "tree_extension_config_create", "方案A")
                 self.assertIsNotNone(created)
 
+                self.widget.refresh()
+                global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
+                extension_root = next(
+                    global_root.child(i)
+                    for i in range(global_root.childCount())
+                    if global_root.child(i).text(0) == "扩展配置"
+                )
+                processing_group = next(
+                    extension_root.child(i)
+                    for i in range(extension_root.childCount())
+                    if extension_root.child(i).text(0) == "处理扩展"
+                )
+                extension_item = next(
+                    processing_group.child(i)
+                    for i in range(processing_group.childCount())
+                    if processing_group.child(i).text(0) == "树配置新建探针"
+                )
+                self.assertGreater(extension_item.childCount(), 0)
+                self.assertIn("方案A", [extension_item.child(i).text(0) for i in range(extension_item.childCount())])
+
                 self.widget._cmd_duplicate_extension_config(created.id)
                 duplicated = global_assets.get_extension_config_by_name("processing", "tree_extension_config_create", "方案A 副本")
                 self.assertIsNotNone(duplicated)
@@ -323,6 +343,7 @@ class TestProjectTreeWidget(unittest.TestCase):
 
     def test_extension_config_groups_hide_entries_without_settings_support(self):
         from core.extension_api import ProcessingExtension, extension_registry
+        from core.global_assets import global_assets
 
         def _probe(lines, params):
             return lines[0] if lines else []
@@ -331,20 +352,24 @@ class TestProjectTreeWidget(unittest.TestCase):
             ProcessingExtension(type="tree_extension_config_hidden", name="隐藏配置扩展", handler=_probe, settings=False)
         )
         try:
+            global_assets.add_extension_config(
+                category="processing",
+                extension_type="tree_extension_config_hidden",
+                extension_name="隐藏配置扩展",
+                name="隐藏方案",
+            )
             self.widget.refresh()
             global_root = self.widget._tree.topLevelItem(self.widget._tree.topLevelItemCount() - 1)
-            extension_root = next(
-                global_root.child(i)
-                for i in range(global_root.childCount())
-                if global_root.child(i).text(0) == "扩展配置"
-            )
-            processing_group = next(
-                extension_root.child(i)
-                for i in range(extension_root.childCount())
-                if extension_root.child(i).text(0) == "处理扩展"
-            )
-            group_labels = [processing_group.child(i).text(0) for i in range(processing_group.childCount())]
-            self.assertNotIn("隐藏配置扩展", group_labels)
+            labels: list[str] = []
+
+            def _walk(item):
+                for idx in range(item.childCount()):
+                    child = item.child(idx)
+                    labels.append(child.text(0))
+                    _walk(child)
+
+            _walk(global_root)
+            self.assertNotIn("隐藏配置扩展", labels)
         finally:
             extension_registry.unregister_processing("tree_extension_config_hidden")
 

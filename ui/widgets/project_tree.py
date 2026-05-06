@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFontMetrics
@@ -639,10 +639,73 @@ class ProjectTreeWidget(QWidget):
         self._tree.addTopLevelItem(root)
 
     def _build_extension_config_group_items(self, category: str) -> List[QTreeWidgetItem]:
+        extension_map = self._extension_registry_name_map(category)
+        configs_by_type: dict[str, list[Any]] = {}
+        for config in global_assets.list_extension_configs(category=category):
+            type_id = str(getattr(config, "extension_type", "") or "").strip()
+            if not type_id:
+                continue
+            configs_by_type.setdefault(type_id, []).append(config)
+
+        ordered_types = sorted(extension_map, key=lambda value: (extension_map.get(value, value).lower(), value))
+
         items: List[QTreeWidgetItem] = []
-        for config in sorted(global_assets.list_extension_configs(category=category), key=_extension_config_sort_key):
-            items.append(self._make_synthetic_item(config.name, "global_extension_config", config.id, getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS)))
+        for type_id in ordered_types:
+            configs = sorted(configs_by_type.get(type_id, []), key=_extension_config_sort_key)
+            extension_label = extension_map.get(type_id) or (str(getattr(configs[0], "extension_name", "") or "").strip() if configs else "")
+            items.append(self._build_extension_config_extension_item(category, type_id, extension_label, configs))
         return items
+
+    @staticmethod
+    def _extension_registry_name_map(category: str) -> dict[str, str]:
+        if category == "plot":
+            extensions = extension_registry.list_plot()
+        elif category == "processing":
+            extensions = extension_registry.list_processing()
+        elif category == "digitize":
+            extensions = extension_registry.list_digitize()
+        else:
+            extensions = extension_registry.list_analysis()
+        name_map: dict[str, str] = {}
+        for extension in extensions:
+            entry = build_extension_entry(extension)
+            type_id = str(entry.get("type") or "").strip()
+            if not type_id:
+                continue
+            if not entry.get("listed", True) or not entry.get("settings"):
+                continue
+            name_map[type_id] = str(entry.get("name") or type_id)
+        return name_map
+
+    def _build_extension_config_extension_item(
+        self,
+        category: str,
+        extension_type: str,
+        extension_label: Optional[str],
+        configs: List[Any],
+    ) -> QTreeWidgetItem:
+        label = str(extension_label or extension_type or "扩展").strip() or "扩展"
+        item = self._make_synthetic_item(
+            label,
+            "global_group",
+            f"__global_extension_configs__:{category}:{extension_type}",
+            getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
+        )
+        entry = self._extension_entry_for_category_type(category, extension_type)
+        if entry is not None:
+            description = str(entry.get("description") or "").strip()
+            if description:
+                item.setToolTip(0, description)
+        for config in configs:
+            item.addChild(
+                self._make_synthetic_item(
+                    config.name,
+                    "global_extension_config",
+                    config.id,
+                    getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
+                )
+            )
+        return item
 
     def _make_item(self, node, project_id: str) -> QTreeWidgetItem:
         kind = node.kind
@@ -1707,19 +1770,35 @@ class ProjectTreeWidget(QWidget):
 
     @staticmethod
     def _parse_extension_config_group_node_id(node_id: str) -> Optional[Tuple[str, str]]:
-        parts = node_id.split("|")
-        if len(parts) == 2 and parts[0] == "extension_config_group":
-            return (parts[1], parts[1])
+        parts = str(node_id or "").split(":")
+        if len(parts) == 3 and parts[0] == "__global_extension_configs__":
+            return (parts[1], parts[2])
         return None
 
     def _cmd_create_extension_config(self, group_node_id: str) -> None:
         parsed = self._parse_extension_config_group_node_id(group_node_id)
         if parsed is None:
             return
-        _category, extension_type = parsed
+        category, extension_type = parsed
+        entry = self._extension_entry_for_category_type(category, extension_type)
         base_name = self._extension_config_default_name(extension_type)
+        extension_name = str(entry.get("name") if entry is not None else base_name).strip() or base_name
+        extension_version = entry.get("version") if entry is not None else None
+        name, ok = self._prompt_tree_existing_text("新建扩展配置", "名称:", base_name)
+        if not ok:
+            return
         from core.global_assets import global_assets
-        config_id = global_assets.create_extension_config(extension_type, name=base_name)
+        try:
+            config = global_assets.add_extension_config(
+                category=category,
+                extension_type=extension_type,
+                extension_name=extension_name,
+                extension_version=extension_version,
+                name=name,
+            )
+        except ValueError:
+            return
+        config_id = config.id
         if config_id:
             self.refresh()
 
@@ -1728,8 +1807,15 @@ class ProjectTreeWidget(QWidget):
         config = global_assets.get_extension_config(config_id)
         if config is None:
             return
-        new_id = global_assets.create_extension_config(config.extension_type, name=f"{config.name} (副本)", preset=config)
-        if new_id:
+        duplicated = global_assets.add_extension_config(
+            category=config.category,
+            extension_type=config.extension_type,
+            extension_name=config.extension_name,
+            extension_version=config.extension_version,
+            name=f"{config.name} 副本",
+            options=dict(config.options or {}),
+        )
+        if duplicated:
             self.refresh()
 
     def _cmd_export_extension_config(self, config_id: str) -> None:
@@ -1756,23 +1842,41 @@ class ProjectTreeWidget(QWidget):
         self.refresh()
 
     def _extension_config_default_name(self, extension_type: str) -> str:
-        entry = build_extension_entry(extension_type)
-        if entry:
-            return getattr(entry, "name", extension_type) or extension_type
-        ext_type = extension_registry.get(extension_type, {})
-        if isinstance(ext_type, dict):
-            return ext_type.get("name", extension_type)
+        entry = self._extension_entry_for_category_type("", extension_type)
+        if entry is not None:
+            return str(entry.get("name") or extension_type).strip() or extension_type
         return extension_type
 
     @staticmethod
-    def _extension_entry_for_category_type(category: str, extension_type: str) -> Optional[dict]:
-        entry = build_extension_entry(extension_type)
-        if entry:
-            return entry
-        ext_type = extension_registry.get(extension_type, {})
-        if isinstance(ext_type, dict):
-            return ext_type
+    def _extension_registry_extension_for_category_type(category: str, extension_type: str) -> Optional[Any]:
+        type_id = str(extension_type or "").strip()
+        if not type_id:
+            return None
+        category = str(category or "").strip()
+        if category == "plot":
+            return extension_registry.get_plot(type_id)
+        if category == "processing":
+            return extension_registry.get_processing(type_id)
+        if category == "digitize":
+            return extension_registry.get_digitize(type_id)
+        if category == "analysis":
+            return extension_registry.get_analysis(type_id)
+        for getter in (
+            extension_registry.get_processing,
+            extension_registry.get_analysis,
+            extension_registry.get_plot,
+            extension_registry.get_digitize,
+        ):
+            entry = getter(type_id)
+            if entry is not None:
+                return entry
         return None
+
+    def _extension_entry_for_category_type(self, category: str, extension_type: str) -> Optional[dict]:
+        extension = self._extension_registry_extension_for_category_type(category, extension_type)
+        if extension is None:
+            return None
+        return build_extension_entry(extension)
 
     def _next_extension_config_name(self, category: str, extension_type: str, base_name: str) -> str:
         from core.global_assets import global_assets
