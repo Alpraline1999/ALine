@@ -82,7 +82,7 @@ class ProjectTreeManageDialog(MessageBoxBase):
         if self._tree.is_focus_active() and (not selected_keys or set(selected_keys) == focused_keys):
             self._tree.clear_focus()
         else:
-            self._tree.focus_selected_item()
+            self._tree.focus_item_keys(selected_keys)
         self._update_action_buttons()
 
     def _update_action_buttons(self) -> None:

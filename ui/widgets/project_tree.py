@@ -373,15 +373,21 @@ class ProjectTreeWidget(QWidget):
     def focused_item_keys(self) -> List[str]:
         return list(self._focused_item_keys)
 
+    def focus_item_keys(self, item_keys: List[str]) -> None:
+        selected_keys = [str(item_key) for item_key in item_keys if item_key]
+        if not selected_keys:
+            return
+        self._focused_item_keys = selected_keys
+        self._focused_item_key = selected_keys[0]
+        self._reapply_focus_view(preferred_selection_keys=selected_keys)
+
     def focus_selected_item(self) -> None:
         if not self.can_focus_selected_item():
             return
         selected_keys = self._selected_item_keys()
         if not selected_keys:
             return
-        self._focused_item_keys = selected_keys
-        self._focused_item_key = selected_keys[0]
-        self._reapply_focus_view(preferred_selection_keys=selected_keys)
+        self.focus_item_keys(selected_keys)
 
     def clear_focus(self) -> None:
         if not self._focused_item_keys:
@@ -684,15 +690,20 @@ class ProjectTreeWidget(QWidget):
     def _activate_item_project(self, item: Optional[QTreeWidgetItem]) -> None:
         if item is None:
             return
-        previous_project_id = project_manager.current_project_id
         project_id = self._item_project_id(item)
         if project_id:
-            project_manager.set_current_project(project_id)
-            if project_id != previous_project_id:
-                window = self.window()
-                update_window_title = getattr(window, "_update_window_title", None)
-                if callable(update_window_title):
-                    update_window_title()
+            self._activate_project_id(project_id)
+
+    def _activate_project_id(self, project_id: Optional[str]) -> None:
+        if not project_id:
+            return
+        previous_project_id = project_manager.current_project_id
+        project_manager.set_current_project(project_id)
+        if project_id != previous_project_id:
+            window = self.window()
+            update_window_title = getattr(window, "_update_window_title", None)
+            if callable(update_window_title):
+                update_window_title()
 
     def _on_item_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         if self._renaming:
@@ -815,10 +826,16 @@ class ProjectTreeWidget(QWidget):
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
         self._command_service.rename_virtual(kind, node_id, current_name)
 
-    def _cmd_prune_empty_folders(self, root_id: Optional[str] = None, *, scope_label: str = "项目树") -> None:
-        current_item = self._tree.currentItem()
-        if current_item is not None:
-            self._activate_item_project(current_item)
+    def _cmd_prune_empty_folders(
+        self,
+        root_id: Optional[str] = None,
+        *,
+        scope_label: str = "项目树",
+        project_id: Optional[str] = None,
+    ) -> None:
+        resolved_project_id = self._resolve_scope_project_id(root_id=root_id, project_id=project_id)
+        if resolved_project_id:
+            self._activate_project_id(resolved_project_id)
         self._command_service.prune_empty_folders(root_id, scope_label=scope_label)
         if root_id is None and self.is_focus_active():
             self.clear_focus()
@@ -999,6 +1016,32 @@ class ProjectTreeWidget(QWidget):
         current = self._tree.currentItem()
         return [current] if current is not None else []
 
+    def _resolve_scope_project_id(
+        self,
+        *,
+        root_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        items: Optional[List[QTreeWidgetItem]] = None,
+    ) -> Optional[str]:
+        if project_id and project_manager.get_project(project_id) is not None:
+            return project_id
+        if root_id:
+            root_item = self._find_item(root_id)
+            if root_item is not None:
+                root_project_id = self._item_project_id(root_item)
+                if root_project_id:
+                    return root_project_id
+        source_items = list(items or self._selected_items_or_current())
+        project_ids = {self._item_project_id(item) for item in source_items if self._item_project_id(item)}
+        if len(project_ids) == 1:
+            return next(iter(project_ids))
+        current_project_id = self._item_project_id(self._tree.currentItem())
+        if current_project_id:
+            return current_project_id
+        if len(self._projects) == 1:
+            return self._projects[0].id
+        return project_manager.current_project_id
+
     def _selected_item_keys(self, items: Optional[List[QTreeWidgetItem]] = None) -> List[str]:
         source_items = self._selected_items_or_current() if items is None else items
         keys: List[str] = []
@@ -1102,12 +1145,20 @@ class ProjectTreeWidget(QWidget):
     # 树作用域操作
     # ─────────────────────────────────────────────────────────
 
-    def _append_tree_scope_actions(self, menu: RoundMenu, separated: bool = False) -> None:
+    def _append_tree_scope_actions(
+        self,
+        menu: RoundMenu,
+        separated: bool = False,
+        *,
+        focus_items: Optional[List[QTreeWidgetItem]] = None,
+        project_id: Optional[str] = None,
+    ) -> None:
         if separated and menu.actions():
             menu.addSeparator()
-        focus_items = self._selected_items_or_current()
+        focus_items = list(self._selected_items_or_current() if focus_items is None else focus_items)
         focus_keys = set(self.focused_item_keys())
-        selected_keys = set(self._selected_item_keys(focus_items))
+        selected_key_list = self._selected_item_keys(focus_items)
+        selected_keys = set(selected_key_list)
         if focus_keys and (not selected_keys or selected_keys == focus_keys):
             self._add_menu_action(menu, getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self.clear_focus)
         else:
@@ -1116,10 +1167,20 @@ class ProjectTreeWidget(QWidget):
                     label = "切换专注到所选" if self.is_focus_active() else "专注所选"
                 else:
                     label = "切换专注到此处" if self.is_focus_active() else "专注此处"
-                self._add_menu_action(menu, getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)), label, self.focus_selected_item)
+                self._add_menu_action(
+                    menu,
+                    getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)),
+                    label,
+                    lambda keys=list(selected_key_list): self.focus_item_keys(keys),
+                )
             if self.is_focus_active():
                 self._add_menu_action(menu, getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self.clear_focus)
-        self._add_menu_action(menu, FIF.SYNC, "清理空文件夹", self._cmd_prune_empty_folders)
+        self._add_menu_action(
+            menu,
+            FIF.SYNC,
+            "清理空文件夹",
+            lambda target_project_id=project_id: self._cmd_prune_empty_folders(project_id=target_project_id),
+        )
 
     def _expand_all_items(self) -> None:
         def _walk(item: Optional[QTreeWidgetItem]) -> None:

@@ -136,7 +136,17 @@ class ProjectTreeMenuBuilder:
         item = self._tree.itemAt(pos)
         if item is None:
             menu = RoundMenu(parent=self._dialog_parent())
-            self._append_tree_scope_actions(menu)
+            focus_items = (
+                list(self._tree_widget._selected_items_or_current())
+                if hasattr(self._tree_widget, "_selected_items_or_current")
+                else []
+            )
+            project_id = (
+                self._tree_widget._resolve_scope_project_id(items=focus_items)
+                if hasattr(self._tree_widget, "_resolve_scope_project_id")
+                else None
+            )
+            self._append_tree_scope_actions(menu, focus_items=focus_items, project_id=project_id)
             menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
@@ -164,7 +174,12 @@ class ProjectTreeMenuBuilder:
                 (FIF.CLOSE, "关闭项目", self._close_current_project),
             ])
             self._append_menu_section(menu, manage_entries)
-            self._append_tree_scope_actions(menu, separated=True)
+            self._append_tree_scope_actions(
+                menu,
+                separated=True,
+                focus_items=selected_items,
+                project_id=self._item_project_id(item),
+            )
             menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
 
@@ -181,7 +196,12 @@ class ProjectTreeMenuBuilder:
         self._append_menu_section(menu, manage_entries)
 
         if menu.actions():
-            self._append_tree_scope_actions(menu, separated=True)
+            self._append_tree_scope_actions(
+                menu,
+                separated=True,
+                focus_items=selected_items,
+                project_id=self._item_project_id(item),
+            )
             menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def _activate_item_project(self, item: Optional[QTreeWidgetItem]) -> None:
@@ -213,12 +233,19 @@ class ProjectTreeMenuBuilder:
     def _build_batch_menu(self, menu: RoundMenu, batch_payloads: list[dict[str, object]], selected_items: list[QTreeWidgetItem], pos) -> None:
         focus_entries: list[tuple[object, str, object]] = []
         focus_keys = set(self._tree_widget.focused_item_keys()) if hasattr(self._tree_widget, "focused_item_keys") else set()
-        selected_keys = set(self._tree_widget._selected_item_keys(selected_items)) if hasattr(self._tree_widget, "_selected_item_keys") else set()
+        selected_key_list = list(self._tree_widget._selected_item_keys(selected_items)) if hasattr(self._tree_widget, "_selected_item_keys") else []
+        selected_keys = set(selected_key_list)
         if focus_keys and (not selected_keys or selected_keys == focus_keys):
             focus_entries.append((getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self._clear_focus))
         elif selected_items:
             label = "切换专注到所选" if self._tree_widget.is_focus_active() else "专注所选"
-            focus_entries.append((getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)), label, self._focus_selected_item))
+            focus_entries.append(
+                (
+                    getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)),
+                    label,
+                    lambda keys=list(selected_key_list): self._tree_widget.focus_item_keys(keys),
+                )
+            )
         manage_entries = [
             (FIF.DELETE, f"删除选中 {len(batch_payloads)} 项", lambda: self._cmd_delete_batch(batch_payloads)),
         ]
@@ -229,7 +256,12 @@ class ProjectTreeMenuBuilder:
             )
         self._append_menu_section(menu, focus_entries)
         self._append_menu_section(menu, manage_entries)
-        self._append_tree_scope_actions(menu, separated=True)
+        self._append_tree_scope_actions(
+            menu,
+            separated=True,
+            focus_items=selected_items,
+            project_id=self._item_project_id(selected_items[0]) if selected_items else None,
+        )
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def _build_global_kind_menu(self, menu: RoundMenu, pos, kind: str, node_id: str, item, manage_entries: list) -> None:
