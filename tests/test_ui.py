@@ -194,6 +194,14 @@ class TestProjectTreeWidget(unittest.TestCase):
         labels = [self.widget._tree.topLevelItem(i).text(0) for i in range(self.widget._tree.topLevelItemCount())]
         self.assertEqual(labels, [self.p.name, "全局资源"])
 
+    def test_unsaved_close_dialog_uses_bottom_button_group(self):
+        from ui.dialogs.project_close_dialog import UnsavedProjectCloseDialog
+
+        dialog = UnsavedProjectCloseDialog(self.p.name, self.widget)
+        self.assertEqual(dialog.yesButton.text(), "保存")
+        self.assertEqual(dialog.cancelButton.text(), "不保存")
+        self.assertEqual(dialog.buttonLayout.count(), 3)
+
     def test_close_current_project_cancel_keeps_project_open(self):
         from ui.dialogs.project_close_dialog import ProjectCloseDecision
 

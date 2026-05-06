@@ -3,7 +3,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from PySide6.QtWidgets import QHBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget
 from qfluentwidgets import BodyLabel, MessageBoxBase, PrimaryPushButton, PushButton, SubtitleLabel
 
 
@@ -29,28 +30,15 @@ class UnsavedProjectCloseDialog(MessageBoxBase):
         message.setWordWrap(True)
         self.viewLayout.addWidget(message)
 
-        button_row = QHBoxLayout()
-        button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(8)
-        button_row.addStretch()
-
-        save_btn = PrimaryPushButton("保存", self.widget)
-        save_btn.clicked.connect(self._accept_save)
-        button_row.addWidget(save_btn)
-
-        discard_btn = PushButton("不保存", self.widget)
-        discard_btn.clicked.connect(self._accept_discard)
-        button_row.addWidget(discard_btn)
-
-        cancel_btn = PushButton("取消", self.widget)
-        cancel_btn.clicked.connect(self._reject_cancel)
-        button_row.addWidget(cancel_btn)
-
-        self.viewLayout.addLayout(button_row)
         self.widget.setMinimumWidth(420)
 
-        self.yesButton.hide()
-        self.cancelButton.hide()
+        self.yesButton.setText("保存")
+        self.cancelButton.setText("不保存")
+
+        self._extra_cancel_button = PushButton("取消", self.buttonGroup)
+        self._extra_cancel_button.setAttribute(Qt.WA_LayoutUsesWidgetRect)
+        self._extra_cancel_button.clicked.connect(self._reject_cancel)
+        self.buttonLayout.addWidget(self._extra_cancel_button, 1, Qt.AlignmentFlag.AlignVCenter)
 
     def _accept_save(self) -> None:
         self._decision = ProjectCloseDecision.SAVE
