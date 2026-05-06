@@ -736,9 +736,41 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertFalse(second_item.isHidden())
         self.assertFalse(focus_folder_item.isHidden())
 
-    def test_tree_prune_empty_folder_clears_focus_when_root_scope_cleans(self):
+    def test_focus_selected_item_survives_refresh_with_multiple_selection(self):
         from models.schemas import DataFile, DataSeries
 
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        focus_folder = self.pm.add_folder("focus_refresh_parent", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(focus_folder)
+        multi = self.pm.add_data_file(DataFile(name="focus_refresh.csv", series=[DataSeries(name="s2", x=[0.0], y=[2.0])]), parent_id=focus_folder.id)
+        self.assertIsNotNone(multi)
+        self.widget.refresh()
+
+        first_item = self.widget._find_item(next(node.id for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id))
+        second_item = self.widget._find_item(multi.id)
+        self.assertIsNotNone(first_item)
+        self.assertIsNotNone(second_item)
+
+        first_key = self.widget._item_key(first_item)
+        second_key = self.widget._item_key(second_item)
+        self.assertIsNotNone(first_key)
+        self.assertIsNotNone(second_key)
+
+        self.widget._select_nodes([first_key, second_key])
+        self.widget.focus_selected_item()
+        self.widget.refresh()
+
+        refreshed_first = self.widget._find_item(first_key)
+        refreshed_second = self.widget._find_item(multi.id)
+        self.assertIsNotNone(refreshed_first)
+        self.assertIsNotNone(refreshed_second)
+        self.assertTrue(self.widget.is_focus_active())
+        self.assertEqual(set(self.widget.focused_item_keys()), {first_key, second_key})
+        self.assertFalse(refreshed_first.isHidden())
+        self.assertFalse(refreshed_second.isHidden())
+
+    def test_tree_prune_empty_folder_clears_focus_when_root_scope_cleans(self):
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
         empty_folder = self.pm.add_folder("empty_root_cleanup", parent_id=datasets_root.id, group_type="datasets")
@@ -755,6 +787,26 @@ class TestProjectTreeWidget(unittest.TestCase):
 
         self.assertFalse(self.widget.is_focus_active())
         self.assertIsNone(self.widget._find_item(empty_folder.id))
+        success_mock.assert_called_once()
+
+    def test_tree_prune_empty_folder_uses_current_item_project_context(self):
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        empty_folder = self.pm.add_folder("context_empty_folder", parent_id=datasets_root.id, group_type="datasets")
+        self.assertIsNotNone(empty_folder)
+
+        other_project = self.pm.create_new("other_cleanup_context")
+        self.pm.migrate_to_v2(other_project)
+        self.pm.set_current_project(other_project.id)
+        self.widget.refresh()
+
+        focus_node = next(node for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id)
+        self.widget.select_node(focus_node.id)
+        with mock.patch("ui.widgets.project_tree.InfoBar.success") as success_mock:
+            self.widget._cmd_prune_empty_folders()
+
+        self.assertIsNone(self.widget._find_item(empty_folder.id))
+        self.assertEqual(self.pm.current_project_id, self.p.id)
         success_mock.assert_called_once()
 
     def test_project_tree_manage_dialog_supports_multi_selection_focus(self):
@@ -1271,6 +1323,25 @@ class TestNavigationStack(unittest.TestCase):
 
         visible_texts = [action.text() for action in captured["actions"] if not action.isSeparator()]
         self.assertIn("专注所选", visible_texts)
+
+    def test_context_menu_preserves_multi_selection_within_same_project(self):
+        from models.schemas import DataFile, DataSeries
+
+        second = self.pm.add_data_file(DataFile(name="batch_focus_keep.csv", series=[DataSeries(name="s2", x=[1.0], y=[2.0])]))
+        self.assertIsNotNone(second)
+        self.widget.refresh()
+
+        first_item = self.widget._find_item(next(node.id for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id))
+        second_item = self.widget._find_item(second.id)
+        self.assertIsNotNone(first_item)
+        self.assertIsNotNone(second_item)
+
+        first_item.setSelected(True)
+        second_item.setSelected(True)
+        self.widget._tree.setCurrentItem(first_item)
+
+        selected = self.widget._selected_items_for_context_menu(second_item)
+        self.assertEqual({self.widget._item_key(item) for item in selected}, {self.widget._item_key(first_item), self.widget._item_key(second_item)})
 
     def test_project_tree_dialog_adapters_use_current_dialog_apis(self):
         with mock.patch("ui.widgets.project_tree.SelectionDialog.get_item", return_value=("目标A", True)) as get_item_mock, \
