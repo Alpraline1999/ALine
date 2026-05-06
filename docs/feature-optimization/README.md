@@ -24,6 +24,7 @@
 18. [17-phase-17-project-tree-root-cleanup-and-multi-select-focus-mode.md](17-phase-17-project-tree-root-cleanup-and-multi-select-focus-mode.md)
 19. [18-phase-18-unsaved-project-close-confirmation-and-cancel-path.md](18-phase-18-unsaved-project-close-confirmation-and-cancel-path.md)
 20. [19-phase-19-extension-config-tree-ownership-and-grouping-normalization.md](19-phase-19-extension-config-tree-ownership-and-grouping-normalization.md)
+21. [20-phase-20-template-editor-parity-and-extension-settings-card-normalization.md](20-phase-20-template-editor-parity-and-extension-settings-card-normalization.md)
 
 ## 当前阶段定位
 
@@ -81,6 +82,9 @@
   - 关闭未保存项目时，确认弹窗目前只有“保存 / 不保存”两条路径，缺少“取消关闭”选项，用户无法中止关闭操作并保持当前项目状态不变
 - 最新功能核查还补充出一个扩展配置管理结构问题：
   - 项目树中的扩展配置目前仍按扩展类别扁平挂载，未按具体扩展节点归属管理，导致配置所有权、查找路径和后续管理动作都不清晰
+- 最新交互与功能核查又补充出一组新的全局资产管理问题：
+  - 设置页扩展标签页中，内置扩展和外部扩展区域的“扩展管理”设置卡片标题字体大小与字重异常，未与其他设置卡片保持一致
+  - 数据管理页中的 Pipelines 模板、图表模板、报告模板尚未像扩展配置那样支持在右侧编辑区直接修改并保存，模板管理能力明显落后于扩展配置，且该问题影响面较大、实现复杂度较高，需要单独成 phase 收口
 - 鉴于后续可能完全重做 AI 模块，现阶段更合理的策略是：
   - 先把 AI 从主启动链路和日常用户路径中彻底解耦/禁用
   - 再单独规划新的 AI 架构、命令模型与 UI 交互面

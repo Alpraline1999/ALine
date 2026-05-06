@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 import warnings
+import json
 import gc
 import time
 from pathlib import Path
@@ -3826,6 +3827,102 @@ class TestDataPage(unittest.TestCase):
             self.assertGreaterEqual(warning_mock.call_count, 2)
         finally:
             extension_registry.unregister_processing("data_page_config_validate")
+            restore_assets()
+
+    def test_global_pipeline_selection_opens_editor_and_saves(self):
+        from core.global_assets import global_assets
+        from models.schemas import SavedPipeline
+
+        restore_assets = _patch_global_assets()
+        try:
+            pipeline = global_assets.add_saved_pipeline(
+                SavedPipeline(name="流程A", ops=[{"type": "smooth", "params": {"window": 5}}], description="old")
+            )
+
+            self.page.on_tree_node_selected("global_pipeline", pipeline.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertFalse(self.page._text_preview.isReadOnly())
+            self.assertEqual(self.page._preview_section_label.text(), "模板编辑")
+            self.assertEqual(self.page._btn_save_extension_config.text(), "保存模板")
+
+            self.page._text_preview.setPlainText(
+                json.dumps(
+                    {
+                        "id": pipeline.id,
+                        "name": "流程B",
+                        "ops": [{"type": "normalize", "params": {"mode": "minmax"}}],
+                        "description": "new",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            self.page._save_selected_extension_config()
+
+            updated = global_assets.get_saved_pipeline(pipeline.id)
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated.name, "流程B")
+            self.assertEqual(updated.ops[0]["type"], "normalize")
+            self.assertEqual(updated.description, "new")
+        finally:
+            restore_assets()
+
+    def test_global_figure_template_selection_opens_editor_and_saves(self):
+        from core.global_assets import global_assets
+        from models.schemas import FigureConfig
+
+        restore_assets = _patch_global_assets()
+        try:
+            template = global_assets.add_figure_template(FigureConfig(name="图表A", theme="Nature"))
+
+            self.page.on_tree_node_selected("global_plot_style", f"template:{template.id}")
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertFalse(self.page._text_preview.isReadOnly())
+            self.assertEqual(self.page._preview_section_label.text(), "模板编辑")
+
+            self.page._text_preview.setPlainText(
+                json.dumps(
+                    {
+                        **template.model_dump(),
+                        "name": "图表B",
+                        "font_size": 12,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            self.page._save_selected_extension_config()
+
+            updated = global_assets.get_figure_template(template.id)
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated.name, "图表B")
+            self.assertEqual(updated.font_size, 12)
+        finally:
+            restore_assets()
+
+    def test_global_report_template_selection_opens_editor_and_saves(self):
+        from core.global_assets import global_assets
+        from models.schemas import ReportTemplate
+
+        restore_assets = _patch_global_assets()
+        try:
+            template = global_assets.add_report_template(ReportTemplate(name="报告A", content="# Old Report"))
+
+            self.page.on_tree_node_selected("global_report_template", template.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertFalse(self.page._text_preview.isReadOnly())
+            self.assertEqual(self.page._preview_section_label.text(), "模板编辑")
+
+            self.page._text_preview.setPlainText("# New Report")
+            self.page._save_selected_extension_config()
+
+            updated = global_assets.get_report_template(template.id)
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated.content, "# New Report")
+        finally:
             restore_assets()
 
     def test_extension_field_help_formats_lines_summary(self):

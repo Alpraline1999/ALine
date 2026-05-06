@@ -67,9 +67,10 @@ from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
-from models.schemas import DataFile, DataSeries, Dataset, Curve
+from models.schemas import Curve, DataFile, DataSeries, Dataset, FigureConfig, PlotTheme, ReportTemplate, SavedPipeline
 from app.workspaces.data_workspace import DataWorkspaceController, DataWorkspaceState
 from ui.dialogs.export_flow import choose_curve_file_export_plan, curve_export_file_filter
+from ui.dialogs.fluent_dialogs import TextInputDialog
 from .data_page_support import (
     Figure,
     FigureCanvas,
@@ -286,6 +287,9 @@ class DataPage(QWidget):
         self._workspace_state = DataWorkspaceState()
         self._workspace_controller = DataWorkspaceController(self._workspace_state)
         self._page_state_bridge = DataPageStateBridge()
+        self._preview_editor_kind: str | None = None
+        self._preview_editor_node_id: str | None = None
+        self._preview_editor_original_text: str = ""
         self._pending_import_states = {
             "source_files": _PendingImportQueueState(),
             "datasets": _PendingImportQueueState(),
@@ -1068,14 +1072,52 @@ class DataPage(QWidget):
         self._preview_summary_divider.setVisible(bool(visible))
         self._summary_footer.setVisible(bool(visible))
 
+    def _set_preview_text_editor_mode(
+        self,
+        enabled: bool,
+        *,
+        section_label: str = "数据预览",
+        action_title: str = "配置编辑",
+        reset_text: str = "重置配置",
+        save_text: str = "保存配置",
+        summary_title: str = "",
+        summary_meta: str = "",
+    ) -> None:
+        if not enabled:
+            self._preview_editor_kind = None
+            self._preview_editor_node_id = None
+            self._preview_editor_original_text = ""
+            self._set_preview_footer_visible(True)
+            self._extension_config_action_panel.setVisible(False)
+            self._config_editor_header_panel.setVisible(False)
+            self._text_preview.setReadOnly(True)
+            self._preview_section_label.setText(section_label)
+            return
+        self._preview_section_label.setText(section_label)
+        self._extension_config_action_panel.setVisible(True)
+        self._config_editor_header_panel.setVisible(True)
+        self._set_preview_footer_visible(False)
+        self._text_preview.setReadOnly(False)
+        self._btn_reset_extension_config.setText(reset_text)
+        self._btn_save_extension_config.setText(save_text)
+        self._config_editor_title_label.setText(summary_title)
+        self._config_editor_meta_label.setText(summary_meta)
+        self._preview_name = summary_title or self._preview_name
+
     def _set_extension_config_editor_mode(self, enabled: bool) -> None:
         if not enabled:
             self._current_extension_config_id = None
-        self._preview_section_label.setText("配置编辑" if enabled else "数据预览")
-        self._extension_config_action_panel.setVisible(enabled)
-        self._config_editor_header_panel.setVisible(enabled)
-        self._set_preview_footer_visible(not enabled)
-        self._text_preview.setReadOnly(not enabled)
+        else:
+            self._preview_editor_kind = None
+            self._preview_editor_node_id = None
+            self._preview_editor_original_text = ""
+        self._set_preview_text_editor_mode(
+            enabled,
+            section_label="配置编辑" if enabled else "数据预览",
+            action_title="配置编辑",
+            reset_text="重置配置",
+            save_text="保存配置",
+        )
 
     @staticmethod
     def _preview_numeric_input_value(line_edit: LineEdit, *, minimum: int, fallback: int) -> int:
@@ -3081,13 +3123,244 @@ class DataPage(QWidget):
         self._extension_preview_panel.setVisible(True)
         return True
 
+    def _show_global_template_editor(self, kind: str, node_id: str) -> bool:
+        title, summary_lines, raw_text = self._global_template_editor_payload(kind, node_id)
+        if raw_text is None:
+            return False
+        self._preview_editor_kind = kind
+        self._preview_editor_node_id = node_id
+        self._preview_editor_original_text = raw_text
+        self._show_preview_mode()
+        self._set_preview_text_editor_mode(
+            True,
+            section_label="模板编辑",
+            reset_text="重置模板",
+            save_text="保存模板",
+            summary_title=title,
+            summary_meta="\n".join(summary_lines[1:]),
+        )
+        self._preview_image_path = None
+        self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
+        self._set_preview_plot_type_controls_visible(False)
+        self._hide_source_path_links()
+        self._preview_xs = []
+        self._preview_ys = []
+        self._preview_name = title
+        self._preview_x_label = "X"
+        self._preview_y_label = "Y"
+        self._text_preview.setPlainText(raw_text)
+        self._preview_stack.setCurrentWidget(self._text_preview)
+        self._set_preview_summary(summary_lines)
+        self._set_extension_field_help_height(_EXTENSION_FIELD_HELP_COMPACT_HEIGHT)
+        self._set_extension_preview_help()
+        self._extension_preview_panel.setVisible(False)
+        return True
+
+    def _global_template_editor_payload(self, kind: str, node_id: str) -> tuple[str, list[str], Optional[str]]:
+        if kind == "global_pipeline":
+            template = global_assets.get_saved_pipeline(node_id)
+            if template is None:
+                return "", [], None
+            title = template.name or "Pipelines 模板"
+            return (
+                title,
+                [
+                    f"模板名称: {template.name or '未命名流程'}",
+                    "类型: Pipelines 模板",
+                    f"步骤数: {len(getattr(template, 'ops', []) or [])}",
+                    f"说明: {getattr(template, 'description', '') or '无'}",
+                ],
+                json.dumps(template.model_dump(), ensure_ascii=False, indent=2),
+            )
+        if kind in {"global_plot_style", "global_plot_theme"}:
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "template":
+                template = global_assets.get_figure_template(asset_id)
+                if template is None:
+                    return "", [], None
+                title = template.name or "图表模板"
+                return (
+                    title,
+                    [
+                        f"模板名称: {template.name or '未命名模板'}",
+                        "类型: 图表模板",
+                        f"主题: {template.theme or 'default'}",
+                        f"图例项: {len(getattr(template, 'typed_series_refs', []) or [])}",
+                    ],
+                    json.dumps(template.model_dump(), ensure_ascii=False, indent=2),
+                )
+            theme = global_assets.get_plot_theme(asset_id)
+            if theme is None:
+                return "", [], None
+            title = theme.name or "绘图主题"
+            return (
+                title,
+                [
+                    f"模板名称: {theme.name or '未命名主题'}",
+                    "类型: 绘图主题",
+                    f"说明: {getattr(theme, 'description', '') or '无'}",
+                    f"内置: {'是' if bool(getattr(theme, 'is_builtin', False)) else '否'}",
+                ],
+                json.dumps(theme.model_dump(), ensure_ascii=False, indent=2),
+            )
+        if kind == "global_report_template":
+            template = global_assets.get_report_template(node_id)
+            if template is None:
+                return "", [], None
+            title = template.name or "报告模板"
+            return (
+                title,
+                [
+                    f"模板名称: {template.name or '未命名模板'}",
+                    "类型: 报告模板",
+                    f"内置: {'是' if bool(getattr(template, 'is_builtin', False)) else '否'}",
+                ],
+                template.content or "",
+            )
+        return "", [], None
+
+    def _reset_selected_preview_editor(self) -> None:
+        if self._current_extension_config_id:
+            self._text_preview.setPlainText(self._extension_config_original_text or "{}")
+            return
+        if self._preview_editor_kind is not None:
+            self._text_preview.setPlainText(self._preview_editor_original_text or "")
+
+    def _save_selected_preview_editor(self) -> None:
+        if self._current_extension_config_id:
+            self._save_selected_extension_config()
+            return
+        kind = self._preview_editor_kind
+        node_id = self._preview_editor_node_id
+        if not kind or not node_id:
+            return
+        raw_text = self._text_preview.toPlainText()
+        if kind == "global_pipeline":
+            self._save_global_pipeline_template(node_id, raw_text)
+            return
+        if kind in {"global_plot_style", "global_plot_theme"}:
+            self._save_global_plot_template(kind, node_id, raw_text)
+            return
+        if kind == "global_report_template":
+            self._save_global_report_template(node_id, raw_text)
+            return
+        InfoBar.warning("保存失败", "当前模板不支持编辑保存", parent=self, position=InfoBarPosition.TOP)
+
+    def _save_global_pipeline_template(self, template_id: str, raw_text: str) -> None:
+        item = global_assets.get_saved_pipeline(template_id)
+        if item is None:
+            InfoBar.warning("保存失败", "当前 Pipeline 模板不存在", parent=self, position=InfoBarPosition.TOP)
+            return
+        try:
+            payload = json.loads(raw_text)
+            model = SavedPipeline.model_validate(payload)
+        except json.JSONDecodeError as exc:
+            InfoBar.warning("保存失败", f"JSON 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列附近", parent=self, position=InfoBarPosition.TOP)
+            return
+        except Exception as exc:
+            InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        if not global_assets.update_saved_pipeline(template_id, name=model.name, ops=list(model.ops), description=model.description):
+            InfoBar.warning("保存失败", "当前 Pipeline 模板未能更新", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.project_modified.emit()
+        self._show_global_template_editor("global_pipeline", template_id)
+        self._refresh_management_panel()
+        InfoBar.success("已保存", f'Pipeline 模板 "{model.name or item.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+
+    def _save_global_plot_template(self, kind: str, node_id: str, raw_text: str) -> None:
+        style_type, asset_id = parse_plot_style_asset_key(node_id)
+        if style_type != "template":
+            theme = global_assets.get_plot_theme(asset_id)
+            if theme is None:
+                InfoBar.warning("保存失败", "当前绘图主题不存在", parent=self, position=InfoBarPosition.TOP)
+                return
+            try:
+                payload = json.loads(raw_text)
+                model = PlotTheme.model_validate(payload)
+            except json.JSONDecodeError as exc:
+                InfoBar.warning("保存失败", f"JSON 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列附近", parent=self, position=InfoBarPosition.TOP)
+                return
+            except Exception as exc:
+                InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+                return
+            if not global_assets.update_plot_theme(
+                asset_id,
+                name=model.name,
+                description=model.description,
+                canvas_mode=model.canvas_mode,
+                grid_color=model.grid_color,
+                foreground_color=model.foreground_color,
+                background_color=model.background_color,
+                state=model.state,
+            ):
+                InfoBar.warning("保存失败", "当前绘图主题未能更新", parent=self, position=InfoBarPosition.TOP)
+                return
+            self.project_modified.emit()
+            self._show_global_template_editor(kind, node_id)
+            self._refresh_management_panel()
+            InfoBar.success("已保存", f'绘图主题 "{model.name or theme.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+            return
+
+        template = global_assets.get_figure_template(asset_id)
+        if template is None:
+            InfoBar.warning("保存失败", "当前图表模板不存在", parent=self, position=InfoBarPosition.TOP)
+            return
+        try:
+            payload = json.loads(raw_text)
+            model = FigureConfig.model_validate(payload)
+        except json.JSONDecodeError as exc:
+            InfoBar.warning("保存失败", f"JSON 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列附近", parent=self, position=InfoBarPosition.TOP)
+            return
+        except Exception as exc:
+            InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        if not global_assets.update_figure_template(asset_id, template=model):
+            InfoBar.warning("保存失败", "当前图表模板未能更新", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.project_modified.emit()
+        self._show_global_template_editor(kind, node_id)
+        self._refresh_management_panel()
+        InfoBar.success("已保存", f'图表模板 "{model.name or template.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+
+    def _save_global_report_template(self, template_id: str, raw_text: str) -> None:
+        template = global_assets.get_report_template(template_id)
+        if template is None:
+            InfoBar.warning("保存失败", "当前报告模板不存在", parent=self, position=InfoBarPosition.TOP)
+            return
+        if global_assets.update_report_template(template_id, content=raw_text):
+            self.project_modified.emit()
+            self._show_global_template_editor("global_report_template", template_id)
+            self._refresh_management_panel()
+            InfoBar.success("已保存", f'报告模板 "{template.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+            return
+        fallback_name, ok = TextInputDialog.get_text(
+            self,
+            "另存报告模板",
+            "模板名称:",
+            placeholder="输入新模板名称",
+            text=f"{template.name} 副本",
+        )
+        if not ok or not fallback_name.strip():
+            return
+        copied = global_assets.add_report_template(ReportTemplate(name=fallback_name.strip(), content=raw_text))
+        self.project_modified.emit()
+        self._show_global_template_editor("global_report_template", copied.id)
+        self._refresh_management_panel()
+        InfoBar.success("已保存", f'报告模板 "{copied.name}" 已另存', parent=self, position=InfoBarPosition.TOP)
+
     def _reset_selected_extension_config_edit(self) -> None:
         if not self._current_extension_config_id:
+            self._reset_selected_preview_editor()
             return
         self._text_preview.setPlainText(self._extension_config_original_text or "{}")
 
     def _save_selected_extension_config(self) -> None:
         config_id = self._current_extension_config_id or self._selected_node_id
+        if self._current_extension_config_id is None and self._preview_editor_kind is not None:
+            self._save_selected_preview_editor()
+            return
         if not config_id:
             return
         config_item = global_assets.get_extension_config(config_id)
@@ -4821,6 +5094,12 @@ class DataPage(QWidget):
         """共享树选中节点 → 显示预览。"""
         self._workspace_controller.handle_tree_selected(kind, node_id)
         if kind == "global_extension_config" and self._show_extension_config_editor(node_id):
+            self._selected_type = None
+            self._selected_id = None
+            self._set_actions_enabled(False)
+            self._refresh_management_panel()
+            return
+        if kind in {"global_pipeline", "global_plot_style", "global_plot_theme", "global_report_template"} and self._show_global_template_editor(kind, node_id):
             self._selected_type = None
             self._selected_id = None
             self._set_actions_enabled(False)
