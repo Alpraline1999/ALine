@@ -1413,6 +1413,41 @@ class TestNavigationStack(unittest.TestCase):
 
         focus_mock.assert_called_once_with([first_key, second_key])
 
+    def test_tree_scope_focus_action_ignores_trigger_checked_argument(self):
+        from models.schemas import DataFile, DataSeries
+
+        second = self.pm.add_data_file(DataFile(name="checked_focus.csv", series=[DataSeries(name="s2", x=[1.0], y=[2.0])]))
+        self.assertIsNotNone(second)
+        self.widget.refresh()
+
+        first_item = self.widget._find_item(next(node.id for node in self.p.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id))
+        second_item = self.widget._find_item(second.id)
+        self.assertIsNotNone(first_item)
+        self.assertIsNotNone(second_item)
+
+        first_key = self.widget._item_key(first_item)
+        second_key = self.widget._item_key(second_item)
+        self.assertIsNotNone(first_key)
+        self.assertIsNotNone(second_key)
+
+        self.widget._tree.clearSelection()
+        first_item.setSelected(True)
+        second_item.setSelected(True)
+        self.widget._tree.setCurrentItem(first_item)
+
+        captured = {}
+
+        def _fake_add(menu, icon, text, callback):
+            if text == "专注所选":
+                captured["callback"] = callback
+            return mock.Mock()
+
+        with mock.patch.object(self.widget, "_add_menu_action", side_effect=_fake_add):
+            self.widget._append_tree_scope_actions(mock.Mock(actions=lambda: [1]), focus_items=[first_item, second_item], project_id=self.p.id)
+
+        captured["callback"](True)
+        self.assertEqual(set(self.widget.focused_item_keys()), {first_key, second_key})
+
     def test_context_menu_preserves_multi_selection_within_same_project(self):
         from models.schemas import DataFile, DataSeries
 

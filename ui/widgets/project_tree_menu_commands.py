@@ -243,7 +243,7 @@ class ProjectTreeMenuBuilder:
                 (
                     getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)),
                     label,
-                    lambda keys=list(selected_key_list): self._tree_widget.focus_item_keys(keys),
+                    lambda _checked=False, keys=list(selected_key_list): self._tree_widget.focus_item_keys(keys),
                 )
             )
         manage_entries = [

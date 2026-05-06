@@ -1171,7 +1171,7 @@ class ProjectTreeWidget(QWidget):
                     menu,
                     getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)),
                     label,
-                    lambda keys=list(selected_key_list): self.focus_item_keys(keys),
+                    lambda _checked=False, keys=list(selected_key_list): self.focus_item_keys(keys),
                 )
             if self.is_focus_active():
                 self._add_menu_action(menu, getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self.clear_focus)
@@ -1179,7 +1179,7 @@ class ProjectTreeWidget(QWidget):
             menu,
             FIF.SYNC,
             "清理空文件夹",
-            lambda target_project_id=project_id: self._cmd_prune_empty_folders(project_id=target_project_id),
+            lambda _checked=False, target_project_id=project_id: self._cmd_prune_empty_folders(project_id=target_project_id),
         )
 
     def _expand_all_items(self) -> None:
