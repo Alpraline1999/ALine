@@ -20,6 +20,7 @@ from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
+from ui.dialogs.project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
 from ui.dialogs.export_flow import DataCreateTargetOption, choose_curve_file_export_plan, choose_data_export_plan, curve_export_file_filter
 from ui.pages.save_export_coordinator import SaveExportCoordinator
 from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
@@ -2596,10 +2597,10 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
             return
 
         if project_manager.current_project.is_modified:
-            w = MessageBox("项目已修改", "当前项目有未保存的更改，是否保存？", self)
-            w.yesButton.setText("保存")
-            w.cancelButton.setText("不保存")
-            if w.exec():
+            decision = confirm_unsaved_project_close(project_manager.current_project.name, self)
+            if decision == ProjectCloseDecision.CANCEL:
+                return
+            if decision == ProjectCloseDecision.SAVE:
                 self._on_save_project()
 
         project_manager.close_current_project()

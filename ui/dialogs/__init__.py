@@ -5,6 +5,7 @@ from .coord_type_dialog import CoordTypeDialog
 from .fluent_dialogs import SelectionDialog, TextInputDialog
 from .import_dialog import ImportDialog
 from .polar_calibration_dialog import PolarCalibrationDialog
+from .project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
 from .project_tree_manage_dialog import ProjectTreeManageDialog
 from .report_template_dialog import ReportTemplateDialog
 
@@ -15,8 +16,10 @@ __all__ = [
     "CoordTypeDialog",
     "ImportDialog",
     "PolarCalibrationDialog",
+    "ProjectCloseDecision",
     "ProjectTreeManageDialog",
     "ReportTemplateDialog",
     "SelectionDialog",
+    "confirm_unsaved_project_close",
     "TextInputDialog",
 ]

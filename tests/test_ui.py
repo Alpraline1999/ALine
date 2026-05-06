@@ -194,6 +194,25 @@ class TestProjectTreeWidget(unittest.TestCase):
         labels = [self.widget._tree.topLevelItem(i).text(0) for i in range(self.widget._tree.topLevelItemCount())]
         self.assertEqual(labels, [self.p.name, "全局资源"])
 
+    def test_close_current_project_cancel_keeps_project_open(self):
+        from ui.dialogs.project_close_dialog import ProjectCloseDecision
+
+        self.p.is_modified = True
+        with mock.patch("ui.widgets.project_tree.confirm_unsaved_project_close", return_value=ProjectCloseDecision.CANCEL):
+            self.widget._close_current_project()
+
+        self.assertIs(self.pm.current_project, self.p)
+        self.p.is_modified = False
+
+    def test_close_current_project_discard_closes_project(self):
+        from ui.dialogs.project_close_dialog import ProjectCloseDecision
+
+        self.p.is_modified = True
+        with mock.patch("ui.widgets.project_tree.confirm_unsaved_project_close", return_value=ProjectCloseDecision.DISCARD):
+            self.widget._close_current_project()
+
+        self.assertIsNone(self.pm.current_project)
+
     def test_multiple_projects_render_as_top_level_roots(self):
         from models.schemas import DataFile, DataSeries
 
@@ -9489,6 +9508,16 @@ class TestDigitizePage(unittest.TestCase):
             (14, 14, 14, 14),
         )
 
+    def test_close_project_cancel_keeps_current_project(self):
+        from ui.dialogs.project_close_dialog import ProjectCloseDecision
+
+        self.p.is_modified = True
+        with mock.patch("ui.pages.digitize_page.confirm_unsaved_project_close", return_value=ProjectCloseDecision.CANCEL):
+            self.page._on_close_project()
+
+        self.assertIs(self.pm.current_project, self.p)
+        self.p.is_modified = False
+
     def test_curve_data_buttons_are_above_panel_title(self):
         layout = self.page._right_panel.layout()
 
@@ -10148,6 +10177,34 @@ class TestMainWindow(unittest.TestCase):
         self.assertFalse(self.win._tree_panel.tree_manage_btn.isHidden())
         self.assertFalse(hasattr(self.win._tree_panel, "add_dataset_btn"))
         self.assertFalse(hasattr(self.win._tree_panel, "import_file_btn"))
+
+    def test_close_current_project_cancel_keeps_project_open(self):
+        from ui.dialogs.project_close_dialog import ProjectCloseDecision
+
+        self.p.is_modified = True
+        with mock.patch("ui.main_window.confirm_unsaved_project_close", return_value=ProjectCloseDecision.CANCEL):
+            self.win._close_current_project_from_panel()
+
+        self.assertIs(self.pm.current_project, self.p)
+        self.p.is_modified = False
+
+    def test_close_current_project_save_then_closes(self):
+        from ui.dialogs.project_close_dialog import ProjectCloseDecision
+
+        self.p.is_modified = True
+        try:
+            with mock.patch("ui.main_window.confirm_unsaved_project_close", return_value=ProjectCloseDecision.SAVE), \
+                 mock.patch.object(self.win, "_save_current_project_from_panel", return_value=True) as save_mock:
+                self.win._close_current_project_from_panel()
+
+            save_mock.assert_called_once()
+            self.assertIsNone(self.pm.current_project)
+        finally:
+            if self.p not in self.pm.projects:
+                self.pm._projects.insert(0, self.p)
+            self.pm.set_current_project(self.p.id)
+            self.p.is_modified = False
+            self.win._tree_panel.tree.refresh()
 
     def test_project_tree_manage_button_opens_dialog(self):
         with mock.patch("ui.main_window.ProjectTreeManageDialog") as dialog_cls:

@@ -22,6 +22,7 @@ from .pages.process_page import ProcessPage
 from .pages.analysis_page import AnalysisPage
 from .pages.settings_page import SettingsPage
 from .dialogs.fluent_dialogs import TextInputDialog
+from .dialogs.project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
 from .dialogs.project_tree_manage_dialog import ProjectTreeManageDialog
 from .notifications import show_error, show_success, show_warning
 from .widgets.project_tree import ProjectTreeWidget
@@ -656,10 +657,10 @@ class MainWindow(FluentWindow):
             return
 
         if project.is_modified:
-            dlg = MessageBox("项目已修改", "当前项目有未保存的更改，是否保存？", self)
-            dlg.yesButton.setText("保存")
-            dlg.cancelButton.setText("不保存")
-            if dlg.exec() and not self._save_current_project_from_panel():
+            decision = confirm_unsaved_project_close(project.name, self)
+            if decision == ProjectCloseDecision.CANCEL:
+                return
+            if decision == ProjectCloseDecision.SAVE and not self._save_current_project_from_panel():
                 return
 
         project_manager.close_current_project()

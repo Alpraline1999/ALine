@@ -23,6 +23,7 @@ from core.extension_api import build_extension_entry, extension_registry
 from core.project_manager import project_manager
 from core.ui_preferences import get_tree_name_display_mode
 from app.project_tree_command_service import ProjectTreeCommandService
+from ui.dialogs.project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.widgets.project_tree_builder import ProjectTreeBuilder
 from ui.widgets.project_tree_page_dispatcher import ProjectTreePageDispatcher
@@ -303,8 +304,15 @@ class ProjectTreeWidget(QWidget):
         if callable(handler):
             handler()
             return
-        if project_manager.current_project is None:
+        project = project_manager.current_project
+        if project is None:
             return
+        if project.is_modified:
+            decision = confirm_unsaved_project_close(project.name, self._dialog_parent())
+            if decision == ProjectCloseDecision.CANCEL:
+                return
+            if decision == ProjectCloseDecision.SAVE and not self._save_current_project():
+                return
         project_manager.close_current_project()
         self.refresh()
 
