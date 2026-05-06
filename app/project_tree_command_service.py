@@ -111,14 +111,15 @@ class ProjectTreeCommandService:
             return project_manager.rename_curve(node_id, clean_name)
         return project_manager.rename_node(node_id, clean_name)
 
-    def prune_empty_folders(self, root_id: str | None = None, *, scope_label: str = "项目树") -> None:
+    def prune_empty_folders(self, root_id: str | None = None, *, scope_label: str = "项目树") -> bool:
         removed_ids = project_manager.remove_empty_folders(root_id)
         if not removed_ids:
             self.notify_success("无需清理", f"{scope_label} 中没有可移除的空文件夹")
-            return
+            return False
         self.refresh()
         self.project_modified()
         self.notify_success("清理完成", f"已移除 {len(removed_ids)} 个空文件夹")
+        return True
 
     def delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
         if not self.confirm_delete("确认删除", f"确定要删除「{node_name}」吗？"):

@@ -149,7 +149,7 @@ class ProjectTreeMenuBuilder:
 
         batch_payloads = self._batch_action_payloads(selected_items)
         if len(batch_payloads) > 1:
-            self._build_batch_menu(menu, batch_payloads, pos)
+            self._build_batch_menu(menu, batch_payloads, selected_items, pos)
             return
 
         d = self._item_role_data(item)
@@ -210,7 +210,15 @@ class ProjectTreeMenuBuilder:
             return self._item_project_id(parent)
         return None
 
-    def _build_batch_menu(self, menu: RoundMenu, batch_payloads: list[dict[str, object]], pos) -> None:
+    def _build_batch_menu(self, menu: RoundMenu, batch_payloads: list[dict[str, object]], selected_items: list[QTreeWidgetItem], pos) -> None:
+        focus_entries: list[tuple[object, str, object]] = []
+        focus_keys = set(self._tree_widget.focused_item_keys()) if hasattr(self._tree_widget, "focused_item_keys") else set()
+        selected_keys = set(self._tree_widget._selected_item_keys(selected_items)) if hasattr(self._tree_widget, "_selected_item_keys") else set()
+        if focus_keys and (not selected_keys or selected_keys == focus_keys):
+            focus_entries.append((getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self._clear_focus))
+        elif selected_items:
+            label = "切换专注到所选" if self._tree_widget.is_focus_active() else "专注所选"
+            focus_entries.append((getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)), label, self._focus_selected_item))
         manage_entries = [
             (FIF.DELETE, f"删除选中 {len(batch_payloads)} 项", lambda: self._cmd_delete_batch(batch_payloads)),
         ]
@@ -219,6 +227,7 @@ class ProjectTreeMenuBuilder:
             manage_entries.append(
                 (FIF.SYNC, f"移动选中 {len(batch_payloads)} 项...", lambda: self._cmd_move_batch(batch_payloads, move_choices))
             )
+        self._append_menu_section(menu, focus_entries)
         self._append_menu_section(menu, manage_entries)
         self._append_tree_scope_actions(menu, separated=True)
         menu.exec(self._tree.viewport().mapToGlobal(pos))

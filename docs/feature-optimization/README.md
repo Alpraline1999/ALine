@@ -21,6 +21,7 @@
 15. [14-phase-14-project-tree-group-semantics-and-export-target-normalization.md](14-phase-14-project-tree-group-semantics-and-export-target-normalization.md)
 16. [15-phase-15-analysis-result-curve-export-and-output-lines-normalization.md](15-phase-15-analysis-result-curve-export-and-output-lines-normalization.md)
 17. [16-phase-16-chart-rendering-regression-and-project-tree-capability-unification.md](16-phase-16-chart-rendering-regression-and-project-tree-capability-unification.md)
+18. [17-phase-17-project-tree-root-cleanup-and-multi-select-focus-mode.md](17-phase-17-project-tree-root-cleanup-and-multi-select-focus-mode.md)
 
 ## 当前阶段定位
 
@@ -71,6 +72,9 @@
 - 最新补充核查又确认，本轮还存在一组需要单独成 phase 收口的回归与契约漂移：
   - 可视化页大点数预览路径仍残留 `decimate_xy_for_rendering(..., max_points=...)` 的旧接口调用，导致绘图运行时直接崩溃
   - 项目树普通子文件夹与根分组文件夹的能力矩阵没有统一，已表现为右键菜单缺项、节点管理名称错误、批量操作范围过窄、源文件拖动移动失效、项目根节点命令缺失等一组关联问题
+- 最新用户验收又补充出两项需要进入下一阶段的项目树问题：
+  - 项目树“清理空文件夹”根级入口仍无效，而“清理空子文件夹”路径正常，说明 root-scoped 清理契约仍未闭环
+  - 项目树专注模式当前仅支持单节点，不支持多选节点联合专注，已与现有多选管理能力脱节
 - 鉴于后续可能完全重做 AI 模块，现阶段更合理的策略是：
   - 先把 AI 从主启动链路和日常用户路径中彻底解耦/禁用
   - 再单独规划新的 AI 架构、命令模型与 UI 交互面

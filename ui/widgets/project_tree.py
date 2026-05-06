@@ -128,6 +128,7 @@ class ProjectTreeWidget(QWidget):
         self._branch_toggle_item_key: Optional[str] = None
         self._drag_source_item_key: Optional[str] = None
         self._drag_source_item_keys: List[str] = []
+        self._focused_item_keys: List[str] = []
         self._focused_item_key: Optional[str] = None
         self._fluent_tooltip: Optional[ToolTip] = None
         self._name_display_mode = "elide"
@@ -364,27 +365,33 @@ class ProjectTreeWidget(QWidget):
         self._apply_name_display_mode()
 
     def is_focus_active(self) -> bool:
-        return bool(self._focused_item_key)
+        return bool(self._focused_item_keys)
 
     def can_focus_selected_item(self) -> bool:
-        return len(self._selected_items_or_current()) == 1
+        return bool(self._selected_items_or_current())
+
+    def focused_item_keys(self) -> List[str]:
+        return list(self._focused_item_keys)
 
     def focus_selected_item(self) -> None:
         if not self.can_focus_selected_item():
             return
-        item = self._selected_items_or_current()[0]
-        item_key = self._item_key(item)
-        if not item_key:
+        selected_keys = self._selected_item_keys()
+        if not selected_keys:
             return
-        self._focused_item_key = item_key
-        self._reapply_focus_view(preferred_selection_key=item_key)
+        self._focused_item_keys = selected_keys
+        self._focused_item_key = selected_keys[0]
+        self._reapply_focus_view(preferred_selection_keys=selected_keys)
 
     def clear_focus(self) -> None:
-        if not self._focused_item_key:
+        if not self._focused_item_keys:
             return
+        selected_keys = list(self._focused_item_keys)
         selected_key = self._current_item_key()
+        self._focused_item_keys = []
         self._focused_item_key = None
-        self._reapply_focus_view(preferred_selection_key=selected_key)
+        preferred_keys = selected_keys if selected_key is None else [selected_key, *[key for key in selected_keys if key != selected_key]]
+        self._reapply_focus_view(preferred_selection_keys=preferred_keys)
 
     def get_selected_node(self) -> Optional[Tuple[str, str]]:
         """返回 (kind, node_id) 或 None。"""
@@ -809,7 +816,12 @@ class ProjectTreeWidget(QWidget):
         self._command_service.rename_virtual(kind, node_id, current_name)
 
     def _cmd_prune_empty_folders(self, root_id: Optional[str] = None, *, scope_label: str = "项目树") -> None:
+        current_item = self._tree.currentItem()
+        if current_item is not None:
+            self._activate_item_project(current_item)
         self._command_service.prune_empty_folders(root_id, scope_label=scope_label)
+        if root_id is None and self.is_focus_active():
+            self.clear_focus()
 
     def _cmd_delete_batch(self, payloads: List[Dict[str, object]]) -> None:
         self._command_service.delete_batch(payloads)
@@ -984,6 +996,15 @@ class ProjectTreeWidget(QWidget):
         current = self._tree.currentItem()
         return [current] if current is not None else []
 
+    def _selected_item_keys(self, items: Optional[List[QTreeWidgetItem]] = None) -> List[str]:
+        source_items = self._selected_items_or_current() if items is None else items
+        keys: List[str] = []
+        for item in source_items:
+            key = self._item_key(item)
+            if key and key not in keys:
+                keys.append(key)
+        return keys
+
     def _item_key(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
         if item is None:
             return None
@@ -1082,13 +1103,16 @@ class ProjectTreeWidget(QWidget):
         if separated and menu.actions():
             menu.addSeparator()
         focus_items = self._selected_items_or_current()
-        focus_item = focus_items[0] if len(focus_items) == 1 else None
-        focus_key = self._item_key(focus_item)
-        if focus_key and focus_key == self._focused_item_key:
+        focus_keys = set(self.focused_item_keys())
+        selected_keys = set(self._selected_item_keys(focus_items))
+        if focus_keys and (not selected_keys or selected_keys == focus_keys):
             self._add_menu_action(menu, getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self.clear_focus)
         else:
-            if focus_item is not None:
-                label = "切换专注到此处" if self.is_focus_active() else "专注此处"
+            if focus_items:
+                if len(focus_items) > 1:
+                    label = "切换专注到所选" if self.is_focus_active() else "专注所选"
+                else:
+                    label = "切换专注到此处" if self.is_focus_active() else "专注此处"
                 self._add_menu_action(menu, getattr(FIF, "PIN", getattr(FIF, "VIEW", FIF.SEARCH)), label, self.focus_selected_item)
             if self.is_focus_active():
                 self._add_menu_action(menu, getattr(FIF, "CANCEL", FIF.CLOSE), "退出专注", self.clear_focus)
@@ -1288,10 +1312,14 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _select_nodes(self, node_ids: List[str]) -> None:
+        self._apply_selection_nodes(node_ids, block_signals=True)
+
+    def _apply_selection_nodes(self, node_ids: List[str], *, block_signals: bool) -> None:
         clean_ids = [str(node_id) for node_id in node_ids if node_id]
         if not clean_ids:
             return
-        self._tree.blockSignals(True)
+        if block_signals:
+            self._tree.blockSignals(True)
         try:
             self._tree.clearSelection()
             current_item = None
@@ -1305,7 +1333,8 @@ class ProjectTreeWidget(QWidget):
             if current_item is not None:
                 self._tree.setCurrentItem(current_item, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
         finally:
-            self._tree.blockSignals(False)
+            if block_signals:
+                self._tree.blockSignals(False)
 
     def _folder_path_label(self, folder_id: str) -> str:
         label = project_manager.format_tree_path_label(folder_id, separator="/", omit_root_group=True)
@@ -1374,25 +1403,27 @@ class ProjectTreeWidget(QWidget):
             self._expand_item_ancestors(item)
             self._tree.setCurrentItem(item)
 
-    def _reapply_focus_view(self, preferred_selection_key: Optional[str] = None) -> None:
-        target_selection = preferred_selection_key
+    def _reapply_focus_view(self, preferred_selection_keys: Optional[List[str]] = None) -> None:
+        target_selection = list(preferred_selection_keys or [])
         self._tree.blockSignals(True)
         try:
             target_selection = self._apply_focus_view(target_selection)
             if target_selection:
-                self._restore_selection(target_selection)
+                self._apply_selection_nodes(target_selection, block_signals=False)
         finally:
             self._tree.blockSignals(False)
         self._tree.viewport().update()
         self._tree.updateGeometry()
 
-    def _apply_focus_view(self, selected_key: Optional[str]) -> Optional[str]:
-        focus_key = self._focused_item_key
-        focus_item = self._find_item_by_key(focus_key) if focus_key else None
-        if focus_key and focus_item is None:
-            self._focused_item_key = None
-            focus_key = None
-        visible_keys = self._focus_visible_keys(focus_item) if focus_item is not None else None
+    def _apply_focus_view(self, preferred_selection_keys: Optional[List[str]] = None) -> List[str]:
+        preferred_selection_keys = list(preferred_selection_keys or [])
+        focus_keys = [key for key in self._focused_item_keys if self._find_item_by_key(key) is not None]
+        if focus_keys != self._focused_item_keys:
+            self._focused_item_keys = focus_keys
+            self._focused_item_key = focus_keys[0] if focus_keys else None
+        focus_items = [self._find_item_by_key(key) for key in focus_keys]
+        focus_items = [item for item in focus_items if item is not None]
+        visible_keys = self._focus_visible_keys(focus_items) if focus_items else None
         def _walk(parent: Optional[QTreeWidgetItem]) -> None:
             count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
             for index in range(count):
@@ -1403,31 +1434,40 @@ class ProjectTreeWidget(QWidget):
                 item.setHidden(bool(visible_keys is not None and item_key not in visible_keys))
                 _walk(item)
         _walk(None)
-        if focus_item is not None:
-            self._expand_item_ancestors(focus_item)
-            if focus_item.childCount() > 0:
-                focus_item.setExpanded(True)
-            if visible_keys and selected_key not in visible_keys:
-                return self._focused_item_key
-        return selected_key
+        if focus_items:
+            for focus_item in focus_items:
+                self._expand_item_ancestors(focus_item)
+                if focus_item.childCount() > 0:
+                    focus_item.setExpanded(True)
+            if visible_keys:
+                visible_selection = [key for key in preferred_selection_keys if key in visible_keys]
+                if visible_selection:
+                    return visible_selection
+            return focus_keys[:1]
+        return [key for key in preferred_selection_keys if self._find_item_by_key(key) is not None]
 
-    def _focus_visible_keys(self, focus_item: Optional[QTreeWidgetItem]) -> set[str]:
+    def _focus_visible_keys(self, focus_items: List[QTreeWidgetItem]) -> set[str]:
         visible_keys: set[str] = set()
-        if focus_item is None:
+        if not focus_items:
             return visible_keys
-        current = focus_item
-        while current is not None:
-            item_key = self._item_key(current)
-            if item_key:
-                visible_keys.add(item_key)
-            current = current.parent()
-        stack = [focus_item]
+        stack = list(focus_items)
         while stack:
             item = stack.pop()
-            item_key = self._item_key(item)
-            if item_key:
-                visible_keys.add(item_key)
-            stack.extend(item.child(index) for index in range(item.childCount()))
+            if item is None:
+                continue
+            current = item
+            while current is not None:
+                item_key = self._item_key(current)
+                if item_key:
+                    visible_keys.add(item_key)
+                current = current.parent()
+            child_stack = [item]
+            while child_stack:
+                current_item = child_stack.pop()
+                item_key = self._item_key(current_item)
+                if item_key:
+                    visible_keys.add(item_key)
+                child_stack.extend(current_item.child(index) for index in range(current_item.childCount()))
         return visible_keys
 
     @staticmethod

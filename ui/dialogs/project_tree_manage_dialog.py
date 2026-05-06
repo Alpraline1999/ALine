@@ -77,8 +77,9 @@ class ProjectTreeManageDialog(MessageBoxBase):
 
     def _toggle_focus(self) -> None:
         selected_items = self._tree._selected_items_or_current()
-        selected_key = self._tree._item_key(selected_items[0]) if len(selected_items) == 1 else None
-        if self._tree.is_focus_active() and (selected_key is None or selected_key == self._tree._focused_item_key):
+        selected_keys = self._tree._selected_item_keys(selected_items)
+        focused_keys = set(self._tree.focused_item_keys())
+        if self._tree.is_focus_active() and (not selected_keys or set(selected_keys) == focused_keys):
             self._tree.clear_focus()
         else:
             self._tree.focus_selected_item()
@@ -90,10 +91,11 @@ class ProjectTreeManageDialog(MessageBoxBase):
             self._selection_label.setText("未选择节点")
         else:
             self._selection_label.setText(f"已选 {len(selected_items)} 项")
-        selected_key = self._tree._item_key(selected_items[0]) if len(selected_items) == 1 else None
+        selected_keys = set(self._tree._selected_item_keys(selected_items))
+        focused_keys = set(self._tree.focused_item_keys())
         focus_active = self._tree.is_focus_active()
-        focus_matches_selection = bool(selected_key and selected_key == self._tree._focused_item_key)
-        if focus_active and (focus_matches_selection or selected_key is None):
+        focus_matches_selection = bool(focused_keys and selected_keys == focused_keys)
+        if focus_active and (focus_matches_selection or not selected_keys):
             self._focus_btn.setText("退出专注")
             self._focus_btn.setEnabled(True)
         else:
