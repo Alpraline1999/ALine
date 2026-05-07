@@ -822,7 +822,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
 
         self._style_target_label = make_hint_label("当前选中：未选中", page)
         layout.addWidget(self._style_target_label)
-        self._style_target_label.hide()
 
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("基础外观", page))
