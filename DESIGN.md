@@ -1,867 +1,392 @@
-# ALine 重构设计文档
+# ALine 软件设计与结构文档
 
-> 版本: 方案 v0.5  日期: 2026-04-16
-> 状态: 已确认，可进入实现
-> 目标: 以数据管理为核心，完成统一项目树、跨页数据互通、模板体系和全量测试；AI runtime 保留，但前端入口默认隐藏
+> 状态：当前实现基线
+> 适用范围：仓库主干、后续功能开发、缺陷修复、结构演进
+> 关联文档：
+> `README.md`
+> `docs/development-architecture-guide.md`
+> `docs/refactor/README.md`
+> `docs/feature-optimization/README.md`
 
-> 当前实现覆写: 保留 `core/ai/`、`ai/`、`core.ai_client.AIConfig` 等运行时与配置模型，但当前版本不承诺可见 AI 前端。右侧 AI 助手栏、项目树 AI 工具节点、设置页 AI 配置入口均视为暂停/隐藏能力，不作为当前 UI 目标。
+## 1. 文档目的
 
----
+本文件是 ALine 当前版本的统一软件设计与结构说明。
 
-## 一、重构结论
+它不再记录历史阶段计划，也不再区分“设计文档”和“下一阶段规划文档”。它只回答四个问题：
 
-### 1.1 本轮必须解决的问题
+1. ALine 当前解决什么问题。
+2. 当前代码库按什么架构分层组织。
+3. 关键运行流、数据模型、扩展协议如何协作。
+4. 仓库中哪些目录和文档是长期维护入口。
 
-| 现状问题                                                   | 设计结论                                                                                                                     | 主要落点                                                                             |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 各功能页仍使用各自的数据列表、曲线列表、输入列表           | 2-6 页面统一使用同一个共享项目树作为唯一数据入口；页面内部只保留当前工作集，不再保留第二套可选源列表                         | `ui/main_window.py`、`ui/widgets/project_tree.py`、各页面                            |
-| 导入数据文件对话框中的上一步无效                           | 导入流程改为显式状态机，回退、前进、完成三态可测试                                                                           | `ui/dialogs/import_dialog.py`                                                        |
-| 绘图高级设置无法反映当前设置，且模板不能直接加载到当前图表 | 引入单一 `FigureState` 作为图表状态源；高级设置界面双向绑定当前状态；增加加载模板和保存模板按钮                              | `ui/pages/chart_page.py`、`ui/dialogs/advanced_figure_dialog.py`                     |
-| 报告模板配置位置不合理且分析页缺少模板应用能力             | 报告模板进入项目树，归类到工具集中的报告模板组；分析页增加应用报告模板、编辑模板、渲染预览和导出功能；设置页不再管理报告模板 | `ui/pages/analysis_page.py`、`ui/widgets/project_tree.py`、`core/project_manager.py` |
-| 图片取点只能导出文件或剪贴板                               | 增加导出为数据列，可将提取曲线写入项目中的数据文件或数据集                                                                   | `ui/pages/digitize_page.py`、`core/project_manager.py`                               |
-| Pipeline 不能作为模板保存和复用                            | Process 页引入 Pipeline 模板库，支持保存、加载、覆盖、另存                                                                   | `ui/pages/process_page.py`、`core/project_manager.py`                                |
-| AI runtime 已存在，但前端入口与当前产品决策冲突            | 保留核心 AI 层与配置模型；暂停右侧 AI 助手栏、项目树 AI 工具节点和设置页 AI Provider 前端入口，只保留运行时与后续接入点      | `core/ai/`、`ai/`、`core/ai_client.py`、`ui/pages/settings_page.py`                  |
+如果当前实现与本文冲突，以“当前代码 + 测试护栏 + `docs/development-architecture-guide.md`”为准，并同步修正文档。
 
-### 1.2 本轮设计原则
+## 2. 产品定位
 
-1. 数据管理优先。所有功能以项目树中的数据资产为中心，页面之间不再复制维护可选数据列表。
-2. 项目树是唯一的跨页选取入口。页面内部允许存在当前图表工作集、当前处理链输入、当前分析输入等工作集，但不允许再出现另一套全量源列表。
-3. AI runtime 继续保留，但当前版本不承诺可见前端。页面右侧 AI 助手栏、项目树 AI 工具节点和设置页 AI 配置入口默认隐藏。
-4. 保持项目文件向后兼容。旧项目可以打开，新结构通过迁移补齐，不破坏已有数据。
-5. 先完成结构重构，再补全测试；最终以测试通过作为结束条件。
+ALine 是一个面向科研与工程场景的桌面数据工作台，用于把图片中的曲线数字化、把曲线资产组织进项目、执行处理与分析、生成图表与报告素材，并通过 Python 扩展接入领域算法。
 
-### 1.3 本轮不做的事情
+它不是单一“取点工具”，也不是单一“绘图工具”。当前产品核心是一个项目驱动的数据工作流：
 
-1. 不在本轮引入多用户协作、云同步或远程项目存储。
-2. 不在本轮重写图片取点核心算法；仅调整管理结构、导出路径和页面集成。
-3. 不在本轮把 AI Skill 做成任意 Python 执行平台；首期采用受控工具调用与声明式技能编排。
+1. 导入图片或数据文件。
+2. 在共享项目树中组织数据、图片、分析结果、模板和扩展配置。
+3. 在数字化、数据处理、数据分析、可视化页面之间共享资产，而不是在每个页面复制一套数据源。
+4. 使用模板、全局资源和扩展机制复用流程。
 
----
+当前主工作流包括：
 
-## 二、目标信息架构
+- 图片数字化到数据列
+- 原始曲线到处理流水线
+- 曲线到分析结果与报告模板
+- 曲线到最终图表与图片导出
+- 内置/外部扩展加载、配置、应用与重载
 
-### 2.1 项目树目标结构
+## 3. 当前架构总览
 
-共享项目树的目标结构如下，页面 2-6 全部使用这一棵树：
+ALine 当前遵循以 `models -> core -> app -> ui` 为主干的分层架构。
 
-```text
-项目根节点
-├─ 文件夹（可多层嵌套）
-│  ├─ 数据集
-│  │  ├─ 数据文件
-│  │  │  ├─ 数据列 / 曲线数据
-│  │  │  └─ 数据列 / 曲线数据
-│  ├─ 图片集
-│  │  ├─ 图片
-│  │  │  ├─ 曲线数据
-│  │  │  └─ 曲线数据
-│  └─ 工具集
-│     ├─ Pipelines
-│     │  └─ Pipeline 模板
-│     ├─ 绘图模板组
-│     │  └─ 绘图模板
-│     └─ 报告模板组
-│        └─ 报告模板
-└─ 文件夹（同上，可继续嵌套）
-```
+| 层 | 目录 | 职责 |
+| --- | --- | --- |
+| 领域模型层 | `models/` | 项目、数据、图片、模板、分析结果、绘图快照等共享 schema |
+| 核心运行时层 | `core/` | 项目持久化、迁移、全局资产、扩展协议、扩展运行时、导出、渲染、偏好设置 |
+| 应用编排层 | `app/` | 页面工作区状态、树命令服务、消息对象、上下文与业务编排 |
+| UI 层 | `ui/` | 主窗口、页面、对话框、共享控件、主题与交互装配 |
+| 处理与算法层 | `processing/`, `digitize/` | 曲线处理、校准、图像提取等可复用基础算法 |
+| 扩展实现层 | `extensions/` | processing / analysis / plot / digitize 四类内置扩展 |
+| AI 运行时层 | `ai/`, `core/ai/` | 命令注册、工具分发、Agent 运行时与 provider 封装 |
+| 测试与门禁 | `tests/`, `scripts/` | UI/后端回归、架构护栏、结构检查 |
 
-### 2.2 持久化策略
+主依赖方向保持为：
 
-为兼顾可维护性和兼容性，树本身仍然采用持久化容器节点加虚拟数据叶节点策略：
+`ui -> app -> core -> models`
 
-| 节点                   | 是否持久化到树结构 | 说明                                                                                      |
-| ---------------------- | ------------------ | ----------------------------------------------------------------------------------------- |
-| 项目根节点             | 否                 | 由当前项目对象隐式表示                                                                    |
-| 文件夹                 | 是                 | 通用容器，允许多层嵌套                                                                    |
-| 数据集                 | 是                 | 逻辑集合节点，承载多个数据文件                                                            |
-| 数据文件               | 是                 | 对应导入文件或处理结果文件                                                                |
-| 数据列 / 曲线数据      | 虚拟叶节点         | 实际存储在 `DataFile.series` 或 `ImageWork.curves` 中，但在项目树中必须可见、可选、可操作 |
-| 图片集                 | 是                 | 逻辑集合节点                                                                              |
-| 图片                   | 是                 | 对应单个 `ImageWork`                                                                      |
-| 工具集                 | 是                 | 逻辑集合节点                                                                              |
-| Pipeline 模板          | 是                 | 持久化的可复用处理流程                                                                    |
-| 绘图模板               | 是                 | 持久化的图表样式模板                                                                      |
-| 报告模板               | 是                 | 持久化的分析报告模板，归类在工具集中                                                      |
-| Prompt / Skill / Agent | 是                 | AI 工具节点                                                                               |
+辅助方向：
 
-### 2.3 节点类型设计
+- `ui -> core`
+  当前保留少量受控单例直连，如 `project_manager`、`global_assets`、`extension_registry`。
+- `extensions -> core / processing / models`
+  扩展属于能力实现层，可以依赖稳定协议与基础算法。
+- `ai -> core`
+  AI 命令本质上是对核心能力的编排入口。
 
-本轮保留统一 `FolderNode + group_type` 的方向，但扩展分组语义以匹配新的结构层级：
+明确禁止：
+
+- `core -> ui`
+- `models -> core/ui/app`
+- `core` 直接硬编码依赖 `extensions.*`
+- 页面跨模块调用 `project_manager._*` 私有方法
+
+更严格的边界约束以 [docs/development-architecture-guide.md](/home/alpraline/Projects/Python/ALine/docs/development-architecture-guide.md) 为准。
+
+## 4. 主窗口与页面结构
+
+应用入口为 [main.py](/home/alpraline/Projects/Python/ALine/main.py)，主窗口为 [ui/main_window.py](/home/alpraline/Projects/Python/ALine/ui/main_window.py) 中的 `MainWindow`。
+
+当前页面集合：
+
+- 首页 `HomePage`
+- 数据管理页 `DataPage`
+- 可视化页 `ChartPage`
+- 数据处理页 `ProcessPage`
+- 数据分析页 `AnalysisPage`
+- 图片数字化页 `DigitizePage`
+- 设置页 `SettingsPage`
+
+除首页和设置页外，主窗口使用“导航栏 + 共享项目树 + 当前工作区”的工作台布局。共享项目树是页面 2-6 的统一资产入口。
+
+主窗口关键协作对象：
+
+- `ProjectTreeWidget`
+  负责项目树渲染、拖拽、右键菜单、专注模式和节点管理。
+- `TreeCommandRoute`
+  将树节点动作路由到数据、图表、处理、分析、数字化页面。
+- `ProjectTreeActionDispatcher`
+  负责树级应用命令的分发。
+- `AppContext`
+  持有全局上下文与可共享运行时资源。
+
+页面内部不再维护第二套全量源树。页面只维护“当前工作集”，例如：
+
+- 图表页的当前曲线工作集
+- 处理页的当前输入与 Pipeline
+- 分析页的当前输入与结果上下文
+- 数字化页的当前图片、曲线、校准与导出目标
+
+## 5. 工作区状态模型
+
+当前各工作台页面都引入了 workspace state/controller：
+
+- [app/workspaces/data_workspace.py](/home/alpraline/Projects/Python/ALine/app/workspaces/data_workspace.py)
+- [app/workspaces/chart_workspace.py](/home/alpraline/Projects/Python/ALine/app/workspaces/chart_workspace.py)
+- [app/workspaces/process_workspace.py](/home/alpraline/Projects/Python/ALine/app/workspaces/process_workspace.py)
+- [app/workspaces/analysis_workspace.py](/home/alpraline/Projects/Python/ALine/app/workspaces/analysis_workspace.py)
+- [app/workspaces/digitize_workspace.py](/home/alpraline/Projects/Python/ALine/app/workspaces/digitize_workspace.py)
+
+这些模块负责：
+
+- 页面级业务真相
+- 树节点选中/激活后的状态迁移
+- 当前工作集与 UI 控件之间的业务态同步
+
+`ui/page_view_state.py` 中的 view state 只保存纯 UI 视图态，例如 tooltip、面板显隐、局部显示状态，不保存领域真相。
+
+## 6. 项目、资产与持久化模型
+
+### 6.1 项目模型
+
+项目持久化模型位于 [models/schemas.py](/home/alpraline/Projects/Python/ALine/models/schemas.py)。
+
+这里定义了：
+
+- 项目对象
+- 文件夹和树节点
+- 数据文件与数据列
+- 图片与数字化结果
+- 分析结果与报告模板
+- 绘图样式、曲线样式、绘图快照
+- 扩展配置与 AI 相关资源
+
+### 6.2 项目持久化与迁移
+
+项目相关核心服务集中在 `core/`：
+
+- [core/project_manager.py](/home/alpraline/Projects/Python/ALine/core/project_manager.py)
+  当前项目 façade 与高层能力入口
+- [core/project_repository.py](/home/alpraline/Projects/Python/ALine/core/project_repository.py)
+  项目读写
+- [core/project_migration_service.py](/home/alpraline/Projects/Python/ALine/core/project_migration_service.py)
+  旧版本迁移
+- [core/project_tree_service.py](/home/alpraline/Projects/Python/ALine/core/project_tree_service.py)
+  树节点与分组能力
+- [core/project_asset_service.py](/home/alpraline/Projects/Python/ALine/core/project_asset_service.py)
+  项目资产级操作
+- [core/project_session.py](/home/alpraline/Projects/Python/ALine/core/project_session.py)
+  当前项目会话访问
+
+### 6.3 共享项目树语义
+
+项目树当前用于组织以下资产：
+
+- 普通文件夹
+- 数据文件、源文件、图片、图片结果
+- 分析结果
+- 全局 Pipeline 模板
+- 全局报告模板
+- 全局曲线样式模板
+- 全局绘图样式/主题
+- 全局扩展配置
+
+树中的一些叶节点是运行时虚拟节点，例如 `series`、`curve`。它们在 UI 中可见、可选、可拖拽、可批处理，但其真实数据仍存储在父级资产对象中。
+
+## 7. 全局资源与模板体系
+
+全局资源统一由 [core/global_assets.py](/home/alpraline/Projects/Python/ALine/core/global_assets.py) 管理。
+
+当前纳入统一管理的全局资源包括：
+
+- Pipeline 模板
+- 报告模板
+- 曲线样式模板
+- 绘图样式模板
+- 绘图主题
+- 扩展配置 preset
+- AI Prompt / Skill / Agent 资源
+
+这套体系的核心原则是：
+
+1. 项目内资产和全局模板分离。
+2. 设置页负责全局配置入口。
+3. 页面内允许查看、编辑、保存和覆盖与自身工作流相关的模板。
+
+例如：
+
+- 处理页维护 Pipeline 模板
+- 分析页维护报告模板与分析结果
+- 图表页维护曲线样式、绘图样式、绘图扩展实例
+- 数据页承担更通用的模板/配置编辑入口
+
+## 8. 曲线数据与渲染协议
+
+### 8.1 运行时曲线主表示
+
+当前代码库在热点路径使用两套受控表示：
+
+- 项目存储层与多数页面业务层仍使用结构化数据对象
+- 数值与热路径通过 [core/curve_data.py](/home/alpraline/Projects/Python/ALine/core/curve_data.py)、[core/line_tools.py](/home/alpraline/Projects/Python/ALine/core/line_tools.py) 和 `processing/extension_tools.py` 做统一适配
+
+### 8.2 扩展边界协议
+
+扩展正式曲线协议使用 point-list：
 
 ```python
-FolderNode.group_type in {
-    "user",                   # 普通文件夹
-    "dataset_set",            # 数据集
-    "image_set",              # 图片集
-    "tool_set",               # 工具集
-    "pipeline_group",         # Pipelines
-    "figure_template_group",  # 绘图模板组
-    "report_template_group",  # 报告模板组
-    "ai_group",               # AI 工具
-    "prompt_group",           # Prompts
-    "skill_group",            # Skills
-    "agent_group",            # Agents
-}
+line = [[x0, y0], [x1, y1], ...]
+lines = [line, ...]
 ```
 
-叶子节点使用明确节点类型：
+扩展层的正式转换入口：
 
 ```python
-DataFileNode
-ImageWorkNode
-PipelineNode
-FigureTemplateNode
-ReportTemplateNode
-AIPromptNode
-AISkillNode
-AIAgentNode
+from extensions.processing.extension_tools import line_from_xy, line_xy
 ```
 
-虚拟叶节点运行时统一使用选择载荷：
+仓库内部仍保留 `processing.extension_tools` 兼容转发层，但新的扩展实现应优先使用正式路径。
 
-```python
-{
-    "kind": "series" | "curve",
-    "id": str,
-    "parent_node_id": str,
-    "source_id": str,
-}
-```
-
-### 2.4 共享树交互约定
-
-1. 单击节点：更新当前页面预览区，并同步 AI 助手上下文。
-2. 双击节点：执行当前页面主动作。
-3. 右键菜单：提供与节点类型相关的动作，例如添加到图表、加入处理链、设为分析输入、导出为数据列、应用绘图模板、应用报告模板。
-4. 页面不再通过硬编码维护独立数据树或独立源列表；项目树为唯一全局资产树。
-5. 页面可以提供只看相关节点的辅助筛选，但默认显示完整树，避免跨页数据跳转时目标节点被隐藏。
-
-### 2.5 页面与树节点动作映射
-
-| 页面     | 主要可操作节点                                       | 双击默认动作                                               |
-| -------- | ---------------------------------------------------- | ---------------------------------------------------------- |
-| 数据管理 | 文件夹、数据集、数据文件、图片集、图片、数据列、曲线 | 预览或展开详情                                             |
-| 可视化   | 数据文件、图片、数据列、曲线、绘图模板               | 数据加入当前图表；模板应用到当前图表                       |
-| 数据处理 | 数据文件、图片、数据列、曲线、Pipeline 模板          | 设为当前输入；模板加载到处理链                             |
-| 数据分析 | 数据文件、图片、数据列、曲线、报告模板               | 数据加入当前分析输入；报告模板设为当前模板并可直接应用渲染 |
-| 图片取点 | 图片、曲线、数据集、数据文件                         | 图片加载到画布；曲线选中；数据集或数据文件作为导出目标     |
-
----
-
-## 三、主界面与页面方案
-
-### 3.1 总体布局
-
-除主页和设置页外，页面骨架统一为三栏布局：
-
-```text
-┌────┬──────────────┬──────────────────────────────┐
-│导航│ 共享项目树    │ 当前页面工作区                │
-│栏  │ 260~300px    │ Data / Chart / Process /     │
-│    │ 可折叠        │ Analysis / Digitize          │
-└────┴──────────────┴──────────────────────────────┘
-```
-
-导航顺序调整为：主页、数据管理、可视化、数据处理、数据分析、图片取点、设置。
-
-主题方向调整为数据管理优先：
-
-1. 项目树、数据元信息、来源路径、模板状态在视觉上优先展示。
-2. 页面工具按钮命名统一为加入当前工作集、保存为模板、从模板加载、导出为数据列等与资产流转相关的术语。
-3. 首页保留现有风格，不做激进视觉改版。
-
-### 3.2 数据管理页
-
-数据管理页负责项目内数据资产的导入、预览、整理、重命名、移动和导出。
-
-#### 关键调整
-
-1. 取消页面内部独立数据源列表，只根据共享项目树当前选中节点展示内容。
-2. 导入数据文件时必须允许列选择，导入落点由当前树节点决定：
-   - 选中数据集：导入后创建数据文件节点。
-   - 选中文件夹：自动在其下创建默认数据集后导入，或提示用户选择目标数据集。
-   - 选中数据文件：允许导入为新的数据文件，或按兼容规则追加为新数据列。
-3. 导入向导采用显式状态机：选择文件 -> 列角色配置 -> 完成。
-4. 上一步按钮必须恢复上一步界面和按钮状态，且有自动化测试覆盖。
-
-#### 导入列选择规则
-
-1. 每列可标记为 `X`、`Y`、`Y 误差`、`X 误差`、`忽略`。
-2. 可为每个 Y 列指定输出名称。
-3. 导入结果统一落为 `DataFile`，其下包含若干 `DataSeries` 虚拟叶节点。
-
-### 3.3 可视化页
-
-可视化页的目标是由共享树选择数据，在当前图表工作区组织图层。
-
-#### 关键调整
-
-1. 删除旧的左侧源曲线列表，不再维护另一份全量曲线来源。
-2. 页面内部仅保留当前图表工作集，用于展示已经加入当前图表的数据列或曲线及其显示顺序。
-3. 从项目树双击数据列、曲线、数据文件或图片时，将对应数据加入当前图表。
-4. 提供显式按钮：加载模板、保存模板、高级设置、导出图像。
-5. 绘图模板既可以从共享树双击应用，也可以通过加载模板按钮从模板列表中加载。
-
-#### FigureState 单一状态源
-
-当前图表的所有设置统一进入 `FigureState`，高级设置弹窗读取并写回这个对象，而不是读取零散控件状态：
-
-```python
-FigureState(
-    title,
-    x_label,
-    y_label,
-    x_lim,
-    y_lim,
-    theme,
-    figure_width,
-    figure_height,
-    dpi,
-    font_family,
-    font_size,
-    tick_label_size,
-    legend_visible,
-    legend_loc,
-    legend_font_size,
-    grid_visible,
-    grid_style,
-    axes_line_width,
-    line_width,
-    marker_size,
-    background_color,
-    margins,
-    show_error_bar,
-)
-```
+这条协议用于减少处理、分析、绘图、数字化四类扩展之间的结构漂移。
 
-#### 高级设置弹窗必须支持的项目
-
-1. 图尺寸、DPI、导出格式。
-2. 字体族、全局字号、坐标轴字号、标题字号。
-3. 轴范围、轴标签、标题、刻度方向、刻度字号。
-4. 图例开关、位置、字号、边框。
-5. 网格开关、线型、透明度。
-6. 线宽、点型、点大小、误差棒开关。
-7. 背景色、边距、子图留白。
-
-### 3.4 数据处理页
-
-数据处理页保留 Pipeline 思路，但输入选择和模板复用方式必须重构。
-
-#### 关键调整
-
-1. 输入数据来源统一来自共享树，不再显示独立的源数据树。
-2. 页面内部保留当前处理链、参数编辑区、结果预览区。
-3. Pipeline 具备完整模板能力：
-   - 保存当前处理链为模板。
-   - 从模板加载处理链。
-   - 对已有模板另存或覆盖。
-4. Pipeline 模板统一存放在项目树的工具集/Pipelines 下。
-5. 处理结果可选择：
-   - 保存为新的数据文件。
-   - 追加为现有数据文件中的新数据列。
-
-### 3.5 数据分析页
-
-分析页负责分析执行、结果预览、报告模板应用、模板编辑与 Markdown 导出。
-
-#### 关键调整
-
-1. 报告模板进入项目树，归类在工具集/报告模板组。
-2. 页面内部允许存在已选分析输入工作集，但这些输入只能由共享树添加。
-3. 右侧结果区改为双 Tab：
-   - 分析结果
-   - 报告模板
-4. 分析页必须提供应用报告模板功能：
-   - 从共享树双击 `report_template` 节点时，将该模板设为当前分析模板。
-   - 当前分析模板可立即对当前分析结果执行渲染。
-   - 可在分析页内编辑后保存回项目树中的模板节点。
-
-#### 报告模板能力
-
-1. 模板格式为 Markdown。
-2. 支持变量占位，例如：
-
-```markdown
-# 分析报告：{{series_name}}
-
-## 拟合结果
-- 模型：{{fit.model}}
-- R2：{{fit.r2:.4f}}
-
-## 统计信息
-- X 均值：{{stats.x_mean:.4g}}
-- Y 均值：{{stats.y_mean:.4g}}
-```
-
-3. 模板可新建、保存、另存、删除、应用、渲染预览、导出 `.md`。
-4. 模板持久化为项目树中的 `ReportTemplateNode`，实际内容保存在项目对象的报告模板集合中。
-
-### 3.6 图片取点页
-
-图片取点页保留现有取点、校准、自动提取能力，仅做管理结构和导出路径调整。
-
-#### 关键调整
-
-1. 页面由共享树选中图片并加载，不再依赖自身内部树作为唯一入口。
-2. 曲线导出动作扩展为三种：
-   - 导出到文件。
-   - 复制到剪贴板。
-   - 导出为数据列。
-3. 导出为数据列支持两种目标：
-   - 选中数据集：创建新的数据文件并写入提取曲线。
-   - 选中数据文件：追加为新的数据列。
-4. 导出后项目树立即刷新，对应数据列可直接用于可视化、处理和分析。
-
-### 3.7 设置页
-
-设置页负责外观、扩展与快捷键配置；AI runtime 配置不再作为当前版本的用户侧设置入口。
-
-#### 关键调整
-
-1. 保留主题、扩展和快捷键配置。
-2. 报告模板管理继续停留在分析页，不回流到设置页。
-3. AI Provider、模型、测试连接和 AI 助手显隐开关不再出现在当前设置 UI。
-4. `core.ai_client.AIConfig` 与相关 runtime 继续保留，供后续恢复前端入口或内部调用时复用。
-
----
-
-## 四、AI runtime 保留策略
-
-### 4.1 重构后的核心分层
-
-当前实现保留 AI 运行时与配置模型，但不再把可见 AI 前端作为当前版本目标。保留结构如下：
-
-```text
-core/
-├─ project_manager.py
-├─ analysis_engine.py
-├─ data_operations.py
-├─ exporter.py
-├─ ai/
-│  ├─ config.py
-│  ├─ providers.py
-│  ├─ client.py
-│  ├─ context.py
-│  ├─ tool_registry.py
-│  ├─ tool_executor.py
-│  └─ agent_runtime.py
-```
-
-顶层 `ai/` 目录保留，但调整为应用适配层：
-
-```text
-ai/
-├─ agent.py
-├─ command_layer.py
-└─ skill_runner.py
-```
-
-### 4.2 AI 工具模型
-
-运行时层仍保留三类 AI 工具模型，但当前不作为项目树中的用户可见节点：
-
-1. Prompt：复用提示模板，用于生成建议、摘要、说明文本。
-2. Skill：由受控工具步骤组成的技能模板，例如导入数据后自动清洗并拟合。
-3. Agent：绑定模型配置、系统提示、可用 Skill 集合的代理。
-
-Skill 首期不允许任意 Python 代码执行，统一调用注册工具，避免重构期间引入不可控执行面。
-
-### 4.3 AI 助手栏
-
-`ui/widgets/ai_assistant_panel.py` 作为保留组件存在，但当前版本默认隐藏，不纳入页面正式布局。
-
-#### 能力要求
-
-1. 保留页面上下文接入点，便于未来恢复前端时复用。
-2. 当前不在数据管理、可视化、数据处理、数据分析、图片取点页面右侧显示。
-3. 未来恢复时需要自动感知：
-   - 当前页面类型。
-   - 当前项目树选中节点。
-   - 当前页面工作集，例如当前图表工作集、当前处理链、当前分析结果。
-4. 支持直接调用项目工具，例如：
-   - 列出数据文件。
-   - 读取当前图表配置。
-   - 保存当前 Pipeline 为模板。
-   - 应用当前报告模板并渲染。
-   - 将取点结果导出为数据列。
-
-### 4.4 对 AI 暴露的核心工具
-
-核心工具注册到 `core.ai.tool_registry`，页面和 Agent 共用：
-
-```python
-TOOLS = {
-    "list_tree_nodes",
-    "get_node_detail",
-    "import_data_file",
-    "append_series_to_data_file",
-    "add_chart_series",
-    "load_figure_template",
-    "save_figure_template",
-    "load_pipeline_template",
-    "save_pipeline_template",
-    "load_report_template",
-    "render_report_template",
-    "run_analysis",
-    "export_curve_to_data_file",
-    "list_ai_tools",
-}
-```
-
-### 4.5 ProjectManager 需要补齐的能力
-
-`core/project_manager.py` 在本轮需要新增或调整以下接口：
-
-1. 统一的集合节点创建接口：文件夹、数据集、图片集、工具集。
-2. DataFile CRUD 与数据列追加接口。
-3. 图片曲线导出为数据列接口。
-4. Pipeline 模板 CRUD。
-5. FigureTemplate CRUD。
-6. ReportTemplate CRUD 及对应树节点创建、移动、删除、加载接口。
-7. AI Prompt / Skill / Agent CRUD。
-8. 节点选择解析接口：根据树节点快速返回数据、模板或 AI 工具实体。
-
-### 4.6 兼容与迁移
-
-#### 项目文件兼容策略
-
-1. 旧项目打开时自动迁移到新树语义。
-2. 旧的固定顶层数据集、图片集、工具集会转换为新的集合节点结构。
-3. 既有图像、曲线、数据文件、已保存模板均保留原始内容。
-4. 旧版设置页中的报告模板迁移到项目级报告模板集合，并自动挂到工具集/报告模板组下。
-
-#### 迁移原则
-
-1. 不删除用户数据。
-2. 不丢失现有图像曲线与数据列的关联关系。
-3. 对无法自动归类的节点放入待整理文件夹。
-
----
-
-## 五、目标模块结构
+### 8.3 大曲线与绘图优化
+
+当前大曲线优化以局部热路径收口为主，而不是全仓强制数组化。
+
+相关模块：
+
+- [core/rendering.py](/home/alpraline/Projects/Python/ALine/core/rendering.py)
+  负责降采样、渲染辅助与大曲线预览优化
+- [core/exporter.py](/home/alpraline/Projects/Python/ALine/core/exporter.py)
+  负责大数据导出
+- [ui/widgets/matplotlib_preview.py](/home/alpraline/Projects/Python/ALine/ui/widgets/matplotlib_preview.py)
+  负责共享预览工具栏与交互契约
+
+## 9. 扩展系统设计
+
+### 9.1 当前扩展类型
+
+扩展协议与注册表定义位于 [core/extension_api.py](/home/alpraline/Projects/Python/ALine/core/extension_api.py)。
+
+当前主要扩展类型：
+
+| 类型 | 用途 | 标准签名 | 返回值 |
+| --- | --- | --- | --- |
+| ProcessingExtension | 曲线处理 | `(lines, params)` | `line` |
+| AnalysisExtension | 结果分析 | `(lines, params)` | `dict` |
+| PlotExtension | 图表叠加或样式 patch | `(plot_context, params)` | `None` |
+| DigitizeExtension | 图像提取曲线 | `(figure, params)` | `line` |
+
+此外还有：
+
+- `PlotStyleExtension`
+- `CurveStyleExtension`
+
+其中 `PlotExtension` 还带有 `phases`、`style_authority`、`authoritative_fields` 等绘图阶段和样式覆盖语义；图表页通过 `PlotExtensionContext` 驱动其执行，而不是直接把 `lines` 传给 handler。
+
+`PlotStyleExtension` 与 `CurveStyleExtension` 用于图表页的样式 patch 与样式体系扩展。
+
+### 9.2 扩展加载与运行时
+
+关键模块：
+
+- [core/extension_api.py](/home/alpraline/Projects/Python/ALine/core/extension_api.py)
+  协议、registry、兼容入口
+- [core/extension_loader.py](/home/alpraline/Projects/Python/ALine/core/extension_loader.py)
+  扩展扫描与加载
+- [core/extension_runtime.py](/home/alpraline/Projects/Python/ALine/core/extension_runtime.py)
+  统一运行时调用 façade
+- [core/extension_settings.py](/home/alpraline/Projects/Python/ALine/core/extension_settings.py)
+  启停状态和来源设置
+
+内置扩展位于：
+
+- `extensions/processing/`
+- `extensions/analysis/`
+- `extensions/plot/`
+- `extensions/digitize/`
+
+对外说明文档位于 [extensions/README.md](/home/alpraline/Projects/Python/ALine/extensions/README.md)。
+
+### 9.3 扩展配置 UI
+
+当前扩展配置 UI 基础设施包括：
+
+- [ui/widgets/extension_panel.py](/home/alpraline/Projects/Python/ALine/ui/widgets/extension_panel.py)
+  页面级扩展面板
+- [ui/widgets/extension_options_form.py](/home/alpraline/Projects/Python/ALine/ui/widgets/extension_options_form.py)
+  字段驱动的参数表单
+- [ui/dialogs/plot_extension_instance_dialog.py](/home/alpraline/Projects/Python/ALine/ui/dialogs/plot_extension_instance_dialog.py)
+  图表页已加载绘图扩展实例的编辑对话框
+
+当前支持的关键能力：
+
+- 扩展启停和重载
+- 内置/外部来源区分
+- 配置 preset 保存与覆盖
+- 绘图扩展实例级编辑与刷新加载
+- 统一 Fluent 风格 tooltip 和参数说明布局
+
+## 10. AI 能力现状
+
+AI 运行时仍保留在仓库中，但它不是当前主产品工作流的第一优先入口。
+
+相关模块：
+
+- `ai/`
+  命令注册、调度与 Agent 主循环
+- `core/ai/`
+  provider、tool registry、tool executor 等底层运行时
+- [core/ai_client.py](/home/alpraline/Projects/Python/ALine/core/ai_client.py)
+  兼容型 AI 配置/访问入口
+
+当前设计原则：
+
+1. AI 作为可接入能力保留。
+2. AI 不应绕过项目管理器直接修改项目数据。
+3. AI 的新增功能应优先复用已有 core façade，而不是复制业务实现。
+
+## 11. 当前目录结构
+
+建议从以下目录理解仓库：
 
 ```text
 ALine/
-├── main.py
-├── build.py
-├── models/
-│   └── schemas.py
-├── core/
-│   ├── project_manager.py
-│   ├── analysis_engine.py
-│   ├── data_operations.py
-│   ├── exporter.py
-│   └── ai/
-│       ├── config.py
-│       ├── providers.py
-│       ├── client.py
-│       ├── context.py
-│       ├── tool_registry.py
-│       ├── tool_executor.py
-│       └── agent_runtime.py
-├── ai/
-│   ├── agent.py
-│   ├── command_layer.py
-│   └── skill_runner.py
-├── ui/
-│   ├── main_window.py
-│   ├── pages/
-│   │   ├── home_page.py
-│   │   ├── data_page.py
-│   │   ├── chart_page.py
-│   │   ├── process_page.py
-│   │   ├── analysis_page.py
-│   │   ├── digitize_page.py
-│   │   └── settings_page.py
-│   ├── widgets/
-│   │   ├── project_tree.py
-│   │   ├── ai_assistant_panel.py
-│   │   └── image_viewer.py
-│   └── dialogs/
-│       ├── import_dialog.py
-│       ├── advanced_figure_dialog.py
-│       ├── pipeline_template_dialog.py
-│       ├── report_template_dialog.py
-│       └── ai_tool_dialog.py
-└── tests/
-    ├── test_backend.py
-    └── test_ui.py
+├─ main.py                    # 应用入口
+├─ README.md                  # 项目首页文档
+├─ DESIGN.md                  # 当前软件设计与结构文档
+├─ app/                       # 应用编排层、workspace controller、命令服务
+├─ core/                      # 核心运行时、项目系统、扩展系统、全局资产
+├─ models/                    # 持久化与共享 schema
+├─ ui/                        # 主窗口、页面、对话框、共享控件
+├─ processing/                # 曲线处理与扩展共享工具
+├─ digitize/                  # 数字化底层算法
+├─ extensions/                # 内置扩展
+├─ ai/                        # AI 命令编排层
+├─ docs/                      # 架构、重构、优化文档
+├─ tests/                     # UI、后端、架构护栏测试
+└─ scripts/                   # 结构检查等开发脚本
 ```
 
----
+其中最值得优先阅读的文件：
 
-## 六、实施计划
+- [ui/main_window.py](/home/alpraline/Projects/Python/ALine/ui/main_window.py)
+- [core/project_manager.py](/home/alpraline/Projects/Python/ALine/core/project_manager.py)
+- [core/global_assets.py](/home/alpraline/Projects/Python/ALine/core/global_assets.py)
+- [core/extension_api.py](/home/alpraline/Projects/Python/ALine/core/extension_api.py)
+- [ui/widgets/project_tree.py](/home/alpraline/Projects/Python/ALine/ui/widgets/project_tree.py)
+- [extensions/README.md](/home/alpraline/Projects/Python/ALine/extensions/README.md)
 
-### Phase 1：数据模型与迁移
+## 12. 文档体系
 
-目标：先让项目树结构和底层对象能表达新方案。
+当前文档应按职责理解：
 
-任务：
+- [README.md](/home/alpraline/Projects/Python/ALine/README.md)
+  项目首页、运行方式、功能概览、开发入口
+- [DESIGN.md](/home/alpraline/Projects/Python/ALine/DESIGN.md)
+  当前软件设计与仓库结构基线
+- [docs/development-architecture-guide.md](/home/alpraline/Projects/Python/ALine/docs/development-architecture-guide.md)
+  持续开发阶段的架构规则与边界约束
+- [docs/refactor/README.md](/home/alpraline/Projects/Python/ALine/docs/refactor/README.md)
+  重构阶段实施索引与历史路线
+- [docs/feature-optimization/README.md](/home/alpraline/Projects/Python/ALine/docs/feature-optimization/README.md)
+  功能优化阶段索引
 
-1. 扩展 `FolderNode.group_type`，补齐数据集、图片集、工具集、报告模板组及 AI 子分组语义。
-2. 增加 `ReportTemplateNode` 和相应节点解析逻辑。
-3. 明确 `DataFile`、`ImageWork`、`SavedPipeline`、`FigureTemplate`、`ReportTemplate`、`AIPrompt`、`AISkill`、`AIAgent` 的项目级存储位置。
-4. 编写旧项目迁移逻辑。
+## 13. 开发与维护原则
 
-完成标准：
+后续开发默认遵守以下原则：
 
-1. 新项目能创建目标结构。
-2. 旧项目打开后不会丢失既有数据。
-3. 共享树可稳定渲染数据列、曲线和报告模板节点。
+1. 页面不新增第二套全量数据源。
+2. 新的可复用业务能力优先下沉到 `core/` 或 `app/`。
+3. 扩展协议、参数字段、预览工具栏、项目树行为优先复用共享实现。
+4. 修改持久化结构时同步考虑迁移和护栏测试。
+5. 若改动影响架构边界，必须同步更新 `docs/development-architecture-guide.md` 与相关测试。
 
-### Phase 2：共享界面骨架
+## 14. 结论
 
-目标：统一主窗口结构，稳定接入共享项目树和 AI 助手栏。
+当前 ALine 已从“页面各自维护流程”的形态，收口为“共享项目树 + workspace 状态 + core 统一运行时 + 扩展协议”的桌面数据工作台。
 
-任务：
-
-1. 主窗口改为统一四栏布局。
-2. 页面 2-6 共享同一项目树组件实例。
-3. 新增 AI 助手栏组件，并接入开关配置。
-4. 为页面定义统一树节点路由接口。
-
-完成标准：
-
-1. 页面切换时共享树状态连续。
-2. 页面 2-6 都能收到树节点事件。
-3. AI 助手栏能读取当前页面和当前选中节点上下文。
-
-### Phase 3：数据管理与图片取点联通
-
-目标：解决导入和取点结果入库问题。
-
-任务：
-
-1. 重写导入对话框状态机，修复上一步无效。
-2. 导入时支持列角色选择。
-3. 图片取点支持导出为数据列。
-4. 数据管理页基于共享树做预览和整理。
-
-完成标准：
-
-1. 导入向导可前进、回退、完成。
-2. 选中的列正确生成数据文件和数据列。
-3. 提取曲线可直接进入项目数据结构，并能在其他页面选中。
-
-### Phase 4：可视化与模板体系
-
-目标：解决当前图表页状态不一致、模板不可用、设置不完整的问题。
-
-任务：
-
-1. 删除旧的源曲线列表。
-2. 引入 `FigureState`。
-3. 新增高级设置对话框并完成双向绑定。
-4. 新增模板保存、模板加载、模板应用按钮。
-5. 保证模板可以作用到当前图表和当前曲线样式。
-
-完成标准：
-
-1. 高级设置总能显示当前图表真实状态。
-2. 保存后的模板可以直接重新加载并应用。
-3. 图表工作集只来自共享树或模板加载。
-
-### Phase 5：数据处理与数据分析
-
-目标：补齐 Pipeline 模板与报告模板体系。
-
-任务：
-
-1. Process 页输入来源切换到共享树。
-2. 增加 Pipeline 模板保存、加载、另存、覆盖。
-3. Analysis 页新增报告模板应用、编辑、渲染和导出区域。
-4. 设置页移除报告模板管理。
-
-完成标准：
-
-1. Pipeline 可保存为模板并重复使用。
-2. 报告模板可在项目树中选中、应用、编辑和导出。
-3. 报告模板可渲染、预览、导出 Markdown。
-
-### Phase 6：AI 层落地
-
-目标：让 AI 功能真正可见、可调用、可管理。
-
-任务：
-
-1. 建立 `core/ai` 运行层。
-2. 将页面动作注册为 AI 可调用工具。
-3. 项目树补齐 Prompt、Skill、Agent 管理节点。
-4. 设置页补齐 Provider 配置、常用 API 预设和 Ollama 支持。
-
-完成标准：
-
-1. 页面右侧 AI 助手栏可以正常发送请求并读取上下文。
-2. Prompt、Skill、Agent 可以创建、编辑、删除。
-3. AI 能调用共享的项目工具完成实际操作。
-
-### Phase 7：测试与稳定化
-
-目标：以测试通过作为重构完成标准。
-
-任务：
-
-1. 补齐后端单元测试。
-2. 补齐界面组件信号测试。
-3. 补齐基于界面信号组合的流程测试。
-4. 修复因结构重构产生的回归问题。
-
-完成标准：
-
-1. 后端流程测试全部通过。
-2. UI 组件测试全部通过。
-3. UI 信号驱动的端到端流程测试全部通过。
-
----
-
-## 七、测试方案
-
-### 7.1 后端测试
-
-后端测试必须覆盖以下流程：
-
-1. 项目创建、保存、打开、迁移。
-2. 树节点创建、移动、删除、重命名。
-3. 数据导入、列角色解析、数据列追加。
-4. 图片曲线导出为数据列。
-5. FigureTemplate、Pipeline 模板、ReportTemplate 的 CRUD 与序列化。
-6. AI Prompt、Skill、Agent 的 CRUD。
-7. 分析结果渲染为 Markdown 报告。
-
-### 7.2 UI 组件测试
-
-UI 组件测试通过模拟信号和用户操作完成，必须覆盖：
-
-1. 项目树节点点击、双击、右键菜单动作。
-2. 导入对话框三步流程与上一步回退。
-3. 图表高级设置读取当前状态并回写状态。
-4. 图表模板保存、加载、应用。
-5. Pipeline 模板保存、加载、覆盖。
-6. 分析页报告模板应用、编辑、渲染、导出。
-7. 图片取点导出为数据列。
-8. 设置页 AI Provider 切换、显隐开关、异步测试连接。
-9. 右侧 AI 助手栏开关与上下文更新。
-
-### 7.3 组合流程测试
-
-需要通过组合界面组件的信号来验证完整流程，而不只测试单个控件：
-
-1. 新建项目 -> 导入数据 -> 在树中选中数据列 -> 加入图表 -> 保存绘图模板 -> 再次加载模板。
-2. 图片导入 -> 取点 -> 导出为数据列 -> 处理 -> 保存 Pipeline 模板 -> 分析 -> 从项目树应用报告模板 -> 生成报告。
-3. 切换页面时保留共享树上下文和 AI 助手上下文。
-4. 在设置中关闭 AI 助手栏后，各业务页面布局仍正常。
-
-### 7.4 完成标准
-
-1. `tests/test_backend.py` 全绿。
-2. `tests/test_ui.py` 全绿。
-3. 后端流程、界面组件、组合流程三类测试全部通过后，才进入收尾阶段。
-
----
-
-## 八、关键设计决策
-
-| 决策点                            | 设计选择                                   | 原因                                        |
-| --------------------------------- | ------------------------------------------ | ------------------------------------------- |
-| 项目树是否按页面过滤              | 默认显示完整树，只提供辅助过滤             | 保证跨页数据互通，避免目标节点被隐藏        |
-| 数据列 / 曲线是否作为持久化树节点 | 继续采用虚拟叶节点                         | 兼顾显示能力与项目文件体积                  |
-| 报告模板是否进入共享树            | 进入共享树，归类到工具集/报告模板组        | 便于与绘图模板、Pipeline 模板统一管理和复用 |
-| Pipeline 是否视为模板             | 是，项目树中的 Pipeline 节点就是可复用模板 | 直接回应保存为模板和使用模板需求            |
-| 绘图设置状态来源                  | 引入 `FigureState` 统一管理                | 解决弹窗显示的不是当前设置问题              |
-| AI Skill 是否允许任意脚本         | 首期不允许，采用受控工具链                 | 降低重构期风险，提高可测试性                |
-| AI 助手是否所有页面显示           | 当前默认隐藏，不作为正式页面布局的一部分   | 与产品决策一致，避免保留未启用前端入口      |
-
----
-
-## 九、已确认约束
-
-1. 共享项目树在页面 2-6 默认显示完整树，而不是每页一套不同的过滤树。
-2. 报告模板进入共享项目树，归类在工具集中，并在分析页支持应用。
-3. AI Skill 首期采用受控工具编排，不开放任意 Python 执行。
-4. 导出为数据列的语义定义为：写入选中数据集或追加到选中数据文件。
-
-文档确认完成，后续实现按 Phase 1 到 Phase 7 依次推进，并在全部实现完成后执行全量测试。
-
----
-
-## 十、内置扩展工具化重构方案
-
-### 10.1 目标
-
-目标不是简单“把文件改名”，而是把当前仓库内的 builtin 扩展收口成两层明确能力：
-
-1. 正式工具：默认可见、默认可用、参数和结果协议稳定。
-2. 实验工具：允许继续演进，但默认不作为稳定工作流入口。
-
-重构后的内置扩展应满足以下产品要求：
-
-1. 用户能区分“可直接用于业务”的工具和“实验中的”扩展。
-2. 同类扩展在输入、参数、结果、错误提示上遵循统一协议。
-3. 设置页、扩展面板、结果页、报告模板对 builtin 的行为一致，不再保留大量兼容分支。
-
-### 10.2 当前现状
-
-当前 builtin 扩展已经统一从 `extensions` 目录递归扫描并注册，但成熟度并不一致：
-
-| 类别       | 当前状态                               | 主要问题                                                                 |
-| ---------- | -------------------------------------- | ------------------------------------------------------------------------ |
-| processing | 大部分已经是正式工具                   | experimental 能力已拆出，但多曲线输出协议仍有兼容分支                    |
-| analysis   | 核心工具已成熟                         | experimental 分析扩展与正式分析扩展的报告占位符 schema 仍需统一          |
-| plot       | 可用能力多，已拆成 tool / experimental | before_plot / after_plot 双阶段下，必须依赖显式 phase 元数据避免重复绘制 |
-| digitize   | 颜色识别可视作正式工具                 | 图形识别仍偏实验态，参数和输出契约还不够稳定                             |
-
-按当前仓库现状，可直接视作正式 builtin 工具的优先集合：
-
-1. Processing：crop、derivative、fft、filter、integral、normalize、pairwise_compute、resample、smooth、transform。
-2. Analysis：curve_fit、peak_detect、statistics、correlation、error_compare。
-3. Digitize：color_detect。
-
-当前仍应保留为 experimental 的集合：
-
-1. Processing：kalman_filter、multi_curve_mean。
-2. Analysis：spectrum_analysis、multi_curve_correlation。
-3. Plot：plot_reference_line、plot_dual_curve_band、plot_science_style、plot_polar_projection。
-4. Digitize：shape_detect。
-
-### 10.3 已确认约束
-
-这轮设计必须接受当前实现层面的几个硬约束：
-
-1. builtin 扫描是递归且按文件启停，不是按扩展条目启停；因此正式工具阶段不应把多个长期维护工具塞进同一个文件。
-2. 页面启动链路中仍保留 `core.builtin_extensions.py` 的兼容补位逻辑，因此“builtin 的唯一真相”还需要继续收口到目录扫描模型。
-3. plot 扩展在图表页中会经历 before_plot / after_plot 两个阶段；任何绘制型 builtin 若不显式判断 phase，都可能重复绘制。
-4. processing / analysis / plot / digitize 的扩展边界已经收口为严格协议，后续新增能力不得再引入历史输入输出兼容分支。
-5. analysis 的 `report_placeholders` 文档规则与运行时接受格式必须保持一致，不能再继续放宽。
-
-### 10.4 设计原则
-
-#### 原则 1：先分层，再工具化
-
-先把 builtin 扩展分成 `tool / experimental` 两层，并把 demo 样例完全移出运行时。没有这层收口，任何“统一体验”都会把实验能力直接暴露给最终用户。
-
-#### 原则 2：元数据是唯一 UI 契约
-
-正式工具必须通过统一元数据完整描述：
-
-1. 类型标识、名称、描述、版本。
-2. config_fields 和 default_options。
-3. lines_number / lines_list 规则。
-4. analysis 的 report_placeholders。
-
-页面侧不得再针对某几个 builtin 文件写私有特判来补参数或补说明。
-
-#### 原则 3：一类扩展只保留一套正式输出协议
-
-统一曲线协议为 point-list：`line = [[x, y], ...]`。扩展内部如需从 `x_list` / `y_list` 生成曲线，必须调用 `extensions.processing.extension_tools.line_from_xy(xs, ys)`，由该接口完成长度、数值和有限性检查。
-
-1. Processing：正式签名固定为 `(lines, params) -> line`，不再接受 xs / ys、inputs dict 或 `{"lines": ...}` 返回格式。
-2. Analysis：正式签名固定为 `(lines, params) -> dict`，输入曲线名等元数据由运行时补齐，不再把 dict 曲线协议暴露给扩展。
-3. Plot：正式签名固定为 `(plot_context, params) -> None`，扩展直接读取 `plot_context.figure / axis / visible_series / selected_series` 操作当前 matplotlib 图元，不再依赖独立 runtime 中转。
-4. Digitize：正式签名固定为 `(figure, params) -> line`，页面统一从 line 还原点列表，不再猜测 `points / summary / warnings` 结构。
-
-#### 原则 4：多曲线输入顺序必须显式化
-
-凡是双曲线或多曲线工具，必须完全依赖 `lines_number` 和 `lines_list`，而不是依赖页面“当前选中”或输入顺序的隐式副作用。处理、分析、绘图三类扩展必须共享这一条规则。
-
-#### 原则 5：算法核心与扩展包装分离
-
-正式工具文件只负责：
-
-1. 参数声明。
-2. 严格协议包装。
-3. 调用稳定底层接口。
-
-当前允许作为稳定底层接口直接复用的只有：`align_lines_to_common_x`、`line_from_xy`、`line_xy`、`primary_line`。
-其余算法如裁剪、数学变换、重采样、内置数字化提取器等，应保留在扩展目录内部实现，不再依赖旧的 app 级提取模块。
-
-算法逻辑优先留在所属扩展内；只有被多类扩展稳定共享、且已经收口的 point-list 协议转换/对齐工具，才允许下沉到共用模块。
-
-#### 原则 6：缺依赖时的行为必须可预期
-
-正式工具必须明确属于以下三种之一：
-
-1. 纯 Python 可运行。
-2. 缺依赖时给出明确报错。
-3. 缺依赖时提供可验证的降级实现。
-
-不允许继续保留“有些工具静默失效、有些直接返回原值、有些抛异常”的混杂行为。
-
-#### 原则 7：报告占位符必须写死 schema
-
-对于分析扩展：
-
-1. `report_placeholders` 必须显式声明。
-2. 每一项必须包含 `token / label / description`。
-3. 仓库内 builtin 不再依赖运行时对 `key` 的兼容猜测。
-
-### 10.5 正式工具分层方案
-
-建议在不破坏当前目录扫描机制的前提下，先采用“元数据分层 + 文件命名保留”的温和方案：
-
-1. `source_kind` 继续保留 `builtin`，不引入新的来源分类。
-2. 新增或约定一个工具成熟度字段，例如 `tool_tier`，取值仅允许 `tool / experimental`。
-3. 设置页和扩展面板默认只展示 `tool`；`experimental` 进入实验分组或通过显式开关显示。
-4. `_demo.py` 不再进入 builtin 运行时扫描，样例只保留在 README.md。
-
-这样可以避免一次性打碎现有扫描和禁用逻辑，同时让 UI 层立刻获得稳定分层能力。
-
-### 10.6 按类别的收口方向
-
-#### Processing
-
-1. 先把 `resample / pairwise_compute / multi_curve_mean` 这类多曲线输入的对齐策略统一。
-2. 明确所有正式工具的输出要么是单曲线，要么是标准 `lines` 列表。
-3. experimental 算法继续保留，但不再默认出现在正式工具分组。
-
-#### Analysis
-
-1. curve_fit、statistics、correlation、error_compare、peak_detect 作为第一批正式 builtin analysis 工具。
-2. spectrum_analysis 和 multi_curve_correlation 先保留为 experimental，待其 report_placeholders、表格结构、plot 输出完全统一后再转正。
-3. AnalysisPage 只保留统一结果视图和统一结果保存主线，不再维护隐藏的旧导出按钮或峰谷专用兼容路径。
-
-#### Plot
-
-1. 所有 plot builtin 都必须显式声明适用 phase。
-2. 注释类工具应归为“轻量绘图工具”；风格类和投影类工具应归为“图幅工具”。
-3. 只有通过 phase 校验、重复绘制校验和最小 UI 回归的 plot builtin，才能从 experimental 转为正式工具。
-
-#### Digitize
-
-1. color_detect 继续作为正式工具模板。
-2. shape_detect 在参数、输出和错误提示稳定前保持 experimental。
-3. 蒙版参数继续作为运行层自动注入能力，不进入扩展公开参数面。
-
-### 10.7 实施路线
-
-#### Phase A：分层与契约收口
-
-1. 为 builtin 补齐工具成熟度标识。
-2. 让设置页 / 扩展面板支持按成熟度分组展示。
-3. 固化 analysis `report_placeholders` schema。
-
-#### Phase B：正式工具首批收口
-
-1. 处理正式 processing 和 analysis 工具的参数、结果、错误提示统一。
-2. 为 plot 扩展补 phase 边界。
-3. 回收页面侧针对旧 builtin 的兼容分支。
-
-#### Phase C：experimental 转正机制
-
-一个 builtin 从 experimental 转为 tool 前，必须同时满足：
-
-1. 命名稳定，且不再依赖 `_demo.py` 文件。
-2. config_fields、description、默认值齐全。
-3. 有稳定输出协议。
-4. 有至少一条后端或 UI 回归测试。
-5. 在扩展说明文档中有明确用途说明，并附带完整参数 / 输入 / 输出样例。
-
-### 10.8 验证标准
-
-内置扩展工具化完成后，应以以下标准验收：
-
-1. 用户能在 UI 中明确区分正式工具和 experimental 扩展。
-2. pages 不再依赖隐藏按钮或页面私有兼容分支来补 builtin 行为。
-3. plot builtin 不再出现 phase 导致的重复绘制。
-4. analysis builtin 的报告占位符声明与运行时解析保持一致。
-5. builtin 启停、配置保存、参数编辑、结果展示、报告渲染都只依赖统一扩展协议。
+后续任何设计调整，都应围绕这条主线展开，而不是回到页面内重复堆业务、重复存状态或重复定义扩展契约。

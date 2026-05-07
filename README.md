@@ -1,155 +1,66 @@
 # ALine
 
-ALine 是一款面向科研与工程场景的桌面数据工作流软件，用于把图片中的曲线重新数字化、把已有曲线组织到统一项目中，并完成处理、分析、绘图和结果导出。它强调“项目级资产管理 + 可复用模板 + Python 扩展能力”，适合论文复现、实验数据整理、对比分析和出版级出图。
+ALine 是一个面向科研与工程场景的桌面数据工作台，用于把图片曲线数字化、把数据资产组织进统一项目、执行处理与分析、生成图表与报告素材，并通过 Python 扩展接入领域算法。
 
-当前仓库以本地桌面应用为主，核心界面基于 PySide6 与 qfluentwidgets，绘图与预览基于 Matplotlib，数值处理依赖 NumPy / SciPy。
-
-## 目录
-
-- 软件定位
-- 界面预览占位
-- 核心能力
-- 典型工作流
-- 功能页面说明
-- 安装与运行
-- 使用手册
-- 扩展系统与开发接口
-- 项目结构
-- 开发与测试
-- 常见问题
-
-## 软件定位
-
-ALine 不是单一的“取点工具”或“绘图工具”，而是围绕曲线数据全生命周期设计的工作台。它把以下环节整合在同一个项目中：
-
-1. 从图片中提取曲线。
-2. 管理原始曲线、处理结果、分析结果和图表模板。
-3. 通过非破坏式流水线对曲线做处理。
-4. 生成统计结果、分析摘要、表格和报告素材。
-5. 对最终图表进行样式化编辑并导出。
-6. 用 Python 扩展把行业特定算法接入现有流程。
-
-适用场景包括：
-
-- 论文图表复现与二次分析。
-- 实验曲线整理、对齐与批量处理。
-- 历史图像资料数字化。
-- 多曲线对比、频谱分析、误差分析与可视化汇报。
-- 需要快速接入自定义算法或标注逻辑的研究型项目。
-
-## 界面预览占位
-
-下表为 README 发布页预留的图片位置，你可以后续直接替换为真实截图或示例图：
-
-| 场景            | 说明                                   | 图片占位 |
-| --------------- | -------------------------------------- | -------- |
-| 首页 / 项目总览 | 展示最近项目、工作入口、共享项目树     | 待补充   |
-| 数字化页        | 展示坐标校准、自动取点、蒙版或手动修正 | 待补充   |
-| 数据管理页      | 展示项目树、数据文件、曲线预览与元信息 | 待补充   |
-| 数据处理页      | 展示 Pipeline、参数区和处理结果        | 待补充   |
-| 数据分析页      | 展示摘要、表格、结果曲线与报告模板     | 待补充   |
-| 绘图页          | 展示曲线样式、绘图样式、扩展与导出效果 | 待补充   |
-| 扩展系统        | 展示设置页中的扩展管理与参数配置       | 待补充   |
-
-如果你准备做网页发布，推荐至少补这 6 类图片：总览、数字化、数据管理、处理、分析、绘图。
+当前实现以 PySide6 + qfluentwidgets 构建桌面界面，以 Matplotlib 完成绘图预览和导出，围绕“共享项目树 + 页面工作区 + 扩展协议”组织整体工作流。
 
 ## 核心能力
 
-### 1. 项目级数据资产管理
+- 共享项目树：统一管理数据文件、图片、分析结果、模板和扩展配置，页面之间不再各自维护第二套源树。
+- 图片数字化：支持校准、自动取点、手动修正、结果保存到项目资产。
+- 数据处理：通过 Pipeline 组织曲线处理步骤，并支持模板保存、加载和复用。
+- 数据分析：生成摘要、表格、文本、结果曲线和报告模板输出素材。
+- 图表与样式：支持曲线样式、绘图样式、绘图扩展和图片导出。
+- 扩展系统：支持 processing / analysis / plot / digitize 四类内置与外部扩展。
 
-- 以项目树统一组织数据文件、图片集、处理结果、分析结果和全局模板。
-- 支持多层目录与逻辑分组，不要求用户手工维护文件夹结构。
-- 通过共享项目树作为跨页面统一入口，减少页面之间的数据割裂。
+## 架构摘要
 
-### 2. 图片数字化与曲线重建
+当前代码库按以下层次组织：
 
-- 支持普通坐标与极坐标校准。
-- 支持自动取点、颜色识别、形状辅助、截图/模板能力和手动修正。
-- 数字化结果可直接进入项目数据资产，而不是停留在一次性导出文件。
+- `models/`：项目、数据、模板、绘图快照等共享 schema
+- `core/`：项目系统、迁移、全局资产、扩展协议、导出、渲染与偏好
+- `app/`：workspace state/controller、树命令服务、应用消息与上下文
+- `ui/`：主窗口、页面、对话框、共享控件、主题
+- `processing/`、`digitize/`：通用数值与数字化基础算法
+- `extensions/`：内置扩展实现
+- `tests/`、`scripts/`：回归测试、架构护栏、结构检查
 
-### 3. 曲线处理流水线
+更完整的结构说明见 [DESIGN.md](/home/alpraline/Projects/Python/ALine/DESIGN.md)。
+开发边界与约束见 [docs/development-architecture-guide.md](/home/alpraline/Projects/Python/ALine/docs/development-architecture-guide.md)。
 
-- 提供裁剪、重采样、平滑、滤波、归一化、积分、微分、FFT 等常见操作。
-- 支持双曲线/多曲线类工具，并保持输入顺序可控。
-- 处理结果默认以新增资产形式保存，避免直接覆盖原始数据。
+## 主要页面
 
-### 4. 分析与报告素材生成
+- 首页：最近项目、创建/打开项目入口
+- 数据管理页：导入、预览、整理项目资产
+- 可视化页：当前图表工作集、样式与绘图扩展
+- 数据处理页：Pipeline 编辑、执行与模板复用
+- 数据分析页：分析输入、结果展示、报告模板输出
+- 图片数字化页：校准、自动取点、修正与结果导出
+- 设置页：主题、快捷键、扩展、全局资源入口
 
-- 提供统计、相关性、误差比较、峰值检测、曲线拟合、频谱分析等分析能力。
-- 输出可同时包含摘要项、表格、文本、结果曲线与报告占位符。
-- 分析结果可继续参与绘图或导出到报告模板流程中。
+## 扩展系统
 
-### 5. 可视化与出版级样式控制
+ALine 当前支持四类正式扩展：
 
-- 支持图例、字体、坐标轴、刻度、网格、边框、颜色和默认曲线样式管理。
-- 支持曲线级样式覆盖与图级样式模板。
-- 支持绘图扩展，例如参考线、注释、极坐标投影、科学绘图风格等。
+| 类型 | 标准签名 | 返回值 |
+| --- | --- | --- |
+| 处理扩展 | `(lines, params)` | `line` |
+| 分析扩展 | `(lines, params)` | `dict` |
+| 绘图扩展 | `(plot_context, params)` | `None` |
+| 数字化扩展 | `(figure, params)` | `line` |
 
-### 6. Python 扩展系统
+扩展曲线协议统一为 point-list：
 
-- 支持处理扩展、分析扩展、绘图扩展、数字化扩展四大类型。
-- 同时支持仓库内置扩展与用户外部目录扩展。
-- 参数表单、扩展启停、来源区分和运行时调用路径都已纳入统一框架。
+```python
+line = [[x0, y0], [x1, y1], ...]
+```
 
-## 典型工作流
-
-### 从图片到图表
-
-1. 创建或打开项目。
-2. 在数字化页导入原图并完成坐标校准。
-3. 自动取点或手动修正，生成曲线数据。
-4. 把数字化结果写入项目数据资产。
-5. 在处理页执行平滑、重采样、归一化等步骤。
-6. 在分析页生成统计结果或频谱结果。
-7. 在绘图页应用样式模板、绘图扩展并导出图片。
-
-### 从已有数据到分析报告
-
-1. 在数据页导入 CSV / Excel / TXT / JSON 等数据文件。
-2. 整理数据列、命名曲线并归档到项目树。
-3. 在处理页建立可复用的 Pipeline 模板。
-4. 在分析页输出摘要、表格、结果曲线和报告占位符。
-5. 应用报告模板，生成可继续加工的报告内容。
-
-## 功能页面说明
-
-### 首页
-
-首页用于创建项目、打开项目和恢复最近项目。它适合作为工作台入口，也适合发布页演示“项目驱动”的产品定位。
-
-### 数据管理页
-
-数据管理页负责项目内资产的导入、整理、预览和重命名。这里不仅能看到数据文件和曲线，也能看到图片资源、分析结果和全局模板节点，是后续所有工作的基础入口。
-
-### 数字化页
-
-数字化页面向图片取点和曲线重建。其核心价值不只是“取点”，而是把结果无缝接回项目树，进入后续处理、分析和绘图流程。
-
-### 数据处理页
-
-处理页提供非破坏式曲线流水线。你可以把一系列操作保存为模板，再对其它曲线复用，从而建立稳定的实验处理流程。
-
-### 数据分析页
-
-分析页输出面向“可解释结果”，而不是只返回原始数值。摘要、表格、文本块、结果曲线和报告占位符可以同时存在，适合继续用于汇报和文档整理。
-
-### 绘图页
-
-绘图页是最终成图界面。它包含曲线样式、绘图样式和绘图扩展三类控制面，适合做最终图版、局部标注、风格模板保存以及结果导出。
-
-### 设置页
-
-设置页负责主题、扩展启停、外部扩展目录、扩展参数表单显示策略以及快捷键等全局偏好。对于扩展型项目，它也是最重要的运营和维护入口之一。
+推荐通过 `extensions.processing.extension_tools.line_from_xy()` 和 `line_xy()` 做转换。
+完整扩展说明见 [extensions/README.md](/home/alpraline/Projects/Python/ALine/extensions/README.md)。
 
 ## 安装与运行
 
-## 环境要求
-
-- 推荐 Python 3.12。
-- 推荐 Linux 开发环境；PySide6 本身支持跨平台，但当前仓库主要在 Linux 环境验证。
-- 建议使用虚拟环境运行。
-
-## 安装依赖
+推荐使用仓库内虚拟环境：
 
 ```bash
 python -m venv .venv
@@ -157,278 +68,40 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-核心依赖包括：
-
-- PySide6
-- PySide6-Fluent-Widgets
-- pydantic
-- numpy
-- scipy
-- matplotlib
-- scienceplots
-- opencv-python-headless
-- openpyxl
-
-## 启动应用
+启动应用：
 
 ```bash
 python main.py
 ```
 
-如果你已经使用仓库内虚拟环境：
+如果已创建仓库内虚拟环境：
 
 ```bash
 .venv/bin/python main.py
 ```
 
-应用启动时会自动加载配置好的内置扩展与外部扩展目录内容。
-
-## 使用手册
-
-### 1. 创建或打开项目
-
-- 启动后在首页新建项目或打开已有项目。
-- 项目打开后，所有资产都围绕共享项目树组织。
-
-### 2. 导入图片或数据文件
-
-- 图片用于数字化页取点与曲线重建。
-- 数据文件用于直接生成项目内数据列与曲线。
-- 推荐尽早整理命名，避免后续分析或绘图时难以识别来源。
-
-### 3. 数字化曲线
-
-- 选择图像并完成坐标校准。
-- 根据图片类型选择自动取点、颜色检测、手动点编辑或蒙版辅助。
-- 完成后将结果写入目标数据文件或数据集。
-
-### 4. 处理曲线
-
-- 从共享项目树选择输入曲线。
-- 组装处理链并调整参数。
-- 如流程稳定，可保存为 Pipeline 模板。
-- 处理结果会作为新资产保存，便于回溯和比较。
-
-### 5. 执行分析
-
-- 选择一条或多条曲线作为输入。
-- 根据分析工具配置参数。
-- 查看摘要、表格、文本结果与结果曲线。
-- 如需要报告输出，可把分析结果送入报告模板流程。
-
-### 6. 绘图与导出
-
-- 在绘图页把需要的曲线加入当前图表工作集。
-- 为单条曲线设置颜色、线型、透明度、点大小等样式。
-- 为整张图设置坐标轴、刻度、图例、网格、边框和字体。
-- 应用绘图扩展完成参考线、注释、极坐标投影等附加绘制。
-- 导出为图片或导出到项目中的图片集。
-
-### 7. 管理模板与全局资源
-
-- 曲线样式和绘图样式可保存为全局模板。
-- Pipeline 与报告模板也可以作为可复用资产维护。
-- 当项目数量变多时，推荐统一整理全局资源命名规范。
-
-## 扩展系统与开发接口
-
-ALine 的扩展系统是整个项目的重要组成部分。用户可以通过内置扩展快速使用现成算法，也可以把自己的 Python 文件放入外部扩展目录中，实现领域定制。
-
-### 扩展类型
-
-| 类型       | 目录                     | 用途                           | 典型输出       |
-| ---------- | ------------------------ | ------------------------------ | -------------- |
-| 处理扩展   | `extensions/processing/` | 对曲线做变换或生成新曲线       | 一条结果曲线   |
-| 分析扩展   | `extensions/analysis/`   | 生成摘要、表格、文本和结果曲线 | 结构化结果字典 |
-| 绘图扩展   | `extensions/plot/`       | 修改当前 Matplotlib 图表       | 无返回值       |
-| 数字化扩展 | `extensions/digitize/`   | 从图像或图像上下文提取曲线     | 一条结果曲线   |
-
-### 扩展加载方式
-
-- 内置扩展来自仓库 `extensions/` 目录。
-- 外部扩展来自设置页中配置的扩展目录。
-- 应用启动和手动重载时都会扫描并注册扩展。
-- 每个扩展文件都需要提供 `register_extensions(registry)`。
-
-### 正式曲线协议
-
-扩展系统统一使用 point-list 作为曲线结构：
-
-```python
-line = [[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]]
-lines = [line, ...]
-```
-
-不要直接把独立的 `x_list`、`y_list` 作为正式输入输出协议。若需要转换，使用统一工具：
-
-```python
-from processing.extension_tools import line_from_xy, line_xy
-
-line = line_from_xy(xs, ys)
-xs, ys = line_xy(line)
-```
-
-### 四类扩展签名
-
-| 类型       | 标准签名           | 返回值 |
-| ---------- | ------------------ | ------ |
-| 处理扩展   | `(lines, params)`  | `line` |
-| 分析扩展   | `(lines, params)`  | `dict` |
-| 绘图扩展   | `(lines, params)`  | `None` |
-| 数字化扩展 | `(figure, params)` | `line` |
-
-### 最小处理扩展示例
-
-```python
-from core.extension_api import ExtensionConfigField, ProcessingExtension
-from processing.extension_tools import line_from_xy, line_xy, primary_line
-
-
-def offset_handler(lines, params):
-	xs, ys = line_xy(primary_line(lines))
-	offset = float(params.get("offset", 0.0) or 0.0)
-	return line_from_xy(xs, [value + offset for value in ys])
-
-
-def register_extensions(registry):
-	registry.register_processing(
-		ProcessingExtension(
-			type="offset_demo",
-			name="偏移示例",
-			handler=offset_handler,
-			description="将输入曲线整体平移。",
-			version="1.0.0",
-			lines_number=(1, 1),
-			settings=True,
-			source_kind="builtin",
-			config_fields=[
-				ExtensionConfigField(
-					key="offset",
-					label="Y 偏移",
-					field_type="number",
-					default=0.0,
-					step=0.1,
-				)
-			],
-		)
-	)
-```
-
-### 参数字段能力
-
-扩展参数表单支持多种字段类型，包括但不限于：
-
-- `string`
-- `integer`
-- `number`
-- `boolean`
-- `selective`
-- `limited`
-- `color`
-- `line`
-- `figure`
-- `pickcolor`
-- `shot`
-
-这些字段会被统一渲染到扩展参数表单中，并自动参与默认值、设置回填和运行参数构造。
-
-### 示例扩展
-
-仓库中提供了四个接口契约示例扩展，可直接作为二次开发起点：
-
-- `extensions/processing/interface_contract_processing.py`
-- `extensions/analysis/interface_contract_analysis.py`
-- `extensions/plot/interface_contract_plot.py`
-- `extensions/digitize/interface_contract_digitize.py`
-
-### 扩展开发文档
-
-更完整的扩展开发说明、字段约定、结果协议与运行时规则见：
-
-- [extensions/README.md](extensions/README.md)
-
-如果你准备对外发布扩展能力，建议优先维护该文档与接口示例扩展，而不是把协议细节分散到页面逻辑里。
-
-## 项目结构
-
-以下目录最值得关注：
-
-| 路径             | 说明                                   |
-| ---------------- | -------------------------------------- |
-| `ui/`            | 主界面、页面、对话框与控件             |
-| `core/`          | 业务核心、项目管理、扩展注册与全局设置 |
-| `processing/`    | 曲线处理与扩展底层工具                 |
-| `extensions/`    | 内置处理 / 分析 / 绘图 / 数字化扩展    |
-| `models/`        | Pydantic 数据模型                      |
-| `digitize/`      | 数字化相关算法与图像处理               |
-| `visualization/` | 可视化相关辅助模块                     |
-| `tests/`         | 后端与 UI 回归测试                     |
-| `assets/`        | 图标等静态资源                         |
-
 ## 开发与测试
 
-### 常用命令
-
-安装依赖：
-
-```bash
-pip install -r requirements.txt
-```
-
-运行应用：
-
-```bash
-python main.py
-```
-
-运行全部测试：
-
-```bash
-python -m pytest tests/test_backend.py tests/test_ui.py
-```
-
-运行常用窄测：
+常用命令：
 
 ```bash
 python -m pytest tests/test_backend.py -q
 python -m pytest tests/test_ui.py -q
+python -m pytest tests/test_architecture_guardrails.py -q
+python -m pytest tests/test_refactor_guardrails.py -q
 ```
 
-### 开发建议
+开发时建议优先遵守以下规则：
 
-- 优先通过项目树组织数据流，而不是在页面里维护第二套全量数据源。
-- 新增 UI 行为时，优先在 `tests/test_ui.py` 增加窄测。
-- 新增扩展时，优先复用 point-list 曲线协议和现有工具函数。
-- 需要公开的协议，应收敛在 `core/extension_api.py` 与 `extensions/README.md`。
+- 页面不新增第二套全量数据源。
+- 新的共享业务能力优先下沉到 `core/` 或 `app/`。
+- 扩展协议、项目树行为、预览工具栏和参数表单优先复用现有实现。
+- 影响结构边界的改动，同步更新设计文档和架构护栏。
 
-## 常见问题
+## 文档入口
 
-### 1. 为什么应用启动后没有加载我的扩展？
-
-优先检查以下几点：
-
-1. 文件是否位于已配置的外部扩展目录中。
-2. 文件名是否以下划线开头。
-3. 是否提供了 `register_extensions(registry)`。
-4. 注册的扩展类型、版本号和字段定义是否符合约束。
-5. 设置页中是否被禁用了该扩展或整个扩展来源。
-
-### 2. 为什么建议使用 point-list 作为曲线协议？
-
-因为 point-list 可以统一覆盖数据导入、处理、分析、绘图和数字化四类流程，减少各层之间的结构转换与兼容分支。
-
-### 3. Linux 下中文输入或输入法异常怎么办？
-
-应用启动时会主动探测 Qt 输入法插件并设置 `QT_IM_MODULE`。如果仍有问题，建议确认系统 Qt 插件路径、输入法模块安装情况以及虚拟环境中的 PySide6 插件目录是否完整。
-
-## 发布建议
-
-如果你计划把本 README 用于网页发布，推荐继续补充以下内容：
-
-- 首页总览图
-- 数字化页操作示例 GIF 或静态截图
-- 一组真实的“原图 -> 曲线 -> 分析 -> 成图”案例
-- 一个最小扩展开发案例仓库链接或代码片段图
-- 打包下载方式与版本更新记录
-
-当前这份 README 已经覆盖产品介绍、核心功能、使用路径、扩展系统和开发入口，适合作为项目主页或产品介绍页的主体文案基础。
+- [DESIGN.md](/home/alpraline/Projects/Python/ALine/DESIGN.md)：当前软件设计与仓库结构
+- [docs/development-architecture-guide.md](/home/alpraline/Projects/Python/ALine/docs/development-architecture-guide.md)：开发架构指南
+- [docs/refactor/README.md](/home/alpraline/Projects/Python/ALine/docs/refactor/README.md)：重构历史与阶段索引
+- [docs/feature-optimization/README.md](/home/alpraline/Projects/Python/ALine/docs/feature-optimization/README.md)：功能优化阶段索引
+- [extensions/README.md](/home/alpraline/Projects/Python/ALine/extensions/README.md)：扩展开发文档
