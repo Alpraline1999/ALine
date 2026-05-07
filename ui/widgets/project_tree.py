@@ -609,33 +609,43 @@ class ProjectTreeWidget(QWidget):
         for item in sorted(global_assets.list_saved_pipelines(), key=lambda asset: _sort_text_key(asset.name or asset.id)):
             pipelines.addChild(self._make_synthetic_item(item.name, "global_pipeline", item.id, FIF.DEVELOPER_TOOLS))
         root.addChild(pipelines)
-        plot_group = self._make_synthetic_item("图表模板", "global_group", "__global_plot_style__", FIF.PIE_SINGLE)
+        curve_group = self._make_synthetic_item("曲线样式", "global_group", "__global_curve_styles__", FIF.PENCIL_INK)
+        curve_templates = getattr(global_assets, "list_curve_style_templates", lambda: [])()
+        for tmpl in sorted(curve_templates, key=lambda t: _sort_text_key(t.name)):
+            curve_group.addChild(self._make_synthetic_item(tmpl.name, "global_curve_style_template", tmpl.id, FIF.PENCIL_INK))
+        root.addChild(curve_group)
+        plot_group = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
+        plot_themes = sorted(global_assets.list_plot_themes(include_builtin=True), key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)))
+        for theme in plot_themes:
+            plot_group.addChild(self._make_synthetic_item(theme.name, "global_plot_theme", make_plot_style_asset_key("theme", theme.id), FIF.PIE_SINGLE))
         templates = global_assets.list_figure_templates()
-        for tmpl in sorted(templates, key=lambda t: (0 if t.is_builtin else 1, _sort_text_key(t.name))):
+        for tmpl in sorted(
+            templates,
+            key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
+        ):
             plot_group.addChild(self._make_synthetic_item(tmpl.name, "global_plot_style", make_plot_style_asset_key("template", tmpl.id), FIF.PIE_SINGLE))
-        if hasattr(global_assets, "list_curve_style_templates"):
-            for tmpl in sorted(global_assets.list_curve_style_templates(), key=lambda t: _sort_text_key(t.name)):
-                plot_group.addChild(self._make_synthetic_item(tmpl.name, "global_curve_style_template", tmpl.id, FIF.PENCIL_INK))
+        root.addChild(plot_group)
         report_group = self._make_synthetic_item("报告模板", "global_group", "__global_report_templates__", FIF.DOCUMENT)
-        for tmpl in sorted(global_assets.list_report_templates(), key=lambda t: _sort_text_key(t.name)):
+        for tmpl in sorted(
+            global_assets.list_report_templates(include_builtin=True),
+            key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
+        ):
             report_group.addChild(self._make_synthetic_item(tmpl.name, "global_report_template", tmpl.id, FIF.DOCUMENT))
         root.addChild(report_group)
         plot_configs = []
         for category, label, icon in _EXTENSION_CONFIG_GROUPS:
             items = self._build_extension_config_group_items(category)
+            group_item = self._make_synthetic_item(label, "global_group", f"extension_config_group|{category}", icon)
             if items:
-                group_item = self._make_synthetic_item(label, "global_group", f"extension_config_group|{category}", icon)
                 for item in items:
                     group_item.addChild(item)
-                plot_configs.append(group_item)
-        if plot_configs:
-            ext_group = self._make_synthetic_item("扩展配置", "global_group", "__global_extension_configs__", getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS))
-            for item in plot_configs:
-                ext_group.addChild(item)
-            root.addChild(ext_group)
-        # AI 配置组（Phase 9 已禁用收口，后续重做 AI 时再恢复）
-        # 补回 plot_group
-        root.insertChild(1, plot_group)
+            else:
+                group_item.addChild(self._make_synthetic_item("空分组", "global_group", f"extension_config_group|{category}|empty", getattr(FIF, "INFO", FIF.DOCUMENT)))
+            plot_configs.append(group_item)
+        ext_group = self._make_synthetic_item("扩展配置", "global_group", "__global_extension_configs__", getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS))
+        for item in plot_configs:
+            ext_group.addChild(item)
+        root.addChild(ext_group)
         self._tree.addTopLevelItem(root)
 
     def _build_extension_config_group_items(self, category: str) -> List[QTreeWidgetItem]:

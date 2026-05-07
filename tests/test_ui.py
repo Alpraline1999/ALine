@@ -3902,6 +3902,42 @@ class TestDataPage(unittest.TestCase):
         finally:
             restore_assets()
 
+    def test_global_curve_style_template_selection_opens_editor_and_saves(self):
+        from core.global_assets import global_assets
+        from models.schemas import CurveStyle, CurveStyleTemplate
+
+        restore_assets = _patch_global_assets()
+        try:
+            template = global_assets.add_curve_style_template(
+                CurveStyleTemplate(name="曲线样式A", description="old", style=CurveStyle(color="#111111"))
+            )
+
+            self.page.on_tree_node_selected("global_curve_style_template", template.id)
+
+            self.assertIs(self.page._preview_stack.currentWidget(), self.page._text_preview)
+            self.assertFalse(self.page._text_preview.isReadOnly())
+            self.assertEqual(self.page._preview_section_label.text(), "模板编辑")
+
+            self.page._text_preview.setPlainText(
+                json.dumps(
+                    {
+                        **template.model_dump(),
+                        "name": "曲线样式B",
+                        "description": "new",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            self.page._save_selected_extension_config()
+
+            updated = global_assets.get_curve_style_template(template.id)
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated.name, "曲线样式B")
+            self.assertEqual(updated.description, "new")
+        finally:
+            restore_assets()
+
     def test_global_report_template_selection_opens_editor_and_saves(self):
         from core.global_assets import global_assets
         from models.schemas import ReportTemplate
@@ -3922,6 +3958,29 @@ class TestDataPage(unittest.TestCase):
             updated = global_assets.get_report_template(template.id)
             self.assertIsNotNone(updated)
             self.assertEqual(updated.content, "# New Report")
+        finally:
+            restore_assets()
+
+    def test_builtin_report_template_uses_default_view_and_save_as(self):
+        from core.global_assets import global_assets
+
+        restore_assets = _patch_global_assets()
+        try:
+            builtin_template = next(item for item in global_assets.list_report_templates(include_builtin=True) if item.is_builtin)
+
+            self.page.on_tree_node_selected("global_report_template", builtin_template.id)
+
+            self.assertEqual(self.page._preview_name, "默认模板")
+            self.assertFalse(self.page._text_preview.isReadOnly())
+            self.assertIn("默认模板", self.page._config_editor_title_label.text())
+
+            self.page._text_preview.setPlainText("# Builtin Copy")
+            with mock.patch("ui.pages.data_page.TextInputDialog.get_text", return_value=("默认模板副本", True)):
+                self.page._save_selected_extension_config()
+
+            copied = next((item for item in global_assets.list_report_templates() if item.name == "默认模板副本"), None)
+            self.assertIsNotNone(copied)
+            self.assertEqual(copied.content, "# Builtin Copy")
         finally:
             restore_assets()
 

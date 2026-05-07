@@ -67,7 +67,7 @@ from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
 from core.project_manager import project_manager
 from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
-from models.schemas import Curve, DataFile, DataSeries, Dataset, FigureConfig, PlotTheme, ReportTemplate, SavedPipeline
+from models.schemas import Curve, CurveStyleTemplate, DataFile, DataSeries, Dataset, FigureConfig, PlotTheme, ReportTemplate, SavedPipeline
 from app.workspaces.data_workspace import DataWorkspaceController, DataWorkspaceState
 from ui.dialogs.export_flow import choose_curve_file_export_plan, curve_export_file_filter
 from ui.dialogs.fluent_dialogs import TextInputDialog
@@ -3173,6 +3173,20 @@ class DataPage(QWidget):
                 ],
                 json.dumps(template.model_dump(), ensure_ascii=False, indent=2),
             )
+        if kind == "global_curve_style_template":
+            template = global_assets.get_curve_style_template(node_id)
+            if template is None:
+                return "", [], None
+            title = template.name or "曲线样式模板"
+            return (
+                title,
+                [
+                    f"模板名称: {template.name or '默认模板'}",
+                    "类型: 曲线样式模板",
+                    f"内置: {'是' if bool(getattr(template, 'is_builtin', False)) else '否'}",
+                ],
+                json.dumps(template.model_dump(), ensure_ascii=False, indent=2),
+            )
         if kind in {"global_plot_style", "global_plot_theme"}:
             style_type, asset_id = parse_plot_style_asset_key(node_id)
             if style_type == "template":
@@ -3183,7 +3197,7 @@ class DataPage(QWidget):
                 return (
                     title,
                     [
-                        f"模板名称: {template.name or '未命名模板'}",
+                        f"模板名称: {template.name or '默认模板'}",
                         "类型: 图表模板",
                         f"主题: {template.theme or 'default'}",
                         f"图例项: {len(getattr(template, 'typed_series_refs', []) or [])}",
@@ -3193,12 +3207,12 @@ class DataPage(QWidget):
             theme = global_assets.get_plot_theme(asset_id)
             if theme is None:
                 return "", [], None
-            title = theme.name or "绘图主题"
+            title = theme.name or "绘图样式"
             return (
                 title,
                 [
-                    f"模板名称: {theme.name or '未命名主题'}",
-                    "类型: 绘图主题",
+                    f"模板名称: {theme.name or '默认模板'}",
+                    "类型: 绘图样式",
                     f"说明: {getattr(theme, 'description', '') or '无'}",
                     f"内置: {'是' if bool(getattr(theme, 'is_builtin', False)) else '否'}",
                 ],
@@ -3239,6 +3253,9 @@ class DataPage(QWidget):
         if kind == "global_pipeline":
             self._save_global_pipeline_template(node_id, raw_text)
             return
+        if kind == "global_curve_style_template":
+            self._save_global_curve_style_template(node_id, raw_text)
+            return
         if kind in {"global_plot_style", "global_plot_theme"}:
             self._save_global_plot_template(kind, node_id, raw_text)
             return
@@ -3268,6 +3285,28 @@ class DataPage(QWidget):
         self._show_global_template_editor("global_pipeline", template_id)
         self._refresh_management_panel()
         InfoBar.success("已保存", f'Pipeline 模板 "{model.name or item.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+
+    def _save_global_curve_style_template(self, template_id: str, raw_text: str) -> None:
+        template = global_assets.get_curve_style_template(template_id)
+        if template is None:
+            InfoBar.warning("保存失败", "当前曲线样式不存在", parent=self, position=InfoBarPosition.TOP)
+            return
+        try:
+            payload = json.loads(raw_text)
+            model = CurveStyleTemplate.model_validate(payload)
+        except json.JSONDecodeError as exc:
+            InfoBar.warning("保存失败", f"JSON 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列附近", parent=self, position=InfoBarPosition.TOP)
+            return
+        except Exception as exc:
+            InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        if not global_assets.update_curve_style_template(template_id, name=model.name, description=model.description, style=model.style):
+            InfoBar.warning("保存失败", "当前曲线样式未能更新", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.project_modified.emit()
+        self._show_global_template_editor("global_curve_style_template", template_id)
+        self._refresh_management_panel()
+        InfoBar.success("已保存", f'曲线样式 "{model.name or template.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
 
     def _save_global_plot_template(self, kind: str, node_id: str, raw_text: str) -> None:
         style_type, asset_id = parse_plot_style_asset_key(node_id)
@@ -5099,7 +5138,7 @@ class DataPage(QWidget):
             self._set_actions_enabled(False)
             self._refresh_management_panel()
             return
-        if kind in {"global_pipeline", "global_plot_style", "global_plot_theme", "global_report_template"} and self._show_global_template_editor(kind, node_id):
+        if kind in {"global_pipeline", "global_curve_style_template", "global_plot_style", "global_plot_theme", "global_report_template"} and self._show_global_template_editor(kind, node_id):
             self._selected_type = None
             self._selected_id = None
             self._set_actions_enabled(False)
