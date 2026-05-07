@@ -820,7 +820,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         curve_template_row.addWidget(self._btn_update_curve_style_template)
         layout.addLayout(curve_template_row)
 
-        layout.addWidget(make_hsep(page))
         self._style_target_label = make_hint_label("当前选中：未选中", page)
         layout.addWidget(self._style_target_label)
         self._style_target_label.hide()
