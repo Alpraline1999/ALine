@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
 
-from PySide6.QtWidgets import QSizePolicy
-from qfluentwidgets import BodyLabel, MessageBoxBase, SubtitleLabel
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, MessageBoxBase, SmoothScrollArea, SubtitleLabel
 
 from core.extension_api import extension_entry_display_info, extension_entry_parameter_help_text, build_extension_entry
 from ui.widgets.extension_options_form import ExtensionOptionsForm
@@ -46,9 +47,25 @@ class PlotExtensionInstanceEditDialog(MessageBoxBase):
 
         help_text = extension_entry_parameter_help_text(self._extension_entry)
         if help_text:
-            help_label = BodyLabel(help_text, self.widget)
+            self._help_scroll_area = SmoothScrollArea(self.widget)
+            self._help_scroll_area.setWidgetResizable(True)
+            self._help_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._help_scroll_area.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+            self._help_scroll_container = QWidget(self._help_scroll_area)
+            help_layout = QVBoxLayout(self._help_scroll_container)
+            help_layout.setContentsMargins(0, 0, 0, 0)
+            help_layout.setSpacing(0)
+            help_label = BodyLabel(help_text, self._help_scroll_container)
             help_label.setWordWrap(True)
-            self.viewLayout.addWidget(help_label)
+            help_layout.addWidget(help_label)
+            help_layout.addStretch(1)
+            self._help_scroll_area.setWidget(self._help_scroll_container)
+            self.viewLayout.addWidget(self._help_scroll_area)
+            self.widget.installEventFilter(self)
+            self._update_help_area_height()
+        else:
+            self._help_scroll_area = None
+            self._help_scroll_container = None
 
         self._editor = ExtensionOptionsForm(self.widget)
         self._editor.set_show_field_descriptions(True)
@@ -67,6 +84,18 @@ class PlotExtensionInstanceEditDialog(MessageBoxBase):
 
         self.yesButton.setText("刷新加载")
         self.cancelButton.setText("取消")
+
+    def _update_help_area_height(self) -> None:
+        if self._help_scroll_area is None:
+            return
+        height = max(int(self.widget.height() * 0.3), 120)
+        self._help_scroll_area.setMinimumHeight(height)
+        self._help_scroll_area.setMaximumHeight(height)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is getattr(self, "widget", None) and event.type() in {QEvent.Type.Show, QEvent.Type.Resize}:
+            self._update_help_area_height()
+        return super().eventFilter(watched, event)
 
     def current_options(self) -> Dict[str, Any]:
         return self._editor.current_options()

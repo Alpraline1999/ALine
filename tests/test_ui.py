@@ -5655,6 +5655,11 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(dialog.yesButton.text(), "刷新加载")
         self.assertEqual(dialog.cancelButton.text(), "取消")
         self.assertEqual(dialog.current_options().get("alpha"), 2)
+        dialog.widget.resize(800, 600)
+        dialog._update_help_area_height()
+        self.assertIsNotNone(dialog._help_scroll_area)
+        self.assertEqual(dialog._help_scroll_area.minimumHeight(), 180)
+        self.assertEqual(dialog._help_scroll_area.maximumHeight(), 180)
 
     def test_refresh_plot_extension_instance_overwrites_in_place(self):
         from types import SimpleNamespace
