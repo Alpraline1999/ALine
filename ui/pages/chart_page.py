@@ -81,6 +81,7 @@ from models.schemas import (
 )
 from ui.dialogs.export_flow import choose_picture_export_plan
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
+from ui.dialogs.plot_extension_instance_dialog import PlotExtensionInstanceEditDialog
 from ui.matplotlib_fonts import list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.focus_commit import install_click_away_focus_commit
@@ -761,6 +762,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._plot_extension_applied_list.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
+        self._plot_extension_applied_list.itemDoubleClicked.connect(self._edit_selected_plot_extension_instance)
+        self._plot_extension_applied_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._plot_extension_applied_list.customContextMenuRequested.connect(self._on_plot_extension_instance_context_menu)
         loaded_layout.addWidget(self._plot_extension_applied_list, 1)
 
         panel.add_bottom_widget(loaded_section, stretch=1)
@@ -1990,6 +1994,107 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         instance_id = item.data(Qt.ItemDataRole.UserRole)
         return next((entry for entry in self._applied_plot_extensions if entry.get("id") == instance_id), None)
 
+    def _plot_extension_instance_line_candidates(self) -> List[str]:
+        return [self._curve_display_name(curve) for curve in self._chart_series]
+
+    def _plot_extension_instance_edit_dialog(self, applied: Dict[str, Any]) -> Optional[PlotExtensionInstanceEditDialog]:
+        extension = extension_registry.get_plot(str(applied.get("type") or ""))
+        if extension is None:
+            InfoBar.warning(
+                "无法编辑",
+                "当前扩展已不存在，请先撤销或重新加载该扩展",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return None
+        dialog = PlotExtensionInstanceEditDialog(
+            extension,
+            applied,
+            line_candidates=self._plot_extension_instance_line_candidates(),
+            parent=self,
+        )
+        return dialog
+
+    def _replace_plot_extension_instance(self, instance_id: str, options: Dict[str, Any]) -> bool:
+        if not instance_id:
+            return False
+        target_index = next((index for index, entry in enumerate(self._applied_plot_extensions) if entry.get("id") == instance_id), -1)
+        if target_index < 0:
+            return False
+        target = dict(self._applied_plot_extensions[target_index])
+        extension = extension_registry.get_plot(str(target.get("type") or ""))
+        if extension is None:
+            InfoBar.warning(
+                "刷新失败",
+                "当前扩展已不存在，请先撤销该实例后重新选择扩展",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return False
+
+        current_curve = self._resolve_plot_extension_curve(str(target.get("curve_identity") or ""), visible_only=False)
+        updated = dict(target)
+        updated["options"] = copy.deepcopy(dict(options or {}))
+        updated["extension_version"] = str(getattr(extension, "version", target.get("extension_version") or ""))
+        if current_curve is not None:
+            updated["curve_name"] = current_curve.get("name")
+            updated["curve_display_name"] = self._curve_display_name(current_curve)
+
+        self._applied_plot_extensions[target_index] = updated
+        self._refresh_plot_extension_list(selected_instance_id=instance_id)
+        self._redraw()
+        InfoBar.success(
+            "已刷新",
+            f"绘图扩展 {self._plot_extension_instance_label(updated, target_index)} 已按新参数覆盖加载",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
+        return True
+
+    def _edit_selected_plot_extension_instance(self, *args) -> bool:
+        del args
+        applied = self._selected_plot_extension_instance()
+        if applied is None:
+            return False
+        return self._edit_plot_extension_instance(str(applied.get("id") or ""))
+
+    def _edit_plot_extension_instance(self, instance_id: str) -> bool:
+        applied = next((entry for entry in self._applied_plot_extensions if entry.get("id") == instance_id), None)
+        if applied is None:
+            return False
+        dialog = self._plot_extension_instance_edit_dialog(applied)
+        if dialog is None:
+            return False
+        if not dialog.exec():
+            return False
+        try:
+            options = dialog.current_options()
+        except ValueError as exc:
+            InfoBar.error("刷新失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return False
+        return self._replace_plot_extension_instance(instance_id, options)
+
+    def _on_plot_extension_instance_context_menu(self, pos) -> None:
+        item = self._plot_extension_applied_list.itemAt(pos)
+        if item is None:
+            return
+        self._plot_extension_applied_list.setCurrentItem(item)
+        applied = self._selected_plot_extension_instance()
+        if applied is None:
+            return
+        menu = RoundMenu(parent=self)
+        edit_action = Action(FIF.EDIT, "编辑")
+        edit_action.triggered.connect(self._edit_selected_plot_extension_instance)
+        menu.addAction(edit_action)
+        menu.addSeparator()
+        remove_action = Action(FIF.DELETE, "撤销选中")
+        remove_action.triggered.connect(self._remove_selected_plot_extension)
+        menu.addAction(remove_action)
+        clear_action = Action(FIF.DELETE, "清除全部")
+        clear_action.triggered.connect(self._clear_all_plot_extensions)
+        menu.addAction(clear_action)
+        menu.exec(self._plot_extension_applied_list.mapToGlobal(pos))
+
     def _refresh_plot_extension_list(self, *, selected_instance_id: Optional[str] = None) -> None:
         if hasattr(self, "_plot_extension_target_hint"):
             self._plot_extension_target_hint.setText(self._plot_extension_target_hint_text())
@@ -2036,6 +2141,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._plot_extension_applied_list.blockSignals(False)
         self._sync_plot_extension_list_height()
         self._on_plot_extension_instance_selection_changed(self._plot_extension_applied_list.currentItem(), None)
+
+    def _plot_extension_instance_label(self, entry: Dict[str, Any], index: int) -> str:
+        return self._applied_plot_extension_label(entry, index)
 
     def _on_plot_extension_instance_selection_changed(self, current, _previous) -> None:
         has_selection = current is not None

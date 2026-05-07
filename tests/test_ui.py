@@ -5610,6 +5610,118 @@ class TestChartPage(unittest.TestCase):
         for button in buttons:
             self.assertTrue(bool(button.property("_alineFluentTooltip")))
 
+    def test_plot_extension_instance_edit_dialog_uses_refresh_buttons(self):
+        from types import SimpleNamespace
+
+        from ui.dialogs.plot_extension_instance_dialog import PlotExtensionInstanceEditDialog
+
+        extension = SimpleNamespace(
+            id="fake_plot",
+            type="fake_plot",
+            name="Fake Plot",
+            description="",
+            version="2.3.4",
+            default_options={"alpha": 1},
+            config_fields=[],
+            lines_number=None,
+            settings=False,
+            source_kind="builtin",
+            tool_tier="tool",
+            hidden=False,
+            capabilities=set(),
+            api_version="",
+            supports_progress=False,
+            supports_cancel=False,
+            min_app_version="",
+            tested_app_range=[],
+            style_authority="advisory",
+            authoritative_fields=set(),
+            post_render_mutation=False,
+            phases=("before_plot", "after_plot"),
+        )
+        applied = {
+            "id": "plot-extension-1",
+            "type": "fake_plot",
+            "sequence": 7,
+            "options": {"alpha": 2},
+            "curve_identity": self.page._curve_identity(self.page._chart_series[0]) if self.page._chart_series else None,
+            "curve_name": self.page._chart_series[0].get("name") if self.page._chart_series else "",
+            "curve_display_name": self.page._curve_display_name(self.page._chart_series[0]) if self.page._chart_series else "",
+            "extension_version": "2.3.4",
+        }
+
+        dialog = PlotExtensionInstanceEditDialog(extension, applied, line_candidates=["curve_a", "curve_b"], parent=self.page)
+
+        self.assertEqual(dialog.yesButton.text(), "刷新加载")
+        self.assertEqual(dialog.cancelButton.text(), "取消")
+        self.assertEqual(dialog.current_options().get("alpha"), 2)
+
+    def test_refresh_plot_extension_instance_overwrites_in_place(self):
+        from types import SimpleNamespace
+
+        extension = SimpleNamespace(
+            id="fake_plot",
+            type="fake_plot",
+            name="Fake Plot",
+            description="",
+            version="3.1.0",
+            default_options={"alpha": 1},
+            config_fields=[],
+            lines_number=None,
+            settings=False,
+            source_kind="builtin",
+            tool_tier="tool",
+            hidden=False,
+            capabilities=set(),
+            api_version="",
+            supports_progress=False,
+            supports_cancel=False,
+            min_app_version="",
+            tested_app_range=[],
+            style_authority="advisory",
+            authoritative_fields=set(),
+            post_render_mutation=False,
+            phases=("before_plot", "after_plot"),
+        )
+        self.page._chart_series = [
+            {
+                "curve_key": "curve-1",
+                "obj_id": "curve-1",
+                "name": "curve.csv",
+                "display_name": "curve.csv",
+                "visible": True,
+            }
+        ]
+        self.page._applied_plot_extensions = [
+            {
+                "id": "plot-extension-1",
+                "type": "fake_plot",
+                "sequence": 7,
+                "options": {"alpha": 1},
+                "curve_identity": "curve-1",
+                "curve_name": "curve.csv",
+                "curve_display_name": "curve.csv",
+                "extension_version": "2.0.0",
+            }
+        ]
+        self.page._plot_extension_options = {"fake_plot": {"alpha": 1}}
+
+        with mock.patch("ui.pages.chart_page.extension_registry.get_plot", return_value=extension), \
+                mock.patch.object(self.page, "_refresh_plot_extension_list") as refresh_mock, \
+                mock.patch.object(self.page, "_redraw") as redraw_mock:
+            ok = self.page._replace_plot_extension_instance("plot-extension-1", {"alpha": 9, "beta": 3})
+
+        self.assertTrue(ok)
+        self.assertEqual(len(self.page._applied_plot_extensions), 1)
+        updated = self.page._applied_plot_extensions[0]
+        self.assertEqual(updated["id"], "plot-extension-1")
+        self.assertEqual(updated["sequence"], 7)
+        self.assertEqual(updated["options"], {"alpha": 9, "beta": 3})
+        self.assertEqual(updated["extension_version"], "3.1.0")
+        self.assertEqual(self.page._plot_extension_options["fake_plot"], {"alpha": 1})
+        refresh_mock.assert_called_once()
+        redraw_mock.assert_called_once()
+
     def test_chart_quick_config_line_edits_wait_for_edit_commit(self):
         original_font_size = self.page._figure_state.font_size
 
