@@ -3738,6 +3738,19 @@ class TestDataPage(unittest.TestCase):
         self.assertAlmostEqual(abs(reset_axis.get_xlim()[1] - reset_axis.get_xlim()[0]), original_x_span, places=6)
         self.assertAlmostEqual(abs(reset_axis.get_ylim()[1] - reset_axis.get_ylim()[0]), original_y_span, places=6)
 
+    def test_plot_preview_toolbar_buttons_use_fluent_tooltips(self):
+        if self.page._preview_figure is None or self.page._preview_canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        for button in (
+            self.page._preview_fit_btn,
+            self.page._preview_zoom_in_btn,
+            self.page._preview_zoom_out_btn,
+            self.page._preview_pan_btn,
+            self.page._preview_box_zoom_btn,
+        ):
+            self.assertTrue(bool(button.property("_alineFluentTooltip")))
+
     def test_global_extension_config_selection_opens_json_editor_and_saves(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
         from core.global_assets import global_assets
@@ -5542,6 +5555,9 @@ class TestChartPage(unittest.TestCase):
             self.skipTest("matplotlib unavailable")
 
         self.page.on_tree_node_activated("series", self.s.id)
+        QApplication.processEvents()
+        if not self.page._figure.axes:
+            self.page._redraw_now()
         axis = self.page._figure.axes[0]
         original_x_span = abs(axis.get_xlim()[1] - axis.get_xlim()[0])
         original_y_span = abs(axis.get_ylim()[1] - axis.get_ylim()[0])
@@ -5565,6 +5581,25 @@ class TestChartPage(unittest.TestCase):
         reset_axis = self.page._figure.axes[0]
         self.assertAlmostEqual(abs(reset_axis.get_xlim()[1] - reset_axis.get_xlim()[0]), original_x_span, places=6)
         self.assertAlmostEqual(abs(reset_axis.get_ylim()[1] - reset_axis.get_ylim()[0]), original_y_span, places=6)
+
+    def test_chart_preview_toolbar_buttons_use_single_fluent_tooltip_contract(self):
+        if self.page._figure is None or self.page._canvas is None:
+            self.skipTest("matplotlib unavailable")
+
+        buttons = (
+            self.page._chart_preview_fit_btn,
+            self.page._chart_preview_zoom_in_btn,
+            self.page._chart_preview_zoom_out_btn,
+            self.page._chart_preview_pan_btn,
+            self.page._chart_preview_box_zoom_btn,
+        )
+        for button in buttons:
+            self.assertTrue(bool(button.property("_alineFluentTooltip")))
+
+        self.page._install_tooltip_filters()
+
+        for button in buttons:
+            self.assertTrue(bool(button.property("_alineFluentTooltip")))
 
     def test_chart_quick_config_line_edits_wait_for_edit_commit(self):
         original_font_size = self.page._figure_state.font_size
@@ -8047,6 +8082,20 @@ class TestAnalysisPage(unittest.TestCase):
         reset_axis = view["figure"].axes[0]
         self.assertAlmostEqual(abs(reset_axis.get_xlim()[1] - reset_axis.get_xlim()[0]), original_x_span, places=6)
         self.assertAlmostEqual(abs(reset_axis.get_ylim()[1] - reset_axis.get_ylim()[0]), original_y_span, places=6)
+
+    def test_analysis_preview_toolbar_buttons_use_fluent_tooltips(self):
+        view = self.page._analysis_tab_views["current"]
+        if view["figure"] is None or view["canvas"] is None:
+            self.skipTest("matplotlib unavailable")
+
+        for key in (
+            "preview_fit_btn",
+            "preview_zoom_in_btn",
+            "preview_zoom_out_btn",
+            "preview_pan_btn",
+            "preview_box_zoom_btn",
+        ):
+            self.assertTrue(bool(view[key].property("_alineFluentTooltip")))
 
     def test_selected_input_state_label_uses_shared_placeholder_color(self):
         from ui.theme import placeholder_color

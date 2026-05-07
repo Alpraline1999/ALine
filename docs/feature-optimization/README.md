@@ -25,6 +25,7 @@
 19. [18-phase-18-unsaved-project-close-confirmation-and-cancel-path.md](18-phase-18-unsaved-project-close-confirmation-and-cancel-path.md)
 20. [19-phase-19-extension-config-tree-ownership-and-grouping-normalization.md](19-phase-19-extension-config-tree-ownership-and-grouping-normalization.md)
 21. [20-phase-20-template-editor-parity-and-extension-settings-card-normalization.md](20-phase-20-template-editor-parity-and-extension-settings-card-normalization.md)
+22. [21-phase-21-preview-toolbar-contract-and-plot-extension-instance-editing.md](21-phase-21-preview-toolbar-contract-and-plot-extension-instance-editing.md)
 
 ## 当前阶段定位
 
@@ -85,6 +86,9 @@
 - 最新交互与功能核查又补充出一组新的全局资产管理问题：
   - 设置页扩展标签页中，内置扩展和外部扩展区域的“扩展管理”设置卡片标题字体大小与字重异常，未与其他设置卡片保持一致
   - 数据管理页中的 Pipelines 模板、图表模板、报告模板尚未像扩展配置那样支持在右侧编辑区直接修改并保存，模板管理能力明显落后于扩展配置，且该问题影响面较大、实现复杂度较高，需要单独成 phase 收口
+- 最新交互验收还补充出一组新的预览与绘图扩展问题：
+  - 数据管理页、数据分析页、可视化页中的共享预览工具栏虽然已经抽到共享模块，但 tooltip 安装契约仍可能在页面层漂移，已经表现为非 Fluent tooltip 与重复 tooltip 问题
+  - 可视化页右侧扩展面板中的“已加载扩展”列表仍缺少实例级编辑入口，无法围绕当前加载实例直接修改参数并覆盖刷新
 - 鉴于后续可能完全重做 AI 模块，现阶段更合理的策略是：
   - 先把 AI 从主启动链路和日常用户路径中彻底解耦/禁用
   - 再单独规划新的 AI 架构、命令模型与 UI 交互面

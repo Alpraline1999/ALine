@@ -5,7 +5,9 @@ from typing import Callable, Optional
 
 from PySide6.QtCore import QEvent, QObject, QSignalBlocker, Qt
 from PySide6.QtWidgets import QHBoxLayout, QWidget
-from qfluentwidgets import FluentIcon as FIF, ToggleToolButton, ToolButton
+from qfluentwidgets import FluentIcon as FIF, ToggleToolButton, ToolButton, ToolTipPosition
+
+from ui.theme import install_fluent_tooltip
 
 try:
     from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -67,6 +69,8 @@ def build_preview_toolbar(
     pan_toggle_callback: Callable[[bool], None],
     box_zoom_toggle_callback: Callable[[bool], None],
     install_tooltip: Optional[Callable[[ToolButton, str], None]] = None,
+    tooltip_delay: int = 300,
+    tooltip_position=ToolTipPosition.BOTTOM,
 ) -> tuple[QHBoxLayout, PreviewToolbarButtons]:
     layout = QHBoxLayout()
     layout.setContentsMargins(0, 0, 0, 0)
@@ -103,9 +107,13 @@ def build_preview_toolbar(
     layout.addWidget(box_zoom_btn)
     layout.addStretch(1)
 
-    if install_tooltip is not None:
-        for button in (fit_btn, zoom_in_btn, zoom_out_btn, pan_btn, box_zoom_btn):
-            install_tooltip(button, button.toolTip())
+    def _default_install_tooltip(widget: ToolButton, text: str) -> None:
+        widget.setToolTip(text)
+        install_fluent_tooltip(widget, delay=tooltip_delay, position=tooltip_position)
+
+    tooltip_installer = install_tooltip or _default_install_tooltip
+    for button in (fit_btn, zoom_in_btn, zoom_out_btn, pan_btn, box_zoom_btn):
+        tooltip_installer(button, button.toolTip())
 
     return layout, PreviewToolbarButtons(
         fit=fit_btn,

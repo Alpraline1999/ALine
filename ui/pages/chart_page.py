@@ -51,7 +51,6 @@ from qfluentwidgets import (
     TeachingTipView,
     ToolTip,
     ToolButton,
-    ToolTipFilter,
     ToolTipPosition,
     isDarkTheme,
 )
@@ -432,7 +431,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 zoom_out_callback=lambda: self._zoom_chart_preview_axes(1.25),
                 pan_toggle_callback=self._toggle_chart_preview_pan_mode,
                 box_zoom_toggle_callback=self._toggle_chart_preview_box_zoom_mode,
-                install_tooltip=lambda widget, text: install_fluent_tooltip(widget, delay=300, position=ToolTipPosition.BOTTOM),
+                tooltip_position=ToolTipPosition.BOTTOM,
             )
             self._chart_preview_fit_btn = preview_buttons.fit
             self._chart_preview_zoom_in_btn = preview_buttons.zoom_in
@@ -630,7 +629,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     def _install_tooltip_filters(self) -> None:
         for widget in self.findChildren(QWidget):
             if widget.toolTip():
-                widget.installEventFilter(ToolTipFilter(widget, 500, ToolTipPosition.TOP))
+                install_fluent_tooltip(widget, delay=500, position=ToolTipPosition.TOP)
 
     @staticmethod
     def _set_compact_edit_width(edit: LineEdit, width: int = 96) -> None:
@@ -746,7 +745,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._set_square_tool_button(self._clear_all_plot_extensions_btn)
         self._clear_all_plot_extensions_btn.setToolTip("清除全部已加载扩展")
         self._clear_all_plot_extensions_btn.clicked.connect(self._clear_all_plot_extensions)
-        self._clear_all_plot_extensions_btn.installEventFilter(ToolTipFilter(self._clear_all_plot_extensions_btn, 300, ToolTipPosition.TOP))
+        install_fluent_tooltip(self._clear_all_plot_extensions_btn, delay=300, position=ToolTipPosition.TOP)
         self._clear_all_plot_extensions_btn.setEnabled(False)
         applied_header.addWidget(self._clear_all_plot_extensions_btn)
         self._remove_selected_plot_extension_btn = PushButton("撤销选中", loaded_section)

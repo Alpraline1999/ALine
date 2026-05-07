@@ -569,7 +569,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
                 zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
                 pan_toggle_callback=self._toggle_preview_pan_mode,
                 box_zoom_toggle_callback=self._toggle_preview_box_zoom_mode,
-                install_tooltip=lambda widget, text: _install_fluent_tip(widget, text, ToolTipPosition.BOTTOM),
+                tooltip_position=ToolTipPosition.BOTTOM,
             )
             self._preview_fit_btn = preview_buttons.fit
             self._preview_zoom_in_btn = preview_buttons.zoom_in
