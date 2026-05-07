@@ -3751,6 +3751,15 @@ class TestDataPage(unittest.TestCase):
         ):
             self.assertTrue(bool(button.property("_alineFluentTooltip")))
 
+    def test_plot_preview_toolbar_is_outside_plot_panel(self):
+        preview_layout = self.page._preview_card.layout()
+        self.assertIs(self.page._plot_preview_toolbar_widget.parent(), self.page._preview_card)
+        self.assertNotEqual(self.page._plot_preview_toolbar_widget.parent(), self.page._plot_preview_panel)
+        self.assertLess(
+            preview_layout.indexOf(self.page._plot_preview_toolbar_widget),
+            preview_layout.indexOf(self.page._preview_stack),
+        )
+
     def test_global_extension_config_selection_opens_json_editor_and_saves(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, extension_registry
         from core.global_assets import global_assets

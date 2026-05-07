@@ -418,6 +418,12 @@ class DataPage(QWidget):
         self._fluent_tooltip_views[viewport] = view
         viewport.installEventFilter(self)
 
+    def _sync_plot_preview_toolbar_visibility(self, *_args) -> None:
+        if not hasattr(self, "_plot_preview_toolbar_widget") or not hasattr(self, "_preview_stack"):
+            return
+        visible = self._preview_stack.currentWidget() is getattr(self, "_plot_preview_panel", None)
+        self._plot_preview_toolbar_widget.setVisible(bool(visible))
+
     @staticmethod
     def _tooltip_item_at_event(view: TreeWidget, event) -> Optional[QTreeWidgetItem]:
         if hasattr(event, "position"):
@@ -900,8 +906,10 @@ class DataPage(QWidget):
         self._extension_preview_panel.hide()
         preview_layout.addWidget(self._extension_preview_panel)
 
-        self._preview_stack = QStackedWidget(self._preview_card)
-        preview_layout.addWidget(self._preview_stack, stretch=3)
+        self._plot_preview_toolbar_widget = QWidget(self._preview_card)
+        preview_toolbar_layout = QVBoxLayout(self._plot_preview_toolbar_widget)
+        preview_toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        preview_toolbar_layout.setSpacing(0)
 
         self._plot_preview_panel = QWidget(self._preview_card)
         plot_preview_layout = QVBoxLayout(self._plot_preview_panel)
@@ -917,7 +925,7 @@ class DataPage(QWidget):
                 sync_callback=self._sync_preview_nav_toggle_states,
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
-                self._plot_preview_panel,
+                self._plot_preview_toolbar_widget,
                 button_size=WORKBENCH_BUTTON_HEIGHT,
                 reset_callback=self._reset_preview_view,
                 zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
@@ -930,13 +938,14 @@ class DataPage(QWidget):
             self._preview_zoom_out_btn = preview_buttons.zoom_out
             self._preview_pan_btn = preview_buttons.pan
             self._preview_box_zoom_btn = preview_buttons.box_zoom
-            plot_preview_layout.addLayout(preview_toolbar)
+            preview_toolbar_layout.addLayout(preview_toolbar)
             plot_preview_layout.addWidget(self._preview_canvas, stretch=1)
             self._sync_preview_nav_toggle_states()
         else:
             self._preview_figure = None
             self._preview_canvas = None
             self._preview_nav_toolbar = None
+            self._plot_preview_toolbar_widget.hide()
             self._preview_canvas_label = BodyLabel(
                 f"matplotlib 加载失败：{_MATPLOTLIB_ERROR}" if _MATPLOTLIB_ERROR else "请安装 matplotlib 以启用绘图预览",
                 self._preview_card,
@@ -945,7 +954,12 @@ class DataPage(QWidget):
             self._preview_canvas_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             plot_preview_layout.addWidget(self._preview_canvas_label, stretch=1)
 
+        preview_layout.addWidget(self._plot_preview_toolbar_widget)
+        self._preview_stack = QStackedWidget(self._preview_card)
+        preview_layout.addWidget(self._preview_stack, stretch=3)
         self._preview_stack.addWidget(self._plot_preview_panel)
+        self._preview_stack.currentChanged.connect(self._sync_plot_preview_toolbar_visibility)
+        self._sync_plot_preview_toolbar_visibility()
 
         self._image_preview_label = QLabel(self._preview_card)
         self._image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
