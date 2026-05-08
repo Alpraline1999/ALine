@@ -164,7 +164,8 @@ def build_extensions_tab(page) -> QWidget:
     page._bind_theme_text_in_widget(
         page._builtin_extension_management_card,
         "扩展管理",
-        lambda: card_title_style_sheet(font_size=18),
+        body_text_style_sheet,
+        first_only=True,
     )
     page._bind_theme_text_in_widget(
         page._builtin_extension_management_card,
@@ -246,7 +247,8 @@ def build_extensions_tab(page) -> QWidget:
     page._bind_theme_text_in_widget(
         page._external_extension_management_card,
         "扩展管理",
-        lambda: card_title_style_sheet(font_size=18),
+        body_text_style_sheet,
+        first_only=True,
     )
     page._bind_theme_text_in_widget(
         page._external_extension_management_card,

@@ -2378,8 +2378,8 @@ class TestSettingsPage(unittest.TestCase):
         self.assertEqual(_label_text_style(self.page._external_extensions_dirs_card, "可添加多个文件夹；保存后会统一扫描并重载。"), placeholder_text_style_sheet(font_size=11))
         builtin_manage_title = next(label for label in self.page._builtin_extension_management_card.findChildren(QLabel) if label.text() == "扩展管理")
         external_manage_title = next(label for label in self.page._external_extension_management_card.findChildren(QLabel) if label.text() == "扩展管理")
-        self.assertEqual(builtin_manage_title.styleSheet(), card_title_style_sheet(font_size=18))
-        self.assertEqual(external_manage_title.styleSheet(), card_title_style_sheet(font_size=18))
+        self.assertEqual(builtin_manage_title.styleSheet(), body_text_style_sheet())
+        self.assertEqual(external_manage_title.styleSheet(), body_text_style_sheet())
         self.assertEqual(self.page._extension_other_settings_card.titleLabel.styleSheet(), card_title_style_sheet(font_size=18))
 
     def test_settings_page_uses_setting_card_containers(self):

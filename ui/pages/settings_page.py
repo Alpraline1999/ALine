@@ -490,7 +490,8 @@ class SettingsPage(QWidget):
         self._bind_theme_text_in_widget(
             self._builtin_extension_management_card,
             "扩展管理",
-            lambda: card_title_style_sheet(font_size=18),
+            body_text_style_sheet,
+            first_only=True,
         )
         self._bind_theme_text_in_widget(
             self._builtin_extension_management_card,
@@ -571,7 +572,8 @@ class SettingsPage(QWidget):
         self._bind_theme_text_in_widget(
             self._external_extension_management_card,
             "扩展管理",
-            lambda: card_title_style_sheet(font_size=18),
+            body_text_style_sheet,
+            first_only=True,
         )
         self._bind_theme_text_in_widget(
             self._external_extension_management_card,
