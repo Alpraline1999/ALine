@@ -7,6 +7,8 @@ from collections.abc import Iterable, MutableMapping
 from importlib.util import find_spec
 from pathlib import Path
 
+from aline_metadata import APP_NAME, APP_VERSION
+
 
 def _normalize_linux_input_method_name(name: str | None) -> str | None:
     value = str(name or "").strip().lower()
@@ -129,15 +131,17 @@ def _configure_linux_environment(env: MutableMapping[str, str] | None = None) ->
 
 _configure_linux_environment()
 
+
+def _resolve_base_dir() -> Path:
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from qfluentwidgets import Theme, setTheme
 
-# PyInstaller 路径兼容
-if getattr(sys, "frozen", False):
-    BASE_DIR = sys._MEIPASS  # type: ignore
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = str(_resolve_base_dir())
 
 sys.path.insert(0, BASE_DIR)
 
@@ -150,8 +154,8 @@ for _extension_error in _EXTENSION_LOAD_REPORT.get("errors", []):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("ALine")
-    app.setApplicationVersion("0.1.0")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
 
     icon_path = os.path.join(BASE_DIR, "assets", "icon.ico")
     if os.path.exists(icon_path):

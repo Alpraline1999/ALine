@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from aline_metadata import CURRENT_PROJECT_VERSION
 from core.global_assets import global_assets
 from core.project_name_rules import (
     ensure_non_empty_name as _ensure_non_empty_name_rule,
@@ -57,7 +58,7 @@ from models.schemas import (
     Project,
 )
 
-_ALINE_VERSION = "0.3"
+_ALINE_VERSION = CURRENT_PROJECT_VERSION
 _PROJECT_FILE_SUFFIX = ".aline"
 
 _GROUP_TYPE_ALIASES = {
@@ -399,7 +400,7 @@ class ProjectManager:
         self._projects.append(project)
         self._current_project_id = project.id
 
-        # 为新项目直接初始化 v0.3 树结构（不经过旧数据迁移路径）
+        # 为新项目直接初始化当前树结构（不经过旧数据迁移路径）
         self._project_migration_service.init_new_project_tree(project)
 
         if create_structure:

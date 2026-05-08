@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple, Union
 
+from aline_metadata import CURRENT_PROJECT_VERSION
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -369,7 +370,7 @@ class Project(BaseModel):
             name=name,
             created_at=now,
             updated_at=now,
-            aline_version="0.3",
+            aline_version=CURRENT_PROJECT_VERSION,
         )
 
     def is_aline_project(self) -> bool:

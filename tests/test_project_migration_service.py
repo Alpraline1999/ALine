@@ -202,7 +202,7 @@ class TestProjectMigrationService(unittest.TestCase):
 
         service.migrate_to_v3(project)
 
-        self.assertEqual("0.3", project.aline_version)
+        self.assertEqual("0.1.0", project.aline_version)
         self.assertTrue(project.is_modified)
         self.assertEqual("ai_group", project.tree.nodes[0].group_type)
         self.assertEqual("ai_prompt", project.tree.nodes[1].kind)

@@ -68,7 +68,7 @@ class TestSchemas(unittest.TestCase):
     def test_project_create_new(self):
         from models.schemas import Project
         p = Project.create_new("exp_1")
-        self.assertEqual(p.aline_version, "0.3")
+        self.assertEqual(p.aline_version, "0.1.0")
         self.assertEqual(p.name, "exp_1")
 
     def test_project_backward_compat_extra_fields_ignored(self):
@@ -275,7 +275,7 @@ class TestProjectManager(unittest.TestCase):
     def test_create_new_project(self):
         p = self.pm.create_new("test_proj")
         self.assertEqual(p.name, "test_proj")
-        self.assertEqual(p.aline_version, "0.3")
+        self.assertEqual(p.aline_version, "0.1.0")
         self.assertEqual(self.pm.current_project_id, p.id)
 
     def test_migrate_to_v2_idempotent(self):

@@ -20,6 +20,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from aline_metadata import APP_NAME, APP_VERSION
+
 
 ROOT = Path(__file__).parent.resolve()
 DIST_DIR = ROOT / "dist"
@@ -87,42 +89,26 @@ def build(python: str) -> None:
 
 def make_archive() -> Path:
     """将 dist/ALine 目录压缩为 zip，便于分发。"""
-    app_dir = DIST_DIR / "ALine"
+    app_dir = DIST_DIR / APP_NAME
     if not app_dir.exists():
         print(f"✖ 未找到输出目录: {app_dir}")
         sys.exit(1)
 
     plat = platform.system().lower()
     machine = platform.machine().lower()
-    version = _get_version()
-    archive_name = f"ALine-{version}-{plat}-{machine}.zip"
+    archive_name = f"{APP_NAME}-{APP_VERSION}-{plat}-{machine}.zip"
     archive_path = DIST_DIR / archive_name
 
     print(f"\n═══ 打包为 {archive_name} ═══")
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for file in sorted(app_dir.rglob("*")):
             if file.is_file():
-                arcname = Path("ALine") / file.relative_to(app_dir)
+                arcname = Path(APP_NAME) / file.relative_to(app_dir)
                 zf.write(file, arcname)
 
     size_mb = archive_path.stat().st_size / 1024 / 1024
     print(f"  ✔ {archive_path}  ({size_mb:.1f} MB)")
     return archive_path
-
-
-def _get_version() -> str:
-    """从 main.py 读取版本号。"""
-    try:
-        main_py = (ROOT / "main.py").read_text(encoding="utf-8")
-        for line in main_py.splitlines():
-            if "setApplicationVersion" in line:
-                import re
-                m = re.search(r'"([\d.]+)"', line)
-                if m:
-                    return m.group(1)
-    except Exception:
-        pass
-    return "0.1.0"
 
 
 def main() -> None:
@@ -157,7 +143,7 @@ def main() -> None:
         archive = make_archive()
         print(f"\n✔ 打包完成 → {archive}")
     else:
-        print(f"\n✔ 打包完成 → {DIST_DIR / 'ALine'}")
+        print(f"\n✔ 打包完成 → {DIST_DIR / APP_NAME}")
 
 
 if __name__ == "__main__":

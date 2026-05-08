@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable
 
+from aline_metadata import CURRENT_PROJECT_VERSION
 from models.schemas import (
     AIAgentNode,
     AIPromptNode,
@@ -25,6 +26,7 @@ class ProjectMigrationService:
 
     def init_new_project_tree(self, project: Project) -> None:
         project.tree = ProjectTree()
+        project.aline_version = CURRENT_PROJECT_VERSION
         self.ensure_project_tree_groups(project)
 
     def migrate_to_v2(self, project: Project | None) -> None:
@@ -170,5 +172,5 @@ class ProjectMigrationService:
 
         self.migrate_project_assets_to_global(project)
         self.ensure_project_tree_groups(project)
-        project.aline_version = "0.3"
+        project.aline_version = CURRENT_PROJECT_VERSION
         project.is_modified = True

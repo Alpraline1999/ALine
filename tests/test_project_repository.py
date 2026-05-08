@@ -65,7 +65,7 @@ class TestProjectRepository(unittest.TestCase):
     def _make_repository(self, calls: dict[str, list[object]]) -> ProjectRepository:
         return ProjectRepository(
             project_file_suffix=".aline",
-            aline_version="0.3",
+            aline_version="0.1.0",
             normalize_path=lambda path: str(Path(path).resolve()),
             sync_legacy_datasets=lambda project: calls.setdefault("sync_legacy", []).append(project.id),
             sync_project_backups=lambda project, path, previous: calls.setdefault("sync_backups", []).append((project.id, path, previous)),
@@ -81,7 +81,7 @@ class TestProjectRepository(unittest.TestCase):
             saved_path = repository.save_project(project, str(Path(tmpdir) / "repo-save"))
 
             self.assertTrue(saved_path.endswith(".aline"))
-            self.assertEqual("0.3", project.aline_version)
+            self.assertEqual("0.1.0", project.aline_version)
             self.assertFalse(project.is_modified)
             self.assertEqual([(saved_path, "Repo Save")], calls["recent"])
             self.assertEqual([project.id], calls["sync_legacy"])
