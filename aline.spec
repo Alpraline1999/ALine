@@ -47,6 +47,7 @@ _hidden = [
     "openpyxl",
     "csv",
     "json",
+    "core.value_parsing",
     # 图像处理
     "cv2",
 ]
@@ -104,7 +105,6 @@ if os.path.isdir(_extensions_dir):
 # ─── 排除不需要打包的模块 ─────────────────────────────────────────
 _excludes = [
     "pytest",
-    "unittest",
     "IPython",
     "jupyter",
     "tkinter",
