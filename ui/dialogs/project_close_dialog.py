@@ -34,6 +34,8 @@ class UnsavedProjectCloseDialog(MessageBoxBase):
 
         self.yesButton.setText("保存")
         self.cancelButton.setText("不保存")
+        self.yesButton.clicked.connect(self._accept_save)
+        self.cancelButton.clicked.connect(self._accept_discard)
 
         self._extra_cancel_button = PushButton("取消", self.buttonGroup)
         self._extra_cancel_button.setAttribute(Qt.WA_LayoutUsesWidgetRect)

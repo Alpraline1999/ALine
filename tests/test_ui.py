@@ -34,7 +34,7 @@ _PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJ_ROOT not in sys.path:
     sys.path.insert(0, _PROJ_ROOT)
 
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QWidget
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QWidget, QDialog
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
 
@@ -202,6 +202,27 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertEqual(dialog.yesButton.text(), "保存")
         self.assertEqual(dialog.cancelButton.text(), "不保存")
         self.assertEqual(dialog.buttonLayout.count(), 3)
+
+    def test_unsaved_close_dialog_buttons_return_distinct_decisions(self):
+        from ui.dialogs.project_close_dialog import ProjectCloseDecision, UnsavedProjectCloseDialog
+
+        save_dialog = UnsavedProjectCloseDialog(self.p.name, self.widget)
+        QTimer.singleShot(0, save_dialog.yesButton.click)
+        save_dialog.exec()
+        self.assertEqual(save_dialog.decision, ProjectCloseDecision.SAVE)
+        self.assertEqual(save_dialog.result(), QDialog.DialogCode.Accepted)
+
+        discard_dialog = UnsavedProjectCloseDialog(self.p.name, self.widget)
+        QTimer.singleShot(0, discard_dialog.cancelButton.click)
+        discard_dialog.exec()
+        self.assertEqual(discard_dialog.decision, ProjectCloseDecision.DISCARD)
+        self.assertEqual(discard_dialog.result(), QDialog.DialogCode.Accepted)
+
+        cancel_dialog = UnsavedProjectCloseDialog(self.p.name, self.widget)
+        QTimer.singleShot(0, cancel_dialog._extra_cancel_button.click)
+        cancel_dialog.exec()
+        self.assertEqual(cancel_dialog.decision, ProjectCloseDecision.CANCEL)
+        self.assertEqual(cancel_dialog.result(), QDialog.DialogCode.Rejected)
 
     def test_close_current_project_cancel_keeps_project_open(self):
         from ui.dialogs.project_close_dialog import ProjectCloseDecision
