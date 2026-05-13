@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from aline_metadata import CURRENT_PROJECT_VERSION
+from core.analysis_manager import AnalysisManager
+from core.data_file_manager import DataFileManager
+from core.project_serializer import ProjectSerializer
+from core.tree_manager import TreeManager
 from core.global_assets import global_assets
 from core.project_name_rules import (
     ensure_non_empty_name as _ensure_non_empty_name_rule,
@@ -137,6 +141,14 @@ class ProjectManager:
         self._project_tree_service = services.tree_service
         self._project_asset_service = services.asset_service
         self._project_session = services.session
+
+        self._serializer = ProjectSerializer(
+            migration_service=self._project_migration_service,
+            aline_version=_ALINE_VERSION,
+        )
+        self._tree_manager = TreeManager()
+        self._data_file_manager = DataFileManager(self)
+        self._analysis_manager = AnalysisManager(self)
 
     def get_last_error_message(self) -> str:
         return self._last_operation_error
@@ -347,6 +359,18 @@ class ProjectManager:
     def current_project_id(self) -> Optional[str]:
         return self._current_project_id
 
+    @property
+    def tree(self) -> TreeManager:
+        return self._tree_manager
+
+    @property
+    def data_files(self) -> DataFileManager:
+        return self._data_file_manager
+
+    @property
+    def analysis(self) -> AnalysisManager:
+        return self._analysis_manager
+
     # ─────────────────────────────────────────────
     # 项目查找与切换
     # ─────────────────────────────────────────────
@@ -444,6 +468,14 @@ class ProjectManager:
         if self.current_project is None:
             raise ValueError("没有当前项目")
         return self._project_repository.save_project(self.current_project, file_path)
+
+    def _save_project(self, path: str) -> None:
+        if self.current_project is None:
+            raise ValueError("没有当前项目")
+        self._serializer.save(self.current_project, path)
+
+    def _load_project(self, path: str) -> Optional[Project]:
+        return self._serializer.load(path)
 
     def close_project(self, project_id: str) -> None:
         self._projects = [p for p in self._projects if p.id != project_id]
@@ -1200,21 +1232,7 @@ class ProjectManager:
         return True
 
     def remove_analysis(self, analysis_id: str) -> bool:
-        if self.current_project is None:
-            return False
-        before = len(self.current_project.analyses)
-        self.current_project.analyses = [
-            a for a in self.current_project.analyses if a.id != analysis_id
-        ]
-        changed = len(self.current_project.analyses) < before
-        if changed:
-            if self.current_project.tree is not None:
-                self.current_project.tree.nodes = [
-                    node for node in self.current_project.tree.nodes
-                    if not (node.kind == "analysis_result" and node.analysis_id == analysis_id)
-                ]
-            self.current_project.is_modified = True
-        return changed
+        return self._analysis_manager.delete_analysis(analysis_id)
 
     # ─────────────────────────────────────────────
     # ALine 图表配置管理（新增）
