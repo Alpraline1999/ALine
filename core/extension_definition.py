@@ -351,6 +351,7 @@ class ProcessingExtension:
     hidden: bool = False
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
+    aline_api_version: str = ""
     supports_progress: bool = False
     supports_cancel: bool = False
     min_app_version: str = ""

@@ -15,6 +15,8 @@ from core.extension_registry import (
 )
 from core.extension_registry import _annotate_extension_detail
 from core.extension_registry import _summarize_extension_sources
+from core.extension_validator import ExtensionValidator
+from core import ALINE_VERSION
 
 
 class LoadReport:
@@ -150,6 +152,29 @@ def _wrap_external_extensions_with_sandbox() -> None:
             object.__setattr__(ext, "handler", _make_wrapper(original_handler))
 
 
+def _check_extension_compatibility(report: LoadReport) -> None:
+    categories = {
+        "processing": extension_registry._processing,
+        "analysis": extension_registry._analysis,
+        "plot": extension_registry._plot,
+        "digitize": extension_registry._digitize,
+    }
+    for category, store in categories.items():
+        for type_id, ext in list(store.items()):
+            api_version = getattr(ext, "aline_api_version", "")
+            result = ExtensionValidator.check_compatibility(api_version, ALINE_VERSION)
+            if result == "incompatible":
+                report.errors.append(
+                    f"扩展 '{ext.name}' ({category}) 需要 ALine {api_version}，"
+                    f"当前版本 {ALINE_VERSION}，已禁用"
+                )
+                store.pop(type_id, None)
+            elif result == "warning":
+                report.errors.append(
+                    f"扩展 '{ext.name}' ({category}) 版本声明解析失败: {api_version}"
+                )
+
+
 def _load_from_files(builtin_files: Iterable[str], external_files: Iterable[str]) -> LoadReport:
     report = LoadReport()
     for path in builtin_files:
@@ -157,6 +182,7 @@ def _load_from_files(builtin_files: Iterable[str], external_files: Iterable[str]
     for path in external_files:
         _load_file(str(path), source_kind="external", report=report)
     _wrap_external_extensions_with_sandbox()
+    _check_extension_compatibility(report)
     extension_registry._last_load_report = _load_report_to_dict(report)
     default_dir = (
         str(Path(list(builtin_files)[0]).parent) if builtin_files

@@ -148,6 +148,27 @@ class ExtensionValidator:
         return "compatible"
 
     @staticmethod
+    def check_compatibility(arg1: Any, arg2: str) -> Any:
+        if isinstance(arg1, str):
+            return ExtensionValidator.check_api_compatibility(arg1, arg2)
+        ext = arg1
+        aline_version = arg2
+        api_version = getattr(ext, "api_version", None)
+        if not api_version:
+            return []
+        warnings: List[str] = []
+        try:
+            current = tuple(int(x) for x in aline_version.split("."))
+            required = tuple(int(x) for x in api_version.lstrip(">=").split("."))
+            if api_version.startswith(">=") and current < required:
+                warnings.append(f"需要 ALine {api_version}，当前版本 {aline_version}")
+            elif api_version.startswith("<") and current >= required:
+                warnings.append(f"不支持 ALine {api_version} 以上版本")
+        except (ValueError, TypeError, AttributeError):
+            warnings.append(f"无法解析版本要求: {api_version}")
+        return warnings
+
+    @staticmethod
     def validate_param_value(key: str, value: Any, field_def: Any) -> Optional[str]:
         """校验单个参数值是否符合字段定义。
 
