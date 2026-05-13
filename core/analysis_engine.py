@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from core.extension_api import extension_registry
 from core.extension_runtime import invoke_analysis_extension_handler
@@ -91,6 +91,7 @@ def fit_curve(
         raise ValueError(f"未知模型: {model}")
 
     func, param_names, eq_fmt, default_p0 = fit_funcs[model]
+    popt: list[float] = []
 
     if model in ("poly2", "poly3"):
         deg = 2 if model == "poly2" else 3
@@ -99,6 +100,7 @@ def fit_curve(
         y_fit = np.polyval(coeffs, x)
         cov = None
     else:
+        assert callable(func)
         if p0 is None:
             p0 = default_p0
         try:
@@ -122,6 +124,8 @@ def fit_curve(
     if model in ("poly2", "poly3"):
         y_dense = np.polyval(np.array(popt), x_dense).tolist()
     else:
+        assert callable(func)
+        assert callable(eq_fmt)
         y_dense = func(x_dense, *popt).tolist()
 
     return {
@@ -131,12 +135,12 @@ def fit_curve(
         "r2": r2,
         "fit_x": x_dense.tolist(),
         "fit_y": y_dense,
-        "equation": eq_fmt(popt),
+        "equation": str(cast(Any, eq_fmt)(popt)),
         "covariance": cov,
     }
 
 
-def _power_func(x, a, b):
+def _power_func(x: Any, a: float, b: float) -> Any:
     import numpy as np
     return a * np.abs(x) ** b
 
@@ -218,7 +222,7 @@ def detect_valleys(
 def _filter_indices_by_x_distance(
     xs: List[float],
     ys: List[float],
-    indices,
+    indices: Any,
     min_distance_x: float,
     *,
     prefer: str,
@@ -246,7 +250,7 @@ def _filter_indices_by_x_distance(
 
 def compute_statistics(xs: List[float], ys: List[float]) -> Dict[str, Any]:
     """基础统计量：N, x/y 的 min/max/mean/std/median/percentiles."""
-    def _stats(vals: List[float], label: str) -> dict:
+    def _stats(vals: List[float], label: str) -> dict[str, Any]:
         n = len(vals)
         if n == 0:
             return {}
@@ -435,7 +439,7 @@ def run_analysis(
     ]
     custom_analysis = extension_registry.get_analysis(analysis_type)
     if custom_analysis is not None:
-        return invoke_analysis_extension_handler(custom_analysis.handler, normalized_inputs, params)
+        return cast(Dict[str, Any], invoke_analysis_extension_handler(custom_analysis.handler, normalized_inputs, params))
     if analysis_type == "curve_fit":
         if not normalized_inputs:
             raise ValueError("curve_fit 需要至少一条输入数据")
@@ -903,12 +907,12 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     }
 
     # 处理 {{r2:.Nf}} 自定义精度
-    def _fmt_r2(m):
+    def _fmt_r2(m: Any) -> str:
         fmt = m.group(1)
         try:
             return f"{r.get('r2', float('nan')):{fmt}}"
         except Exception:
-            return m.group(0)
+            return str(m.group(0))
     content = re.sub(r"\{\{r2:([^}]+)\}\}", _fmt_r2, template_content)
 
     # 简单 {{key}} 替换
@@ -965,7 +969,7 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
             return ", ".join(_format_generic_placeholder(item) for item in value)
         return str(value)
 
-    def _replace_generic_placeholder(match):
+    def _replace_generic_placeholder(match: Any) -> str:
         key = match.group(1)
         fmt_spec = match.group(2)
         if key.startswith("_"):
