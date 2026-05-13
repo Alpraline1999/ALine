@@ -202,6 +202,18 @@ def build_extensions_tab(page) -> QWidget:
     )
     page._external_extensions_enabled_checkbox.checkedChanged.connect(page._on_external_extensions_enabled_changed)
     page._external_extension_card.addSettingCard(page._external_extensions_enabled_checkbox)
+    page._external_extensions_sandbox_checkbox = SwitchSettingCard(
+        FIF.FOLDER,
+        "外部扩展沙箱模式",
+        "在独立进程中执行外部扩展，崩溃不影响主应用。",
+        parent=page._external_extension_card,
+    )
+    page._bind_setting_card_styles(
+        page._external_extensions_sandbox_checkbox,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    page._external_extension_card.addSettingCard(page._external_extensions_sandbox_checkbox)
     page._external_extensions_dirs_card = MutableFolderListSettingCard(
         "外部扩展目录",
         "可添加多个文件夹；保存后会统一扫描并重载。",

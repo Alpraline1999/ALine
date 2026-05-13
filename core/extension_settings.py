@@ -22,6 +22,7 @@ class ExtensionSettings(BaseModel):
     disabled_builtin_extensions: list[str] = Field(default_factory=list)
     load_external_extensions: bool = True
     disabled_external_extensions: list[str] = Field(default_factory=list)
+    external_extension_sandbox: bool = False
     number_decimals: int = _EXTENSION_NUMBER_DECIMALS_DEFAULT
 
     @classmethod
@@ -144,6 +145,18 @@ def set_external_extension_settings(load_external: bool, disabled_extension_ids:
     settings = ExtensionSettings.load()
     settings.load_external_extensions = bool(load_external)
     settings.disabled_external_extensions = _normalize_external_extension_ids(disabled_extension_ids)
+    settings.save()
+    return settings
+
+
+def get_external_extension_sandbox_enabled() -> bool:
+    settings = ExtensionSettings.load()
+    return bool(settings.external_extension_sandbox)
+
+
+def set_external_extension_sandbox_enabled(enabled: bool) -> ExtensionSettings:
+    settings = ExtensionSettings.load()
+    settings.external_extension_sandbox = bool(enabled)
     settings.save()
     return settings
 

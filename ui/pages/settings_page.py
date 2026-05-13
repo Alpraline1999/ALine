@@ -96,6 +96,7 @@ class SettingsPage(QWidget):
         self._external_extensions_dir_edit = None
         self._browse_external_extensions_dir_btn = None
         self._external_extensions_enabled_checkbox = None
+        self._external_extensions_sandbox_checkbox = None
         self._external_extension_number_decimals_card = None
         self._external_extension_number_decimals_slider = None
         self._external_extension_number_decimals_value_label = None
@@ -1170,6 +1171,7 @@ class SettingsPage(QWidget):
         from core.extension_api import list_builtin_extension_specs, list_external_extension_specs
         from core.extension_settings import (
             get_builtin_extension_settings,
+            get_external_extension_sandbox_enabled,
             get_extension_number_decimals,
             get_external_extension_settings,
             get_external_extensions_directories,
@@ -1177,6 +1179,7 @@ class SettingsPage(QWidget):
 
         load_builtin, disabled_extension_ids = get_builtin_extension_settings()
         load_external, disabled_external_ids = get_external_extension_settings()
+        sandbox_enabled = get_external_extension_sandbox_enabled()
         if self._builtin_extensions_enabled_checkbox is not None:
             self._builtin_extensions_enabled_checkbox.blockSignals(True)
             self._builtin_extensions_enabled_checkbox.setChecked(load_builtin)
@@ -1185,6 +1188,10 @@ class SettingsPage(QWidget):
             self._external_extensions_enabled_checkbox.blockSignals(True)
             self._external_extensions_enabled_checkbox.setChecked(load_external)
             self._external_extensions_enabled_checkbox.blockSignals(False)
+        if self._external_extensions_sandbox_checkbox is not None:
+            self._external_extensions_sandbox_checkbox.blockSignals(True)
+            self._external_extensions_sandbox_checkbox.setChecked(sandbox_enabled)
+            self._external_extensions_sandbox_checkbox.blockSignals(False)
         if self._external_extensions_dirs_card is not None:
             self._external_extensions_dirs_card.setFolders([str(path) for path in get_external_extensions_directories()])
         self._set_external_extension_number_decimals(get_extension_number_decimals())
@@ -1268,6 +1275,7 @@ class SettingsPage(QWidget):
     def _save_extension_settings(self) -> None:
         from core.extension_settings import (
             set_builtin_extension_settings,
+            set_external_extension_sandbox_enabled,
             set_extension_number_decimals,
             set_external_extension_settings,
             set_external_extensions_directories,
@@ -1298,6 +1306,8 @@ class SettingsPage(QWidget):
             return
         set_builtin_extension_settings(load_builtin, disabled_extension_ids)
         set_external_extension_settings(load_external, disabled_external_ids)
+        if self._external_extensions_sandbox_checkbox is not None:
+            set_external_extension_sandbox_enabled(self._external_extensions_sandbox_checkbox.isChecked())
         if self._external_extension_number_decimals_slider is not None:
             set_extension_number_decimals(self._external_extension_number_decimals_slider.value())
         report = reload_configured_extensions()
