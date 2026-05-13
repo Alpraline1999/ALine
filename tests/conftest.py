@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import gc
+from unittest.mock import MagicMock
 
 import pytest
+
+from core.app_context import AppContext, reset_app_context, set_app_context
 
 
 def _drain_qt_teardown() -> None:
@@ -27,6 +30,23 @@ def _drain_qt_teardown() -> None:
     for _ in range(2):
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.processEvents()
+
+
+@pytest.fixture
+def app_context():
+    """提供可注入 mock 的 AppContext。"""
+    ctx = AppContext(
+        project_manager=MagicMock(),
+        tree_manager=MagicMock(),
+        data_file_manager=MagicMock(),
+        analysis_manager=MagicMock(),
+        extension_registry=MagicMock(),
+        global_assets=MagicMock(),
+        shortcut_manager=MagicMock(),
+    )
+    set_app_context(ctx)
+    yield ctx
+    reset_app_context()
 
 
 @pytest.hookimpl(trylast=True)
