@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QTreeWidgetItem
 
 from core.global_assets import global_assets, make_plot_style_asset_key
 from core.extension_api import build_extension_entry, extension_registry
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from core.ui_preferences import get_tree_name_display_mode
 from app.project_tree_command_service import ProjectTreeCommandService
 from ui.dialogs.project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
@@ -62,6 +62,20 @@ from .project_tree_support import (
 from .project_tree_delegate import ProjectTreeWrapAnywhereDelegate
 from .project_tree_drag_drop import ProjectTreeDragDropHelper
 from .project_tree_menu_commands import ProjectTreeMenuBuilder
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
 
 
 # 用于右键菜单图标引用

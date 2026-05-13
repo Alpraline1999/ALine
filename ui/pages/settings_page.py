@@ -34,6 +34,7 @@ from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.navigation_stack import PivotStackWidget, SegmentedStackWidget
 from ui.page_view_state import SettingsPageViewState
 from core.shortcut_manager import shortcut_manager
+from core.app_context import get_app_context
 from core.ui_preferences import (
     TreeNameDisplayMode,
     get_tree_name_display_mode,
@@ -1656,7 +1657,7 @@ class SettingsPage(QWidget):
 
     def _on_edit_template(self):
         from core.global_assets import global_assets
-        from core.project_manager import project_manager
+        project_manager = get_app_context().project_manager
 
         tmpl_list = getattr(self, "_tmpl_list", None)
         if tmpl_list is None:
@@ -1677,7 +1678,7 @@ class SettingsPage(QWidget):
 
     def _on_delete_template(self):
         from core.global_assets import global_assets
-        from core.project_manager import project_manager
+        project_manager = get_app_context().project_manager
 
         tmpl_list = getattr(self, "_tmpl_list", None)
         if tmpl_list is None:

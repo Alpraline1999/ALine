@@ -26,10 +26,24 @@ from ui.theme import (
     warning_color,
 )
 from ui.dialogs.fluent_dialogs import TextInputDialog
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from core.recent_projects import load_recent, remove_recent
 from ui.widgets.extension_panel import show_extension_load_report_dialog
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
 
 
 _HOME_CONTENT_MARGIN = 40

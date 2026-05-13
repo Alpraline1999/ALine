@@ -19,8 +19,22 @@ from qfluentwidgets import (
 )
 from ui.widgets.focus_commit import install_click_away_focus_commit
 
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from models.schemas import DataSeries
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
 
 _ROLES = ["X 轴", "Y 轴", "Y 误差棒", "X 误差棒", "跳过"]
 SUPPORTED_IMPORT_SUFFIXES = (".csv", ".txt", ".dat", ".tsv", ".xlsx", ".xls", ".json", ".npy", ".npz")

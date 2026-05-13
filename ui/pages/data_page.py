@@ -65,7 +65,7 @@ from core.extension_api import (
 from core.global_assets import global_assets, parse_plot_style_asset_key
 from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
 from models.schemas import Curve, CurveStyleTemplate, DataFile, DataSeries, Dataset, FigureConfig, PlotTheme, ReportTemplate, SavedPipeline
 from app.workspaces.data_workspace import DataWorkspaceController, DataWorkspaceState
@@ -95,6 +95,20 @@ from .data_page_support import (
     _TYPE_SERIES,
 )
 from .data_page_state_bridge import DataPageStateBridge
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
 
 
 class DataPage(QWidget):

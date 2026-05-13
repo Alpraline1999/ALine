@@ -25,7 +25,7 @@ from ui.dialogs.export_flow import DataCreateTargetOption, choose_curve_file_exp
 from ui.pages.save_export_coordinator import SaveExportCoordinator
 from core.extension_api import build_extension_entry, extension_registry, reload_configured_extensions
 from core.shortcut_manager import ShortcutBindingSet
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from core.extension_runtime import invoke_digitize_extension_handler
 from extensions.digitize.color_detect import COLOR_DIGITIZE_EXTENSION_TYPE
 from extensions.digitize.shape_detect import SHAPE_DIGITIZE_EXTENSION_TYPE
@@ -33,6 +33,20 @@ from models.schemas import CalibrationData, DataFile, DataSeries
 from app.workspaces.digitize_workspace import DigitizeWorkspaceController, DigitizeWorkspaceState
 from processing.extension_tools import line_xy
 from ui.page_view_state import DigitizePageViewState
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
 from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
 from .digitize_page_support import _InputDialog, _SUPPORTED_SOURCE_IMAGE_SUFFIXES
 

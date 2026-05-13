@@ -28,9 +28,24 @@ from .notifications import show_error, show_success, show_warning
 from .widgets.project_tree import ProjectTreeWidget
 from .tree_command_route import TreeCommandRoute
 from core.global_assets import global_assets
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from core.ui_preferences import is_page_tree_focus_mode_enabled, reset_all_onboarding_progress
 from core.shortcut_manager import ShortcutBindingSet, shortcut_manager
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
+
 
 # 页面 2-6 默认显示完整共享树，主页和设置页不显示。
 _BUSINESS_TREE_KINDS = [
