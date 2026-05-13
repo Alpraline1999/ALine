@@ -796,9 +796,11 @@ class TestProjectManager(unittest.TestCase):
             path = f.name
         try:
             self.pm.save(path)
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.assertIn("datasets", data)
+            self.pm.close_current_project()
+            p2 = self.pm.open(path)
+            self.assertIsNotNone(p2.datasets)
+            self.assertTrue(len(p2.datasets) > 0)
+            self.assertEqual(p2.datasets[0].name, "compat.csv")
         finally:
             os.unlink(path)
 

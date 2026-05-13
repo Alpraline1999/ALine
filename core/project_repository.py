@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -36,12 +35,16 @@ class ProjectRepository:
         if not os.path.exists(normalized_path):
             raise FileNotFoundError(f"项目文件不存在: {normalized_path}")
 
-        with open(normalized_path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-
-        project = Project(**data)
+        from core.zip_serializer import ZipProjectSerializer
+        project = ZipProjectSerializer.load(normalized_path)
         project.file_path = normalized_path
         project.is_modified = False
+
+        format_ = ZipProjectSerializer.detect_format(normalized_path)
+        if format_ == 'zip':
+            from core.lazy_series import convert_to_lazy
+            convert_to_lazy(project, normalized_path)
+
         self.add_recent_project(normalized_path, project.name)
         return project
 
@@ -64,12 +67,27 @@ class ProjectRepository:
         self.sync_legacy_datasets(project)
         self.sync_project_backups(project, normalized_path, previous_path)
 
-        data = project.model_dump()
-        data.pop("file_path", None)
-        data.pop("is_modified", None)
+        # Collect all data IDs for ZIP container save
+        all_series: set[str] = set()
+        for df in project.data_files:
+            for s in df.series:
+                all_series.add(s.id)
+        for ds in project.datasets:
+            for s in ds.series:
+                all_series.add(s.id)
+        all_curves: set[str] = set()
+        for img in project.images:
+            for c in img.curves:
+                all_curves.add(c.id)
+        for c in project.imported_curves:
+            all_curves.add(c.id)
 
-        with open(normalized_path, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, ensure_ascii=False)
+        from core.zip_serializer import ZipProjectSerializer
+        ZipProjectSerializer.save(
+            project, normalized_path,
+            modified_series_ids=all_series,
+            modified_curve_ids=all_curves,
+        )
 
         project.file_path = normalized_path
         project.is_modified = False

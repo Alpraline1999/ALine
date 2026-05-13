@@ -21,6 +21,11 @@ def _load_project_repository_module():
             self.is_modified = data.get("is_modified", True)
             self.aline_version = data.get("aline_version")
             self.updated_at = data.get("updated_at", "")
+            self.data_files = data.get("data_files", [])
+            self.datasets = data.get("datasets", [])
+            self.images = data.get("images", [])
+            self.imported_curves = data.get("imported_curves", [])
+            self.analyses = data.get("analyses", [])
 
         @classmethod
         def create_new(cls, name: str):

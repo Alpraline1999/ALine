@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,10 +17,11 @@ class ProjectSerializer:
     """项目文件序列化器。
 
     职责：
-    - 将 Project 对象原子写入 .aline 文件（临时文件 → fsync → os.replace）
-    - 从 .aline 文件加载 Project 对象
-    - 检测项目文件格式版本（pyline_v1 / pyline_v2 / aline_v3）
+    - 将 Project 对象原子写入 .aline 文件（ZIP 容器格式 + 原子替换）
+    - 从 .aline / .pyline 文件加载 Project 对象（自动检测 ZIP/JSON 格式）
+    - 检测项目文件格式版本（pyline_v1 / pyline_v2 / aline_v3 / zip）
     - 处理旧版本格式迁移（v1 → v2 → v3）
+    - ZIP 格式下 series/curve 的数据点通过 LazyDataSeries/LazyCurve 按需加载
 
     使用方式：
         serializer = ProjectSerializer(migration_service)
@@ -36,7 +36,7 @@ class ProjectSerializer:
 
         Args:
             migration_service: ProjectMigrationService 实例，用于加载时自动迁移。
-                               为 None 时 load() 不执行迁移（仅用于独立测试）。
+                                为 None 时 load() 不执行迁移（仅用于独立测试）。
             aline_version: 保存时写入的 aline_version 值。
         """
         self._migration = migration_service
@@ -47,7 +47,9 @@ class ProjectSerializer:
     def save(self, project: Project, path: str) -> None:
         """将 project 序列化到 path。
 
-        原子写入：先写入 .tmp 文件 → fsync → os.replace 原子替换。
+        使用 ZIP 容器格式（分离元数据与数据块），通过 ZipProjectSerializer
+        实现原子写入（临时文件 → os.replace）。
+
         写入前自动更新 updated_at、补充 aline_version、排除运行时字段。
 
         Args:
@@ -65,24 +67,27 @@ class ProjectSerializer:
         if project.aline_version is None:
             project.aline_version = self._aline_version
 
-        data = project.model_dump()
-        data.pop("file_path", None)
-        data.pop("is_modified", None)
+        # Collect all data IDs for ZIP container save
+        all_series: set[str] = set()
+        for df in project.data_files:
+            for s in df.series:
+                all_series.add(s.id)
+        for ds in project.datasets:
+            for s in ds.series:
+                all_series.add(s.id)
+        all_curves: set[str] = set()
+        for img in project.images:
+            for c in img.curves:
+                all_curves.add(c.id)
+        for c in project.imported_curves:
+            all_curves.add(c.id)
 
-        temp_path = path + ".tmp"
-        try:
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, path)
-        except Exception:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-            raise
+        from core.zip_serializer import ZipProjectSerializer
+        ZipProjectSerializer.save(
+            project, path,
+            modified_series_ids=all_series,
+            modified_curve_ids=all_curves,
+        )
 
         project.file_path = path
         project.is_modified = False
@@ -90,27 +95,29 @@ class ProjectSerializer:
     # ── load ─────────────────────────────────────────────────────
 
     def load(self, path: str) -> Optional[Project]:
-        """从 path 加载 Project，自动检测版本并迁移。
+        """从 path 加载 Project，自动检测 ZIP/JSON 格式并迁移。
+
+        ZIP 格式下 series/curve 的数据点通过 LazyDataSeries/LazyCurve 按需加载。
 
         Args:
-            path: .aline 文件路径。
+            path: .aline / .pyline 文件路径。
 
         Returns:
-            Project 对象，如果文件不存在或 JSON 无效则返回 None。
+            Project 对象，如果文件不存在或格式无效则返回 None。
         """
         if not os.path.exists(path):
             return None
 
+        from core.zip_serializer import ZipProjectSerializer
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+            project = ZipProjectSerializer.load(path)
+        except (ValueError, Exception):
             return None
 
-        try:
-            project = Project(**data)
-        except Exception:
-            return None
+        format_ = ZipProjectSerializer.detect_format(path)
+        if format_ == 'zip':
+            from core.lazy_series import convert_to_lazy
+            convert_to_lazy(project, path)
 
         project.file_path = path
         project.is_modified = False
@@ -122,7 +129,7 @@ class ProjectSerializer:
     # ── detect_format ────────────────────────────────────────────
 
     def detect_format(self, path: str) -> Optional[str]:
-        """检测文件格式: 'pyline_v1' | 'pyline_v2' | 'aline_v3'。
+        """检测文件格式: 'pyline_v1' | 'pyline_v2' | 'aline_v3' | 'zip'。
 
         Args:
             path: 项目文件路径。
@@ -133,18 +140,24 @@ class ProjectSerializer:
         if not os.path.exists(path):
             return None
 
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return None
+        from core.zip_serializer import ZipProjectSerializer
+        container = ZipProjectSerializer.detect_format(path)
+        if container == 'zip':
+            return 'zip'
+        if container == 'json':
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return None
 
-        version = data.get("aline_version")
-        if version is None:
-            return "pyline_v1"
-        if version == "0.2":
-            return "pyline_v2"
-        return "aline_v3"
+            version = data.get("aline_version")
+            if version is None:
+                return "pyline_v1"
+            if version == "0.2":
+                return "pyline_v2"
+            return "aline_v3"
+        return None
 
     # ── migrate ──────────────────────────────────────────────────
 

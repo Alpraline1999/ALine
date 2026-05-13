@@ -10,7 +10,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, cast
 
 from aline_metadata import CURRENT_PROJECT_VERSION
 from core.analysis_manager import AnalysisManager
@@ -59,6 +59,7 @@ from models.schemas import (
     PictureAsset,
     PicturePlotSnapshot,
     PictureNode,
+    TreeNodeUnion,
     Project,
 )
 
@@ -181,7 +182,7 @@ class ProjectManager:
         attr_name: str,
         attr_value: str,
         project: Optional[Project] = None,
-    ):
+    ) -> Optional["TreeNodeUnion"]:
         p = project or self.current_project
         if p is None or p.tree is None:
             return None
@@ -389,7 +390,7 @@ class ProjectManager:
         """Public facade: 清除当前项目选择。"""
         self._current_project_id = None
 
-    def find_folder_by_group_type(self, group_type: str, parent_id: Optional[str] = None):
+    def find_folder_by_group_type(self, group_type: str, parent_id: Optional[str] = None) -> Optional[FolderNode]:
         """Public facade: 按 group_type 查找文件夹节点。"""
         return self._find_folder_by_group_type(group_type, parent_id)
 
@@ -967,7 +968,7 @@ class ProjectManager:
         if node.kind != "folder":
             return analysis_root.id
 
-        current = node
+        current: Optional[TreeNodeUnion] = node
         while current is not None:
             if current.id == analysis_root.id:
                 return node.id
@@ -1129,7 +1130,7 @@ class ProjectManager:
         del dataset_id
         return self.delete_series(series_id)
 
-    def _find_series_owner(self, series_id: str):
+    def _find_series_owner(self, series_id: str) -> tuple[Optional[str], Any, Optional[DataSeries]]:
         p = self.current_project
         if p is None:
             return None, None, None
@@ -1177,7 +1178,7 @@ class ProjectManager:
         )
         return series if self.add_series_to_data_file(dataset_id, series) else None
 
-    def _find_curve_owner(self, curve_id: str):
+    def _find_curve_owner(self, curve_id: str) -> tuple[Optional[Any], Optional[Curve]]:
         p = self.current_project
         if p is None:
             return None, None
@@ -1366,26 +1367,26 @@ class ProjectManager:
             tool_node_parent_group=_TOOL_NODE_PARENT_GROUP,
         )
 
-    def get_node_by_id(self, node_id: str):
+    def get_node_by_id(self, node_id: str) -> Optional["TreeNodeUnion"]:
         p = self.current_project
         if p is None or p.tree is None:
             return None
         return p.tree.get_node(node_id)
 
-    def get_children(self, parent_id: Optional[str]):
+    def get_children(self, parent_id: Optional[str]) -> list["TreeNodeUnion"]:
         p = self.current_project
         if p is None or p.tree is None:
             return []
         return p.tree.get_children(parent_id)
 
-    def _find_folder_by_name(self, name: str, parent_id: Optional[str] = None):
+    def _find_folder_by_name(self, name: str, parent_id: Optional[str] = None) -> Optional["TreeNodeUnion"]:
         """在树中按名称查找指定层级的文件夹节点。"""
         p = self.current_project
         if p is None or p.tree is None:
             return None
         return p.tree.find_first(kind="folder", name=name, parent_id=parent_id)
 
-    def _find_folder_by_group_type(self, group_type: str, parent_id: Optional[str] = None):
+    def _find_folder_by_group_type(self, group_type: str, parent_id: Optional[str] = None) -> Optional[FolderNode]:
         """按 group_type 查找文件夹节点（更稳健，不依赖名称）。"""
         p = self.current_project
         if p is None or p.tree is None:
@@ -1455,7 +1456,7 @@ class ProjectManager:
             folder.order = order
             changed = True
         if folder.group_type != canonical:
-            folder.group_type = canonical  # type: ignore[assignment]
+            folder.group_type = cast(Any, canonical)
             changed = True
         return folder, changed
 
@@ -1558,7 +1559,7 @@ class ProjectManager:
     # ─────────────────────────────────────────────
 
     def add_saved_pipeline(
-        self, name: str, ops: List[dict], description: str = "", parent_id: Optional[str] = None
+        self, name: str, ops: List[dict[str, Any]], description: str = "", parent_id: Optional[str] = None
     ) -> Optional[SavedPipeline]:
         if self.current_project is None:
             return None
@@ -1567,7 +1568,7 @@ class ProjectManager:
         global_assets.add_saved_pipeline(pipeline)
         return pipeline
 
-    def load_pipeline(self, pipeline_id: str) -> List[dict]:
+    def load_pipeline(self, pipeline_id: str) -> List[dict[str, Any]]:
         """返回 ops 列表；未找到时返回空列表。"""
         sp = global_assets.get_saved_pipeline(pipeline_id)
         return list(sp.ops) if sp else []
@@ -1577,7 +1578,7 @@ class ProjectManager:
         pipeline_id: str,
         *,
         name: Optional[str] = None,
-        ops: Optional[List[dict]] = None,
+        ops: Optional[List[dict[str, Any]]] = None,
         description: Optional[str] = None,
     ) -> bool:
         return global_assets.update_saved_pipeline(pipeline_id, name=name, ops=ops, description=description)
@@ -1735,7 +1736,7 @@ class ProjectManager:
 
         return None
 
-    def get_all_series_from_node(self, kind: str, node_id: str) -> list:
+    def get_all_series_from_node(self, kind: str, node_id: str) -> list[Any]:
         """返回节点下所有 DataSeries 列表（data_file/image_work 返回多个）。"""
         p = self.current_project
         if p is None:
@@ -1779,7 +1780,7 @@ class ProjectManager:
     # 可视化数据聚合（供各页面调用）
     # ─────────────────────────────────────────────
 
-    def collect_all_series(self, project: Optional[Project] = None):
+    def collect_all_series(self, project: Optional[Project] = None) -> list[dict[str, Any]]:
         """汇总项目中所有可用数据系列，供可视化页和分析页使用。
 
         Returns:
