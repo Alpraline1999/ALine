@@ -145,6 +145,7 @@ BASE_DIR = str(_resolve_base_dir())
 
 sys.path.insert(0, BASE_DIR)
 
+from core.app_context import AppContext, set_app_context
 from core.extension_api import load_configured_extensions
 
 _EXTENSION_LOAD_REPORT = load_configured_extensions(os.path.join(BASE_DIR, "extensions"))
@@ -162,6 +163,27 @@ def main():
         app.setWindowIcon(QIcon(icon_path))
 
     setTheme(Theme.AUTO)
+
+    # 初始化 AppContext（核心服务依赖容器）
+    from core.project_manager import ProjectManager
+    from core.tree_manager import TreeManager
+    from core.data_file_manager import DataFileManager
+    from core.analysis_manager import AnalysisManager
+    from core.extension_registry import extension_registry
+    from core.global_assets import global_assets
+    from core.shortcut_manager import shortcut_manager
+
+    pm = ProjectManager()
+    ctx = AppContext(
+        project_manager=pm,
+        tree_manager=TreeManager(),
+        data_file_manager=DataFileManager(pm),
+        analysis_manager=AnalysisManager(pm),
+        extension_registry=extension_registry,
+        global_assets=global_assets,
+        shortcut_manager=shortcut_manager,
+    )
+    set_app_context(ctx)
 
     from ui.main_window import MainWindow
     window = MainWindow()
