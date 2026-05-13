@@ -122,10 +122,13 @@ class ProjectTreeWidget(QWidget):
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.viewport().installEventFilter(self)
+        self._tree.itemExpanded.connect(self._on_item_expanded)
 
         layout.addWidget(self._tree)
 
-        self._renaming = False  # 防止 itemChanged 循环
+        self._renaming = False
+        self._item_cache: Dict[str, QTreeWidgetItem] = {}
+        self._ensuring_loaded: set[str] = set()
         self._branch_toggle_item_key: Optional[str] = None
         self._drag_source_item_key: Optional[str] = None
         self._drag_source_item_keys: List[str] = []
@@ -253,6 +256,7 @@ class ProjectTreeWidget(QWidget):
     def refresh(self) -> None:
         """从 project_manager.projects 完整重建树。"""
         self._projects = project_manager.projects
+        self._item_cache.clear()
         self._builder.build(self)
 
     def _save_current_project(self) -> bool:
@@ -345,6 +349,7 @@ class ProjectTreeWidget(QWidget):
 
     def select_node(self, node_id: str) -> None:
         """程序化选中节点（不触发 node_selected 信号）。"""
+        self._ensure_node_loaded(node_id)
         item = self._find_item(node_id)
         if item:
             self._tree.blockSignals(True)
@@ -534,10 +539,14 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _build_children(
-        self, project, parent_id: Optional[str], parent_item: Optional[QTreeWidgetItem]
+        self, project, parent_id: Optional[str], parent_item: Optional[QTreeWidgetItem], *, depth: int = 1
     ) -> None:
         if project is None or project.tree is None or parent_item is None:
             return
+        if parent_id is None:
+            parent_data = parent_item.data(0, _ROLE)
+            if parent_data and parent_data[0] == "project":
+                depth = 2
         children = sorted(
             project.tree.get_children(parent_id),
             key=lambda node: self._tree_node_sort_key(node, parent_id),
@@ -547,41 +556,182 @@ class ProjectTreeWidget(QWidget):
             if self._filter_kinds and kind not in self._filter_kinds:
                 if kind != "folder":
                     continue
-            item = self._make_item(node, project.id)
-            parent_item.addChild(item)
+            item = self._get_or_create_item(node, project.id)
+            if item.parent() != parent_item:
+                parent_item.addChild(item)
 
-            # 递归子节点
-            self._build_children(project, node.id, item)
+            if depth > 1:
+                self._build_children(project, node.id, item, depth=depth - 1)
 
-            # 为 DataFileNode 追加虚拟 DataSeries 叶节点
-            if kind == "data_file":
-                if not self._filter_kinds or "series" in self._filter_kinds or "data_file" in self._filter_kinds:
-                    df = project.find_data_file(node.data_file_id)
-                    if df:
-                        for series in sorted(df.series, key=lambda item: _sort_text_key(item.name or item.id)):
-                            child = self._make_virtual_series_item(series, project.id)
-                            item.addChild(child)
+                if kind == "data_file":
+                    if not self._filter_kinds or "series" in self._filter_kinds or "data_file" in self._filter_kinds:
+                        df = project.find_data_file(node.data_file_id)
+                        if df:
+                            for series in sorted(df.series, key=lambda item: _sort_text_key(item.name or item.id)):
+                                child = self._make_virtual_series_item(series, project.id)
+                                item.addChild(child)
 
-            # 为 ImageWorkNode 追加虚拟 Curve 叶节点
-            elif kind == "image_work":
-                if not self._filter_kinds or "curve" in self._filter_kinds or "image_work" in self._filter_kinds:
-                    img = next((image for image in project.images if image.id == node.image_work_id), None)
-                    if img:
-                        for curve in sorted(img.curves, key=lambda item: _sort_text_key(item.name or item.id)):
-                            child = self._make_virtual_curve_item(curve, project.id)
-                            item.addChild(child)
+                elif kind == "image_work":
+                    if not self._filter_kinds or "curve" in self._filter_kinds or "image_work" in self._filter_kinds:
+                        img = next((image for image in project.images if image.id == node.image_work_id), None)
+                        if img:
+                            for curve in sorted(img.curves, key=lambda item: _sort_text_key(item.name or item.id)):
+                                child = self._make_virtual_curve_item(curve, project.id)
+                                item.addChild(child)
 
-            # 过滤：文件夹下无可见子节点则隐藏（但受保护的系统文件夹始终保留）
-            is_root_folder = kind == "folder" and parent_id is None and getattr(node, "group_type", None) in _ROOT_GROUP_TYPES
-            is_protected_folder = self._is_protected_folder(node)
-            show_empty_folder = not self._filter_kinds or "folder" in self._filter_kinds
-            if kind == "folder" and not show_empty_folder and item.childCount() == 0 and not is_root_folder and not is_protected_folder:
-                if parent_item is None:
-                    idx = self._tree.indexOfTopLevelItem(item)
-                    self._tree.takeTopLevelItem(idx)
-                else:
+                is_root_folder = kind == "folder" and parent_id is None and getattr(node, "group_type", None) in _ROOT_GROUP_TYPES
+                is_protected_folder = self._is_protected_folder(node)
+                show_empty_folder = not self._filter_kinds or "folder" in self._filter_kinds
+                if kind == "folder" and not show_empty_folder and item.childCount() == 0 and not is_root_folder and not is_protected_folder:
                     parent_item.removeChild(item)
-                continue
+                    continue
+            else:
+                if self._node_has_visible_children(project, node):
+                    self._build_placeholder_item(item)
+                if self._filter_kinds and kind == "folder" and not self._node_has_visible_children(project, node):
+                    is_root_folder = parent_id is None and getattr(node, "group_type", None) in _ROOT_GROUP_TYPES
+                    is_protected = self._is_protected_folder(node)
+                    if not is_root_folder and not is_protected:
+                        parent_item.removeChild(item)
+                        continue
+
+    def _build_placeholder_item(self, parent_item: QTreeWidgetItem) -> QTreeWidgetItem:
+        placeholder = QTreeWidgetItem()
+        parent_item.addChild(placeholder)
+        return placeholder
+
+    def _is_placeholder_item(self, item: Optional[QTreeWidgetItem]) -> bool:
+        if item is None:
+            return False
+        return item.data(0, _ROLE) is None
+
+    def _node_has_visible_children(self, project, node) -> bool:
+        kind = node.kind
+        if kind == "folder":
+            children = project.tree.get_children(node.id)
+            if not children:
+                return False
+            if self._filter_kinds:
+                return any(
+                    child.kind in self._filter_kinds or child.kind == "folder"
+                    for child in children
+                )
+            return True
+        if kind == "data_file":
+            df = project.find_data_file(getattr(node, "data_file_id", ""))
+            if not df:
+                return False
+            if self._filter_kinds and "series" not in self._filter_kinds and "data_file" not in self._filter_kinds:
+                return False
+            return bool(df.series)
+        if kind == "image_work":
+            img = next((image for image in project.images if image.id == getattr(node, "image_work_id", "")), None)
+            if not img:
+                return False
+            if self._filter_kinds and "curve" not in self._filter_kinds and "image_work" not in self._filter_kinds:
+                return False
+            return bool(img.curves)
+        return False
+
+    def _get_or_create_item(self, node, project_id: str) -> QTreeWidgetItem:
+        node_id = getattr(node, "id", None)
+        if node_id and node_id in self._item_cache:
+            item = self._item_cache[node_id]
+            item.setData(0, _PROJECT_ROLE, project_id)
+            return item
+        item = self._make_item(node, project_id)
+        if node_id:
+            self._item_cache[node_id] = item
+        return item
+
+    def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
+        self._lazy_load_children(item)
+
+    def _lazy_load_children(self, item: Optional[QTreeWidgetItem]) -> None:
+        if item is None or item.childCount() != 1:
+            return
+        if not self._is_placeholder_item(item.child(0)):
+            return
+        placeholder = item.child(0)
+        item.removeChild(placeholder)
+        data = self._item_role_data(item)
+        if not data:
+            return
+        kind, node_id = data
+        project_id = self._item_project_id(item)
+        project = next((p for p in self._projects if p.id == project_id), None)
+        if project is None:
+            return
+        if kind == "project":
+            self._build_children(project, None, item)
+        elif kind == "data_file":
+            self._build_virtual_children(project, "data_file", node_id, item)
+        elif kind == "image_work":
+            self._build_virtual_children(project, "image_work", node_id, item)
+        elif kind == "folder" or kind in _ROOT_GROUP_TYPES:
+            self._build_children(project, node_id, item)
+
+    def _build_virtual_children(self, project, kind: str, node_id: str, parent_item: QTreeWidgetItem) -> None:
+        if kind == "data_file":
+            node = project.tree.get_node(node_id)
+            if node is None:
+                return
+            if not self._filter_kinds or "series" in self._filter_kinds or "data_file" in self._filter_kinds:
+                df = project.find_data_file(getattr(node, "data_file_id", ""))
+                if df:
+                    for series in sorted(df.series, key=lambda item: _sort_text_key(item.name or item.id)):
+                        child = self._make_virtual_series_item(series, project.id)
+                        parent_item.addChild(child)
+        elif kind == "image_work":
+            node = project.tree.get_node(node_id)
+            if node is None:
+                return
+            if not self._filter_kinds or "curve" in self._filter_kinds or "image_work" in self._filter_kinds:
+                img = next((image for image in project.images if image.id == getattr(node, "image_work_id", "")), None)
+                if img:
+                    for curve in sorted(img.curves, key=lambda item: _sort_text_key(item.name or item.id)):
+                        child = self._make_virtual_curve_item(curve, project.id)
+                        parent_item.addChild(child)
+
+    def _ensure_node_loaded(self, node_id: str) -> None:
+        if node_id in self._ensuring_loaded:
+            return
+        self._ensuring_loaded.add(node_id)
+        try:
+            project = project_manager.current_project
+            if project is None or project.tree is None:
+                return
+            current = project.tree.get_node(node_id)
+            if current is None:
+                for df in project.data_files:
+                    if any(series.id == node_id for series in df.series):
+                        for node in project.tree.nodes:
+                            if getattr(node, "kind", None) == "data_file" and getattr(node, "data_file_id", None) == df.id:
+                                current = node
+                                break
+                        break
+                if current is None:
+                    for img in project.images:
+                        if any(curve.id == node_id for curve in img.curves):
+                            for node in project.tree.nodes:
+                                if getattr(node, "kind", None) == "image_work" and getattr(node, "image_work_id", None) == img.id:
+                                    current = node
+                                    break
+                            break
+            if current is None:
+                return
+            ancestor_ids: List[str] = []
+            while current is not None:
+                ancestor_ids.append(current.id)
+                parent_id = getattr(current, "parent_id", None)
+                current = project.tree.get_node(parent_id) if parent_id else None
+            for ancestor_id in reversed(ancestor_ids):
+                item = self._find_item(ancestor_id)
+                if item is not None:
+                    item.setExpanded(True)
+                    self._lazy_load_children(item)
+        finally:
+            self._ensuring_loaded.discard(node_id)
 
     def _make_project_item(self, project) -> QTreeWidgetItem:
         project_item = QTreeWidgetItem([project.name])
@@ -733,6 +883,7 @@ class ProjectTreeWidget(QWidget):
         tooltip = getattr(node, "name", "") or getattr(node, "id", "")
         item.setToolTip(0, str(tooltip))
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
+        self._item_cache[node.id] = item
         return item
 
     def _make_virtual_series_item(self, series, project_id: str) -> QTreeWidgetItem:
@@ -816,6 +967,8 @@ class ProjectTreeWidget(QWidget):
                     if branch_key is not None:
                         if item is not None:
                             item.setExpanded(not item.isExpanded())
+                            if item.isExpanded():
+                                self._lazy_load_children(item)
                         return True
                 if event.button() == Qt.MouseButton.LeftButton and self._tree.itemAt(event.pos()) is None:
                     self._clear_drag_source_item()
@@ -1077,6 +1230,7 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _find_item(self, node_id: str) -> Optional[QTreeWidgetItem]:
+        self._ensure_node_loaded(node_id)
         def _search(parent: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
             count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
             for index in range(count):
@@ -1267,10 +1421,13 @@ class ProjectTreeWidget(QWidget):
         def _walk(item: Optional[QTreeWidgetItem]) -> None:
             if item is None or item.isHidden():
                 return
+            self._lazy_load_children(item)
             if item.childCount() > 0:
                 item.setExpanded(True)
-            for index in range(item.childCount()):
+            index = 0
+            while index < item.childCount():
                 _walk(item.child(index))
+                index += 1
         for index in range(self._tree.topLevelItemCount()):
             _walk(self._tree.topLevelItem(index))
 
@@ -1469,6 +1626,7 @@ class ProjectTreeWidget(QWidget):
             self._tree.clearSelection()
             current_item = None
             for node_id in clean_ids:
+                self._ensure_node_loaded(node_id)
                 item = self._find_item(node_id)
                 if item is None:
                     continue
@@ -1522,6 +1680,8 @@ class ProjectTreeWidget(QWidget):
             key = self._item_key(item)
             if key in state:
                 item.setExpanded(state[key])
+                if state[key]:
+                    self._lazy_load_children(item)
             for index in range(item.childCount()):
                 _walk(item.child(index))
         for index in range(self._tree.topLevelItemCount()):
@@ -1530,6 +1690,7 @@ class ProjectTreeWidget(QWidget):
     def _find_item_by_key(self, item_key: Optional[str]) -> Optional[QTreeWidgetItem]:
         if not item_key:
             return None
+        self._ensure_node_loaded(item_key)
         def _search(parent: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
             count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
             for index in range(count):
@@ -1555,6 +1716,7 @@ class ProjectTreeWidget(QWidget):
         current_item = None
         self._tree.clearSelection()
         for key in keys:
+            self._ensure_node_loaded(key)
             item = self._find_item_by_key(key)
             if item is None:
                 continue
@@ -1578,6 +1740,8 @@ class ProjectTreeWidget(QWidget):
 
     def _apply_focus_view(self, preferred_selection_keys: Optional[List[str]] = None) -> List[str]:
         preferred_selection_keys = list(preferred_selection_keys or [])
+        for key in list(self._focused_item_keys):
+            self._ensure_node_loaded(key)
         focus_keys = [key for key in self._focused_item_keys if self._find_item_by_key(key) is not None]
         if focus_keys != self._focused_item_keys:
             self._focused_item_keys = focus_keys
@@ -1605,6 +1769,8 @@ class ProjectTreeWidget(QWidget):
                 if visible_selection:
                     return visible_selection
             return focus_keys[:1]
+        for key in list(preferred_selection_keys):
+            self._ensure_node_loaded(key)
         return [key for key in preferred_selection_keys if self._find_item_by_key(key) is not None]
 
     def _focus_visible_keys(self, focus_items: List[QTreeWidgetItem]) -> set[str]:
@@ -1631,11 +1797,11 @@ class ProjectTreeWidget(QWidget):
                 child_stack.extend(current_item.child(index) for index in range(current_item.childCount()))
         return visible_keys
 
-    @staticmethod
-    def _expand_item_ancestors(item: Optional[QTreeWidgetItem]) -> None:
+    def _expand_item_ancestors(self, item: Optional[QTreeWidgetItem]) -> None:
         current = item
         while current is not None:
             current.setExpanded(True)
+            self._lazy_load_children(current)
             current = current.parent()
 
     # ─────────────────────────────────────────────────────────

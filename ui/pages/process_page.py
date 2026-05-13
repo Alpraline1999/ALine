@@ -1219,12 +1219,12 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
                 "process_pipeline", job_id,
                 self._build_output_series_batch,
                 args=(self._preview_input_payloads(), self._selected_inputs),
+                on_finished=lambda tid, result: self._on_pipeline_finished(tid, result, job_id),
+                on_error=lambda tid, err: self._on_pipeline_error(tid, err, job_id),
             )
             task = self._task_manager.get_task("process_pipeline")
             if task is not None:
                 task.progress_changed.connect(self._on_pipeline_progress)
-                task.finished.connect(lambda tid, result: self._on_pipeline_finished(tid, result, job_id))
-                task.error_occurred.connect(lambda tid, err: self._on_pipeline_error(tid, err, job_id))
                 self._set_stats_message("正在后台处理…")
         else:
             self._run_pipeline_now()
