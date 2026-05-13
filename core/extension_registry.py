@@ -13,6 +13,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
+from core.i18n import _
+
 from core.extension_definition import (
     AnalysisExtension,
     DEFAULT_EXTENSION_VERSION,
@@ -539,7 +541,7 @@ def _format_source_split(counts: Dict[str, int]) -> str:
     external_count = int(counts.get("external", 0) or 0)
     if builtin_count + external_count <= 0:
         return ""
-    return f"（内置 {builtin_count} / 外部 {external_count}）"
+    return _("（内置 {} / 外部 {}）").format(builtin_count, external_count)
 
 
 def _builtin_extension_id(path: str | Path) -> str:

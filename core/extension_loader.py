@@ -324,39 +324,42 @@ def format_extension_load_report(category: Optional[str] = None) -> str:
     details = status["details"]
     source_summary = status.get("source_summary") or {}
     lines = [
-        f"{status['label']}状态",
-        f"已注册扩展: {status['registered_count']}{_format_source_split(source_summary.get('loaded_extension_counts', {}))}",
-        f"成功扫描文件: {status['loaded_file_count']}{_format_source_split(source_summary.get('loaded_file_counts', {}))}",
-        f"失败文件: {status['error_count']}{_format_source_split(source_summary.get('error_file_counts', {}))}",
+        _("{}状态").format(status['label']),
+        _("已注册扩展: {}").format(status['registered_count']) + _format_source_split(source_summary.get('loaded_extension_counts', {})),
+        _("成功扫描文件: {}").format(status['loaded_file_count']) + _format_source_split(source_summary.get('loaded_file_counts', {})),
+        _("失败文件: {}").format(status['error_count']) + _format_source_split(source_summary.get('error_file_counts', {})),
     ]
 
     if details.get("loaded"):
         lines.append("")
-        lines.append("成功扫描文件:")
+        lines.append(_("成功扫描文件:"))
         for item in details["loaded"]:
-            lines.append(f"- {Path(item['path']).name} [{item.get('source_label', '外部')}]")
+            source_label = item.get('source_label', _('外部'))
+            lines.append(_("- {} [{}]").format(Path(item['path']).name, source_label))
             extension_parts = []
             for detail_category, type_ids in sorted(item.get("extensions", {}).items()):
                 category_label = _EXTENSION_CATEGORY_LABELS.get(detail_category, detail_category)
-                extension_parts.append(f"{category_label}: {', '.join(type_ids)}")
+                extension_parts.append(_("{}: {}").format(category_label, ', '.join(type_ids)))
             if extension_parts:
-                lines.append(f"  {' | '.join(extension_parts)}")
+                lines.append(_("  {}").format(' | '.join(extension_parts)))
 
     if details.get("errors"):
         lines.append("")
-        lines.append("失败文件:")
+        lines.append(_("失败文件:"))
         for item in details["errors"]:
-            category_text = "、".join(
+            source_label = item.get('source_label', _('外部'))
+            separator = "、"
+            category_text = separator.join(
                 _EXTENSION_CATEGORY_LABELS.get(str(cat), str(cat))
                 for cat in item.get("categories", [])
             )
             lines.append(
-                f"- {Path(item['path']).name} [{item.get('source_label', '外部')}]: {item.get('message', '')}"
+                _("- {} [{}]: {}").format(Path(item['path']).name, source_label, item.get('message', ''))
             )
             if category_text:
-                lines.append(f"  推断分类: {category_text}")
+                lines.append(_("  推断分类: {}").format(category_text))
 
     if len(lines) == 4:
         lines.append("")
-        lines.append("最近一次扫描没有记录到任何扩展文件。")
+        lines.append(_("最近一次扫描没有记录到任何扩展文件。"))
     return "\n".join(lines)

@@ -84,8 +84,8 @@ _EXTENSION_SOURCE_HINTS = {
 }
 
 _EXTENSION_TOOL_TIER_LABELS = {
-    "tool": "工具",
-    "experimental": "实验",
+    "tool": _("工具"),
+    "experimental": _("实验"),
 }
 
 _EXTENSION_SOURCE_KINDS = frozenset(_EXTENSION_ORIGIN_LABELS)
