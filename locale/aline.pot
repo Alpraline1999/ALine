@@ -1,0 +1,553 @@
+# Translations template for ALine.
+# Copyright (C) 2026 ALine
+# This file is distributed under the same license as the ALine project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: ALine 0.3\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-05-13 17:43+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: core/extension_api.py:606 core/extension_api.py:607
+#: core/extension_api.py:1001 ui/pages/settings_page.py:204
+msgid "扩展"
+msgstr ""
+
+#: core/extension_definition.py:25
+msgid "处理扩展"
+msgstr ""
+
+#: core/extension_definition.py:26
+msgid "分析扩展"
+msgstr ""
+
+#: core/extension_definition.py:27 ui/pages/chart_page.py:374
+#: ui/pages/chart_page.py:731 ui/pages/chart_page.py:732
+msgid "绘图扩展"
+msgstr ""
+
+#: core/extension_definition.py:28
+msgid "数字化扩展"
+msgstr ""
+
+#: core/extension_definition.py:32 core/extension_definition.py:38
+msgid "基础"
+msgstr ""
+
+#: core/extension_definition.py:33 core/extension_definition.py:39
+msgid "内置"
+msgstr ""
+
+#: core/extension_definition.py:34 core/extension_definition.py:40
+msgid "外部"
+msgstr ""
+
+#: ui/main_window.py:122 ui/main_window.py:562 ui/pages/home_page.py:349
+#: ui/pages/home_page.py:642
+msgid "新建项目"
+msgstr ""
+
+#: ui/main_window.py:126 ui/main_window.py:581 ui/pages/home_page.py:354
+#: ui/pages/home_page.py:660
+msgid "打开项目"
+msgstr ""
+
+#: ui/main_window.py:130
+msgid "保存当前项目"
+msgstr ""
+
+#: ui/main_window.py:134
+msgid "关闭当前项目"
+msgstr ""
+
+#: ui/main_window.py:154 ui/main_window.py:194
+msgid "全部展开"
+msgstr ""
+
+#: ui/main_window.py:158
+msgid "项目树管理"
+msgstr ""
+
+#: ui/main_window.py:162 ui/main_window.py:461
+msgid "隐藏扩展面板"
+msgstr ""
+
+#: ui/main_window.py:194
+msgid "全部折叠"
+msgstr ""
+
+#: ui/main_window.py:265
+msgid "主页"
+msgstr ""
+
+#: ui/main_window.py:266
+msgid "数据管理"
+msgstr ""
+
+#: ui/main_window.py:267
+msgid "数据可视化"
+msgstr ""
+
+#: ui/main_window.py:268
+msgid "数据处理"
+msgstr ""
+
+#: ui/main_window.py:269
+msgid "数据分析"
+msgstr ""
+
+#: ui/main_window.py:270
+msgid "图片数字化"
+msgstr ""
+
+#: ui/main_window.py:271
+msgid "设置"
+msgstr ""
+
+#: ui/main_window.py:280 ui/main_window.py:471
+msgid "隐藏项目树"
+msgstr ""
+
+#: ui/main_window.py:454
+msgid "当前页面没有扩展面板"
+msgstr ""
+
+#: ui/main_window.py:461
+msgid "显示扩展面板"
+msgstr ""
+
+#: ui/main_window.py:471
+msgid "显示项目树"
+msgstr ""
+
+#: ui/main_window.py:562 ui/pages/home_page.py:642
+msgid "请输入项目名称"
+msgstr ""
+
+#: ui/main_window.py:568 ui/pages/home_page.py:647
+msgid "选择项目保存目录"
+msgstr ""
+
+#: ui/main_window.py:574 ui/main_window.py:590 ui/pages/home_page.py:654
+#: ui/pages/home_page.py:669
+msgid "错误"
+msgstr ""
+
+#: ui/main_window.py:574
+#, python-brace-format
+msgid ""
+"创建项目失败:\n"
+"{exc}"
+msgstr ""
+
+#: ui/main_window.py:590
+#, python-brace-format
+msgid ""
+"无法打开项目:\n"
+"{exc}"
+msgstr ""
+
+#: ui/main_window.py:597 ui/main_window.py:628 ui/main_window.py:657
+#: ui/pages/home_page.py:611
+msgid "提示"
+msgstr ""
+
+#: ui/main_window.py:597 ui/main_window.py:628 ui/main_window.py:657
+msgid "请先打开项目"
+msgstr ""
+
+#: ui/main_window.py:604
+msgid "保存项目"
+msgstr ""
+
+#: ui/main_window.py:614 ui/main_window.py:643
+msgid "保存失败"
+msgstr ""
+
+#: ui/main_window.py:622
+msgid "已保存"
+msgstr ""
+
+#: ui/main_window.py:633
+msgid "另存项目"
+msgstr ""
+
+#: ui/main_window.py:651
+msgid "已另存"
+msgstr ""
+
+#: ui/main_window.py:745
+msgid "未保存的更改"
+msgstr ""
+
+#: ui/main_window.py:745
+#, python-brace-format
+msgid ""
+"以下项目有未保存的更改：\n"
+"{names}\n"
+"\n"
+"确定要退出吗？"
+msgstr ""
+
+#: ui/pages/analysis_page.py:280
+msgid "分析类型"
+msgstr ""
+
+#: ui/pages/analysis_page.py:297 ui/pages/process_page.py:409
+msgid "已选择列表"
+msgstr ""
+
+#: ui/pages/analysis_page.py:303
+msgid "当前分析: 未选择"
+msgstr ""
+
+#: ui/pages/analysis_page.py:327 ui/pages/chart_page.py:332
+#: ui/pages/process_page.py:419
+msgid "清除"
+msgstr ""
+
+#: ui/pages/analysis_page.py:331 ui/pages/chart_page.py:339
+#: ui/pages/process_page.py:423
+msgid "移除选中"
+msgstr ""
+
+#: ui/pages/analysis_page.py:369
+msgid "运行分析"
+msgstr ""
+
+#: ui/pages/analysis_page.py:399
+msgid "分析结果"
+msgstr ""
+
+#: ui/pages/analysis_page.py:456
+msgid "报告模板"
+msgstr ""
+
+#: ui/pages/chart_page.py:316
+msgid "已绘图曲线"
+msgstr ""
+
+#: ui/pages/chart_page.py:372
+msgid "曲线样式"
+msgstr ""
+
+#: ui/pages/chart_page.py:373
+msgid "绘图样式"
+msgstr ""
+
+#: ui/pages/chart_page.py:383
+msgid "导出图片"
+msgstr ""
+
+#: ui/pages/chart_page.py:387
+msgid "导出到图片集"
+msgstr ""
+
+#: ui/pages/chart_page.py:731
+msgid "应用扩展"
+msgstr ""
+
+#: ui/pages/data_page.py:542
+msgid "共享树入口"
+msgstr ""
+
+#: ui/pages/data_page.py:547
+msgid "新建数据集"
+msgstr ""
+
+#: ui/pages/data_page.py:550
+msgid "导入文件"
+msgstr ""
+
+#: ui/pages/data_page.py:573
+msgid "曲线→数据集"
+msgstr ""
+
+#: ui/pages/data_page.py:595
+msgid "节点管理"
+msgstr ""
+
+#: ui/pages/data_page.py:620
+msgid "重命名"
+msgstr ""
+
+#: ui/pages/data_page.py:630
+msgid "删除节点"
+msgstr ""
+
+#: ui/pages/data_page.py:634
+msgid "导出数据"
+msgstr ""
+
+#: ui/pages/data_page.py:641
+msgid "→ 可视化"
+msgstr ""
+
+#: ui/pages/data_page.py:642
+msgid "→ 处理"
+msgstr ""
+
+#: ui/pages/data_page.py:655
+msgid "导入到数据集"
+msgstr ""
+
+#: ui/pages/data_page.py:657
+msgid "导入到数字化"
+msgstr ""
+
+#: ui/pages/data_page.py:674
+msgid "待导入列表"
+msgstr ""
+
+#: ui/pages/data_page.py:694
+msgid "移除所选"
+msgstr ""
+
+#: ui/pages/data_page.py:696
+msgid "清空列表"
+msgstr ""
+
+#: ui/pages/data_page.py:704
+msgid "默认模式导入"
+msgstr ""
+
+#: ui/pages/data_page.py:706
+msgid "执行导入"
+msgstr ""
+
+#: ui/pages/data_page.py:741
+msgid "数据预览"
+msgstr ""
+
+#: ui/pages/data_page.py:748
+msgid "重置配置"
+msgstr ""
+
+#: ui/pages/data_page.py:753
+msgid "保存配置"
+msgstr ""
+
+#: ui/pages/data_page.py:1438
+msgid "选择目录"
+msgstr ""
+
+#: ui/pages/digitize_page.py:374
+msgid "导入图片"
+msgstr ""
+
+#: ui/pages/digitize_page.py:380
+msgid "新增曲线"
+msgstr ""
+
+#: ui/pages/digitize_page.py:388
+msgid "曲线数据"
+msgstr ""
+
+#: ui/pages/digitize_page.py:435
+msgid "图片选点"
+msgstr ""
+
+#: ui/pages/digitize_page.py:437
+msgid "数据导出"
+msgstr ""
+
+#: ui/pages/digitize_page.py:610
+msgid "手动选点"
+msgstr ""
+
+#: ui/pages/digitize_page.py:624
+msgid "校准"
+msgstr ""
+
+#: ui/pages/digitize_page.py:630
+msgid "手动取点"
+msgstr ""
+
+#: ui/pages/home_page.py:146
+msgid "一站式科研数据管理与可视化工作台"
+msgstr ""
+
+#: ui/pages/home_page.py:148
+msgid "项目、数据、绘图和分析结果在同一工作台内流转。"
+msgstr ""
+
+#: ui/pages/home_page.py:157
+msgid "软件主页"
+msgstr ""
+
+#: ui/pages/home_page.py:158
+msgid "预留软件主页入口，后续替换为正式介绍页面。"
+msgstr ""
+
+#: ui/pages/home_page.py:165
+msgid "GitHub 仓库"
+msgstr ""
+
+#: ui/pages/home_page.py:166
+msgid "预留代码仓库入口，后续替换为正式仓库地址。"
+msgstr ""
+
+#: ui/pages/home_page.py:173
+msgid "扩展社区"
+msgstr ""
+
+#: ui/pages/home_page.py:174
+msgid "预留扩展社区入口，后续替换为正式社区。"
+msgstr ""
+
+#: ui/pages/home_page.py:367
+msgid "最近项目"
+msgstr ""
+
+#: ui/pages/home_page.py:374
+msgid "暂无最近项目"
+msgstr ""
+
+#: ui/pages/home_page.py:488
+msgid "未知项目"
+msgstr ""
+
+#: ui/pages/home_page.py:522
+msgid "从列表移除"
+msgstr ""
+
+#: ui/pages/home_page.py:552
+#, python-brace-format
+msgid "扩展：{count} 项可用{suffix}，{errors} 项失败"
+msgstr ""
+
+#: ui/pages/home_page.py:555
+#, python-brace-format
+msgid "扩展：{count} 项可用{suffix}"
+msgstr ""
+
+#: ui/pages/home_page.py:558
+msgid "扩展：未发现可用项"
+msgstr ""
+
+#: ui/pages/home_page.py:576
+msgid "扩展加载详情"
+msgstr ""
+
+#: ui/pages/home_page.py:586
+msgid "主页入口留在这里"
+msgstr ""
+
+#: ui/pages/home_page.py:587
+msgid "顶部 Banner 预留了软件主页和 GitHub 仓库卡片，后续可直接补充链接和封面。"
+msgstr ""
+
+#: ui/pages/home_page.py:592
+msgid "先建项目"
+msgstr ""
+
+#: ui/pages/home_page.py:593
+msgid "数据、图表和结果都会落在同一项目里，先建项目最稳妥。"
+msgstr ""
+
+#: ui/pages/home_page.py:598
+msgid "也可以继续上次工作"
+msgstr ""
+
+#: ui/pages/home_page.py:599
+msgid "已有 .aline 项目时，从这里恢复项目树和页面状态。"
+msgstr ""
+
+#: ui/pages/home_page.py:604
+msgid "最近项目会留在这里"
+msgstr ""
+
+#: ui/pages/home_page.py:605
+msgid "常做的项目可以直接回到上次位置。"
+msgstr ""
+
+#: ui/pages/home_page.py:611
+msgid "请先新建项目或打开现有项目"
+msgstr ""
+
+#: ui/pages/home_page.py:619
+msgid "文件不存在"
+msgstr ""
+
+#: ui/pages/home_page.py:619
+#, python-brace-format
+msgid ""
+"项目文件已移动或删除:\n"
+"{path}"
+msgstr ""
+
+#: ui/pages/home_page.py:654
+#, python-brace-format
+msgid ""
+"创建项目失败:\n"
+"{err}"
+msgstr ""
+
+#: ui/pages/home_page.py:669
+#, python-brace-format
+msgid ""
+"无法打开项目:\n"
+"{err}"
+msgstr ""
+
+#: ui/pages/process_page.py:360
+msgid "当前输入"
+msgstr ""
+
+#: ui/pages/process_page.py:386
+msgid "当前输入: 未选择"
+msgstr ""
+
+#: ui/pages/process_page.py:394
+msgid "当前处理: 未选择"
+msgstr ""
+
+#: ui/pages/process_page.py:446
+msgid "操作链"
+msgstr ""
+
+#: ui/pages/process_page.py:448
+msgid "选择曲线"
+msgstr ""
+
+#: ui/pages/process_page.py:535
+msgid "导出数据列"
+msgstr ""
+
+#: ui/pages/process_page.py:539
+msgid "批量导出"
+msgstr ""
+
+#: ui/pages/process_page.py:556
+msgid "处理预览"
+msgstr ""
+
+#: ui/pages/settings_page.py:203
+msgid "常规"
+msgstr ""
+
+#: ui/pages/settings_page.py:205
+msgid "快捷键"
+msgstr ""
+
+#: ui/pages/settings_page.py:341
+msgid "外观"
+msgstr ""
+
+#: ui/pages/settings_page.py:348
+msgid "主题"
+msgstr ""
+
+#: ui/pages/settings_page.py:348
+msgid "切换浅色、深色或跟随系统。"
+msgstr ""
+
