@@ -62,11 +62,28 @@ from ui.widgets.matplotlib_preview import (
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.page_view_state import ProcessPageViewState
 from core.global_assets import global_assets
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from models.schemas import DataFile, DataSeries, SavedPipeline
 from processing.data_engine import apply_pipeline_to_lines
+from processing.async_runner import AsyncPipelineRunner
+from processing.downsample import downsample_lttb, should_downsample
 from processing.pipeline_extension import build_pipeline_extension_definition
 from .page_shell_helpers import ExtensionPanelShellMixin, sync_vertical_splitter_sizes
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
+
 
 _matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtagg()
 HAS_MATPLOTLIB = _matplotlib is not None
@@ -216,6 +233,8 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._run_timer.setInterval(300)
         self._run_timer.timeout.connect(self._trigger_pipeline_run)
         self._task_manager = TaskManager(self)
+        self._async_runner: Optional[AsyncPipelineRunner] = None
+        self._async_source_batch_ref: List[Dict[str, Any]] = []
         self._theme_refresh_pending = False
         self._shortcut_bindings = ShortcutBindingSet()
         self._save_export_coordinator = SaveExportCoordinator(
@@ -539,6 +558,11 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._save_batch_result_button.clicked.connect(self._save_batch_result)
         apply_button_metrics(self._save_batch_result_button, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         export_row.addWidget(self._save_batch_result_button)
+        self._cancel_pipeline_btn = PushButton(FIF.CANCEL, "取消处理")
+        self._cancel_pipeline_btn.clicked.connect(self._cancel_async_pipeline)
+        apply_button_metrics(self._cancel_pipeline_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        self._cancel_pipeline_btn.hide()
+        export_row.addWidget(self._cancel_pipeline_btn)
         controls_layout.addLayout(export_row)
         self._selected_input_splitter.setStretchFactor(0, 0)
         self._selected_input_splitter.setStretchFactor(1, 1)
@@ -1210,53 +1234,134 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._run_timer.start()
 
     def _trigger_pipeline_run(self) -> None:
-        """触发 pipeline 执行：小输入同步，大输入后台异步。"""
-        if len(self._selected_inputs) >= 3 and self._out_series_batch:
-            # 批量大输入 -> 后台执行
-            import uuid
-            job_id = str(uuid.uuid4())
-            self._task_manager.run(
-                "process_pipeline", job_id,
-                self._build_output_series_batch,
-                args=(self._preview_input_payloads(), self._selected_inputs),
-                on_finished=lambda tid, result: self._on_pipeline_finished(tid, result, job_id),
-                on_error=lambda tid, err: self._on_pipeline_error(tid, err, job_id),
-            )
-            task = self._task_manager.get_task("process_pipeline")
-            if task is not None:
-                task.progress_changed.connect(self._on_pipeline_progress)
-                self._set_stats_message("正在后台处理…")
-        else:
+        """触发 pipeline 执行：异步后台执行，带进度反馈与取消支持。"""
+        if not self._ops:
             self._run_pipeline_now()
-
-    def _on_pipeline_progress(self, task_id: str, text: str, percent: float) -> None:
-        self._set_stats_message(text)
-
-    def _on_pipeline_finished(self, task_id: str, result: Any, expected_job_id: str) -> None:
-        """后台 pipeline 完成回调。"""
-        current = self._task_manager._current_job_ids.get("process_pipeline")
-        if current != expected_job_id:
-            return  # 过期结果
-        if result is None:
             return
-        out_series_batch, warnings = result if isinstance(result, tuple) else (result, [])
-        self._out_series_batch = out_series_batch
+
+        self._sync_ops_params()
+
+        active_payloads = self._preview_input_payloads()
+        source_templates = self._build_series_batch_from_payloads(active_payloads)
+        if not source_templates:
+            self._out_series_batch = []
+            self._out_xs = []
+            self._out_ys = []
+            self._pipeline_warnings = []
+            self._draw_preview()
+            self._set_stats_message("（选择数据并配置操作后显示统计）")
+            self._update_save_action_presentation()
+            return
+
+        all_series = self._build_series_batch_from_payloads(self._selected_inputs)
+        lines = [self._series_to_line_payload(series) for series in source_templates]
+        selected_lines = [self._series_to_line_payload(series) for series in all_series] if all_series else None
+
+        self._async_source_batch_ref = [source_templates, all_series]
+
+        self._cancel_async_runner()
+        self._async_runner = AsyncPipelineRunner(self)
+        self._async_runner.progress.connect(self._on_async_pipeline_progress)
+        self._async_runner.step_completed.connect(self._on_async_step_completed)
+        self._async_runner.finished.connect(self._on_async_pipeline_finished)
+        self._async_runner.error.connect(self._on_async_pipeline_error)
+        self._async_runner.cancelled.connect(self._on_async_pipeline_cancelled)
+        self._async_runner.run(lines, self._ops, selected_lines)
+
+        self._cancel_pipeline_btn.show()
+        self._set_stats_message("正在处理…")
+
+    def _on_async_pipeline_progress(self, percent: int, msg: str) -> None:
+        self._set_stats_message(f"{percent}% {msg}")
+
+    def _on_async_step_completed(self, index: int, op_type: str, _result: object) -> None:
+        self._set_stats_message(f"已完成: {op_type}")
+
+    def _on_async_pipeline_finished(self, result_lines: list, warnings: list) -> None:
+        source_templates, all_series = self._async_source_batch_ref
+        template_series = source_templates or all_series
+        rebuilt = [
+            DataSeries(
+                name=str(line.get("name", source_series.name) or source_series.name),
+                x=list(line.get("x", []) or []),
+                y=list(line.get("y", []) or []),
+                x_label=str(line.get("x_label", source_series.x_label) or source_series.x_label),
+                y_label=str(line.get("y_label", source_series.y_label) or source_series.y_label),
+                color=str(line.get("color", source_series.color) or source_series.color),
+                visible=bool(line.get("visible", source_series.visible)),
+                source="computed",
+                source_curve_id=line.get("source_curve_id", source_series.source_curve_id),
+            )
+            for line, source_series in zip(
+                result_lines,
+                template_series + [template_series[0]] * max(0, len(result_lines) - len(template_series)),
+            )
+        ]
+        self._out_series_batch = rebuilt
         self._pipeline_warnings = warnings
-        preview_series = out_series_batch[0] if out_series_batch else None
+        preview_series = rebuilt[0] if rebuilt else None
         self._out_xs = list(preview_series.x) if preview_series is not None else []
         self._out_ys = list(preview_series.y) if preview_series is not None else []
+        self._cancel_pipeline_btn.hide()
+        self._cancel_async_runner()
         self._draw_preview()
         self._update_stats()
         self._update_save_action_presentation()
 
-    def _on_pipeline_error(self, task_id: str, error: str, expected_job_id: str) -> None:
-        current = self._task_manager._current_job_ids.get("process_pipeline")
-        if current != expected_job_id:
-            return
+    def _on_async_pipeline_error(self, error_msg: str) -> None:
         self._out_series_batch = []
         self._out_xs = []
         self._out_ys = []
-        self._set_stats_message(f"处理错误: {error}", is_error=True)
+        self._pipeline_warnings = []
+        self._cancel_pipeline_btn.hide()
+        self._cancel_async_runner()
+        self._set_stats_message(f"处理错误: {error_msg}", is_error=True)
+
+    def _on_async_pipeline_cancelled(self) -> None:
+        self._out_series_batch = []
+        self._out_xs = []
+        self._out_ys = []
+        self._pipeline_warnings = []
+        self._cancel_pipeline_btn.hide()
+        self._cancel_async_runner()
+        self._set_stats_message("处理已取消")
+
+    def _cancel_async_pipeline(self) -> None:
+        if self._async_runner is not None:
+            self._async_runner.cancel()
+            self._set_stats_message("正在取消…")
+
+    def _cancel_async_runner(self) -> None:
+        if self._async_runner is not None:
+            try:
+                self._async_runner.progress.disconnect()
+            except Exception:
+                pass
+            try:
+                self._async_runner.step_completed.disconnect()
+            except Exception:
+                pass
+            try:
+                self._async_runner.finished.disconnect()
+            except Exception:
+                pass
+            try:
+                self._async_runner.error.disconnect()
+            except Exception:
+                pass
+            try:
+                self._async_runner.cancelled.disconnect()
+            except Exception:
+                pass
+            self._async_runner.cleanup()
+            self._async_runner = None
+
+    def _sync_ops_params(self) -> None:
+        for op, pw in zip(self._ops, self._param_widgets):
+            merged_params = dict(op.get("params", {}) or {})
+            merged_params.update(pw.get_params())
+            op["params"] = self._normalized_operation_params(str(op.get("type", "") or ""), merged_params)
+            op["config_id"] = getattr(pw, "current_settings_config_id", lambda: None)()
 
     def _run_pipeline_now(self):
         if not self._src_series_batch:
@@ -1268,11 +1373,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             self._set_stats_message("（选择数据并配置操作后显示统计）")
             self._update_save_action_presentation()
             return
-        for op, pw in zip(self._ops, self._param_widgets):
-            merged_params = dict(op.get("params", {}) or {})
-            merged_params.update(pw.get_params())
-            op["params"] = self._normalized_operation_params(str(op.get("type", "") or ""), merged_params)
-            op["config_id"] = getattr(pw, "current_settings_config_id", lambda: None)()
+        self._sync_ops_params()
         try:
             preview_payloads = self._preview_input_payloads()
             self._out_series_batch, self._pipeline_warnings = self._build_output_series_batch(
@@ -1359,12 +1460,23 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         _MAX_PTS = 2000
         src_label = "原始（预览当前首条）" if len(self._src_series_batch) > 1 else "原始"
         out_label = "处理后（预览当前首条）" if len(self._out_series_batch) > 1 else "处理后"
+
+        def _ds(xs, ys):
+            if should_downsample(len(xs)):
+                try:
+                    import numpy as np
+                    xd, yd = downsample_lttb(np.array(xs, dtype=float), np.array(ys, dtype=float), max_points=_MAX_PTS)
+                    return xd.tolist() if hasattr(xd, 'tolist') else list(xd), yd.tolist() if hasattr(yd, 'tolist') else list(yd)
+                except ImportError:
+                    pass
+            return _downsample(xs, ys, _MAX_PTS)
+
         if self._src_xs:
-            sx, sy = _downsample(self._src_xs, self._src_ys, _MAX_PTS)
+            sx, sy = _ds(self._src_xs, self._src_ys)
             ax.plot(sx, sy, color="#888888",
                     linestyle="--", linewidth=1.0, alpha=0.6, label=src_label)
         if self._out_xs:
-            ox, oy = _downsample(self._out_xs, self._out_ys, _MAX_PTS)
+            ox, oy = _ds(self._out_xs, self._out_ys)
             ax.plot(ox, oy, color="#0078D4",
                     linewidth=1.5, label=out_label)
         if self._src_xs or self._out_xs:

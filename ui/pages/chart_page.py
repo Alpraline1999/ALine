@@ -65,9 +65,11 @@ from core.extension_api import (
 )
 from core.extension_runtime import invoke_plot_extension_handler
 from core.shortcut_manager import ShortcutBindingSet
+import numpy as np
 from core.rendering import RenderDecimationPolicy, decimate_xy_for_rendering
 from core.task_runner import TaskManager
-from core.project_manager import project_manager
+from processing.downsample import downsample_lttb, should_downsample
+from core.app_context import get_app_context
 from models.schemas import (
     AxisConfig,
     CurveStyle,
@@ -128,6 +130,21 @@ from .chart_page_support import (
     set_compact_edit_width,
     set_square_tool_button,
 )
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
+
 
 _CHART_RENDER_DECIMATION_POLICY = RenderDecimationPolicy(max_points=2500)
 
@@ -3599,7 +3616,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         """仅渲染大曲线的抽样预览（快速响应）。"""
         if not HAS_MATPLOTLIB or self._figure is None or self._canvas is None:
             return
-        from core.rendering import decimate_xy_for_rendering
         total_pts = total_points if total_points is not None else self._chart_total_points()
         self._figure.clear()
         axis = self._figure.add_subplot(111)
@@ -3617,11 +3633,22 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             ys = curve.get("ys", curve.get("y", []))
             if not xs or not ys:
                 continue
-            xs_dec, ys_dec, _ = decimate_xy_for_rendering(
-                list(xs),
-                list(ys),
-                RenderDecimationPolicy(max_points=200),
-            )
+            x_list = list(xs)
+            y_list = list(ys)
+            if should_downsample(len(x_list)):
+                xd_arr, yd_arr = downsample_lttb(
+                    np.array(x_list, dtype=float),
+                    np.array(y_list, dtype=float),
+                    max_points=200,
+                )
+                xs_dec = xd_arr.tolist()
+                ys_dec = yd_arr.tolist()
+            else:
+                xs_dec, ys_dec, _ = decimate_xy_for_rendering(
+                    x_list,
+                    y_list,
+                    RenderDecimationPolicy(max_points=200),
+                )
             axis.plot(xs_dec, ys_dec, linewidth=1.2, alpha=0.7)
             rendered += 1
         if rendered == 0:
@@ -3878,12 +3905,23 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 x_values = list(curve.get("x", []))
                 y_values = list(curve.get("y", []))
                 y_err = list(curve.get("y_err", []) or [])
-                render_x_values, render_y_values, render_indices = decimate_xy_for_rendering(
-                    x_values,
-                    y_values,
-                    _CHART_RENDER_DECIMATION_POLICY,
-                )
-                render_y_err = [y_err[index] for index in render_indices] if len(y_err) == len(x_values) else []
+
+                if should_downsample(len(x_values)):
+                    render_x_arr, render_y_arr = downsample_lttb(
+                        np.array(x_values, dtype=float),
+                        np.array(y_values, dtype=float),
+                        max_points=_CHART_RENDER_DECIMATION_POLICY.max_points,
+                    )
+                    render_x_values = render_x_arr.tolist()
+                    render_y_values = render_y_arr.tolist()
+                    render_y_err = []
+                else:
+                    render_x_values, render_y_values, render_indices = decimate_xy_for_rendering(
+                        x_values,
+                        y_values,
+                        _CHART_RENDER_DECIMATION_POLICY,
+                    )
+                    render_y_err = [y_err[index] for index in render_indices] if len(y_err) == len(x_values) else []
                 plotted_series.append({
                     **curve,
                     "curve_identity": curve_identity,

@@ -65,7 +65,7 @@ from core.extension_api import (
     validate_extension_lines_list,
 )
 from core.global_assets import global_assets
-from core.project_manager import project_manager
+from core.app_context import get_app_context
 from processing.extension_tools import line_from_xy, line_xy, normalize_line
 from ui.page_view_state import AnalysisPageViewState
 from .analysis_page_support import (
@@ -77,6 +77,20 @@ from .analysis_page_support import (
     _SelectableResultTable,
     isDarkTheme,
 )
+
+
+class _PMProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        pm = get_app_context().project_manager
+        if pm is None:
+            import core.project_manager as _pm_module
+            pm = _pm_module.project_manager
+        return getattr(pm, name)
+
+
+project_manager = _PMProxy()
 
 
 class AnalysisPage(ExtensionPanelShellMixin, QWidget):
@@ -369,6 +383,12 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._run_analysis_btn.clicked.connect(self._run_analysis)
         apply_button_metrics(self._run_analysis_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         controls_layout.addWidget(self._run_analysis_btn)
+
+        self._cancel_analysis_btn = PushButton(FIF.CANCEL, "取消分析")
+        self._cancel_analysis_btn.clicked.connect(self._cancel_analysis)
+        apply_button_metrics(self._cancel_analysis_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
+        self._cancel_analysis_btn.hide()
+        controls_layout.addWidget(self._cancel_analysis_btn)
 
         self._report_template_label = BodyLabel("当前报告模板: 默认模板")
         self._report_template_label.setWordWrap(True)
@@ -1899,6 +1919,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
             t = analysis_type
             self._run_analysis_btn.setEnabled(False)
+            self._cancel_analysis_btn.show()
             inputs = [{"x": xs, "y": ys, "name": name} for xs, ys, name in selected]
 
             # 全部走后台异步，带进度反馈
@@ -1924,6 +1945,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                     self._set_summary_rows(preview_view["summary_table"], [("错误", message)])
             self._set_analysis_status(f"分析失败: {message}")
             self._run_analysis_btn.setEnabled(True)
+            self._cancel_analysis_btn.hide()
 
     def _on_analysis_finished(self, task_id: str, result: Any, t: str, selected: list, expected_job_id: str) -> None:
         if self._task_manager._current_job_ids.get("analysis") != expected_job_id:
@@ -1931,6 +1953,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._result = result
         self._show_result(t, selected)
         self._run_analysis_btn.setEnabled(True)
+        self._cancel_analysis_btn.hide()
         self._set_analysis_status("分析完成")
 
     def _on_analysis_error(self, task_id: str, error: str, expected_job_id: str) -> None:
@@ -1938,6 +1961,13 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             return
         self._set_analysis_status(f"分析失败: {error}")
         self._run_analysis_btn.setEnabled(True)
+        self._cancel_analysis_btn.hide()
+
+    def _cancel_analysis(self) -> None:
+        self._task_manager.cancel_all()
+        self._set_analysis_status("分析已取消")
+        self._run_analysis_btn.setEnabled(True)
+        self._cancel_analysis_btn.hide()
 
     # ─────────────────────────────────────────────────────────
     # 结果显示
