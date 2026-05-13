@@ -20,6 +20,11 @@ templates_path = ["_templates"]
 exclude_patterns = []
 language = "zh_CN"
 
+html_theme = "alabaster"
+html_static_path = ["_static"]
+
+master_doc = "index"
+
 autodoc_default_options = {
     "members": True,
     "show-inheritance": True,
