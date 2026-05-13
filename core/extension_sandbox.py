@@ -18,7 +18,7 @@ def _sandbox_target(
     handler_pickle: bytes,
     lines_pickle: bytes,
     params_pickle: bytes,
-    result_queue: multiprocessing.Queue,
+    result_queue: multiprocessing.Queue[dict[str, Any]],
 ) -> None:
     """在子进程中执行扩展 handler。
 
@@ -59,7 +59,7 @@ class SandboxedExtensionRunner:
 
     @staticmethod
     def run(
-        handler: Callable,
+        handler: Callable[..., Any],
         lines: List[Line],
         params: Dict[str, Any],
         timeout: int = DEFAULT_TIMEOUT,
@@ -80,7 +80,7 @@ class SandboxedExtensionRunner:
                 traceback (str): 失败时的调用栈
         """
         ctx = multiprocessing.get_context("spawn")
-        queue: multiprocessing.Queue = ctx.Queue()
+        queue: multiprocessing.Queue[dict[str, Any]] = ctx.Queue()
 
         proc = ctx.Process(
             target=_sandbox_target,

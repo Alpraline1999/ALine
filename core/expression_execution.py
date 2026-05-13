@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from typing import Any, Mapping, Sequence, Tuple
+from typing import Any, Mapping, Sequence, Tuple, cast
 
 
 _VECTOR_SYMBOL_NAMES = ("sqrt", "log", "log10", "exp", "sin", "cos", "tan", "abs", "minimum", "maximum")
@@ -26,10 +26,11 @@ def _build_math_symbols() -> dict[str, Any]:
         "pi": math.pi,
         "e": math.e,
     }
+    np: Any = None
     try:
         import numpy as np
     except ImportError:
-        np = None
+        pass
     if np is not None:
         symbols["np"] = np
         for name in _VECTOR_SYMBOL_NAMES:
@@ -56,14 +57,14 @@ class ExpressionExecutionError(ValueError):
 class ExpressionExecutionService:
     context_builder: ExpressionContextBuilder = field(default_factory=ExpressionContextBuilder)
 
-    def _evaluate_scalar(self, expression: str, context: Mapping[str, Any], safe_globals: Mapping[str, Any]) -> Any:
+    def _evaluate_scalar(self, expression: str, context: Mapping[str, Any], safe_globals: dict[str, Any]) -> Any:
         return eval(expression, safe_globals, dict(context))  # noqa: S307
 
     def _evaluate_vector(
         self,
         expression: str,
         context: Mapping[str, Any],
-        safe_globals: Mapping[str, Any],
+        safe_globals: dict[str, Any],
         numpy_module: Any,
     ) -> Any:
         return eval(expression, safe_globals, dict(context))  # noqa: S307
@@ -82,13 +83,13 @@ class ExpressionExecutionService:
         try:
             import numpy as np
         except ImportError:
-            np = None
+            np = cast(Any, None)
 
         if np is not None:
             try:
                 x_arr = np.asarray(xs, dtype=float)
                 y_arr = np.asarray(ys, dtype=float)
-                ctx = {"x": x_arr, "y": y_arr}
+                ctx: dict[str, Any] = {"x": x_arr, "y": y_arr}
                 nx = x_arr if not expression_x else self._evaluate_vector(expression_x, ctx, safe_globals, np)
                 ny = y_arr if not expression_y else self._evaluate_vector(expression_y, ctx, safe_globals, np)
                 return np.asarray(nx, dtype=float).tolist(), np.asarray(ny, dtype=float).tolist()
@@ -99,9 +100,9 @@ class ExpressionExecutionService:
         new_ys: list[float] = []
         try:
             for x_value, y_value in zip(xs, ys):
-                ctx = {"x": float(x_value), "y": float(y_value)}
-                nx = x_value if not expression_x else self._evaluate_scalar(expression_x, ctx, safe_globals)
-                ny = y_value if not expression_y else self._evaluate_scalar(expression_y, ctx, safe_globals)
+                ctx_scalar: dict[str, Any] = {"x": float(x_value), "y": float(y_value)}
+                nx = x_value if not expression_x else self._evaluate_scalar(expression_x, ctx_scalar, safe_globals)
+                ny = y_value if not expression_y else self._evaluate_scalar(expression_y, ctx_scalar, safe_globals)
                 new_xs.append(float(nx))
                 new_ys.append(float(ny))
         except Exception as exc:
@@ -124,7 +125,7 @@ class ExpressionExecutionService:
         try:
             import numpy as np
         except ImportError:
-            np = None
+            np = cast(Any, None)
 
         if np is not None:
             try:
@@ -132,7 +133,7 @@ class ExpressionExecutionService:
                 b1 = np.asarray(y1, dtype=float)
                 a2 = np.asarray(x2, dtype=float)
                 b2 = np.asarray(y2, dtype=float)
-                ctx = {"x1": a1, "y1": b1, "x2": a2, "y2": b2}
+                ctx: dict[str, Any] = {"x1": a1, "y1": b1, "x2": a2, "y2": b2}
                 nx = a1 if not expression_x else self._evaluate_vector(expression_x, ctx, safe_globals, np)
                 ny = b1 if not expression_y else self._evaluate_vector(expression_y, ctx, safe_globals, np)
                 return np.asarray(nx, dtype=float).tolist(), np.asarray(ny, dtype=float).tolist()
@@ -143,14 +144,14 @@ class ExpressionExecutionService:
         new_ys: list[float] = []
         try:
             for left_x, left_y, right_x, right_y in zip(x1, y1, x2, y2):
-                ctx = {
+                ctx_scalar: dict[str, Any] = {
                     "x1": float(left_x),
                     "y1": float(left_y),
                     "x2": float(right_x),
                     "y2": float(right_y),
                 }
-                nx = left_x if not expression_x else self._evaluate_scalar(expression_x, ctx, safe_globals)
-                ny = left_y if not expression_y else self._evaluate_scalar(expression_y, ctx, safe_globals)
+                nx = left_x if not expression_x else self._evaluate_scalar(expression_x, ctx_scalar, safe_globals)
+                ny = left_y if not expression_y else self._evaluate_scalar(expression_y, ctx_scalar, safe_globals)
                 new_xs.append(float(nx))
                 new_ys.append(float(ny))
         except Exception as exc:

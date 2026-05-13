@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.extension_registry import ExtensionRegistry
 
 _BUILTIN_EXTENSION_DIRS = (
     "processing",
@@ -14,7 +18,7 @@ def _extensions_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "extensions"
 
 
-def register_core_builtin_extensions(registry) -> None:
+def register_core_builtin_extensions(registry: ExtensionRegistry) -> None:
     builtin_dir = _extensions_dir()
     builtin_directories = [builtin_dir / name for name in _BUILTIN_EXTENSION_DIRS if (builtin_dir / name).exists()]
     known_processing = {"crop", "smooth", "normalize", "resample", "fft", "derivative", "integral", "transform", "filter", "pairwise_compute"}

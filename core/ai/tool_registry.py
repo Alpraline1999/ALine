@@ -1,4 +1,7 @@
-TOOLS = {
+from typing import Any
+
+
+TOOLS: dict[str, dict[str, str]] = {
     "list_tree_nodes": {"label": "列出项目树节点", "description": "列出当前项目树中的主要节点"},
     "get_node_detail": {"label": "读取当前节点详情", "description": "读取当前共享树节点的详细信息"},
     "list_data_files": {"label": "列出数据文件", "description": "列出项目内全部数据文件"},
@@ -9,5 +12,5 @@ TOOLS = {
 }
 
 
-def list_registered_tools() -> dict:
+def list_registered_tools() -> dict[str, Any]:
     return dict(TOOLS)

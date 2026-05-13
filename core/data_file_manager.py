@@ -10,7 +10,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
-from typing import Iterator, List, Optional, TYPE_CHECKING
+from typing import Any, cast, Iterator, List, Optional, TYPE_CHECKING
 
 from models.schemas import (
     DataFile,
@@ -18,6 +18,7 @@ from models.schemas import (
     DataSeries,
     Dataset,
     FolderNode,
+    Project,
     SourceFileAsset,
     SourceFileNode,
 )
@@ -37,7 +38,7 @@ class DataFileManager:
         self._pm = project_manager
 
     @property
-    def _project(self):
+    def _project(self) -> Any:
         return self._pm.current_project
 
     # ─────────────────────────────────────────────
@@ -253,7 +254,8 @@ class DataFileManager:
         if data_file_node is None or self._project is None:
             return None
         self._pm.sync_legacy_datasets(self._project)
-        return self._project.find_dataset(data_file_node.data_file_id)
+        dataset = self._project.find_dataset(data_file_node.data_file_id) if self._project else None
+        return cast(Optional[Dataset], dataset)
 
     def add_series_to_dataset(self, dataset_id: str, series: DataSeries) -> bool:
         """向 Dataset 添加 DataSeries（实际追加到 DataFile）。"""
@@ -276,7 +278,7 @@ class DataFileManager:
         for data_file in project.data_files:
             for series in data_file.series:
                 if series.id == series_id:
-                    return series
+                    return cast(DataSeries, series)
         return None
 
     def find_data_file(self, data_file_id: str) -> Optional[DataFile]:
@@ -284,14 +286,14 @@ class DataFileManager:
         project = self._project
         if project is None:
             return None
-        return project.find_data_file(data_file_id)
+        return cast(DataFile, project.find_data_file(data_file_id))
 
     def find_source_file(self, source_file_id: str) -> Optional[SourceFileAsset]:
         """按 ID 查找 SourceFileAsset。"""
         project = self._project
         if project is None:
             return None
-        return project.find_source_file(source_file_id)
+        return cast(SourceFileAsset, project.find_source_file(source_file_id))
 
     def get_data_file(self, data_file_id: str) -> Optional[DataFile]:
         """别名：按 ID 查找 DataFile。"""

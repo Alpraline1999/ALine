@@ -6,7 +6,7 @@ from __future__ import annotations
 """
 
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from core.curve_data import (
     CurveBuffer,
@@ -76,7 +76,7 @@ def normalize_line(raw: Any) -> Line:
 
 
 def normalize_lines(raw: Any) -> List[Line]:
-    if raw in (None, "", [], ()):  # type: ignore[comparison-overlap]
+    if raw in (None, "", [], ()):
         return []
     return [normalize_line(item) for item in list(raw)]
 
@@ -102,7 +102,7 @@ def primary_line(lines: Any) -> Line:
     return normalized[0] if normalized else []
 
 
-def sorted_unique_xy(xs: List[float], ys: List[float]) -> XY:
+def sorted_unique_xy(xs: Sequence[float], ys: Sequence[float]) -> tuple[list[float], list[float]]:
     pairs = []
     for x_value, y_value in zip(xs, ys):
         try:
@@ -128,7 +128,7 @@ def sorted_unique_xy(xs: List[float], ys: List[float]) -> XY:
     return unique_x, unique_y
 
 
-def estimate_sample_spacing(xs: List[float]) -> Optional[float]:
+def estimate_sample_spacing(xs: Sequence[float]) -> Optional[float]:
     x_sorted, _ = sorted_unique_xy(xs, xs)
     if len(x_sorted) < 2:
         return None
@@ -140,7 +140,7 @@ def estimate_sample_spacing(xs: List[float]) -> Optional[float]:
     return diffs[len(diffs) // 2]
 
 
-def interp_linear(x_value: float, xs: List[float], ys: List[float]) -> float:
+def interp_linear(x_value: float, xs: Sequence[float], ys: Sequence[float]) -> float:
     if not xs:
         return 0.0
     if x_value <= xs[0]:
@@ -161,7 +161,7 @@ def interp_linear(x_value: float, xs: List[float], ys: List[float]) -> float:
     return ys[lo] + ratio * (ys[hi] - ys[lo])
 
 
-def resample_uniform(xs: List[float], ys: List[float], n_points: int) -> XY:
+def resample_uniform(xs: Sequence[float], ys: Sequence[float], n_points: int) -> tuple[list[float], list[float]]:
     if len(xs) < 2 or n_points < 2:
         return list(xs), list(ys)
     x_min, x_max = xs[0], xs[-1]
@@ -171,7 +171,7 @@ def resample_uniform(xs: List[float], ys: List[float], n_points: int) -> XY:
     return target_x, [interp_linear(x_value, xs, ys) for x_value in target_x]
 
 
-def resample_uniform_spacing(xs: List[float], ys: List[float], spacing: float) -> XY:
+def resample_uniform_spacing(xs: Sequence[float], ys: Sequence[float], spacing: float) -> tuple[list[float], list[float]]:
     if len(xs) < 2 or spacing <= 0:
         return list(xs), list(ys)
     x_min, x_max = xs[0], xs[-1]
@@ -188,7 +188,7 @@ def resample_uniform_spacing(xs: List[float], ys: List[float], spacing: float) -
     return target_x, [interp_linear(x_value, xs, ys) for x_value in target_x]
 
 
-def nearest_value(x_value: float, xs: List[float], ys: List[float]) -> float:
+def nearest_value(x_value: float, xs: Sequence[float], ys: Sequence[float]) -> float:
     if not xs:
         return 0.0
     best_index = 0
@@ -201,7 +201,7 @@ def nearest_value(x_value: float, xs: List[float], ys: List[float]) -> float:
     return float(ys[best_index])
 
 
-def x_values_equal(left_values: List[float], right_values: List[float]) -> bool:
+def x_values_equal(left_values: Sequence[float], right_values: Sequence[float]) -> bool:
     if len(left_values) != len(right_values):
         return False
     for left, right in zip(left_values, right_values):
@@ -210,7 +210,7 @@ def x_values_equal(left_values: List[float], right_values: List[float]) -> bool:
     return True
 
 
-def resample_to_grid(xs: List[float], ys: List[float], target_x: List[float], algorithm: str) -> List[float]:
+def resample_to_grid(xs: Sequence[float], ys: Sequence[float], target_x: Sequence[float], algorithm: str) -> List[float]:
     mode = str(algorithm or "linear").strip().lower()
     if mode == "nearest":
         return [nearest_value(float(value), xs, ys) for value in target_x]
@@ -237,9 +237,9 @@ def resample_to_grid(xs: List[float], ys: List[float], target_x: List[float], al
     return [interp_linear(float(value), xs, ys) for value in target_x]
 
 
-def resolve_sample_rate(xs: List[float], params: Dict[str, Any]) -> Optional[float]:
+def resolve_sample_rate(xs: Sequence[float], params: Dict[str, Any]) -> Optional[float]:
     raw_sample_rate = params.get("sampling_rate")
-    if raw_sample_rate in (None, ""):
+    if raw_sample_rate is None or raw_sample_rate == "":
         sample_rate = 0.0
     else:
         try:

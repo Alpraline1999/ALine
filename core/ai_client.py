@@ -83,7 +83,7 @@ class AIClient:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """返回 httpx AsyncClient（已配置 base_url 和 Authorization)。"""
         try:
             import httpx

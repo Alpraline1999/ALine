@@ -112,7 +112,7 @@ def import_json(file_path: str) -> List[DataSeries]:
         if not data:
             raise ValueError("JSON 数组为空")
         keys = list(data[0].keys())
-        cols = {k: [] for k in keys}
+        cols: dict[str, list[float]] = {k: [] for k in keys}
         for item in data:
             for k in keys:
                 try:

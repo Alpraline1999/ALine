@@ -7,7 +7,7 @@ from __future__ import annotations
 """
 
 from dataclasses import dataclass
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, overload, Sequence, cast
 
 import numpy as np
 
@@ -31,7 +31,11 @@ class SeriesArrayView(Sequence[float]):
     def __iter__(self) -> Iterator[float]:
         return (float(value) for value in self._array)
 
-    def __getitem__(self, item: int | slice) -> float | "SeriesArrayView":
+    @overload
+    def __getitem__(self, item: int) -> float: ...
+    @overload
+    def __getitem__(self, item: slice) -> SeriesArrayView: ...
+    def __getitem__(self, item: int | slice) -> float | SeriesArrayView:
         value = self._array[item]
         if isinstance(item, slice):
             return SeriesArrayView(value, copy=False)
@@ -66,7 +70,8 @@ class SeriesArrayView(Sequence[float]):
         return np.array(self._array, dtype=float, copy=copy)
 
     def tolist(self) -> list[float]:
-        return self._array.tolist()
+        result: Any = self._array.tolist()
+        return cast(list[float], result)
 
 
 @dataclass(frozen=True, slots=True)

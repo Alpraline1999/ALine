@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
 
 from aline_metadata import CURRENT_PROJECT_VERSION
 from pydantic import BaseModel, ConfigDict, Field
@@ -104,7 +104,7 @@ class DataSeries(BaseModel):
     # "manual" | "imported_file" | "computed" | "pyline_curve_copy"
     source_curve_id: Optional[str] = None  # 来源于 PyLine Curve 时记录原始 id
     source_file_path: str = ""  # 来源文件路径（用于追溯）
-    import_params: dict = {}     # 导入参数快照（如解析方式、跳过行数等）
+    import_params: dict[str, Any] = {}     # 导入参数快照（如解析方式、跳过行数等）
 
 
 class Dataset(BaseModel):
@@ -386,7 +386,7 @@ class Project(BaseModel):
 
     def find_series(self, series_id: str) -> Optional[DataSeries]:
         """优先在 DataFile 中查找 DataSeries，datasets 仅保留兼容回退。"""
-        for df in getattr(self, "data_files", []):
+        for df in self.data_files:
             s = df.find_series(series_id)
             if s:
                 return s
@@ -408,7 +408,7 @@ class Project(BaseModel):
                 return picture
         return None
 
-    def iter_all_series(self):
+    def iter_all_series(self) -> Iterator[DataSeries]:
         """优先遍历 DataFile 中的 DataSeries，datasets 仅保留兼容回退。"""
         for df in self.data_files:
             yield from df.series
@@ -417,7 +417,7 @@ class Project(BaseModel):
         for ds in self.datasets:
             yield from ds.series
 
-    def iter_all_curves(self):
+    def iter_all_curves(self) -> Iterator[Curve]:
         """遍历项目中所有图像提取曲线（images[*].curves）。"""
         for img in self.images:
             yield from img.curves

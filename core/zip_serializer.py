@@ -9,7 +9,7 @@ import json
 import os
 import tempfile
 import zipfile
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, cast
 
 from models.schemas import Curve, DataSeries, Project
 
@@ -177,7 +177,7 @@ class ZipProjectSerializer:
     # ── 按需加载数据 ────────────────────────────────────────────
 
     @staticmethod
-    def load_series_data(path: str, series_id: str) -> Optional[Dict]:
+    def load_series_data(path: str, series_id: str) -> Optional[Dict[str, Any]]:
         """从 ZIP 中按需加载单条 DataSeries 的数据。
 
         Args:
@@ -191,14 +191,15 @@ class ZipProjectSerializer:
             return None
         try:
             with zipfile.ZipFile(path, 'r') as zf:
-                return json.loads(
+                result = cast(Dict[str, Any], json.loads(
                     zf.read(f'data/series_{series_id}.json').decode('utf-8')
-                )
+                ))
+                return result
         except KeyError:
             return None
 
     @staticmethod
-    def load_curve_data(path: str, curve_id: str) -> Optional[Dict]:
+    def load_curve_data(path: str, curve_id: str) -> Optional[Dict[str, Any]]:
         """从 ZIP 中按需加载单条 Curve 的点数据。
 
         Args:
@@ -212,9 +213,10 @@ class ZipProjectSerializer:
             return None
         try:
             with zipfile.ZipFile(path, 'r') as zf:
-                return json.loads(
+                result = cast(Dict[str, Any], json.loads(
                     zf.read(f'data/curve_{curve_id}.json').decode('utf-8')
-                )
+                ))
+                return result
         except KeyError:
             return None
 
@@ -258,7 +260,7 @@ class ZipProjectSerializer:
     # ── 内部辅助 ────────────────────────────────────────────────
 
     @staticmethod
-    def _build_meta(project: Project) -> Dict:
+    def _build_meta(project: Project) -> Dict[str, Any]:
         """生成 meta.json 内容。"""
         series_ids: list[str] = []
         for df in project.data_files:
@@ -281,7 +283,7 @@ class ZipProjectSerializer:
         }
 
     @staticmethod
-    def _strip_data(project_dict: Dict) -> None:
+    def _strip_data(project_dict: Dict[str, Any]) -> None:
         """递归移除大字段，留下轻量元数据（原地修改）。"""
         # images -> curves -> x_data / y_data / x_actual / y_actual
         for img in project_dict.get("images", []):

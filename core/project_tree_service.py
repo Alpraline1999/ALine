@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, cast
 
 from core.global_assets import global_assets
 from models.schemas import FolderNode, Project
@@ -17,9 +17,9 @@ class ProjectTreeService:
     rename_source_file: Callable[[str, str], bool]
     rename_image: Callable[[str, str], bool]
     rename_picture: Callable[[str, str], bool]
-    delete_backup_if_managed: Callable[[object, Project], None]
-    delete_picture_backup_if_managed: Callable[[object, Project], None]
-    delete_source_file_backup_if_managed: Callable[[object, Project], None]
+    delete_backup_if_managed: Callable[[Any, Project], None]
+    delete_picture_backup_if_managed: Callable[[Any, Project], None]
+    delete_source_file_backup_if_managed: Callable[[Any, Project], None]
     node_collection_group_type: Callable[[str], str | None]
     sync_picture_storage: Callable[[], None]
     sync_source_file_storage: Callable[[], None]
@@ -36,7 +36,7 @@ class ProjectTreeService:
         if not self.ensure_unique_tree_child_name(parent_id, name, node_kind="folder", project=project):
             return None
         order = project.tree.get_siblings_max_order(parent_id) + 1
-        node = FolderNode(name=name, parent_id=parent_id, order=order, group_type=group_type)
+        node = FolderNode(name=name, parent_id=parent_id, order=order, group_type=cast(Any, group_type))
         project.tree.nodes.append(node)
         project.is_modified = True
         return node
@@ -99,10 +99,11 @@ class ProjectTreeService:
         project = self.get_current_project()
         if project is None or project.tree is None:
             return False
+        tree = project.tree
 
         def collect_ids(current_id: str) -> list[str]:
             ids = [current_id]
-            for child in project.tree.get_children(current_id):
+            for child in tree.get_children(current_id):
                 ids.extend(collect_ids(child.id))
             return ids
 
@@ -156,16 +157,17 @@ class ProjectTreeService:
         project = self.get_current_project()
         if project is None or project.tree is None:
             return []
+        tree2 = project.tree
 
         scoped_ids = None
         if root_id is not None:
-            root = project.tree.get_node(root_id)
+            root = tree2.get_node(root_id)
             if root is None or root.kind != "folder":
                 return []
 
             def collect_folder_ids(node_id: str) -> list[str]:
                 ids = [node_id]
-                for child in project.tree.get_children(node_id):
+                for child in tree2.get_children(node_id):
                     if child.kind == "folder":
                         ids.extend(collect_folder_ids(child.id))
                 return ids
@@ -289,13 +291,13 @@ class ProjectTreeService:
         project.is_modified = True
         return True
 
-    def get_node_by_id(self, node_id: str):
+    def get_node_by_id(self, node_id: str) -> Any:
         project = self.get_current_project()
         if project is None or project.tree is None:
             return None
         return project.tree.get_node(node_id)
 
-    def get_children(self, parent_id: str | None):
+    def get_children(self, parent_id: str | None) -> list[Any]:
         project = self.get_current_project()
         if project is None or project.tree is None:
             return []

@@ -8,13 +8,13 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Dict, List
+from typing import Any, Dict, List
 
 _RECENT_FILE = os.path.join(os.path.expanduser("~"), ".aline_recent.json")
 _MAX_RECENT = 10
 
 
-def load_recent() -> List[Dict]:
+def load_recent() -> List[Dict[str, Any]]:
     """读取最近项目列表（按最新打开时间倒序）。
 
     返回格式：
@@ -61,7 +61,7 @@ def clear_recent() -> None:
     _save([])
 
 
-def _save(items: List[Dict]) -> None:
+def _save(items: List[Dict[str, Any]]) -> None:
     try:
         with open(_RECENT_FILE, "w", encoding="utf-8") as f:
             json.dump(items, f, indent=2, ensure_ascii=False)

@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, cast, Dict, Iterable, List, Optional
 
 from core.extension_registry import (
     _format_source_split,
@@ -133,19 +133,20 @@ def _wrap_external_extensions_with_sandbox() -> None:
     if not get_external_extension_sandbox_enabled():
         return
 
-    categories = {
+    categories: dict[Any, str] = {
         extension_registry._processing: "processing",
         extension_registry._analysis: "analysis",
         extension_registry._digitize: "digitize",
     }
     for store, _category in categories.items():
-        for type_id, ext in list(store.items()):
+        store_dict = cast(dict[str, Any], store)
+        for type_id, ext in list(store_dict.items()):
             if normalize_extension_source_kind(getattr(ext, "source_kind", "builtin")) != "external":
                 continue
             original_handler = ext.handler
 
-            def _make_wrapper(handler):
-                def sandbox_wrapper(lines, params):
+            def _make_wrapper(handler: Any) -> Any:
+                def sandbox_wrapper(lines: Any, params: Any) -> Any:
                     return SandboxedExtensionRunner.run(handler, lines, params)
                 return sandbox_wrapper
 
@@ -153,14 +154,15 @@ def _wrap_external_extensions_with_sandbox() -> None:
 
 
 def _check_extension_compatibility(report: LoadReport) -> None:
-    categories = {
+    categories: dict[str, Any] = {
         "processing": extension_registry._processing,
         "analysis": extension_registry._analysis,
         "plot": extension_registry._plot,
         "digitize": extension_registry._digitize,
     }
     for category, store in categories.items():
-        for type_id, ext in list(store.items()):
+        store_dict = cast(dict[str, Any], store)
+        for type_id, ext in list(store_dict.items()):
             api_version = getattr(ext, "aline_api_version", "")
             result = ExtensionValidator.check_compatibility(api_version, ALINE_VERSION)
             if result == "incompatible":
@@ -168,7 +170,7 @@ def _check_extension_compatibility(report: LoadReport) -> None:
                     f"扩展 '{ext.name}' ({category}) 需要 ALine {api_version}，"
                     f"当前版本 {ALINE_VERSION}，已禁用"
                 )
-                store.pop(type_id, None)
+                store_dict.pop(type_id, None)
             elif result == "warning":
                 report.errors.append(
                     f"扩展 '{ext.name}' ({category}) 版本声明解析失败: {api_version}"

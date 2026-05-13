@@ -69,28 +69,6 @@ class ExtensionValidator:
         return errors
 
     @staticmethod
-    def check_compatibility(ext: Any, aline_version: str) -> List[str]:
-        """检查扩展声明的兼容版本与当前 ALine 版本是否匹配。"""
-        api_version = getattr(ext, "api_version", None)
-        if not api_version:
-            return []  # 未声明 = 不检查
-
-        warnings: List[str] = []
-
-        try:
-            current = tuple(int(x) for x in aline_version.split("."))
-            required = tuple(int(x) for x in api_version.lstrip(">=").split("."))
-
-            if api_version.startswith(">=") and current < required:
-                warnings.append(f"需要 ALine {api_version}，当前版本 {aline_version}")
-            elif api_version.startswith("<") and current >= required:
-                warnings.append(f"不支持 ALine {api_version} 以上版本")
-        except (ValueError, TypeError, AttributeError):
-            warnings.append(f"无法解析版本要求: {api_version}")
-
-        return warnings
-
-    @staticmethod
     def check_api_compatibility(aline_api_version: str, aline_version: str) -> str:
         """检查扩展声明的 API 版本是否兼容当前 ALine 版本。
 

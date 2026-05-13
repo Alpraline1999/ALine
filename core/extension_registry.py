@@ -440,7 +440,7 @@ class ExtensionRegistry:
 
         return conflicts
 
-    def get_categories(self) -> Dict[str, list]:
+    def get_categories(self) -> Dict[str, list[Any]]:
         """返回四类扩展的字典映射。"""
         return {
             "processing": list(self._processing.values()),
@@ -451,6 +451,7 @@ class ExtensionRegistry:
 
     def iter_extensions(self) -> Iterator[Any]:
         """遍历所有已注册扩展。"""
+        ext: Any
         for ext in self._processing.values():
             yield ext
         for ext in self._analysis.values():

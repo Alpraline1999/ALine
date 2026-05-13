@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 def normalize_name_key(name: str) -> str:
@@ -16,7 +16,7 @@ def ensure_non_empty_name(name: str, *, label: str = "名称") -> tuple[bool, Op
 
 
 def has_tree_child_name_conflict(
-    project,
+    project: Any,
     parent_id: Optional[str],
     name: str,
     *,
@@ -50,7 +50,7 @@ def split_name_suffix(name: str) -> tuple[str, str]:
 
 
 def ensure_unique_tree_child_name(
-    project,
+    project: Any,
     parent_id: Optional[str],
     name: str,
     *,
@@ -78,7 +78,7 @@ def ensure_unique_tree_child_name(
 
 
 def next_unique_tree_child_name(
-    project,
+    project: Any,
     parent_id: Optional[str],
     name: str,
     *,

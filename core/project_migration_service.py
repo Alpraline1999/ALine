@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from aline_metadata import CURRENT_PROJECT_VERSION
 from models.schemas import (
@@ -21,7 +21,7 @@ from models.schemas import (
 
 @dataclass(slots=True)
 class ProjectMigrationService:
-    ensure_project_tree_groups: Callable[[Project], None]
+    ensure_project_tree_groups: Callable[[Project | None], None]
     migrate_project_assets_to_global: Callable[[Project], bool]
 
     def init_new_project_tree(self, project: Project) -> None:
@@ -133,7 +133,7 @@ class ProjectMigrationService:
             if node.kind == "folder" and node.group_type is None:
                 node.group_type = name_to_group.get(node.name)  # type: ignore[assignment]
 
-        new_nodes = []
+        new_nodes: list[Any] = []
         for node in project.tree.nodes:
             if node.kind == "ai_tool":
                 if node.tool_type == "prompt":

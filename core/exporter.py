@@ -9,7 +9,7 @@ import math
 import os
 from html import escape
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import Any, Iterator, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from models.schemas import Curve, DataSeries
@@ -21,14 +21,14 @@ class Exporter:
     _SUPPORTED_SERIES_FORMATS = {"csv", "txt", "dat", "xls", "xlsx"}
 
     @staticmethod
-    def _iter_rows(curve: "Curve"):
+    def _iter_rows(curve: "Curve") -> Iterator[tuple[Any, Any]]:
         """按需迭代数据行，避免在热导出路径中提前物化整批 rows。"""
         xs = curve.x_actual if curve.x_actual else curve.x_data
         ys = curve.y_actual if curve.y_actual else curve.y_data
         return zip(xs, ys)
 
     @staticmethod
-    def _get_rows(curve: "Curve") -> List[List]:
+    def _get_rows(curve: "Curve") -> list[Any]:
         """获取数据行 [[x_actual, y_actual], ...]"""
         return list(Exporter._iter_rows(curve))
 
@@ -60,7 +60,7 @@ class Exporter:
         return [x_label, y_label]
 
     @staticmethod
-    def _series_payload_from_curve(curve: "Curve") -> dict:
+    def _series_payload_from_curve(curve: "Curve") -> dict[str, Any]:
         return {
             "name": curve.name or "curve",
             "header": Exporter._get_header(curve),
@@ -68,7 +68,7 @@ class Exporter:
         }
 
     @staticmethod
-    def _series_payload_from_data_series(series: "DataSeries") -> dict:
+    def _series_payload_from_data_series(series: "DataSeries") -> dict[str, Any]:
         return {
             "name": str(series.name or "series"),
             "header": Exporter._get_data_series_header(series),
@@ -76,7 +76,7 @@ class Exporter:
         }
 
     @staticmethod
-    def _normalize_data_series_payloads(series_list: List["DataSeries"]) -> List[dict]:
+    def _normalize_data_series_payloads(series_list: List["DataSeries"]) -> List[dict[str, Any]]:
         payloads = [Exporter._series_payload_from_data_series(series) for series in list(series_list or [])]
         payloads = [payload for payload in payloads if payload["rows"]]
         if not payloads:
@@ -84,7 +84,7 @@ class Exporter:
         return payloads
 
     @staticmethod
-    def _payloads_share_same_x(payloads: List[dict]) -> bool:
+    def _payloads_share_same_x(payloads: List[dict[str, Any]]) -> bool:
         if len(payloads) < 2:
             return False
         base_rows = list(payloads[0].get("rows") or [])
@@ -103,7 +103,7 @@ class Exporter:
         return Exporter._payloads_share_same_x(payloads)
 
     @staticmethod
-    def _merged_header(payloads: List[dict]) -> List[str]:
+    def _merged_header(payloads: List[dict[str, Any]]) -> List[str]:
         header = [str(payloads[0]["header"][0] or "X")]
         for index, payload in enumerate(payloads, start=1):
             series_name = str(payload.get("name") or "").strip()
@@ -112,7 +112,7 @@ class Exporter:
         return header
 
     @staticmethod
-    def _merged_rows(payloads: List[dict]) -> List[List[float]]:
+    def _merged_rows(payloads: List[dict[str, Any]]) -> List[List[float]]:
         if not Exporter._payloads_share_same_x(payloads):
             raise ValueError("仅当所有曲线 X 坐标完全对齐时才能合并导出")
         merged_rows: List[List[float]] = []
@@ -126,7 +126,7 @@ class Exporter:
 
     @staticmethod
     def _grouped_delimited_text(
-        payloads: List[dict],
+        payloads: List[dict[str, Any]],
         *,
         delimiter: str,
         timestamp: Optional[str] = None,
@@ -152,7 +152,7 @@ class Exporter:
 
     @staticmethod
     def _write_delimited_file(
-        payloads: List[dict],
+        payloads: List[dict[str, Any]],
         file_path: str,
         *,
         delimiter: str,
@@ -160,11 +160,11 @@ class Exporter:
         merged: bool = False,
     ) -> None:
         if merged:
-            rows: List[List[object]] = []
+            rows: list[list[Any]] = []
             if timestamp:
                 rows.append([f"# exported: {timestamp}"])
-            rows.append(Exporter._merged_header(payloads))
-            rows.extend(Exporter._merged_rows(payloads))
+            rows.append(list(Exporter._merged_header(payloads)))
+            rows.extend([list(row) for row in Exporter._merged_rows(payloads)])
         else:
             rows = []
             if timestamp:
@@ -181,24 +181,24 @@ class Exporter:
             writer.writerows(rows)
 
     @staticmethod
-    def _workbook_sheets(payloads: List[dict], *, timestamp: Optional[str] = None, merged: bool = False) -> List[tuple[str, List[List[object]]]]:
+    def _workbook_sheets(payloads: List[dict[str, Any]], *, timestamp: Optional[str] = None, merged: bool = False) -> List[tuple[str, List[List[object]]]]:
         if merged:
-            rows: List[List[object]] = []
+            merged_rows: list[list[Any]] = []
             if timestamp:
-                rows.append([f"# exported: {timestamp}"])
-            rows.append(Exporter._merged_header(payloads))
-            rows.extend(Exporter._merged_rows(payloads))
-            return [("merged_export", rows)]
+                merged_rows.append([f"# exported: {timestamp}"])
+            merged_rows.append(list(Exporter._merged_header(payloads)))
+            merged_rows.extend([list(row) for row in Exporter._merged_rows(payloads)])
+            return [("merged_export", merged_rows)]
 
         sheets: List[tuple[str, List[List[object]]]] = []
         for index, payload in enumerate(payloads, start=1):
-            rows: List[List[object]] = []
+            sheet_rows: list[list[Any]] = []
             if timestamp:
-                rows.append([f"# exported: {timestamp}"])
-            rows.append(list(payload["header"]))
-            rows.extend([list(row) for row in payload["rows"]])
+                sheet_rows.append([f"# exported: {timestamp}"])
+            sheet_rows.append(list(payload["header"]))
+            sheet_rows.extend([list(row) for row in payload["rows"]])
             sheet_name = str(payload.get("name") or f"series_{index}")
-            sheets.append((sheet_name, rows))
+            sheets.append((sheet_name, sheet_rows))
         return sheets
 
     @staticmethod
@@ -217,7 +217,7 @@ class Exporter:
         return candidate
 
     @staticmethod
-    def _write_xlsx_file(payloads: List[dict], file_path: str, *, timestamp: Optional[str] = None, merged: bool = False) -> None:
+    def _write_xlsx_file(payloads: List[dict[str, Any]], file_path: str, *, timestamp: Optional[str] = None, merged: bool = False) -> None:
         import openpyxl
 
         workbook = openpyxl.Workbook()
@@ -247,7 +247,7 @@ class Exporter:
         return f'<Cell><Data ss:Type="{data_type}">{data_value}</Data></Cell>'
 
     @staticmethod
-    def _write_xls_xml_file(payloads: List[dict], file_path: str, *, timestamp: Optional[str] = None, merged: bool = False) -> None:
+    def _write_xls_xml_file(payloads: List[dict[str, Any]], file_path: str, *, timestamp: Optional[str] = None, merged: bool = False) -> None:
         used_names: set[str] = set()
         with open(file_path, "w", encoding="utf-8") as handle:
             handle.write('<?xml version="1.0" encoding="UTF-8"?>\n')
@@ -458,7 +458,7 @@ class Exporter:
                 "columns": header,
                 "points": [{"x": x, "y": y} for x, y in Exporter._iter_rows(curve)],
             })
-        result = {"curves": all_data}
+        result: dict[str, Any] = {"curves": all_data}
         if timestamp:
             result["exported_at"] = timestamp
         with open(file_path, "w", encoding="utf-8") as f:

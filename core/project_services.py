@@ -41,7 +41,7 @@ def build_project_services(
         add_recent_project=add_recent,
     )
     migration_service = ProjectMigrationService(
-        ensure_project_tree_groups=manager._ensure_project_tree_groups,
+        ensure_project_tree_groups=lambda p: (manager._ensure_project_tree_groups(p), None)[1],
         migrate_project_assets_to_global=manager._migrate_project_assets_to_global,
     )
     backup_manager = ProjectBackupManager(manager)

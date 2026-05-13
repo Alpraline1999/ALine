@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -85,8 +85,8 @@ class ShortcutBindingSet:
     def bind(
         self,
         action: str,
-        parent,
-        callback,
+        parent: QObject,
+        callback: Callable[[], Any],
         *,
         context: Optional[Qt.ShortcutContext] = None,
     ) -> QShortcut:
@@ -112,7 +112,7 @@ class ShortcutManager(QObject):
     shortcuts_changed = Signal()
     _CONFIG_FILE = Path.home() / ".config" / "aline" / "shortcuts.json"
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._definitions: Dict[str, ShortcutDefinition] = {}
         self.DEFAULTS: Dict[str, str] = {}

@@ -6,9 +6,12 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, cast
 
 from models.schemas import AnalysisResult, AnalysisResultNode
+
+if TYPE_CHECKING:
+    from core.project_manager import ProjectManager
 
 
 class AnalysisManager:
@@ -18,11 +21,11 @@ class AnalysisManager:
     负责 AnalysisResult 的创建、删除、查找和查询。
     """
 
-    def __init__(self, project_manager):
+    def __init__(self, project_manager: ProjectManager) -> None:
         self._pm = project_manager
 
     @property
-    def _project(self):
+    def _project(self) -> Any:
         return self._pm.current_project
 
     def create_analysis(
@@ -84,7 +87,7 @@ class AnalysisManager:
             return None
         for a in project.analyses:
             if a.id == analysis_id:
-                return a
+                return cast(AnalysisResult, a)
         return None
 
     def get_analyses_for_series(self, series_id: str) -> List[AnalysisResult]:

@@ -3,6 +3,7 @@
 为所有项目共享以下资源：
 - Pipeline 模板
 - 绘图样式
+
 - 报告模板
 - 曲线样式模板
 - 内置绘图样式预设
@@ -13,10 +14,12 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypeVar, Type, cast, Literal
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
+
+_T = TypeVar("_T", bound=BaseModel)
 
 from core.extension_api import normalize_extension_version
 from models.schemas import (
@@ -242,7 +245,7 @@ class GlobalAssetManager:
     def data(self) -> GlobalAssets:
         return self.load()
 
-    def _clone(self, item, model_cls):
+    def _clone(self, item: BaseModel, model_cls: Type[_T]) -> _T:
         return model_cls(**item.model_dump())
 
     def list_saved_pipelines(self) -> List[SavedPipeline]:
@@ -269,7 +272,7 @@ class GlobalAssetManager:
         return item
 
     def update_saved_pipeline(self, pipeline_id: str, *, name: Optional[str] = None,
-                              ops: Optional[list[dict]] = None, description: Optional[str] = None) -> bool:
+                              ops: Optional[List[Dict[str, Any]]] = None, description: Optional[str] = None) -> bool:
         item = self.get_saved_pipeline(pipeline_id)
         if item is None:
             return False
@@ -355,16 +358,9 @@ class GlobalAssetManager:
         item = self.get_figure_template(template_id)
         if item is None:
             return None
-        import uuid
-        from models.schemas import FigureConfig
         dup = FigureConfig(
             id=str(uuid.uuid4()),
             name=new_name,
-            figure_state=copy.deepcopy(getattr(item, "figure_state", {})),
-            plot_style_extras=copy.deepcopy(getattr(item, "plot_style_extras", {})),
-            curve_styles=copy.deepcopy(getattr(item, "curve_styles", {})),
-            applied_extensions=copy.deepcopy(getattr(item, "applied_extensions", [])),
-            is_builtin=False,
         )
         return self.add_figure_template(dup)
 
@@ -690,7 +686,7 @@ class GlobalAssetManager:
         if description is not None:
             item.description = description
         if canvas_mode is not None:
-            item.canvas_mode = canvas_mode
+            item.canvas_mode = cast(Literal["app", "light", "dark"], canvas_mode)
         if grid_color is not None:
             item.grid_color = grid_color
         if foreground_color is not None:
@@ -851,11 +847,11 @@ class GlobalAssetManager:
         self.save()
         return True
 
-    def export_to_json(self) -> dict:
+    def export_to_json(self) -> dict[str, Any]:
         """Export all global assets to a JSON-serializable dict."""
         return self.data.model_dump()
 
-    def import_from_json(self, data: dict, *, merge: bool = True) -> None:
+    def import_from_json(self, data: Dict[str, Any], *, merge: bool = True) -> None:
         """Import global assets from a JSON-serializable dict.
 
         Args:
@@ -863,7 +859,7 @@ class GlobalAssetManager:
             merge: If True, merge into existing assets. If False, replace.
         """
         if not merge:
-            self.data = GlobalAssets.model_validate(data)
+            self._cache = GlobalAssets.model_validate(data)
             self.save()
             return
         # Merge mode: append non-duplicate assets
@@ -882,7 +878,7 @@ class GlobalAssetManager:
                 self.data.extension_configs.append(cfg)
         self.save()
 
-    def export_extension_config_to_json(self, config_id: str) -> Optional[dict]:
+    def export_extension_config_to_json(self, config_id: str) -> Optional[dict[str, Any]]:
         """Export a single extension config to a JSON-serializable dict."""
         item = self.get_extension_config(config_id)
         if item is None:

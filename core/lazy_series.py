@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import Any, List, Optional, TYPE_CHECKING
 
 from pydantic import PrivateAttr
 
@@ -27,7 +27,7 @@ class LazyDataSeries(DataSeries):
     _project_path: str = PrivateAttr(default="")
     _loaded: bool = PrivateAttr(default=False)
 
-    def __init__(self, *, project_path: str = "", **kwargs):
+    def __init__(self, *, project_path: str = "", **kwargs: Any) -> None:
         data_given = any(k in kwargs for k in ("x", "y", "y_err"))
         super().__init__(**kwargs)
         self._project_path = project_path
@@ -55,31 +55,31 @@ class LazyDataSeries(DataSeries):
             self.__dict__["y_err"] = data["y_err"]
         object.__setattr__(self, "_loaded", True)
 
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         self.x
         self.y
         self.y_err
         return super().model_dump(**kwargs)
 
 
-def _make_series_property(field_name: str):
-    def getter(self):
+def _make_series_property(field_name: str) -> property:
+    def getter(self: Any) -> Any:
         if not self._loaded and self._project_path:
             self._load()
         return self.__dict__.get(
             field_name, [] if field_name != "y_err" else None
         )
 
-    def setter(self, value):
+    def setter(self: Any, value: Any) -> None:
         self.__dict__[field_name] = value
         object.__setattr__(self, "_loaded", True)
 
     return property(getter, setter)
 
 
-LazyDataSeries.x = _make_series_property("x")
-LazyDataSeries.y = _make_series_property("y")
-LazyDataSeries.y_err = _make_series_property("y_err")
+setattr(LazyDataSeries, "x", _make_series_property("x"))
+setattr(LazyDataSeries, "y", _make_series_property("y"))
+setattr(LazyDataSeries, "y_err", _make_series_property("y_err"))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -92,7 +92,7 @@ class LazyCurve(Curve):
     _project_path: str = PrivateAttr(default="")
     _loaded: bool = PrivateAttr(default=False)
 
-    def __init__(self, *, project_path: str = "", **kwargs):
+    def __init__(self, *, project_path: str = "", **kwargs: Any) -> None:
         data_given = any(
             k in kwargs for k in ("x_data", "y_data", "x_actual", "y_actual")
         )
@@ -122,7 +122,7 @@ class LazyCurve(Curve):
         self.__dict__["y_actual"] = data.get("y_actual", [])
         object.__setattr__(self, "_loaded", True)
 
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         self.x_data
         self.y_data
         self.x_actual
@@ -130,23 +130,23 @@ class LazyCurve(Curve):
         return super().model_dump(**kwargs)
 
 
-def _make_curve_property(field_name: str):
-    def getter(self):
+def _make_curve_property(field_name: str) -> property:
+    def getter(self: Any) -> Any:
         if not self._loaded and self._project_path:
             self._load()
         return self.__dict__.get(field_name, [])
 
-    def setter(self, value):
+    def setter(self: Any, value: Any) -> None:
         self.__dict__[field_name] = value
         object.__setattr__(self, "_loaded", True)
 
     return property(getter, setter)
 
 
-LazyCurve.x_data = _make_curve_property("x_data")
-LazyCurve.y_data = _make_curve_property("y_data")
-LazyCurve.x_actual = _make_curve_property("x_actual")
-LazyCurve.y_actual = _make_curve_property("y_actual")
+setattr(LazyCurve, "x_data", _make_curve_property("x_data"))
+setattr(LazyCurve, "y_data", _make_curve_property("y_data"))
+setattr(LazyCurve, "x_actual", _make_curve_property("x_actual"))
+setattr(LazyCurve, "y_actual", _make_curve_property("y_actual"))
 
 
 # ══════════════════════════════════════════════════════════════════

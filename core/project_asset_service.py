@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, Optional
 
 from models.schemas import DataFile, DataFileNode, DataSeries, Project
 
@@ -15,9 +15,9 @@ class ProjectAssetService:
     next_unique_tree_child_name: Callable[..., str]
     ensure_unique_series_name: Callable[..., bool]
     ensure_unique_curve_name: Callable[..., bool]
-    find_folder_by_group_type: Callable[[str], object | None]
-    find_folder_by_name: Callable[[str], object | None]
-    get_image: Callable[[str], object | None]
+    find_folder_by_group_type: Callable[[str], Any | None]
+    find_folder_by_name: Callable[[str], Any | None]
+    get_image: Callable[[str], Any | None]
     sync_legacy_datasets: Callable[[Project | None], None]
 
     def add_data_file(
@@ -166,7 +166,7 @@ class ProjectAssetService:
         project.is_modified = True
         return True
 
-    def _find_series_owner(self, series_id: str):
+    def _find_series_owner(self, series_id: str) -> tuple[Optional[str], Any, Optional[DataSeries]]:
         project = self.get_current_project()
         if project is None:
             return None, None, None
@@ -176,7 +176,7 @@ class ProjectAssetService:
                     return "data_file", data_file, series
         return None, None, None
 
-    def _find_curve_owner(self, curve_id: str):
+    def _find_curve_owner(self, curve_id: str) -> tuple[Optional[Any], Optional[Any]]:
         project = self.get_current_project()
         if project is None:
             return None, None

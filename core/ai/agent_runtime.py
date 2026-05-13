@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from .client import AIClient
 from .tool_executor import execute_tool
@@ -14,7 +14,7 @@ class AgentRuntime:
 
     async def run_chat(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         response = await self._client.chat(messages)
-        return response.model_dump()
+        return cast(Dict[str, Any], response.model_dump())
 
     def run_tool(self, tool_name: str, context: Optional[Dict[str, Any]] = None) -> str:
         return execute_tool(tool_name, context)

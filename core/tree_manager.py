@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional, cast
+from typing import Any, cast, List, Optional, cast
 
 from models.schemas import (
     FolderNode,
@@ -378,7 +378,7 @@ class TreeManager:
         candidates = _GROUP_TYPE_ALIASES.get(canonical, {canonical})
         for node in project.tree.find_nodes(kind="folder", parent_id=parent_id):
             if getattr(node, "group_type", None) in candidates:
-                return node
+                return cast(FolderNode, node)
         return None
 
     # ── Internal helpers ──────────────────────────────

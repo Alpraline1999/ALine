@@ -121,7 +121,7 @@ def set_external_extensions_directories(directories: Iterable[str | Path] | None
 
 
 def set_external_extensions_directory(directory: str | Path | None) -> Path:
-    return set_external_extensions_directories([directory])[0]
+    return set_external_extensions_directories([directory] if directory is not None else [])[0]
 
 
 def get_external_extension_settings() -> tuple[bool, list[str]]:

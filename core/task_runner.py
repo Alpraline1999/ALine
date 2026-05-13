@@ -34,8 +34,8 @@ class BackgroundTask(QObject):
         self,
         task_id: str,
         target: Callable[..., Any],
-        args: tuple = (),
-        kwargs: Optional[dict] = None,
+        args: tuple[Any, ...] = (),
+        kwargs: Optional[dict[str, Any]] = None,
     ) -> None:
         """启动后台任务。
 
@@ -75,7 +75,7 @@ class BackgroundTask(QObject):
         """在后台线程中调用以报告进度。"""
         self.progress_changed.emit(self._task_id, text, percent)
 
-    def _run_wrapper(self, target: Callable, args: tuple, kwargs: dict) -> None:
+    def _run_wrapper(self, target: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
         try:
             result = target(*args, **kwargs)
             if not self._cancelled:
@@ -98,8 +98,8 @@ class TaskManager(QObject):
         task_type: str,
         job_id: str,
         target: Callable[..., Any],
-        args: tuple = (),
-        kwargs: Optional[dict] = None,
+        args: tuple[Any, ...] = (),
+        kwargs: Optional[dict[str, Any]] = None,
         *,
         on_finished: Optional[Callable[[str, Any], None]] = None,
         on_error: Optional[Callable[[str, str], None]] = None,
