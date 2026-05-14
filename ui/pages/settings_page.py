@@ -39,10 +39,12 @@ from core.ui_preferences import (
     TreeNameDisplayMode,
     get_tree_name_display_mode,
     is_page_tree_focus_mode_enabled,
+    get_ui_language,
     set_ui_language,
     set_page_tree_focus_mode_enabled,
     set_tree_name_display_mode,
 )
+from core.i18n import reload_translations
 from core.ai.providers import (
     get_provider_preset,
     list_builtin_models,
@@ -64,6 +66,7 @@ class SettingsPage(QWidget):
     shortcuts_changed = Signal()  # 快捷键保存后发出
     tree_display_mode_changed = Signal(str)
     page_tree_focus_mode_changed = Signal(bool)
+    language_changed = Signal(str)
     extensions_reloaded = Signal()
     project_modified = Signal()
     assets_modified = Signal()
@@ -426,11 +429,17 @@ class SettingsPage(QWidget):
         if idx < 0 or idx >= len(self._language_keys):
             return
         language = set_ui_language(self._language_keys[idx])
+        reload_translations()
+        self.language_changed.emit(language)
         from qfluentwidgets import InfoBar, InfoBarPosition
+        label_map = {
+            "zh_CN": "简体中文",
+            "en_US": "English",
+        }
 
         InfoBar.info(
             "语言已保存",
-            f"界面语言已保存为 {language}，重启应用后生效。",
+            f"界面语言已切换为 {label_map.get(language, language)}，当前界面已刷新，重启后可完全生效。",
             parent=self._notification_parent(),
             position=InfoBarPosition.TOP,
         )

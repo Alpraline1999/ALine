@@ -38,6 +38,7 @@ from core.report_templates import DEFAULT_REPORT_TEMPLATE
 
 _GLOBAL_ASSET_VERSION = "1"
 _BUILTIN_DEFAULT_REPORT_TEMPLATE_ID = "builtin:default-report-template"
+_BUILTIN_DEFAULT_CURVE_STYLE_TEMPLATE_ID = "builtin:default-curve-style-template"
 _DEFAULT_EXTENSION_CONFIG_NAME = "默认配置"
 _KNOWN_TEST_REPORT_TEMPLATE_SIGNATURES = {
     ("tmpl1", "# Hello"),
@@ -129,6 +130,18 @@ def _builtin_report_templates() -> List[ReportTemplate]:
             id=_BUILTIN_DEFAULT_REPORT_TEMPLATE_ID,
             name="默认模板",
             content=DEFAULT_REPORT_TEMPLATE,
+            is_builtin=True,
+        )
+    ]
+
+
+def _builtin_curve_style_templates() -> List[CurveStyleTemplate]:
+    return [
+        CurveStyleTemplate(
+            id=_BUILTIN_DEFAULT_CURVE_STYLE_TEMPLATE_ID,
+            name="默认样式",
+            description="跟随当前曲线自身颜色与常规线型的默认样式。",
+            style=CurveStyle(),
             is_builtin=True,
         )
     ]
@@ -420,11 +433,17 @@ class GlobalAssetManager:
         self.save()
         return True
 
-    def list_curve_style_templates(self) -> List[CurveStyleTemplate]:
-        return list(self.data.curve_style_templates)
+    def list_curve_style_templates(self, include_builtin: bool = True) -> List[CurveStyleTemplate]:
+        user_templates = list(self.data.curve_style_templates)
+        if not include_builtin:
+            return user_templates
+        return _builtin_curve_style_templates() + user_templates
 
     def get_curve_style_template(self, template_id: str) -> Optional[CurveStyleTemplate]:
-        return next((item for item in self.data.curve_style_templates if item.id == template_id), None)
+        for item in self.list_curve_style_templates(include_builtin=True):
+            if item.id == template_id:
+                return item
+        return None
 
     def add_curve_style_template(self, template: CurveStyleTemplate) -> CurveStyleTemplate:
         self.data.curve_style_templates.append(template)

@@ -942,8 +942,8 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     )
 
     # {{table:params}} — 拟合参数表格
-    params = r.get("params", [])
-    param_names = r.get("param_names", [])
+    params = _ensure_list(r.get("params"))
+    param_names = _ensure_list(r.get("param_names"))
     if params and param_names:
         rows = ["| 参数 | 值 |", "|------|-----|"]
         rows += [f"| {n} | {v:.6g} |" for n, v in zip(param_names, params)]
@@ -952,7 +952,7 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
         content = content.replace("{{table:params}}", "_（无拟合参数）_")
 
     # {{table:peaks}} — 峰值列表
-    peaks = r.get("peaks", [])
+    peaks = _ensure_list(r.get("peaks"))
     if peaks:
         rows = ["| # | X | Y |", "|---|---|---|"]
         rows += [f"| {i+1} | {p['x']:.6g} | {p['y']:.6g} |" for i, p in enumerate(peaks[:50])]
@@ -960,7 +960,7 @@ def render_report(template_content: str, result: Optional[Dict[str, Any]]) -> st
     else:
         content = content.replace("{{table:peaks}}", "_（无峰值数据）_")
 
-    valleys = r.get("valleys", [])
+    valleys = _ensure_list(r.get("valleys"))
     if valleys:
         rows = ["| # | X | Y |", "|---|---|---|"]
         rows += [f"| {i+1} | {p['x']:.6g} | {p['y']:.6g} |" for i, p in enumerate(valleys[:50])]

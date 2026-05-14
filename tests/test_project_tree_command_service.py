@@ -19,6 +19,21 @@ def _load_command_service_module():
     fake_models.DataFile = DataFile
     sys.modules["models.schemas"] = fake_models
 
+    original_dialogs_pkg = sys.modules.get("ui.dialogs")
+    original_node_remark_module = sys.modules.get("ui.dialogs.node_remark_dialog")
+    fake_dialogs_pkg = types.ModuleType("ui.dialogs")
+    fake_dialogs_pkg.__path__ = []  # type: ignore[attr-defined]
+    fake_node_remark_module = types.ModuleType("ui.dialogs.node_remark_dialog")
+
+    class _FakeNodeRemarkDialog:
+        @classmethod
+        def get_remark(cls, parent, title: str, *, remark: str = ""):
+            return remark, False
+
+    fake_node_remark_module.NodeRemarkDialog = _FakeNodeRemarkDialog
+    sys.modules["ui.dialogs"] = fake_dialogs_pkg
+    sys.modules["ui.dialogs.node_remark_dialog"] = fake_node_remark_module
+
     original_global_assets = sys.modules.get("core.global_assets")
     fake_global_assets_module = types.ModuleType("core.global_assets")
 
@@ -126,8 +141,12 @@ def _load_command_service_module():
             return "theme", node_id
         return tuple(node_id.split(":", 1))  # type: ignore[return-value]
 
+    def make_plot_style_asset_key(style_type: str, asset_id: str) -> str:
+        return f"{style_type}:{asset_id}"
+
     fake_global_assets_module.global_assets = _FakeGlobalAssets()
     fake_global_assets_module.parse_plot_style_asset_key = parse_plot_style_asset_key
+    fake_global_assets_module.make_plot_style_asset_key = make_plot_style_asset_key
     sys.modules["core.global_assets"] = fake_global_assets_module
 
     original_project_manager = sys.modules.get("core.project_manager")
@@ -138,6 +157,7 @@ def _load_command_service_module():
             self.deleted: list[str] = []
             self.added: list[tuple[str, str | None, str, int, bool]] = []
             self.renamed_series: list[tuple[str, str]] = []
+            self.remarks: list[tuple[str, str, str]] = []
             self.removed_empty_folder_args: list[str | None] = []
             self.deleted_series: list[str] = []
             self.deleted_curves: list[str] = []
@@ -151,6 +171,7 @@ def _load_command_service_module():
             self.deleted.clear()
             self.added.clear()
             self.renamed_series.clear()
+            self.remarks.clear()
             self.removed_empty_folder_args.clear()
             self.deleted_series.clear()
             self.deleted_curves.clear()
@@ -185,6 +206,27 @@ def _load_command_service_module():
         def rename_node(self, node_id: str, name: str) -> bool:
             self.renamed_series.append((node_id, name))
             return True
+
+        def set_node_remark(self, node_id: str, remark: str) -> bool:
+            self.remarks.append(("node", node_id, remark))
+            return True
+
+        def get_node_remark(self, node_id: str) -> str:
+            return ""
+
+        def set_series_remark(self, node_id: str, remark: str) -> bool:
+            self.remarks.append(("series", node_id, remark))
+            return True
+
+        def get_series_remark(self, node_id: str) -> str:
+            return ""
+
+        def set_curve_remark(self, node_id: str, remark: str) -> bool:
+            self.remarks.append(("curve", node_id, remark))
+            return True
+
+        def get_curve_remark(self, node_id: str) -> str:
+            return ""
 
         def remove_empty_folders(self, root_id: str | None = None):
             self.removed_empty_folder_args.append(root_id)
@@ -230,6 +272,14 @@ def _load_command_service_module():
             sys.modules.pop("models.schemas", None)
         else:
             sys.modules["models.schemas"] = original_models
+        if original_dialogs_pkg is None:
+            sys.modules.pop("ui.dialogs", None)
+        else:
+            sys.modules["ui.dialogs"] = original_dialogs_pkg
+        if original_node_remark_module is None:
+            sys.modules.pop("ui.dialogs.node_remark_dialog", None)
+        else:
+            sys.modules["ui.dialogs.node_remark_dialog"] = original_node_remark_module
         if original_global_assets is None:
             sys.modules.pop("core.global_assets", None)
         else:
@@ -301,6 +351,7 @@ class TestProjectTreeCommandService(unittest.TestCase):
             linked_tree_node_id=lambda *_args: None,
             notify_warning=lambda title, content: state["warnings"].append((title, content)),
             notify_success=lambda title, content: state["successes"].append((title, content)),
+            dialog_parent=lambda: object(),
             refresh=lambda: state["calls"].append("refresh"),
             select_node=lambda node_id: state["calls"].append(f"select:{node_id}"),
             project_modified=lambda: state["calls"].append("modified"),
@@ -340,6 +391,20 @@ class TestProjectTreeCommandService(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual([("f1", "folder-b")], project_manager.renamed_series)
+        self.assertEqual(["refresh", "select:f1", "modified"], state["calls"])
+
+    def test_edit_selected_item_remark_uses_dialog_parent(self) -> None:
+        from unittest import mock
+
+        parent = object()
+        service, state = self._make_service(dialog_parent=lambda: parent)
+
+        with mock.patch.object(module.NodeRemarkDialog, "get_remark", return_value=("备注内容", True)) as get_remark:
+            changed = service.edit_selected_item_remark("folder", "f1", "Folder A", "原备注")
+
+        self.assertTrue(changed)
+        get_remark.assert_called_once_with(parent, "设置备注 · Folder A", remark="原备注")
+        self.assertEqual([("node", "f1", "备注内容")], project_manager.remarks)
         self.assertEqual(["refresh", "select:f1", "modified"], state["calls"])
 
     def test_prune_empty_folders_reports_success(self) -> None:

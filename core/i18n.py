@@ -32,18 +32,21 @@ _translations = gettext.translation(
     fallback=True,
 )
 
-_ = _translations.gettext
-gettext_translate = _
+def _translate(message: str) -> str:
+    return _translations.gettext(message)
+
+
+_ = _translate
+gettext_translate = _translate
 
 def reload_translations() -> gettext.NullTranslations | gettext.GNUTranslations:
-    global _translations, _
+    global _translations
     _translations = gettext.translation(
         "aline",
         localedir=_locale_dir,
         languages=[_current_language()],
         fallback=True,
     )
-    _ = _translations.gettext
     return _translations
 
 

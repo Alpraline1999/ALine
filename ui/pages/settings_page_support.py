@@ -410,7 +410,7 @@ def build_general_tab(page) -> QWidget:
     page._language_combo = ComboBox(language_card)
     page._language_combo.setMinimumWidth(148)
     page._language_keys = ["zh_CN", "en_US"]
-    page._language_combo.addItems([_("中文（简体）"), _("英文（美式）")])
+    page._language_combo.addItems(["简体中文", "English"])
     current_language = get_ui_language()
     page._language_combo.setCurrentIndex(page._language_keys.index(current_language) if current_language in page._language_keys else 0)
     page._language_combo.currentIndexChanged.connect(page._on_language_changed)

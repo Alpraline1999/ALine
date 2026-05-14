@@ -1,0 +1,155 @@
+# English translations for ALine.
+# This file is distributed under the same license as the ALine project.
+msgid ""
+msgstr ""
+"Project-Id-Version: ALine 0.3\n"
+"POT-Creation-Date: 2026-05-13 17:43+0800\n"
+"PO-Revision-Date: 2026-05-14 00:00+0800\n"
+"Language: en_US\n"
+"Language-Team: en_US\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "主页"
+msgstr "Home"
+
+msgid "数据管理"
+msgstr "Data Management"
+
+msgid "数据可视化"
+msgstr "Visualization"
+
+msgid "数据处理"
+msgstr "Processing"
+
+msgid "数据分析"
+msgstr "Analysis"
+
+msgid "图片数字化"
+msgstr "Digitize"
+
+msgid "设置"
+msgstr "Settings"
+
+msgid "隐藏项目树"
+msgstr "Hide Project Tree"
+
+msgid "显示项目树"
+msgstr "Show Project Tree"
+
+msgid "全部展开"
+msgstr "Expand All"
+
+msgid "全部折叠"
+msgstr "Collapse All"
+
+msgid "项目树管理"
+msgstr "Project Tree Management"
+
+msgid "隐藏扩展面板"
+msgstr "Hide Extension Panel"
+
+msgid "显示扩展面板"
+msgstr "Show Extension Panel"
+
+msgid "语言"
+msgstr "Language"
+
+msgid "切换应用界面语言，重启后生效。"
+msgstr "Switch the application language. Restart to apply fully."
+
+msgid "项目树页面专注模式"
+msgstr "Project Tree Focus Mode"
+
+msgid "开启后，功能页中的共享项目树只显示当前页面直接相关的节点。"
+msgstr "When enabled, the shared project tree only shows nodes directly related to the current page."
+
+msgid "新手引导"
+msgstr "Onboarding"
+
+msgid "重新显示引导"
+msgstr "Replay Onboarding"
+
+msgid "常规"
+msgstr "General"
+
+msgid "扩展"
+msgstr "Extensions"
+
+msgid "快捷键"
+msgstr "Shortcuts"
+
+msgid "主题"
+msgstr "Theme"
+
+msgid "保存并重载扩展"
+msgstr "Save and Reload Extensions"
+
+msgid "启用内置扩展"
+msgstr "Enable Built-in Extensions"
+
+msgid "启用外部扩展"
+msgstr "Enable External Extensions"
+
+msgid "外部扩展目录"
+msgstr "External Extension Folders"
+
+msgid "外部扩展沙箱模式"
+msgstr "External Extension Sandbox"
+
+msgid "刷新外部扩展扫描"
+msgstr "Refresh External Scan"
+
+msgid "应用扩展设置"
+msgstr "Apply Extension Settings"
+
+msgid "当前未发现绘图扩展。"
+msgstr "No plot extensions found."
+
+msgid "当前未发现处理扩展。"
+msgstr "No processing extensions found."
+
+msgid "当前未发现分析扩展。"
+msgstr "No analysis extensions found."
+
+msgid "当前未发现数字化扩展。"
+msgstr "No digitize extensions found."
+
+msgid "保存绘图样式"
+msgstr "Save Plot Style"
+
+msgid "加载绘图样式"
+msgstr "Load Plot Style"
+
+msgid "样式名称:"
+msgstr "Style name:"
+
+msgid "默认样式"
+msgstr "Default Style"
+
+msgid "保存曲线样式"
+msgstr "Save Curve Style"
+
+msgid "加载到分析页"
+msgstr "Load to Analysis"
+
+msgid "应用到分析页"
+msgstr "Apply to Analysis"
+
+msgid "应用到可视化"
+msgstr "Apply to Visualization"
+
+msgid "报告模板"
+msgstr "Report Templates"
+
+msgid "曲线样式"
+msgstr "Curve Styles"
+
+msgid "绘图样式"
+msgstr "Plot Styles"
+
+msgid "扩展配置"
+msgstr "Extension Configs"
+
+msgid "Pipelines"
+msgstr "Pipelines"

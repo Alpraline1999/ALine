@@ -31,7 +31,7 @@ from core.global_assets import global_assets
 from core.app_context import get_app_context
 from core.ui_preferences import is_page_tree_focus_mode_enabled, reset_all_onboarding_progress
 from core.shortcut_manager import ShortcutBindingSet, shortcut_manager
-from core.i18n import _
+from core.i18n import _, reload_translations
 
 
 class _PMProxy:
@@ -77,6 +77,16 @@ _PAGE_TREE_FOCUS_KINDS = {
     "analysisPage":  ["datasets", "analysis_result_group"],
     "digitizePage":  ["datasets", "images"],
     "settingsPage":  [],
+}
+
+_PAGE_TREE_FOCUS_GLOBAL_GROUP_KEYS = {
+    "homePage": [],
+    "dataPage": [],
+    "chartPage": ["curve_styles", "plot_styles", "extension_configs:plot"],
+    "processPage": ["pipelines", "extension_configs:processing"],
+    "analysisPage": ["report_templates", "extension_configs:analysis"],
+    "digitizePage": ["extension_configs:digitize"],
+    "settingsPage": [],
 }
 
 _TREE_PANEL_MIN_WIDTH = 260
@@ -351,6 +361,12 @@ class MainWindow(FluentWindow):
         obj_name = getattr(interface, "objectName", lambda: "")()
         return list(_PAGE_TREE_FOCUS_KINDS.get(obj_name, []))
 
+    def _tree_focus_global_groups_for_interface(self, interface) -> list[str]:
+        if not self._page_tree_focus_mode_enabled:
+            return []
+        obj_name = getattr(interface, "objectName", lambda: "")()
+        return list(_PAGE_TREE_FOCUS_GLOBAL_GROUP_KEYS.get(obj_name, []))
+
     def _on_page_tree_focus_mode_changed(self, enabled: bool) -> None:
         self._page_tree_focus_mode_enabled = bool(enabled)
         self._update_tree_panel_visibility(self.stackedWidget.currentWidget())
@@ -384,6 +400,7 @@ class MainWindow(FluentWindow):
         self.home_page.project_opened.connect(self._on_project_opened)
         self.home_page.quick_start_requested.connect(self._on_home_quick_start_requested)
         self.settings_page.replay_onboarding_requested.connect(self._replay_home_onboarding)
+        self.settings_page.language_changed.connect(self._on_language_changed)
         self.settings_page.extensions_reloaded.connect(self._on_extensions_reloaded)
         self.settings_page.project_modified.connect(self._on_project_modified)
         self.settings_page.assets_modified.connect(self._tree_panel.tree.refresh)
@@ -423,6 +440,23 @@ class MainWindow(FluentWindow):
         self.chart_page.handle_extension_runtime_reload(plot_types)
         self._tree_panel.tree.refresh()
 
+    def _on_language_changed(self, language: str) -> None:
+        reload_translations()
+        del language
+        self.home_page.refresh_extension_summary()
+        self.data_page.refresh()
+        self.process_page.refresh_processing_extensions()
+        self.process_page.refresh_input_choices()
+        self.analysis_page.refresh_analysis_type_choices()
+        self.chart_page._refresh_curve_style_template_combo()
+        self.chart_page._refresh_template_combo(self.chart_page._applied_plot_style_ref)
+        self.chart_page._refresh_style_extension_panel()
+        self.chart_page._refresh_chart_list()
+        self.digitize_page.refresh_project_tree()
+        self._tree_panel.tree.refresh()
+        self._update_tree_panel_visibility(self.stackedWidget.currentWidget())
+        self._update_window_title()
+
     # ─────────────────────────────────────────────────────────
     # FluentWindow.switchTo 覆盖
     # ─────────────────────────────────────────────────────────
@@ -432,7 +466,11 @@ class MainWindow(FluentWindow):
         self._update_tree_panel_visibility(interface)
 
     def _tree_available_for_interface(self, interface) -> bool:
-        return bool(self._tree_kinds_for_interface(interface) or self._tree_focus_groups_for_interface(interface))
+        return bool(
+            self._tree_kinds_for_interface(interface)
+            or self._tree_focus_groups_for_interface(interface)
+            or self._tree_focus_global_groups_for_interface(interface)
+        )
 
     def _page_supports_extension_panel(self, interface) -> bool:
         if interface is None or not hasattr(interface, "supports_extension_panel_toggle"):
@@ -478,7 +516,8 @@ class MainWindow(FluentWindow):
     def _update_tree_panel_visibility(self, interface) -> None:
         kinds = self._tree_kinds_for_interface(interface)
         focus_groups = self._tree_focus_groups_for_interface(interface)
-        show = bool(kinds or focus_groups)
+        focus_global_groups = self._tree_focus_global_groups_for_interface(interface)
+        show = bool(kinds or focus_groups or focus_global_groups)
         tree_visible = show and not self._view_state.tree_panel_user_hidden
         self._tree_panel.setVisible(tree_visible)
         self._apply_tree_panel_width(tree_visible)
@@ -486,7 +525,11 @@ class MainWindow(FluentWindow):
         self._tree_toggle_nav_btn.setToolTip(_("显示项目树") if self._view_state.tree_panel_user_hidden else _("隐藏项目树"))
         self._update_extension_panel_toggle_button(interface)
         if show:
-            self._tree_panel.tree.set_filter_kinds(kinds, focus_root_group_types=focus_groups)
+            self._tree_panel.tree.set_filter_kinds(
+                kinds,
+                focus_root_group_types=focus_groups,
+                focus_global_group_keys=focus_global_groups,
+            )
 
     def _toggle_tree_panel(self) -> None:
         current_page = self.stackedWidget.currentWidget()

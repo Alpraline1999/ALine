@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from PySide6.QtWidgets import QWidget
+
 from core.global_assets import global_assets, parse_plot_style_asset_key
 from core.project_manager import project_manager
 from models.schemas import DataFile
@@ -28,6 +30,7 @@ class ProjectTreeCommandService:
     linked_tree_node_id: Callable[[str, str, str], str | None]
     notify_warning: Callable[[str, str], None]
     notify_success: Callable[[str, str], None]
+    dialog_parent: Callable[[], QWidget]
     refresh: Callable[[], None]
     select_node: Callable[[str], None]
     project_modified: Callable[[], None]
@@ -116,7 +119,7 @@ class ProjectTreeCommandService:
             "curve": "设置备注",
         }
         remark, ok = NodeRemarkDialog.get_remark(
-            None,
+            self.dialog_parent(),
             f"{title_map.get(kind, '设置备注')} · {current_name or node_id}",
             remark=current_remark,
         )

@@ -1042,8 +1042,7 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.widget.set_name_display_mode("wrap")
         QApplication.processEvents()
 
-        test_item = QTreeWidgetItem(tree)
-        test_item.setText(0, "A very long node name that should wrap anywhere in the tree view delegate")
+        test_item = tree.create_item("A very long node name that should wrap anywhere in the tree view delegate")
         tree.addTopLevelItem(test_item)
         tree.show()
         QApplication.processEvents()
@@ -2275,6 +2274,11 @@ class TestSettingsPage(unittest.TestCase):
 
     def test_theme_combo_exists(self):
         self.assertIsNotNone(self.page.theme_combo)
+
+    def test_language_combo_uses_simple_labels(self):
+        self.assertIsNotNone(self.page._language_combo)
+        self.assertEqual(self.page._language_combo.itemText(0), "简体中文")
+        self.assertEqual(self.page._language_combo.itemText(1), "English")
 
     def test_extension_controls_exist(self):
         self.assertIsNotNone(self.page._builtin_extension_card)
@@ -6460,8 +6464,8 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._font_family_combo.itemText(0), "默认")
 
     def test_unbound_style_labels_use_none_text(self):
-        self.assertEqual(self.page._template_combo.itemText(0), "无")
-        self.assertEqual(self.page._curve_style_template_combo.itemText(0), "无")
+        self.assertEqual(self.page._template_combo.itemText(0), "默认样式")
+        self.assertEqual(self.page._curve_style_template_combo.itemText(0), "默认样式")
 
     def test_grid_alpha_is_clamped_to_valid_range(self):
         self.page._grid_alpha_slider.setValue(500)
@@ -10365,19 +10369,47 @@ class TestMainWindow(unittest.TestCase):
 
             self.win.switchTo(self.win.chart_page)
             self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "pictures"])
-            self.assertEqual(_top_level_labels(), ["数据集", "图片集"])
+            self.assertEqual(self.win._tree_panel.tree._focus_global_group_keys, ["curve_styles", "plot_styles", "extension_configs:plot"])
+            self.assertEqual(_top_level_labels(), ["数据集", "图片集", "全局资源"])
+            global_root = next(
+                self.win._tree_panel.tree._tree.topLevelItem(index)
+                for index in range(self.win._tree_panel.tree._tree.topLevelItemCount())
+                if self.win._tree_panel.tree._tree.topLevelItem(index).text(0) == "全局资源"
+            )
+            self.assertEqual([global_root.child(i).text(0) for i in range(global_root.childCount())], ["曲线样式", "绘图样式", "扩展配置"])
 
             self.win.switchTo(self.win.process_page)
             self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets"])
-            self.assertEqual(_top_level_labels(), ["数据集"])
+            self.assertEqual(self.win._tree_panel.tree._focus_global_group_keys, ["pipelines", "extension_configs:processing"])
+            self.assertEqual(_top_level_labels(), ["数据集", "全局资源"])
+            global_root = next(
+                self.win._tree_panel.tree._tree.topLevelItem(index)
+                for index in range(self.win._tree_panel.tree._tree.topLevelItemCount())
+                if self.win._tree_panel.tree._tree.topLevelItem(index).text(0) == "全局资源"
+            )
+            self.assertEqual([global_root.child(i).text(0) for i in range(global_root.childCount())], ["Pipelines", "扩展配置"])
 
             self.win.switchTo(self.win.analysis_page)
             self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "analysis_result_group"])
-            self.assertEqual(_top_level_labels(), ["数据集", "分析结果"])
+            self.assertEqual(self.win._tree_panel.tree._focus_global_group_keys, ["report_templates", "extension_configs:analysis"])
+            self.assertEqual(_top_level_labels(), ["数据集", "分析结果", "全局资源"])
+            global_root = next(
+                self.win._tree_panel.tree._tree.topLevelItem(index)
+                for index in range(self.win._tree_panel.tree._tree.topLevelItemCount())
+                if self.win._tree_panel.tree._tree.topLevelItem(index).text(0) == "全局资源"
+            )
+            self.assertEqual([global_root.child(i).text(0) for i in range(global_root.childCount())], ["报告模板", "扩展配置"])
 
             self.win.switchTo(self.win.digitize_page)
             self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "images"])
-            self.assertEqual(_top_level_labels(), ["数据集", "数字化"])
+            self.assertEqual(self.win._tree_panel.tree._focus_global_group_keys, ["extension_configs:digitize"])
+            self.assertEqual(_top_level_labels(), ["数据集", "数字化", "全局资源"])
+            global_root = next(
+                self.win._tree_panel.tree._tree.topLevelItem(index)
+                for index in range(self.win._tree_panel.tree._tree.topLevelItemCount())
+                if self.win._tree_panel.tree._tree.topLevelItem(index).text(0) == "全局资源"
+            )
+            self.assertEqual([global_root.child(i).text(0) for i in range(global_root.childCount())], ["扩展配置"])
         finally:
             self.win._page_tree_focus_mode_enabled = previous
             self.win._update_tree_panel_visibility(self.win.stackedWidget.currentWidget())

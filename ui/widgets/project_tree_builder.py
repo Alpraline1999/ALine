@@ -5,6 +5,7 @@ from typing import Optional, Protocol
 
 class ProjectTreeBuildOwner(Protocol):
     _focus_root_group_types: list[str]
+    _focus_global_group_keys: list[str]
     _name_display_mode: str
     _tree: object
     _projects: list[object]
@@ -39,8 +40,7 @@ class ProjectTreeBuilder:
         owner._tree.clear()
 
         if not owner._projects:
-            if not owner._focus_root_group_types:
-                owner._build_global_assets_root()
+            owner._build_global_assets_root()
             owner._restore_expansion_state(expansion_state)
             owner._restore_selection(selected_key)
             owner._tree.blockSignals(False)
@@ -78,8 +78,7 @@ class ProjectTreeBuilder:
             owner._build_children(project, None, project_item)
             project_item.setExpanded(True)
 
-        if not focus_group_types:
-            owner._build_global_assets_root()
+        owner._build_global_assets_root()
         owner._restore_expansion_state(expansion_state)
         selected_key = owner._apply_focus_view(selected_key)
         owner._restore_selection(selected_key)

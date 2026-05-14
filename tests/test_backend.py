@@ -2142,6 +2142,29 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertEqual(result.get("_plot_series"), [])
         self.assertEqual(result.get("summary_items"), True)
 
+    def test_analysis_report_rendering_ignores_bool_list_fields(self):
+        from core.analysis_engine import render_report
+
+        rendered = render_report(
+            "{{table:params}}\n{{table:peaks}}\n{{table:valleys}}\n{{flag}}",
+            {
+                "_primary_result": {
+                    "analysis_type": "peak_detect",
+                    "params": True,
+                    "param_names": True,
+                    "peaks": True,
+                    "valleys": True,
+                    "flag": False,
+                },
+                "result_count": 1,
+            },
+        )
+
+        self.assertIn("False", rendered)
+        self.assertIn("_（无拟合参数）_", rendered)
+        self.assertIn("_（无峰值数据）_", rendered)
+        self.assertIn("_（无波谷数据）_", rendered)
+
     def test_build_extension_entry_exposes_normalized_metadata_and_resolved_options(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, build_extension_entry
 

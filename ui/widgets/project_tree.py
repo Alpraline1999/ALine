@@ -16,8 +16,6 @@ from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QSizePolicy, QVBox
 from qfluentwidgets import (
     FluentIcon as FIF, InfoBar, InfoBarPosition, MessageBox, RoundMenu, ToolTip,
 )
-from PySide6.QtWidgets import QTreeWidgetItem
-
 from core.global_assets import global_assets, make_plot_style_asset_key
 from core.extension_api import build_extension_entry, extension_registry
 from core.app_context import get_app_context
@@ -26,6 +24,7 @@ from app.project_tree_command_service import ProjectTreeCommandService
 from ui.dialogs.project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.widgets.project_tree_builder import ProjectTreeBuilder
+from ui.widgets.project_tree_model import ProjectTreeItem
 from ui.widgets.project_tree_page_dispatcher import ProjectTreePageDispatcher
 from ui.widgets.project_tree_view import ProjectTreeView
 from .project_tree_support import (
@@ -107,6 +106,7 @@ class ProjectTreeWidget(QWidget):
         self._projects = project_manager.projects
         self._filter_kinds: List[str] = []  # 空 = 显示全部
         self._focus_root_group_types: List[str] = []
+        self._focus_global_group_keys: List[str] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -141,7 +141,7 @@ class ProjectTreeWidget(QWidget):
         layout.addWidget(self._tree)
 
         self._renaming = False
-        self._item_cache: Dict[str, QTreeWidgetItem] = {}
+        self._item_cache: Dict[str, ProjectTreeItem] = {}
         self._ensuring_loaded: set[str] = set()
         self._branch_toggle_item_key: Optional[str] = None
         self._drag_source_item_key: Optional[str] = None
@@ -171,6 +171,7 @@ class ProjectTreeWidget(QWidget):
             linked_tree_node_id=self._linked_tree_node_id,
             notify_warning=self._notify_tree_warning,
             notify_success=self._notify_tree_success,
+            dialog_parent=self._dialog_parent,
             refresh=self.refresh,
             select_node=self.select_node,
             project_modified=self.project_modified.emit,
@@ -374,7 +375,13 @@ class ProjectTreeWidget(QWidget):
             self._tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
             self._tree.blockSignals(False)
 
-    def set_filter_kinds(self, kinds: List[str], *, focus_root_group_types: Optional[List[str]] = None) -> None:
+    def set_filter_kinds(
+        self,
+        kinds: List[str],
+        *,
+        focus_root_group_types: Optional[List[str]] = None,
+        focus_global_group_keys: Optional[List[str]] = None,
+    ) -> None:
         """只显示指定 kind 的节点（空列表 = 显示全部）。"""
         self._filter_kinds = list(kinds)
         self._focus_root_group_types = [
@@ -384,6 +391,11 @@ class ProjectTreeWidget(QWidget):
                 for group_type in list(focus_root_group_types or [])
             )
             if canonical
+        ]
+        self._focus_global_group_keys = [
+            str(group_key or "").strip()
+            for group_key in list(focus_global_group_keys or [])
+            if str(group_key or "").strip()
         ]
         self.refresh()
 
@@ -553,7 +565,7 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _build_children(
-        self, project, parent_id: Optional[str], parent_item: Optional[QTreeWidgetItem], *, depth: int = 1
+        self, project, parent_id: Optional[str], parent_item: Optional[ProjectTreeItem], *, depth: int = 1
     ) -> None:
         if project is None or project.tree is None or parent_item is None:
             return
@@ -609,12 +621,12 @@ class ProjectTreeWidget(QWidget):
                         parent_item.removeChild(item)
                         continue
 
-    def _build_placeholder_item(self, parent_item: QTreeWidgetItem) -> QTreeWidgetItem:
-        placeholder = QTreeWidgetItem()
+    def _build_placeholder_item(self, parent_item: ProjectTreeItem) -> ProjectTreeItem:
+        placeholder = self._tree.create_item("")
         parent_item.addChild(placeholder)
         return placeholder
 
-    def _is_placeholder_item(self, item: Optional[QTreeWidgetItem]) -> bool:
+    def _is_placeholder_item(self, item: Optional[ProjectTreeItem]) -> bool:
         if item is None:
             return False
         return item.data(0, _ROLE) is None
@@ -647,7 +659,7 @@ class ProjectTreeWidget(QWidget):
             return bool(img.curves)
         return False
 
-    def _get_or_create_item(self, node, project_id: str) -> QTreeWidgetItem:
+    def _get_or_create_item(self, node, project_id: str) -> ProjectTreeItem:
         node_id = getattr(node, "id", None)
         if node_id and node_id in self._item_cache:
             item = self._item_cache[node_id]
@@ -658,10 +670,10 @@ class ProjectTreeWidget(QWidget):
             self._item_cache[node_id] = item
         return item
 
-    def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
+    def _on_item_expanded(self, item: ProjectTreeItem) -> None:
         self._lazy_load_children(item)
 
-    def _lazy_load_children(self, item: Optional[QTreeWidgetItem]) -> None:
+    def _lazy_load_children(self, item: Optional[ProjectTreeItem]) -> None:
         if item is None or item.childCount() != 1:
             return
         if not self._is_placeholder_item(item.child(0)):
@@ -685,7 +697,7 @@ class ProjectTreeWidget(QWidget):
         elif kind == "folder" or kind in _ROOT_GROUP_TYPES:
             self._build_children(project, node_id, item)
 
-    def _build_virtual_children(self, project, kind: str, node_id: str, parent_item: QTreeWidgetItem) -> None:
+    def _build_virtual_children(self, project, kind: str, node_id: str, parent_item: ProjectTreeItem) -> None:
         if kind == "data_file":
             node = project.tree.get_node(node_id)
             if node is None:
@@ -747,8 +759,8 @@ class ProjectTreeWidget(QWidget):
         finally:
             self._ensuring_loaded.discard(node_id)
 
-    def _make_project_item(self, project) -> QTreeWidgetItem:
-        project_item = QTreeWidgetItem([project.name])
+    def _make_project_item(self, project) -> ProjectTreeItem:
+        project_item = self._tree.create_item(project.name)
         project_item.setData(0, _ROLE, ("project", project.id))
         project_item.setData(0, _PROJECT_ROLE, project.id)
         project_item.setIcon(0, _PROJECT_ICON.icon())
@@ -759,8 +771,8 @@ class ProjectTreeWidget(QWidget):
             project_item.setFont(0, font)
         return project_item
 
-    def _make_synthetic_item(self, label: str, kind: str, node_id: str, icon_fif) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([label])
+    def _make_synthetic_item(self, label: str, kind: str, node_id: str, icon_fif) -> ProjectTreeItem:
+        item = self._tree.create_item(label)
         item.setData(0, _ROLE, (kind, node_id))
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         item.setIcon(0, icon_fif.icon())
@@ -768,51 +780,71 @@ class ProjectTreeWidget(QWidget):
         return item
 
     def _build_global_assets_root(self) -> None:
-        root = self._make_synthetic_item("全局资源", "global_root", "__global_root__", FIF.FOLDER)
-        pipelines = self._make_synthetic_item("Pipelines", "global_group", "__global_pipelines__", FIF.DEVELOPER_TOOLS)
-        for item in sorted(global_assets.list_saved_pipelines(), key=lambda asset: _sort_text_key(asset.name or asset.id)):
-            pipelines.addChild(self._make_synthetic_item(item.name, "global_pipeline", item.id, FIF.DEVELOPER_TOOLS))
-        root.addChild(pipelines)
-        curve_group = self._make_synthetic_item("曲线样式", "global_group", "__global_curve_styles__", FIF.PENCIL_INK)
-        curve_templates = getattr(global_assets, "list_curve_style_templates", lambda: [])()
-        for tmpl in sorted(curve_templates, key=lambda t: _sort_text_key(t.name)):
-            curve_group.addChild(self._make_synthetic_item(tmpl.name, "global_curve_style_template", tmpl.id, FIF.PENCIL_INK))
-        root.addChild(curve_group)
-        plot_group = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
-        plot_themes = sorted(global_assets.list_plot_themes(include_builtin=True), key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)))
-        for theme in plot_themes:
-            plot_group.addChild(self._make_synthetic_item(theme.name, "global_plot_theme", make_plot_style_asset_key("theme", theme.id), FIF.PIE_SINGLE))
-        templates = global_assets.list_figure_templates()
-        for tmpl in sorted(
-            templates,
-            key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
-        ):
-            plot_group.addChild(self._make_synthetic_item(tmpl.name, "global_plot_style", make_plot_style_asset_key("template", tmpl.id), FIF.PIE_SINGLE))
-        root.addChild(plot_group)
-        report_group = self._make_synthetic_item("报告模板", "global_group", "__global_report_templates__", FIF.DOCUMENT)
-        for tmpl in sorted(
-            global_assets.list_report_templates(include_builtin=True),
-            key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
-        ):
-            report_group.addChild(self._make_synthetic_item(tmpl.name, "global_report_template", tmpl.id, FIF.DOCUMENT))
-        root.addChild(report_group)
-        plot_configs = []
-        for category, label, icon in _EXTENSION_CONFIG_GROUPS:
-            items = self._build_extension_config_group_items(category)
-            group_item = self._make_synthetic_item(label, "global_group", f"extension_config_group|{category}", icon)
-            if items:
-                for item in items:
-                    group_item.addChild(item)
-            else:
-                group_item.addChild(self._make_synthetic_item("空分组", "global_group", f"extension_config_group|{category}|empty", getattr(FIF, "INFO", FIF.DOCUMENT)))
-            plot_configs.append(group_item)
-        ext_group = self._make_synthetic_item("扩展配置", "global_group", "__global_extension_configs__", getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS))
-        for item in plot_configs:
-            ext_group.addChild(item)
-        root.addChild(ext_group)
-        self._tree.addTopLevelItem(root)
+        focus_global_groups = set(self._focus_global_group_keys)
+        focus_mode_active = bool(focus_global_groups)
+        def _allowed(key: str) -> bool:
+            return not focus_mode_active or key in focus_global_groups
 
-    def _build_extension_config_group_items(self, category: str) -> List[QTreeWidgetItem]:
+        root = self._make_synthetic_item("全局资源", "global_root", "__global_root__", FIF.FOLDER)
+        visible_children = 0
+        if _allowed("pipelines"):
+            pipelines = self._make_synthetic_item("Pipelines", "global_group", "__global_pipelines__", FIF.DEVELOPER_TOOLS)
+            for item in sorted(global_assets.list_saved_pipelines(), key=lambda asset: _sort_text_key(asset.name or asset.id)):
+                pipelines.addChild(self._make_synthetic_item(item.name, "global_pipeline", item.id, FIF.DEVELOPER_TOOLS))
+            root.addChild(pipelines)
+            visible_children += 1
+        if _allowed("curve_styles"):
+            curve_group = self._make_synthetic_item("曲线样式", "global_group", "__global_curve_styles__", FIF.PENCIL_INK)
+            curve_templates = getattr(global_assets, "list_curve_style_templates", lambda include_builtin=True: [])(include_builtin=True)
+            for tmpl in sorted(curve_templates, key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name))):
+                curve_group.addChild(self._make_synthetic_item(tmpl.name, "global_curve_style_template", tmpl.id, FIF.PENCIL_INK))
+            root.addChild(curve_group)
+            visible_children += 1
+        if _allowed("plot_styles"):
+            plot_group = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
+            plot_themes = sorted(global_assets.list_plot_themes(include_builtin=True), key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)))
+            for theme in plot_themes:
+                plot_group.addChild(self._make_synthetic_item(theme.name, "global_plot_theme", make_plot_style_asset_key("theme", theme.id), FIF.PIE_SINGLE))
+            templates = global_assets.list_figure_templates()
+            for tmpl in sorted(
+                templates,
+                key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
+            ):
+                plot_group.addChild(self._make_synthetic_item(tmpl.name, "global_plot_style", make_plot_style_asset_key("template", tmpl.id), FIF.PIE_SINGLE))
+            root.addChild(plot_group)
+            visible_children += 1
+        if _allowed("report_templates"):
+            report_group = self._make_synthetic_item("报告模板", "global_group", "__global_report_templates__", FIF.DOCUMENT)
+            for tmpl in sorted(
+                global_assets.list_report_templates(include_builtin=True),
+                key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
+            ):
+                report_group.addChild(self._make_synthetic_item(tmpl.name, "global_report_template", tmpl.id, FIF.DOCUMENT))
+            root.addChild(report_group)
+            visible_children += 1
+        ext_group = None
+        allowed_categories = {key.split(":", 1)[1] for key in focus_global_groups if key.startswith("extension_configs:")}
+        if not focus_mode_active or allowed_categories:
+            ext_group = self._make_synthetic_item("扩展配置", "global_group", "__global_extension_configs__", getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS))
+            for category, label, icon in _EXTENSION_CONFIG_GROUPS:
+                group_key = f"extension_configs:{category}"
+                if not _allowed(group_key):
+                    continue
+                items = self._build_extension_config_group_items(category)
+                group_item = self._make_synthetic_item(label, "global_group", f"extension_config_group|{category}", icon)
+                if items:
+                    for item in items:
+                        group_item.addChild(item)
+                else:
+                    group_item.addChild(self._make_synthetic_item("空分组", "global_group", f"extension_config_group|{category}|empty", getattr(FIF, "INFO", FIF.DOCUMENT)))
+                ext_group.addChild(group_item)
+                visible_children += 1
+            if ext_group.childCount() > 0:
+                root.addChild(ext_group)
+        if visible_children > 0:
+            self._tree.addTopLevelItem(root)
+
+    def _build_extension_config_group_items(self, category: str) -> List[ProjectTreeItem]:
         extension_map = self._extension_registry_name_map(category)
         configs_by_type: dict[str, list[Any]] = {}
         for config in global_assets.list_extension_configs(category=category):
@@ -823,7 +855,7 @@ class ProjectTreeWidget(QWidget):
 
         ordered_types = sorted(extension_map, key=lambda value: (extension_map.get(value, value).lower(), value))
 
-        items: List[QTreeWidgetItem] = []
+        items: List[ProjectTreeItem] = []
         for type_id in ordered_types:
             configs = sorted(configs_by_type.get(type_id, []), key=_extension_config_sort_key)
             extension_label = extension_map.get(type_id) or (str(getattr(configs[0], "extension_name", "") or "").strip() if configs else "")
@@ -857,7 +889,7 @@ class ProjectTreeWidget(QWidget):
         extension_type: str,
         extension_label: Optional[str],
         configs: List[Any],
-    ) -> QTreeWidgetItem:
+    ) -> ProjectTreeItem:
         label = str(extension_label or extension_type or "扩展").strip() or "扩展"
         item = self._make_synthetic_item(
             label,
@@ -881,7 +913,7 @@ class ProjectTreeWidget(QWidget):
             )
         return item
 
-    def _make_item(self, node, project_id: str) -> QTreeWidgetItem:
+    def _make_item(self, node, project_id: str) -> ProjectTreeItem:
         kind = node.kind
         icon, _ = _KIND_CONFIG.get(kind, (FIF.FOLDER, None))
         if kind == "folder":
@@ -890,7 +922,7 @@ class ProjectTreeWidget(QWidget):
             icon_qicon = self._source_file_icon(node).icon()
         else:
             icon_qicon = icon.icon()
-        item = QTreeWidgetItem([getattr(node, "name", "") or getattr(node, "id", "")])
+        item = self._tree.create_item(getattr(node, "name", "") or getattr(node, "id", ""))
         item.setData(0, _ROLE, (kind, node.id))
         item.setData(0, _PROJECT_ROLE, project_id)
         item.setIcon(0, icon_qicon)
@@ -900,8 +932,8 @@ class ProjectTreeWidget(QWidget):
         self._item_cache[node.id] = item
         return item
 
-    def _make_virtual_series_item(self, series, project_id: str) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([series.name or series.id])
+    def _make_virtual_series_item(self, series, project_id: str) -> ProjectTreeItem:
+        item = self._tree.create_item(series.name or series.id)
         item.setData(0, _ROLE, ("series", series.id))
         item.setData(0, _PROJECT_ROLE, project_id)
         color = series.color or "#0078D4"
@@ -910,8 +942,8 @@ class ProjectTreeWidget(QWidget):
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
         return item
 
-    def _make_virtual_curve_item(self, curve, project_id: str) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([curve.name or curve.id])
+    def _make_virtual_curve_item(self, curve, project_id: str) -> ProjectTreeItem:
+        item = self._tree.create_item(curve.name or curve.id)
         item.setData(0, _ROLE, ("curve", curve.id))
         item.setData(0, _PROJECT_ROLE, project_id)
         color = curve.color or "#0078D4"
@@ -933,7 +965,7 @@ class ProjectTreeWidget(QWidget):
     # 事件处理
     # ─────────────────────────────────────────────────────────
 
-    def _activate_item_project(self, item: Optional[QTreeWidgetItem]) -> None:
+    def _activate_item_project(self, item: Optional[ProjectTreeItem]) -> None:
         if item is None:
             return
         project_id = self._item_project_id(item)
@@ -951,7 +983,7 @@ class ProjectTreeWidget(QWidget):
             if callable(update_window_title):
                 update_window_title()
 
-    def _on_item_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
+    def _on_item_clicked(self, item: ProjectTreeItem, _col: int) -> None:
         if self._renaming:
             return
         if self._consume_branch_toggle_click(item):
@@ -962,7 +994,7 @@ class ProjectTreeWidget(QWidget):
         if data:
             self.node_selected.emit(data[0], data[1])
 
-    def _on_item_activated(self, item: QTreeWidgetItem, _col: int) -> None:
+    def _on_item_activated(self, item: ProjectTreeItem, _col: int) -> None:
         self._activate_item_project(item)
         data = self._item_role_data(item)
         if data:
@@ -996,7 +1028,7 @@ class ProjectTreeWidget(QWidget):
                 return False
         return super().eventFilter(watched, event)
 
-    def _on_item_changed(self, item: QTreeWidgetItem, _col: int) -> None:
+    def _on_item_changed(self, item: ProjectTreeItem, _col: int) -> None:
         if not self._renaming:
             return
         self._renaming = False
@@ -1184,7 +1216,7 @@ class ProjectTreeWidget(QWidget):
     def _cmd_move_virtual(self, kind: str, node_id: str, choices: List[Tuple[str, str]]) -> None:
         self._command_service.move_virtual(kind, node_id, choices)
 
-    def _selected_items_for_context_menu(self, anchor_item: QTreeWidgetItem) -> List[QTreeWidgetItem]:
+    def _selected_items_for_context_menu(self, anchor_item: ProjectTreeItem) -> List[ProjectTreeItem]:
         selected_items = [item for item in self._tree.selectedItems() if item is not None]
         if anchor_item not in selected_items:
             anchor_project_id = self._item_project_id(anchor_item)
@@ -1196,7 +1228,7 @@ class ProjectTreeWidget(QWidget):
         self._tree.setCurrentItem(anchor_item)
         return selected_items
 
-    def _batch_action_payloads(self, items: List[QTreeWidgetItem]) -> List[Dict[str, object]]:
+    def _batch_action_payloads(self, items: List[ProjectTreeItem]) -> List[Dict[str, object]]:
         if len(items) < 2:
             return []
         payloads: List[Dict[str, object]] = []
@@ -1243,9 +1275,9 @@ class ProjectTreeWidget(QWidget):
     # 树节点查找与查询
     # ─────────────────────────────────────────────────────────
 
-    def _find_item(self, node_id: str) -> Optional[QTreeWidgetItem]:
+    def _find_item(self, node_id: str) -> Optional[ProjectTreeItem]:
         self._ensure_node_loaded(node_id)
-        def _search(parent: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
+        def _search(parent: Optional[ProjectTreeItem]) -> Optional[ProjectTreeItem]:
             count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
             for index in range(count):
                 item = self._tree.topLevelItem(index) if parent is None else parent.child(index)
@@ -1258,7 +1290,7 @@ class ProjectTreeWidget(QWidget):
             return None
         return _search(None)
 
-    def _selected_items_or_current(self) -> List[QTreeWidgetItem]:
+    def _selected_items_or_current(self) -> List[ProjectTreeItem]:
         items = list(self._tree.selectedItems())
         if items:
             return items
@@ -1270,7 +1302,7 @@ class ProjectTreeWidget(QWidget):
         *,
         root_id: Optional[str] = None,
         project_id: Optional[str] = None,
-        items: Optional[List[QTreeWidgetItem]] = None,
+        items: Optional[List[ProjectTreeItem]] = None,
     ) -> Optional[str]:
         if project_id and project_manager.get_project(project_id) is not None:
             return project_id
@@ -1291,7 +1323,7 @@ class ProjectTreeWidget(QWidget):
             return self._projects[0].id
         return project_manager.current_project_id
 
-    def _selected_item_keys(self, items: Optional[List[QTreeWidgetItem]] = None) -> List[str]:
+    def _selected_item_keys(self, items: Optional[List[ProjectTreeItem]] = None) -> List[str]:
         source_items = self._selected_items_or_current() if items is None else items
         keys: List[str] = []
         for item in source_items:
@@ -1300,7 +1332,7 @@ class ProjectTreeWidget(QWidget):
                 keys.append(key)
         return keys
 
-    def _item_key(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
+    def _item_key(self, item: Optional[ProjectTreeItem]) -> Optional[str]:
         if item is None:
             return None
         d = item.data(0, _ROLE)
@@ -1308,7 +1340,7 @@ class ProjectTreeWidget(QWidget):
             return d[1]
         return None
 
-    def _item_role_data(self, item: Optional[QTreeWidgetItem]) -> Optional[Tuple[str, str]]:
+    def _item_role_data(self, item: Optional[ProjectTreeItem]) -> Optional[Tuple[str, str]]:
         if item is None:
             return None
         d = item.data(0, _ROLE)
@@ -1316,7 +1348,7 @@ class ProjectTreeWidget(QWidget):
             return d[0], d[1]
         return None
 
-    def _item_project_id(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
+    def _item_project_id(self, item: Optional[ProjectTreeItem]) -> Optional[str]:
         if item is None:
             return None
         project_id = item.data(0, _PROJECT_ROLE)
@@ -1351,7 +1383,7 @@ class ProjectTreeWidget(QWidget):
             return FIF.PHOTO
         return _SOURCE_FILE_ICON
 
-    def _tooltip_item_at_event(self, event) -> Optional[QTreeWidgetItem]:
+    def _tooltip_item_at_event(self, event) -> Optional[ProjectTreeItem]:
         if hasattr(event, "position"):
             return self._tree.itemAt(event.position().toPoint())
         if hasattr(event, "pos"):
@@ -1399,7 +1431,7 @@ class ProjectTreeWidget(QWidget):
         menu: RoundMenu,
         separated: bool = False,
         *,
-        focus_items: Optional[List[QTreeWidgetItem]] = None,
+        focus_items: Optional[List[ProjectTreeItem]] = None,
         project_id: Optional[str] = None,
     ) -> None:
         if separated and menu.actions():
@@ -1432,7 +1464,7 @@ class ProjectTreeWidget(QWidget):
         )
 
     def _expand_all_items(self) -> None:
-        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+        def _walk(item: Optional[ProjectTreeItem]) -> None:
             if item is None or item.isHidden():
                 return
             self._lazy_load_children(item)
@@ -1446,7 +1478,7 @@ class ProjectTreeWidget(QWidget):
             _walk(self._tree.topLevelItem(index))
 
     def _collapse_all_items(self) -> None:
-        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+        def _walk(item: Optional[ProjectTreeItem]) -> None:
             if item is None or item.isHidden():
                 return
             if item.childCount() > 0:
@@ -1516,10 +1548,10 @@ class ProjectTreeWidget(QWidget):
     # 拖放操作（委托给 ProjectTreeDragDropHelper）
     # ─────────────────────────────────────────────────────────
 
-    def _normalized_source_file_drop_target(self, target_item: Optional[QTreeWidgetItem]) -> Tuple[Optional[str], Optional[str]]:
+    def _normalized_source_file_drop_target(self, target_item: Optional[ProjectTreeItem]) -> Tuple[Optional[str], Optional[str]]:
         return self._drag_drop_helper.normalized_source_file_drop_target(target_item)
 
-    def _perform_source_file_drop_action(self, source_id: str, target_item: Optional[QTreeWidgetItem], *, defer_view_refresh: bool = False) -> bool:
+    def _perform_source_file_drop_action(self, source_id: str, target_item: Optional[ProjectTreeItem], *, defer_view_refresh: bool = False) -> bool:
         return self._drag_drop_helper.perform_source_file_drop_action(source_id, target_item, defer_view_refresh=defer_view_refresh)
 
     def _open_picture_folder(self, node_id: Optional[str], *, picture_node: bool = False) -> None:
@@ -1590,16 +1622,16 @@ class ProjectTreeWidget(QWidget):
             return None
         return project_manager.add_folder(clean_name, parent_id=parent_id, group_type=group_type)
 
-    def _resolve_drop_target_id(self, source_kind: str, source_id: str, target_item: Optional[QTreeWidgetItem]) -> Optional[str]:
+    def _resolve_drop_target_id(self, source_kind: str, source_id: str, target_item: Optional[ProjectTreeItem]) -> Optional[str]:
         return self._drag_drop_helper.resolve_drop_target_id(source_kind, source_id, target_item)
 
     def _resolve_virtual_drop_container_id(self, target_kind: str, target_id: str) -> Optional[str]:
         return self._drag_drop_helper._resolve_virtual_drop_container_id(target_kind, target_id)
 
-    def _perform_drop_move(self, source_item: Optional[QTreeWidgetItem], target_item: Optional[QTreeWidgetItem], defer_view_refresh: bool = False) -> bool:
+    def _perform_drop_move(self, source_item: Optional[ProjectTreeItem], target_item: Optional[ProjectTreeItem], defer_view_refresh: bool = False) -> bool:
         return self._drag_drop_helper.perform_drop_move(source_item, target_item, defer_view_refresh=defer_view_refresh)
 
-    def _perform_batch_drop_move(self, source_items: List[QTreeWidgetItem], target_item: Optional[QTreeWidgetItem], defer_view_refresh: bool = False) -> bool:
+    def _perform_batch_drop_move(self, source_items: List[ProjectTreeItem], target_item: Optional[ProjectTreeItem], defer_view_refresh: bool = False) -> bool:
         return self._drag_drop_helper.perform_batch_drop_move(source_items, target_item, defer_view_refresh=defer_view_refresh)
 
     def _finalize_drop_move(self, source_id: str) -> None:
@@ -1608,16 +1640,16 @@ class ProjectTreeWidget(QWidget):
     def _finalize_batch_drop_move(self, source_ids: List[str]) -> None:
         self._drag_drop_helper._finalize_batch_drop_move(source_ids)
 
-    def _remember_drag_source_item(self, item: Optional[QTreeWidgetItem]) -> None:
+    def _remember_drag_source_item(self, item: Optional[ProjectTreeItem]) -> None:
         self._drag_drop_helper.remember_drag_source_item(item)
 
-    def _remember_drag_source_items(self, items: List[QTreeWidgetItem]) -> None:
+    def _remember_drag_source_items(self, items: List[ProjectTreeItem]) -> None:
         self._drag_drop_helper.remember_drag_source_items(items)
 
-    def _drag_source_item_for_drop(self, fallback_item: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
+    def _drag_source_item_for_drop(self, fallback_item: Optional[ProjectTreeItem]) -> Optional[ProjectTreeItem]:
         return self._drag_drop_helper.drag_source_item_for_drop(fallback_item)
 
-    def _drag_source_items_for_drop(self, fallback_item: Optional[QTreeWidgetItem]) -> List[QTreeWidgetItem]:
+    def _drag_source_items_for_drop(self, fallback_item: Optional[ProjectTreeItem]) -> List[ProjectTreeItem]:
         return self._drag_drop_helper.drag_source_items_for_drop(fallback_item)
 
     def _clear_drag_source_item(self) -> None:
@@ -1673,7 +1705,7 @@ class ProjectTreeWidget(QWidget):
 
     def _capture_expansion_state(self) -> Dict[str, bool]:
         state: Dict[str, bool] = {}
-        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+        def _walk(item: Optional[ProjectTreeItem]) -> None:
             if item is None:
                 return
             key = self._item_key(item)
@@ -1688,7 +1720,7 @@ class ProjectTreeWidget(QWidget):
     def _restore_expansion_state(self, state: Dict[str, bool]) -> None:
         if not state:
             return
-        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+        def _walk(item: Optional[ProjectTreeItem]) -> None:
             if item is None:
                 return
             key = self._item_key(item)
@@ -1701,11 +1733,11 @@ class ProjectTreeWidget(QWidget):
         for index in range(self._tree.topLevelItemCount()):
             _walk(self._tree.topLevelItem(index))
 
-    def _find_item_by_key(self, item_key: Optional[str]) -> Optional[QTreeWidgetItem]:
+    def _find_item_by_key(self, item_key: Optional[str]) -> Optional[ProjectTreeItem]:
         if not item_key:
             return None
         self._ensure_node_loaded(item_key)
-        def _search(parent: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
+        def _search(parent: Optional[ProjectTreeItem]) -> Optional[ProjectTreeItem]:
             count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
             for index in range(count):
                 item = self._tree.topLevelItem(index) if parent is None else parent.child(index)
@@ -1763,7 +1795,7 @@ class ProjectTreeWidget(QWidget):
         focus_items = [self._find_item_by_key(key) for key in focus_keys]
         focus_items = [item for item in focus_items if item is not None]
         visible_keys = self._focus_visible_keys(focus_items) if focus_items else None
-        def _walk(parent: Optional[QTreeWidgetItem]) -> None:
+        def _walk(parent: Optional[ProjectTreeItem]) -> None:
             count = self._tree.topLevelItemCount() if parent is None else parent.childCount()
             for index in range(count):
                 item = self._tree.topLevelItem(index) if parent is None else parent.child(index)
@@ -1787,7 +1819,7 @@ class ProjectTreeWidget(QWidget):
             self._ensure_node_loaded(key)
         return [key for key in preferred_selection_keys if self._find_item_by_key(key) is not None]
 
-    def _focus_visible_keys(self, focus_items: List[QTreeWidgetItem]) -> set[str]:
+    def _focus_visible_keys(self, focus_items: List[ProjectTreeItem]) -> set[str]:
         visible_keys: set[str] = set()
         if not focus_items:
             return visible_keys
@@ -1811,7 +1843,7 @@ class ProjectTreeWidget(QWidget):
                 child_stack.extend(current_item.child(index) for index in range(current_item.childCount()))
         return visible_keys
 
-    def _expand_item_ancestors(self, item: Optional[QTreeWidgetItem]) -> None:
+    def _expand_item_ancestors(self, item: Optional[ProjectTreeItem]) -> None:
         current = item
         while current is not None:
             current.setExpanded(True)
@@ -1824,7 +1856,7 @@ class ProjectTreeWidget(QWidget):
 
     def _update_wrapped_item_size_hints(self) -> None:
         viewport_width = max(180, self._tree.viewport().width())
-        def _walk(item: Optional[QTreeWidgetItem], depth: int) -> None:
+        def _walk(item: Optional[ProjectTreeItem], depth: int) -> None:
             if item is None:
                 return
             try:
@@ -1849,7 +1881,7 @@ class ProjectTreeWidget(QWidget):
                 continue
             _walk(top_item, 0)
 
-    def _update_wrapped_item_size_hint_for_item(self, item: Optional[QTreeWidgetItem]) -> None:
+    def _update_wrapped_item_size_hint_for_item(self, item: Optional[ProjectTreeItem]) -> None:
         if item is None:
             return
         try:
@@ -1859,7 +1891,7 @@ class ProjectTreeWidget(QWidget):
             return
 
     def _reset_item_size_hints(self) -> None:
-        def _walk(item: Optional[QTreeWidgetItem]) -> None:
+        def _walk(item: Optional[ProjectTreeItem]) -> None:
             if item is None:
                 return
             try:
@@ -1904,7 +1936,7 @@ class ProjectTreeWidget(QWidget):
                 self._tree.blockSignals(False)
 
     @staticmethod
-    def _item_depth(item: Optional[QTreeWidgetItem]) -> int:
+    def _item_depth(item: Optional[ProjectTreeItem]) -> int:
         depth = 0
         current = item.parent() if item is not None else None
         while current is not None:
@@ -1912,7 +1944,7 @@ class ProjectTreeWidget(QWidget):
             current = current.parent()
         return depth
 
-    def _apply_wrapped_item_size_hint(self, item: QTreeWidgetItem, viewport_width: int, depth: int) -> None:
+    def _apply_wrapped_item_size_hint(self, item: ProjectTreeItem, viewport_width: int, depth: int) -> None:
         try:
             text = item.text(0).strip()
             if not text:
@@ -1929,7 +1961,7 @@ class ProjectTreeWidget(QWidget):
         except RuntimeError:
             return
 
-    def _project_branch_toggle_key(self, item: Optional[QTreeWidgetItem], x_pos: float) -> Optional[str]:
+    def _project_branch_toggle_key(self, item: Optional[ProjectTreeItem], x_pos: float) -> Optional[str]:
         data = self._item_role_data(item)
         if not data or data[0] != "project":
             return None
@@ -1947,7 +1979,7 @@ class ProjectTreeWidget(QWidget):
             return self._item_key(item)
         return None
 
-    def _consume_branch_toggle_click(self, item: Optional[QTreeWidgetItem]) -> bool:
+    def _consume_branch_toggle_click(self, item: Optional[ProjectTreeItem]) -> bool:
         item_key = self._item_key(item)
         if item_key is not None and item_key == self._branch_toggle_item_key:
             self._branch_toggle_item_key = None

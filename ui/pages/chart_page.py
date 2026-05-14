@@ -2649,15 +2649,24 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         return True
 
     def _refresh_curve_style_template_combo(self) -> None:
-        templates = global_assets.list_curve_style_templates()
+        templates = global_assets.list_curve_style_templates(include_builtin=True)
+        used_labels: set[str] = set()
         self._curve_style_template_combo.blockSignals(True)
         self._curve_style_template_combo.clear()
-        self._curve_style_template_combo.addItem("默认样式")
-        self._curve_style_template_ids = [None]
+        self._curve_style_template_ids = []
         for item in templates:
-            self._curve_style_template_combo.addItem(item.name)
+            label = self._unique_style_label(
+                item.name or item.id[:8],
+                used_labels,
+                "默认" if getattr(item, "is_builtin", False) else "已保存",
+            )
+            self._curve_style_template_combo.addItem(label)
             self._curve_style_template_ids.append(item.id)
         target_id = self._active_curve_style_ref
+        if target_id not in self._curve_style_template_ids:
+            target_id = self._curve_style_template_ids[0] if self._curve_style_template_ids else None
+            self._active_curve_style_ref = target_id
+            self._active_curve_style_template_id = target_id
         if target_id in self._curve_style_template_ids:
             self._curve_style_template_combo.setCurrentIndex(self._curve_style_template_ids.index(target_id))
         else:
@@ -2678,16 +2687,25 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._refresh_style_extension_panel()
 
     def _update_curve_style_template_summary(self) -> None:
-        if not self._active_curve_style_ref:
+        active_ref = self._active_curve_style_ref
+        if not active_ref and self._curve_style_template_ids:
+            active_ref = self._curve_style_template_ids[0]
+            self._active_curve_style_ref = active_ref
+            self._active_curve_style_template_id = active_ref
+        if not active_ref:
             self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
             self._btn_update_curve_style_template.setEnabled(False)
             return
-        template = global_assets.get_curve_style_template(self._active_curve_style_ref)
+        template = global_assets.get_curve_style_template(active_ref)
         if template is None:
             self._active_curve_style_template_id = None
             self._active_curve_style_ref = None
-            self._active_curve_style_template_id = None
             self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
+            self._btn_update_curve_style_template.setEnabled(False)
+            self._refresh_style_extension_panel()
+            return
+        if getattr(template, "is_builtin", False):
+            self._curve_style_template_label.setText(f"当前使用默认样式: {template.name}")
             self._btn_update_curve_style_template.setEnabled(False)
             self._refresh_style_extension_panel()
             return
@@ -2702,11 +2720,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         return self._curve_style_template_ids[idx]
 
     def _on_curve_style_template_selected(self, idx: int) -> None:
-        if idx <= 0:
-            self._active_curve_style_template_id = None
-            self._active_curve_style_ref = None
-            self._update_curve_style_template_summary()
-            return
         style_ref = self._selected_curve_style_template_id()
         if style_ref:
             self._active_curve_style_ref = style_ref

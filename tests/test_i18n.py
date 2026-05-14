@@ -33,6 +33,7 @@ class TestI18n(unittest.TestCase):
             try:
                 ui_preferences.set_ui_language("en_US")
                 i18n = importlib.reload(importlib.import_module("core.i18n"))
-                self.assertEqual(i18n._("中文"), "中文")
+                self.assertEqual(i18n._("主页"), "Home")
+                self.assertEqual(gettext_translate("数据管理"), "Data Management")
             finally:
                 ui_preferences._CONFIG_PATH = original
