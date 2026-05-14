@@ -46,7 +46,7 @@ def build_project_services(
     tree_service = ProjectTreeService(
         get_current_project=lambda: manager.current_project,
         clear_last_error=manager._clear_last_operation_error,
-        ensure_project_tree=tree_init_service.init_new_project_tree,
+        ensure_project_tree=tree_init_service.ensure_project_tree,
         canonical_group_type=manager._canonical_group_type,
         ensure_unique_tree_child_name=manager._ensure_unique_tree_child_name,
         rename_source_file=manager.rename_source_file,
@@ -62,7 +62,7 @@ def build_project_services(
     asset_service = ProjectAssetService(
         get_current_project=lambda: manager.current_project,
         clear_last_error=manager._clear_last_operation_error,
-        ensure_project_tree=tree_init_service.init_new_project_tree,
+        ensure_project_tree=tree_init_service.ensure_project_tree,
         ensure_unique_tree_child_name=manager._ensure_unique_tree_child_name,
         next_unique_tree_child_name=manager._next_unique_tree_child_name,
         ensure_unique_series_name=manager._ensure_unique_series_name,

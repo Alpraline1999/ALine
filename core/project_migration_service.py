@@ -22,3 +22,11 @@ class ProjectTreeInitService:
         project.tree = ProjectTree()
         project.aline_version = CURRENT_PROJECT_VERSION
         self.ensure_project_tree_groups(project)
+
+    def ensure_project_tree(self, project: Project | None) -> None:
+        """确保 project.tree 已初始化，如果已有树则不覆盖（避免丢失已有节点）。"""
+        if project is None:
+            return
+        if project.tree is not None:
+            return
+        self.init_new_project_tree(project)
