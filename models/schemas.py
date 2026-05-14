@@ -46,6 +46,7 @@ class Curve(BaseModel):
     """一条数字化曲线（含像素坐标 + 校准后真实坐标）。"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
+    remark: str = ""
     x_data: List[float] = []
     y_data: List[float] = []
     x_actual: List[float] = []
@@ -66,6 +67,7 @@ class ImageWork(BaseModel):
     """一张待数字化的图像及其提取曲线。"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
+    remark: str = ""
     image_path: str = ""
     source_image_path: Optional[str] = None
     curves: List[Curve] = []
@@ -76,6 +78,7 @@ class PictureAsset(BaseModel):
     """项目内管理的已导出图片。"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
+    remark: str = ""
     image_path: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     plot_snapshot: Optional["PicturePlotSnapshot"] = None
@@ -89,6 +92,7 @@ class DataSeries(BaseModel):
     """ALine 独立数据系列（区别于从图像提取的 Curve，直接存储数值）。"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
+    remark: str = ""
     x: List[float] = []
     y: List[float] = []
     y_err: Optional[List[float]] = None     # 误差棒
@@ -106,6 +110,7 @@ class Dataset(BaseModel):
     """ALine 数据集（多个 DataSeries 的容器）。"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
+    remark: str = ""
     series: List[DataSeries] = []
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     notes: str = ""
@@ -115,6 +120,7 @@ class AnalysisResult(BaseModel):
     """一次分析任务的完整结果。"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
+    remark: str = ""
     analysis_type: str = ""
     # "curve_fit" | "peak_detect" | "statistics" | "correlation"
     input_series_ids: List[str] = []
@@ -451,6 +457,7 @@ class _NodeBase(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
+    remark: str = ""
     parent_id: Optional[str] = None   # None = 挂在项目根下
     order: int = 0                    # 同层排序
 

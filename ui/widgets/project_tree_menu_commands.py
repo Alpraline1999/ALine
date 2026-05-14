@@ -359,6 +359,7 @@ class ProjectTreeMenuBuilder:
         if not is_protected:
             manage_entries.extend([
                 (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+                (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="folder", node_id=node_id, current_name=item.text(0))),
                 (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
             ])
             move_choices = self._move_target_choices("folder", node_id)
@@ -374,6 +375,7 @@ class ProjectTreeMenuBuilder:
             (FIF.DEVELOPER_TOOLS, "发送到处理", self._page_dispatcher.make_activation_callback("data_file_to_process", node_id)),
             (FIF.SEARCH, "发送到分析", self._page_dispatcher.make_activation_callback("data_file_to_analysis", node_id)),
             (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="data_file", node_id=node_id, current_name=item.text(0))),
             (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
         ])
         if move_choices:
@@ -388,6 +390,7 @@ class ProjectTreeMenuBuilder:
         manage_entries.extend([
             (self._SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
             (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="source_file", node_id=node_id, current_name=item.text(0))),
             (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
         ])
         if move_choices:
@@ -400,6 +403,7 @@ class ProjectTreeMenuBuilder:
             (FIF.DEVELOPER_TOOLS, "发送到处理", self._page_dispatcher.make_activation_callback("series_to_process", node_id)),
             (FIF.SEARCH, "发送到分析", self._page_dispatcher.make_activation_callback("series_to_analysis", node_id)),
             (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="series", node_id=node_id, current_name=item.text(0))),
             (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual("series", node_id, item.text(0))),
         ])
         if move_choices:
@@ -411,6 +415,7 @@ class ProjectTreeMenuBuilder:
             (FIF.ADD, "新增曲线", self._page_dispatcher.make_activation_callback("image_work_add_curve", node_id)),
             (self._OPEN_DIGITIZE_ACTION_ICON, "打开取点", self._page_dispatcher.make_activation_callback("image_work", node_id)),
             (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="image_work", node_id=node_id, current_name=item.text(0))),
             (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
         ])
         if move_choices:
@@ -422,6 +427,7 @@ class ProjectTreeMenuBuilder:
             (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("picture_to_chart", node_id)),
             (self._PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True)),
             (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="picture", node_id=node_id, current_name=item.text(0))),
             (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
         ])
         if move_choices:
@@ -433,6 +439,7 @@ class ProjectTreeMenuBuilder:
             (self._IMPORT_DATA_ACTION_ICON, "导出为数据列", self._page_dispatcher.make_activation_callback("curve_export_to_data_file", node_id)),
             (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("curve_to_chart", node_id)),
             (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="curve", node_id=node_id, current_name=item.text(0))),
             (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual("curve", node_id, item.text(0))),
         ])
         if move_choices:
@@ -464,6 +471,7 @@ class ProjectTreeMenuBuilder:
         manage_entries.extend([
             (FIF.SEARCH, "发送到分析页", self._page_dispatcher.make_activation_callback("analysis_result", node_id)),
             (FIF.EDIT, "重命名", lambda: self._rename_selected_item()),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="analysis_result", node_id=node_id, current_name=item.text(0))),
             (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
         ])
         if move_choices:
@@ -474,3 +482,7 @@ class ProjectTreeMenuBuilder:
             (FIF.EDIT, "编辑", self._page_dispatcher.make_activation_callback(kind, node_id)),
             (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, item.text(0))),
         ])
+
+    def _edit_node_remark(self, kind: str, node_id: str, current_name: str) -> None:
+        current_remark = self._command_service.get_node_remark(kind, node_id)
+        self._command_service.edit_selected_item_remark(kind, node_id, current_name, current_remark)

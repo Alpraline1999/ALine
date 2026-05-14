@@ -1240,6 +1240,13 @@ class ProjectManager:
     def _init_new_project_tree(self, p: Project) -> None:
         self._project_tree_init_service.init_new_project_tree(p)
 
+    def migrate_to_v2(self, project: Optional[Project] = None) -> None:
+        """兼容旧调用点：当前版本不再做格式迁移，只初始化树结构。"""
+        target = project or self.current_project
+        if target is None:
+            return
+        self._init_new_project_tree(target)
+
     # ─────────────────────────────────────────────
     # 树节点 CRUD
     # ─────────────────────────────────────────────
@@ -1272,6 +1279,22 @@ class ProjectManager:
         if p is None or p.tree is None:
             return None
         return p.tree.get_node(node_id)
+
+    def get_node_remark(self, node_id: str) -> str:
+        node = self.get_node_by_id(node_id)
+        return "" if node is None else str(getattr(node, "remark", "") or "")
+
+    def set_node_remark(self, node_id: str, remark: str) -> bool:
+        node = self.get_node_by_id(node_id)
+        if node is None:
+            return False
+        clean = str(remark or "").strip()
+        if getattr(node, "remark", "") == clean:
+            return True
+        setattr(node, "remark", clean)
+        if self.current_project is not None:
+            self.current_project.is_modified = True
+        return True
 
     def get_children(self, parent_id: Optional[str]) -> list["TreeNodeUnion"]:
         p = self.current_project
@@ -1570,6 +1593,38 @@ class ProjectManager:
 
     def delete_ai_agent(self, agent_id: str) -> bool:
         return global_assets.delete_ai_agent(agent_id)
+
+    def get_series_remark(self, series_id: str) -> str:
+        series = self.get_series_from_node("series", series_id)
+        return "" if series is None else str(getattr(series, "remark", "") or "")
+
+    def set_series_remark(self, series_id: str, remark: str) -> bool:
+        series = self.get_series_from_node("series", series_id)
+        if series is None:
+            return False
+        clean = str(remark or "").strip()
+        if getattr(series, "remark", "") == clean:
+            return True
+        series.remark = clean
+        if self.current_project is not None:
+            self.current_project.is_modified = True
+        return True
+
+    def get_curve_remark(self, curve_id: str) -> str:
+        curve = self.get_curve(curve_id)
+        return "" if curve is None else str(getattr(curve, "remark", "") or "")
+
+    def set_curve_remark(self, curve_id: str, remark: str) -> bool:
+        curve = self.get_curve(curve_id)
+        if curve is None:
+            return False
+        clean = str(remark or "").strip()
+        if getattr(curve, "remark", "") == clean:
+            return True
+        curve.remark = clean
+        if self.current_project is not None:
+            self.current_project.is_modified = True
+        return True
 
     # ─────────────────────────────────────────────
     # v0.3 数据系列路由

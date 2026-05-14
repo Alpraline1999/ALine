@@ -7,6 +7,7 @@ from typing import Callable
 from core.global_assets import global_assets, parse_plot_style_asset_key
 from core.project_manager import project_manager
 from models.schemas import DataFile
+from ui.dialogs.node_remark_dialog import NodeRemarkDialog
 
 
 @dataclass(slots=True)
@@ -95,6 +96,35 @@ class ProjectTreeCommandService:
         changed = self.rename_global_asset(kind, node_id, new_name) if kind.startswith("global_") else self.rename_node_by_kind(kind, node_id, new_name.strip())
         if not changed:
             self.notify_warning("重命名失败", self.last_error_message() or "名称已存在或当前节点不支持重命名")
+            return False
+        self.refresh()
+        self.select_node(node_id)
+        self.project_modified()
+        return True
+
+    def edit_selected_item_remark(self, kind: str, node_id: str, current_name: str, current_remark: str = "") -> bool:
+        if kind.startswith("global_") or kind == "project":
+            return False
+        title_map = {
+            "folder": "设置备注",
+            "data_file": "设置备注",
+            "source_file": "设置备注",
+            "image_work": "设置备注",
+            "picture": "设置备注",
+            "analysis_result": "设置备注",
+            "series": "设置备注",
+            "curve": "设置备注",
+        }
+        remark, ok = NodeRemarkDialog.get_remark(
+            None,
+            f"{title_map.get(kind, '设置备注')} · {current_name or node_id}",
+            remark=current_remark,
+        )
+        if not ok:
+            return False
+        changed = self.update_node_remark(kind, node_id, remark)
+        if not changed:
+            self.notify_warning("编辑备注失败", self.last_error_message() or "当前节点不支持备注编辑")
             return False
         self.refresh()
         self.select_node(node_id)
@@ -260,6 +290,20 @@ class ProjectTreeCommandService:
         if kind == "global_ai_agent":
             return global_assets.delete_ai_agent(node_id)
         return False
+
+    def update_node_remark(self, kind: str, node_id: str, remark: str) -> bool:
+        if kind == "series":
+            return project_manager.set_series_remark(node_id, remark)
+        if kind == "curve":
+            return project_manager.set_curve_remark(node_id, remark)
+        return project_manager.set_node_remark(node_id, remark)
+
+    def get_node_remark(self, kind: str, node_id: str) -> str:
+        if kind == "series":
+            return project_manager.get_series_remark(node_id)
+        if kind == "curve":
+            return project_manager.get_curve_remark(node_id)
+        return project_manager.get_node_remark(node_id)
 
     def rename_global(self, kind: str, node_id: str, current_name: str) -> None:
         new_name, ok = self.prompt_existing_text("重命名全局资源", "名称:", current_name)

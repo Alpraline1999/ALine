@@ -2085,6 +2085,27 @@ class DataPage(QWidget):
             return folder_display_name(node) or node.name
         return node.name
 
+    def _current_node_remark(self) -> str:
+        if not self._selected_node_kind or not self._selected_node_id:
+            return ""
+        project = project_manager.current_project
+        if self._selected_node_kind == "series":
+            series = project.find_series(self._selected_node_id) if project is not None else None
+            return "" if series is None else str(getattr(series, "remark", "") or "")
+        if self._selected_node_kind == "curve":
+            curve = self._find_curve(project, self._selected_node_id) if project is not None else None
+            return "" if curve is None else str(getattr(curve, "remark", "") or "")
+        if self._selected_node_kind == "analysis_result":
+            node = self._current_tree_node()
+            return "" if node is None else str(getattr(node, "remark", "") or "")
+        if self._selected_node_kind == "image_work":
+            node = self._current_tree_node()
+            return "" if node is None else str(getattr(node, "remark", "") or "")
+        if self._selected_node_kind in {"folder", "data_file", "source_file", "picture"}:
+            node = self._current_tree_node()
+            return "" if node is None else str(getattr(node, "remark", "") or "")
+        return ""
+
     @staticmethod
     def _append_node_detail_section(lines: list[str], title: str) -> None:
         if lines:
@@ -2144,6 +2165,7 @@ class DataPage(QWidget):
         self._append_node_detail_section(lines, "节点")
         self._append_node_detail_field(lines, "节点类型", self._node_kind_label(kind))
         self._append_node_detail_field(lines, "显示名称", self._current_node_name() or "未命名节点")
+        self._append_node_detail_field(lines, "备注", self._current_node_remark() or "未设置备注")
         if node is not None:
             self._append_node_detail_field(lines, "树节点 ID", getattr(node, "id", None))
             self._append_node_detail_field(lines, "父节点 ID", getattr(node, "parent_id", None))
@@ -2175,7 +2197,7 @@ class DataPage(QWidget):
                 self._append_node_detail_field(lines, "导入路径", data_file.source_path)
                 self._append_node_detail_field(lines, "导入时间", data_file.import_time)
                 self._append_node_detail_field(lines, "系列数量", len(data_file.series))
-                self._append_node_detail_field(lines, "备注", data_file.notes)
+                self._append_node_detail_field(lines, "数据说明", data_file.notes)
         elif kind == "source_file" and node is not None:
             source_file = project_manager.get_source_file(node.source_file_id)
             if source_file is not None:
@@ -2186,7 +2208,7 @@ class DataPage(QWidget):
                 self._append_node_detail_field(lines, "导入时间", source_file.import_time)
                 if source_file.file_size:
                     self._append_node_detail_field(lines, "文件大小", self._format_file_size(source_file.file_size))
-                self._append_node_detail_field(lines, "备注", source_file.notes)
+                self._append_node_detail_field(lines, "数据说明", source_file.notes)
         elif kind == "series":
             series = project.find_series(node_id)
             if series is not None:
@@ -2244,7 +2266,7 @@ class DataPage(QWidget):
                 self._append_node_detail_field(lines, "分析类型", analysis.analysis_type)
                 self._append_node_detail_field(lines, "输入系列数", len(analysis.input_series_ids))
                 self._append_node_detail_field(lines, "参数项数", len(analysis.params))
-                self._append_node_detail_field(lines, "摘要项数", len(analysis.summary))
+                self._append_node_detail_field(lines, "摘要项数", len(analysis.summary) if isinstance(analysis.summary, dict) else 0)
                 self._append_node_detail_field(lines, "结果系列 ID", analysis.result_series_id)
                 self._append_node_detail_field(lines, "创建时间", analysis.created_at)
         elif kind == "global_extension_config":
@@ -2294,7 +2316,39 @@ class DataPage(QWidget):
             return
         title = self._current_node_name() or self._node_kind_label(self._selected_node_kind)
         dialog = _NodeDetailDialog(f"节点信息 · {title}", detail_text, parent=self._dialog_parent())
+        dialog.edit_requested.connect(self._edit_current_node_remark)
         dialog.exec()
+
+    def _edit_current_node_remark(self) -> None:
+        if not self._selected_node_kind or not self._selected_node_id:
+            return
+        if self._selected_node_kind.startswith("global_"):
+            return
+        current_name = self._current_node_name() or self._selected_node_id
+        current_remark = self._current_node_remark()
+        from ui.dialogs.node_remark_dialog import NodeRemarkDialog
+
+        remark, ok = NodeRemarkDialog.get_remark(
+            self._dialog_parent(),
+            f"编辑备注 · {current_name}",
+            remark=current_remark,
+        )
+        if not ok:
+            return
+        changed = False
+        if self._selected_node_kind == "series":
+            changed = project_manager.set_series_remark(self._selected_node_id, remark)
+        elif self._selected_node_kind == "curve":
+            changed = project_manager.set_curve_remark(self._selected_node_id, remark)
+        elif self._selected_node_kind == "analysis_result":
+            analysis = project_manager.current_project.find_analysis(self._selected_node_id) if project_manager.current_project is not None else None
+            if analysis is not None:
+                analysis.remark = remark.strip()
+                if project_manager.current_project is not None:
+                    project_manager.current_project.is_modified = True
+                changed = True
+        else:
+            changed = project_manager.set_node_remark(self._selected_node_id, remark)
 
     @staticmethod
     def _canonical_folder_group(group_type: Optional[str]) -> Optional[str]:
@@ -4367,7 +4421,7 @@ class DataPage(QWidget):
         if analysis is None:
             return False
 
-        summary = analysis.summary or {}
+        summary = analysis.summary if isinstance(analysis.summary, dict) else {}
         preview_lines = [
             f"名称: {analysis.name or '未命名分析结果'}",
             f"类型: {summary.get('analysis_type') or analysis.analysis_type or '-'}",

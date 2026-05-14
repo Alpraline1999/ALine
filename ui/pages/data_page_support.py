@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import CaptionLabel, MessageBoxBase, PlainTextEdit, SubtitleLabel
 
@@ -70,20 +71,31 @@ class _TextActionLabel(CaptionLabel):
 
 class _NodeDetailDialog(MessageBoxBase):
     """节点详情对话框。"""
+    edit_requested = Signal()
+
     def __init__(self, title: str, detail_text: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._title_label = SubtitleLabel(title, self.widget)
         self.viewLayout.addWidget(self._title_label)
 
-        self._detail_edit = PlainTextEdit(self.widget)
+        self._detail_edit = _NodeDetailTextEdit(self.widget)
         self._detail_edit.setReadOnly(True)
         self._detail_edit.setPlainText(detail_text)
         self._detail_edit.setMinimumSize(620, 420)
+        self._detail_edit.double_clicked.connect(self.edit_requested.emit)
         self.viewLayout.addWidget(self._detail_edit)
 
         self.widget.setMinimumWidth(660)
         self.yesButton.setText("关闭")
         self.cancelButton.hide()
+
+
+class _NodeDetailTextEdit(PlainTextEdit):
+    double_clicked = Signal()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
 
 
 @dataclass
