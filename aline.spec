@@ -97,6 +97,10 @@ _icon_dir = os.path.join(_root, "assets")
 if os.path.isdir(_icon_dir):
     _datas.append((_icon_dir, "assets"))
 
+_locale_dir = os.path.join(_root, "locale")
+if os.path.isdir(_locale_dir):
+    _datas.append((_locale_dir, "locale"))
+
 _extensions_dir = os.path.join(_root, "extensions")
 if os.path.isdir(_extensions_dir):
     _datas.append((_extensions_dir, "extensions"))

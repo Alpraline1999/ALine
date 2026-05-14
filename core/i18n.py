@@ -5,6 +5,16 @@ import sys
 from pathlib import Path
 
 
+def _current_language() -> str:
+    try:
+        from core.ui_preferences import get_ui_language
+
+        language = get_ui_language()
+    except Exception:
+        language = "zh_CN"
+    return language if language in {"zh_CN", "en_US"} else "zh_CN"
+
+
 def _get_locale_dir() -> str:
     """获取 locale 目录路径（支持 PyInstaller 打包后）。"""
     if getattr(sys, "frozen", False):
@@ -18,8 +28,23 @@ _locale_dir = _get_locale_dir()
 _translations = gettext.translation(
     "aline",
     localedir=_locale_dir,
-    languages=["zh_CN"],  # 默认中文
+    languages=[_current_language()],
     fallback=True,
 )
 
 _ = _translations.gettext
+gettext_translate = _
+
+def reload_translations() -> gettext.NullTranslations | gettext.GNUTranslations:
+    global _translations, _
+    _translations = gettext.translation(
+        "aline",
+        localedir=_locale_dir,
+        languages=[_current_language()],
+        fallback=True,
+    )
+    _ = _translations.gettext
+    return _translations
+
+
+__all__ = ["_", "gettext_translate", "reload_translations"]

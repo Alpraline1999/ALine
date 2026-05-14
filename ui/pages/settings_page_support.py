@@ -30,7 +30,7 @@ from qfluentwidgets import (
 
 from core.ai.providers import get_provider_preset
 from core.shortcut_manager import shortcut_manager
-from core.ui_preferences import get_tree_name_display_mode, is_page_tree_focus_mode_enabled
+from core.ui_preferences import get_tree_name_display_mode, get_ui_language, is_page_tree_focus_mode_enabled
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.theme import (
     body_text_style_sheet,
@@ -39,6 +39,7 @@ from ui.theme import (
     placeholder_text_style_sheet,
     secondary_text_style_sheet,
 )
+from core.i18n import _
 
 _EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 60750
 _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER = 3
@@ -72,12 +73,12 @@ class MutableFolderListSettingCard(FolderListSettingCard):
 def build_extension_category_tabs(page, parent: QWidget, *, empty_hints: dict[str, BodyLabel], option_layouts: dict[str, QVBoxLayout]) -> QWidget:
     tabs = SegmentedStackWidget(parent)
     tabs.setMaximumHeight(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
-    for category, label in (("plot", "绘图扩展"), ("processing", "处理扩展"), ("analysis", "分析扩展"), ("digitize", "数字化扩展")):
+    for category, label in (("plot", _("绘图扩展")), ("processing", _("处理扩展")), ("analysis", _("分析扩展")), ("digitize", _("数字化扩展"))):
         tab_page = QWidget(parent)
         page_layout = QVBoxLayout(tab_page)
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(6)
-        empty_hint = BodyLabel(f"当前未发现{label}。", tab_page)
+        empty_hint = BodyLabel(f"{_('当前未发现')}{label}{_('。')}", tab_page)
         page._bind_theme_label_style(empty_hint, lambda: placeholder_text_style_sheet(font_size=11))
         page_layout.addWidget(empty_hint)
         empty_hints[category] = empty_hint
@@ -115,13 +116,13 @@ def build_extensions_tab(page) -> QWidget:
     layout.setContentsMargins(*page._tab_content_margins())
     outer.setWidget(content)
 
-    extension_group = SettingCardGroup("扩展", content)
+    extension_group = SettingCardGroup(_("扩展"), content)
     page._extension_card = extension_group
     page._extension_title = page._bind_theme_label_style(
         extension_group.titleLabel,
         lambda: card_title_style_sheet(font_size=18),
     )
-    page._extension_status_card = SettingCard(FIF.INFO, "扩展状态", "查看当前扩展加载情况与失败详情。", extension_group)
+    page._extension_status_card = SettingCard(FIF.INFO, _("扩展状态"), _("查看当前扩展加载情况与失败详情。"), extension_group)
     page._bind_setting_card_styles(
         page._extension_status_card,
         title_style=body_text_style_sheet,
@@ -133,27 +134,27 @@ def build_extensions_tab(page) -> QWidget:
     page._attach_setting_card_control(page._extension_status_card, page._extension_status_summary_btn, alignment=Qt.AlignmentFlag.AlignLeft)
     extension_group.addSettingCard(page._extension_status_card)
 
-    page._extension_actions_card = SettingCard(FIF.SYNC, "应用扩展设置", "保存当前启用状态与目录配置，并重新加载扩展。", extension_group)
+    page._extension_actions_card = SettingCard(FIF.SYNC, _("应用扩展设置"), _("保存当前启用状态与目录配置，并重新加载扩展。"), extension_group)
     page._bind_setting_card_styles(
         page._extension_actions_card,
         title_style=body_text_style_sheet,
         content_style=lambda: placeholder_text_style_sheet(font_size=11),
     )
-    page._save_extension_settings_btn = PrimaryPushButton("保存并重载扩展", page._extension_actions_card)
+    page._save_extension_settings_btn = PrimaryPushButton(_("保存并重载扩展"), page._extension_actions_card)
     page._save_extension_settings_btn.clicked.connect(page._save_extension_settings)
     page._attach_setting_card_control(page._extension_actions_card, page._save_extension_settings_btn)
     extension_group.addSettingCard(page._extension_actions_card)
     layout.addWidget(extension_group)
 
-    page._builtin_extension_card = SettingCardGroup("内置扩展", content)
+    page._builtin_extension_card = SettingCardGroup(_("内置扩展"), content)
     page._bind_theme_label_style(
         page._builtin_extension_card.titleLabel,
         lambda: card_title_style_sheet(font_size=18),
     )
     page._builtin_extensions_enabled_checkbox = SwitchSettingCard(
         FIF.DOWNLOAD,
-        "启用内置扩展",
-        "关闭后保留内置扩展配置，但不参与加载。",
+        _("启用内置扩展"),
+        _("关闭后保留内置扩展配置，但不参与加载。"),
         parent=page._builtin_extension_card,
     )
     page._bind_setting_card_styles(
@@ -166,8 +167,8 @@ def build_extensions_tab(page) -> QWidget:
     page._builtin_extension_card.addSettingCard(page._builtin_extensions_enabled_checkbox)
     page._builtin_extension_management_card = ExpandGroupSettingCard(
         FIF.DOWNLOAD,
-        "扩展管理",
-        "按类别管理内置扩展的启用状态。",
+        _("扩展管理"),
+        _("按类别管理内置扩展的启用状态。"),
         page._builtin_extension_card,
     )
     page._builtin_extension_management_card.setExpand(False)
@@ -194,15 +195,15 @@ def build_extensions_tab(page) -> QWidget:
     page._register_extension_height_watch_target(page._extension_tabs)
     layout.addWidget(page._builtin_extension_card)
 
-    page._external_extension_card = SettingCardGroup("外部扩展", content)
+    page._external_extension_card = SettingCardGroup(_("外部扩展"), content)
     page._bind_theme_label_style(
         page._external_extension_card.titleLabel,
         lambda: card_title_style_sheet(font_size=18),
     )
     page._external_extensions_enabled_checkbox = SwitchSettingCard(
         FIF.FOLDER,
-        "启用外部扩展",
-        "关闭后保留目录配置，但不加载外部扩展。",
+        _("启用外部扩展"),
+        _("关闭后保留目录配置，但不加载外部扩展。"),
         parent=page._external_extension_card,
     )
     page._bind_setting_card_styles(
@@ -214,8 +215,8 @@ def build_extensions_tab(page) -> QWidget:
     page._external_extension_card.addSettingCard(page._external_extensions_enabled_checkbox)
     page._external_extensions_sandbox_checkbox = SwitchSettingCard(
         FIF.FOLDER,
-        "外部扩展沙箱模式",
-        "在独立进程中执行外部扩展，崩溃不影响主应用。",
+        _("外部扩展沙箱模式"),
+        _("在独立进程中执行外部扩展，崩溃不影响主应用。"),
         parent=page._external_extension_card,
     )
     page._bind_setting_card_styles(
@@ -225,8 +226,8 @@ def build_extensions_tab(page) -> QWidget:
     )
     page._external_extension_card.addSettingCard(page._external_extensions_sandbox_checkbox)
     page._external_extensions_dirs_card = MutableFolderListSettingCard(
-        "外部扩展目录",
-        "可添加多个文件夹；保存后会统一扫描并重载。",
+        _("外部扩展目录"),
+        _("可添加多个文件夹；保存后会统一扫描并重载。"),
         [],
         directory="~/.config/aline/extensions",
         parent=page._external_extension_card,
@@ -246,8 +247,8 @@ def build_extensions_tab(page) -> QWidget:
 
     external_refresh_card = SettingCard(
         FIF.SYNC,
-        "刷新外部扩展扫描",
-        "按当前目录配置重新探测外部扩展，不会修改保存设置。",
+        _("刷新外部扩展扫描"),
+        _("按当前目录配置重新探测外部扩展，不会修改保存设置。"),
         page._external_extension_card,
     )
     page._bind_setting_card_styles(
@@ -261,8 +262,8 @@ def build_extensions_tab(page) -> QWidget:
     page._external_extension_card.addSettingCard(external_refresh_card)
     page._external_extension_management_card = ExpandGroupSettingCard(
         FIF.FOLDER,
-        "扩展管理",
-        "按类别管理外部扩展的启用状态。",
+        _("扩展管理"),
+        _("按类别管理外部扩展的启用状态。"),
         page._external_extension_card,
     )
     page._external_extension_management_card.setExpand(False)
@@ -289,15 +290,15 @@ def build_extensions_tab(page) -> QWidget:
     page._register_extension_height_watch_target(page._external_extension_tabs)
     layout.addWidget(page._external_extension_card)
 
-    page._extension_other_settings_card = SettingCardGroup("其他设置", content)
+    page._extension_other_settings_card = SettingCardGroup(_("其他设置"), content)
     page._bind_theme_label_style(
         page._extension_other_settings_card.titleLabel,
         lambda: card_title_style_sheet(font_size=18),
     )
     page._external_extension_number_decimals_card = SettingCard(
         FIF.INFO,
-        "浮点参数显示小数位",
-        "控制扩展 number 参数使用 DoubleSpinBox 时默认显示的小数位数。",
+        _("浮点参数显示小数位"),
+        _("控制扩展 number 参数使用 DoubleSpinBox 时默认显示的小数位数。"),
         page._extension_other_settings_card,
     )
     page._bind_setting_card_styles(
@@ -341,14 +342,14 @@ def build_general_tab(page) -> QWidget:
     layout.setContentsMargins(*page._tab_content_margins())
     outer.setWidget(content)
 
-    appearance_group = SettingCardGroup("外观", content)
+    appearance_group = SettingCardGroup(_("外观"), content)
     page._appearance_card = appearance_group
     page._appearance_title = page._bind_theme_label_style(
         appearance_group.titleLabel,
         lambda: card_title_style_sheet(font_size=18),
     )
 
-    theme_card = SettingCard(FIF.BRUSH, "主题", "切换浅色、深色或跟随系统。", appearance_group)
+    theme_card = SettingCard(FIF.BRUSH, _("主题"), _("切换浅色、深色或跟随系统。"), appearance_group)
     page._theme_label = theme_card.titleLabel
     page._bind_setting_card_styles(
         theme_card,
@@ -357,13 +358,13 @@ def build_general_tab(page) -> QWidget:
     )
     page.theme_combo = ComboBox(theme_card)
     page.theme_combo.setMinimumWidth(148)
-    page.theme_combo.addItems(["浅色", "深色", "跟随系统"])
+    page.theme_combo.addItems([_("浅色"), _("深色"), _("跟随系统")])
     page.theme_combo.setCurrentIndex(2)
     page.theme_combo.currentIndexChanged.connect(page.on_theme_changed)
     page._attach_setting_card_control(theme_card, page.theme_combo)
     appearance_group.addSettingCard(theme_card)
 
-    tree_mode_card = SettingCard(FIF.INFO, "项目树长名称显示", "控制项目树长名称使用自动换行还是省略显示。", appearance_group)
+    tree_mode_card = SettingCard(FIF.INFO, _("项目树长名称显示"), _("控制项目树长名称使用自动换行还是省略显示。"), appearance_group)
     page._tree_display_mode_label = tree_mode_card.titleLabel
     page._bind_setting_card_styles(
         tree_mode_card,
@@ -372,7 +373,7 @@ def build_general_tab(page) -> QWidget:
     )
     page._tree_display_mode_combo = ComboBox(tree_mode_card)
     page._tree_display_mode_combo.setMinimumWidth(148)
-    page._tree_display_mode_combo.addItems(["自动换行", "部分隐藏"])
+    page._tree_display_mode_combo.addItems([_("自动换行"), _("部分隐藏")])
     current_mode = get_tree_name_display_mode()
     current_index = 1 if current_mode == "elide" else 0
     page._tree_display_mode_combo.setCurrentIndex(current_index)
@@ -382,8 +383,8 @@ def build_general_tab(page) -> QWidget:
 
     focus_mode_card = SwitchSettingCard(
         FIF.INFO,
-        "项目树页面专注模式",
-        "开启后，功能页中的共享项目树只显示当前页面直接相关的节点。",
+        _("项目树页面专注模式"),
+        _("开启后，功能页中的共享项目树只显示当前页面直接相关的节点。"),
         parent=appearance_group,
     )
     page._page_tree_focus_mode_card = focus_mode_card
@@ -399,10 +400,27 @@ def build_general_tab(page) -> QWidget:
     focus_mode_card.checkedChanged.connect(page._on_page_tree_focus_mode_changed)
     appearance_group.addSettingCard(focus_mode_card)
 
+    language_card = SettingCard(getattr(FIF, "LANGUAGE", FIF.INFO), _("语言"), _("切换应用界面语言，重启后生效。"), appearance_group)
+    page._language_title = language_card.titleLabel
+    page._bind_setting_card_styles(
+        language_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    page._language_combo = ComboBox(language_card)
+    page._language_combo.setMinimumWidth(148)
+    page._language_keys = ["zh_CN", "en_US"]
+    page._language_combo.addItems([_("中文（简体）"), _("英文（美式）")])
+    current_language = get_ui_language()
+    page._language_combo.setCurrentIndex(page._language_keys.index(current_language) if current_language in page._language_keys else 0)
+    page._language_combo.currentIndexChanged.connect(page._on_language_changed)
+    page._attach_setting_card_control(language_card, page._language_combo)
+    appearance_group.addSettingCard(language_card)
+
     onboarding_card = SettingCard(
         FIF.HELP,
-        "新手引导",
-        "点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数字化页面的 TeachingTip 状态。",
+        _("新手引导"),
+        _("点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数字化页面的 TeachingTip 状态。"),
         appearance_group,
     )
     page._onboarding_label = onboarding_card.titleLabel
@@ -412,7 +430,7 @@ def build_general_tab(page) -> QWidget:
         title_style=body_text_style_sheet,
         content_style=lambda: placeholder_text_style_sheet(font_size=11),
     )
-    page._replay_onboarding_btn = PushButton("重新显示引导", onboarding_card)
+    page._replay_onboarding_btn = PushButton(_("重新显示引导"), onboarding_card)
     page._replay_onboarding_btn.clicked.connect(page.replay_onboarding_requested.emit)
     page._attach_setting_card_control(onboarding_card, page._replay_onboarding_btn)
     appearance_group.addSettingCard(onboarding_card)
@@ -435,7 +453,7 @@ def build_shortcuts_tab(page) -> QWidget:
     layout.setContentsMargins(*page._tab_content_margins())
     outer.setWidget(content)
 
-    page._shortcuts_card = SettingCardGroup("快捷键", content)
+    page._shortcuts_card = SettingCardGroup(_("快捷键"), content)
     page._shortcuts_title = page._shortcuts_card.titleLabel
     page._bind_theme_label_style(page._shortcuts_title, lambda: card_title_style_sheet(font_size=18))
 
@@ -476,9 +494,9 @@ def build_shortcuts_tab(page) -> QWidget:
     btn_row = QHBoxLayout(btn_container)
     btn_row.setContentsMargins(0, 0, 0, 0)
     btn_row.setSpacing(8)
-    apply_btn = PushButton("应用快捷键", btn_container)
+    apply_btn = PushButton(_("应用快捷键"), btn_container)
     apply_btn.clicked.connect(page._on_apply_shortcuts)
-    reset_btn = PushButton("恢复默认", btn_container)
+    reset_btn = PushButton(_("恢复默认"), btn_container)
     reset_btn.clicked.connect(page._on_reset_shortcuts)
     btn_row.addWidget(apply_btn)
     btn_row.addWidget(reset_btn)
@@ -486,20 +504,20 @@ def build_shortcuts_tab(page) -> QWidget:
 
     shortcuts_editor_card = ExpandGroupSettingCard(
         FIF.INFO,
-        "快捷键映射",
-        "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击\u201c应用快捷键\u201d保存。",
+        _("快捷键映射"),
+        _("所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击\u201c应用快捷键\u201d保存。"),
         page._shortcuts_card,
     )
     page._shortcuts_editor_card = shortcuts_editor_card
     page._bind_theme_text_in_widget(
         shortcuts_editor_card,
-        "快捷键映射",
+        _("快捷键映射"),
         body_text_style_sheet,
         first_only=True,
     )
     page._bind_theme_text_in_widget(
         shortcuts_editor_card,
-        "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击\u201c应用快捷键\u201d保存。",
+        _("所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击\u201c应用快捷键\u201d保存。"),
         lambda: placeholder_text_style_sheet(font_size=11),
     )
     shortcuts_editor_card.setExpand(True)
@@ -508,9 +526,9 @@ def build_shortcuts_tab(page) -> QWidget:
     filter_layout.setContentsMargins(0, 0, 0, 0)
     filter_layout.setSpacing(6)
     page._shortcut_filter_edit = LineEdit(filter_container)
-    page._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如\u201c分析\u201d或\u201c导出\u201d")
+    page._shortcut_filter_edit.setPlaceholderText(_("筛选快捷键动作，例如\u201c分析\u201d或\u201c导出\u201d"))
     page._shortcut_filter_edit.setClearButtonEnabled(True)
-    page._shortcut_filter_edit.setToolTip("按动作名称、分类或关键词筛选快捷键")
+    page._shortcut_filter_edit.setToolTip(_("按动作名称、分类或关键词筛选快捷键"))
     page._shortcut_filter_edit.textChanged.connect(page._filter_shortcut_rows)
     page._apply_shortcut_filter_style()
     page._shortcut_filter_edit.setMinimumWidth(280)

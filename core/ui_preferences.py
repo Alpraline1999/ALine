@@ -15,6 +15,7 @@ class UIPreferences(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     tree_name_display_mode: TreeNameDisplayMode = "elide"
+    language: str = "zh_CN"
     page_tree_focus_mode: bool = False
     home_welcome_dismissed: bool = False
     home_onboarding_completed: bool = False
@@ -45,6 +46,19 @@ def set_tree_name_display_mode(mode: TreeNameDisplayMode) -> TreeNameDisplayMode
     prefs.tree_name_display_mode = "elide" if mode == "elide" else "wrap"
     prefs.save()
     return prefs.tree_name_display_mode
+
+
+def get_ui_language() -> str:
+    language = str(UIPreferences.load().language or "zh_CN").strip()
+    return language if language in {"zh_CN", "en_US"} else "zh_CN"
+
+
+def set_ui_language(language: str) -> str:
+    prefs = UIPreferences.load()
+    clean = str(language or "").strip()
+    prefs.language = clean if clean in {"zh_CN", "en_US"} else "zh_CN"
+    prefs.save()
+    return prefs.language
 
 
 def is_page_tree_focus_mode_enabled() -> bool:

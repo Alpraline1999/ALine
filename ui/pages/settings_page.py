@@ -39,6 +39,7 @@ from core.ui_preferences import (
     TreeNameDisplayMode,
     get_tree_name_display_mode,
     is_page_tree_focus_mode_enabled,
+    set_ui_language,
     set_page_tree_focus_mode_enabled,
     set_tree_name_display_mode,
 )
@@ -82,6 +83,9 @@ class SettingsPage(QWidget):
         self._page_tree_focus_mode_card = None
         self._page_tree_focus_mode_checkbox = None
         self._page_tree_focus_mode_hint = None
+        self._language_title = None
+        self._language_combo = None
+        self._language_keys = ["zh_CN", "en_US"]
         self._appearance_title = None
         self._extension_card = None
         self._builtin_extension_card = None
@@ -414,6 +418,22 @@ class SettingsPage(QWidget):
         enabled = bool(self._page_tree_focus_mode_checkbox.isChecked()) if self._page_tree_focus_mode_checkbox is not None else False
         enabled = set_page_tree_focus_mode_enabled(enabled)
         self.page_tree_focus_mode_changed.emit(enabled)
+
+    def _on_language_changed(self, _index: int) -> None:
+        if self._language_combo is None:
+            return
+        idx = self._language_combo.currentIndex()
+        if idx < 0 or idx >= len(self._language_keys):
+            return
+        language = set_ui_language(self._language_keys[idx])
+        from qfluentwidgets import InfoBar, InfoBarPosition
+
+        InfoBar.info(
+            "语言已保存",
+            f"界面语言已保存为 {language}，重启应用后生效。",
+            parent=self._notification_parent(),
+            position=InfoBarPosition.TOP,
+        )
 
     def _clear_builtin_extension_options(self) -> None:
         self._builtin_extension_checkboxes.clear()

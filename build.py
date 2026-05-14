@@ -111,11 +111,41 @@ def make_archive() -> Path:
     return archive_path
 
 
+def _run_optional_packager(python: str, command: list[str], label: str) -> None:
+    if shutil.which(command[0]) is None:
+        raise RuntimeError(f"{label} 工具不可用: {command[0]}")
+    run(command, cwd=ROOT)
+
+
+def build_appimage(python: str) -> None:
+    if platform.system().lower() != "linux":
+        raise RuntimeError("AppImage 仅支持 Linux")
+    build(python)
+    _run_optional_packager(
+        python,
+        ["linuxdeploy", "--appdir", str(DIST_DIR / APP_NAME), "--output", "appimage"],
+        "AppImage",
+    )
+
+
+def build_installer(python: str) -> None:
+    if platform.system().lower() != "windows":
+        raise RuntimeError("Windows 安装包仅支持 Windows")
+    build(python)
+    for tool in ("iscc", "makensis"):
+        if shutil.which(tool) is not None:
+            _run_optional_packager(python, [tool, str(ROOT / "aline.iss")], "Windows installer")
+            return
+    raise RuntimeError("未找到可用的 Windows 安装器工具（ISCC / makensis）")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ALine 打包脚本")
     parser.add_argument("--clean",       action="store_true", help="打包前清理旧产物")
     parser.add_argument("--no-compress", action="store_true", help="不生成 zip 压缩包")
     parser.add_argument("--skip-tests",  action="store_true", help="跳过测试（不推荐）")
+    parser.add_argument("--appimage", action="store_true", help="生成 AppImage（Linux）")
+    parser.add_argument("--installer", action="store_true", help="生成 Windows 安装包")
     args = parser.parse_args()
 
     python = get_python()
@@ -137,7 +167,12 @@ def main() -> None:
     else:
         print("\n⚠ 已跳过测试")
 
-    build(python)
+    if args.appimage:
+        build_appimage(python)
+    elif args.installer:
+        build_installer(python)
+    else:
+        build(python)
 
     if not args.no_compress:
         archive = make_archive()
