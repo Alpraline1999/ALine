@@ -140,11 +140,16 @@ def invoke_analysis_extension_handler(
     handler: Any,
     inputs: List[Dict[str, Any]],
     params: Dict[str, Any],
-) -> Any:
+) -> Dict[str, Any]:
     normalized_inputs = [dict(item or {}) for item in inputs]
     result = handler(series_payloads_to_lines(normalized_inputs), dict(params))
     if not isinstance(result, dict):
-        return result
+        import logging
+        logging.getLogger(__name__).warning(
+            "Analysis handler returned %s instead of dict: %s",
+            type(result).__name__, result,
+        )
+        return {"analysis_type": "unknown", "summary_items": [{"label": "错误", "value": f"扩展返回了无效结果类型: {type(result).__name__}"}]}
 
     payload = dict(result)
     if normalized_inputs:

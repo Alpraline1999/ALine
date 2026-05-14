@@ -1984,6 +1984,11 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         r = self._result
         if r is None:
             return
+        if not isinstance(r, dict):
+            self._set_analysis_status(f"分析失败: 扩展返回了无效结果类型 ({type(r).__name__})")
+            self._run_analysis_btn.setEnabled(True)
+            self._cancel_analysis_btn.hide()
+            return
         tab_number = self._next_temporary_result_number
         self._next_temporary_result_number += 1
         tab_key = f"temp:{tab_number}"

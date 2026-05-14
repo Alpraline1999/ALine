@@ -1308,6 +1308,15 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._update_stats()
         self._update_save_action_presentation()
 
+    def _set_pipeline_hint(self, error_msg: str) -> None:
+        """统一显示处理扩展的简短红色提示。
+
+        从可能包含 traceback 的错误消息中提取首行有用信息。
+        """
+        first_line = error_msg.split("\n", 1)[0]
+        clean_msg = first_line.split(": ", 1)[-1] if ": " in first_line else first_line
+        self._set_stats_message(clean_msg, is_error=True)
+
     def _on_async_pipeline_error(self, error_msg: str) -> None:
         self._out_series_batch = []
         self._out_xs = []
@@ -1315,13 +1324,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._pipeline_warnings = []
         self._cancel_pipeline_btn.hide()
         self._cancel_async_runner()
-        # 输入不足类错误用简短提示，不按错误样式显示
-        if "至少需要" in error_msg or "最多支持" in error_msg:
-            first_line = error_msg.split("\n", 1)[0]
-            clean_msg = first_line.split(": ", 1)[-1] if ": " in first_line else first_line
-            self._set_stats_message(f"提示: {clean_msg}")
-        else:
-            self._set_stats_message(f"处理错误: {error_msg}", is_error=True)
+        self._set_pipeline_hint(error_msg)
 
     def _on_async_pipeline_cancelled(self) -> None:
         self._out_series_batch = []
@@ -1394,7 +1397,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             self._out_series_batch = []
             self._out_xs = []
             self._out_ys = []
-            self._set_stats_message(f"处理错误: {e}", is_error=True)
+            self._set_pipeline_hint(str(e))
             self._update_save_action_presentation()
             return
         self._draw_preview()
