@@ -8,7 +8,6 @@
 - `.aline` 项目文件升级为 ZIP 容器格式（内含 `project.json` + 分块数据文件）
 - 曲线点数据独立存储，支持按需懒加载
 - 保存时仅写入变更块（增量保存）
-- 打开旧 `.pyline` / `.aline` 纯 JSON 文件时自动兼容
 - 原子写入防止保存中断导致文件损坏
 
 ## 当前代码现状
@@ -59,11 +58,11 @@ project.aline  → 实际为 ZIP 包
 - 写入临时文件 → fsync → 重命名覆盖原文件
 - 写入中断时保留上次完整版本
 
-### 5. 向前兼容
+### 5. 版本边界
 
-- `ProjectSerializer` 检测文件格式
-- `.pyline` 或旧 `.aline`（纯 JSON）→ 使用原有全量加载逻辑
-- 首次保存时升级为新 ZIP 格式
+- `ProjectSerializer` 统一读写 ZIP 容器格式
+- 旧 `.pyline` / 旧纯 JSON `.aline` 不再作为目标格式支持
+- 首次保存直接写出新 ZIP 格式
 
 ## 分步实施
 
@@ -77,7 +76,6 @@ project.aline  → 实际为 ZIP 包
 
 - 50 条 x 10000 点项目的加载时间 < 500ms（当前可能数秒）
 - 单条曲线重命名保存时间 < 100ms
-- 旧 `.pyline` 文件可以正常打开
 - 保存过程中强行终止不损坏已有文件
 
 ## 边界与约束
@@ -85,4 +83,4 @@ project.aline  → 实际为 ZIP 包
 - 不改变 `Project` / `DataSeries` / `Curve` 等模型的定义
 - 不改变 `project_manager` 的公共 API
 - 初始仅优化存储格式，暂不引入 SQLite
-- 向后兼容旧格式，但不支持写回旧格式
+- 不再兼容旧格式
