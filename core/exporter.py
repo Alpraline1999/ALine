@@ -7,6 +7,8 @@ import csv
 import json
 import math
 import os
+import time as _stdlib_time
+from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 from typing import Any, Iterator, List, Optional, TYPE_CHECKING
@@ -513,3 +515,54 @@ class Exporter:
         text = Exporter.get_clipboard_text(curve, timestamp=timestamp)
         clipboard = QApplication.clipboard()
         clipboard.setText(text)
+
+
+# ── Streaming export (Phase 22) ──────────────────────────────────────────
+
+
+@dataclass
+class StreamingExportPlan:
+    """Export plan that writes data in chunks to avoid loading everything in memory.
+
+    Thin wrapper around :meth:`Exporter._iter_rows` that writes CSV rows in
+    configurable chunks, tracking total row-count and elapsed time.
+
+    Usage::
+
+        plan = StreamingExportPlan(file_path="/tmp/out.csv", curves=[...])
+        plan.execute()
+        print(plan.row_count, plan.total_time)
+    """
+
+    file_path: str
+    curves: List["Curve"]
+    format: str = "csv"
+    chunk_size: int = 10000
+    row_count: int = 0
+    total_time: float = 0.0
+
+    def execute(self) -> None:
+        """Write *curves* to *file_path* in streaming fashion."""
+        start = _stdlib_time.perf_counter()
+        written = 0
+
+        with open(self.file_path, "w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.writer(handle)
+            for curve in self.curves:
+                header = Exporter._get_header(curve)
+                writer.writerow(["# " + curve.name])
+                writer.writerow(header)
+                chunk: list[tuple[Any, Any]] = []
+                for row in Exporter._iter_rows(curve):
+                    chunk.append(row)
+                    if len(chunk) >= self.chunk_size:
+                        writer.writerows(chunk)
+                        written += len(chunk)
+                        chunk.clear()
+                if chunk:
+                    writer.writerows(chunk)
+                    written += len(chunk)
+                writer.writerow([])
+
+        self.row_count = written
+        self.total_time = _stdlib_time.perf_counter() - start

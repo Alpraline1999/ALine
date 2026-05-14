@@ -1,7 +1,7 @@
-"""ZIP + JSON 容器格式的项目序列化器
+"""ZIP 容器格式的项目序列化器
 
 提供 ZipProjectSerializer — 将 Project 序列化到 .aline ZIP 文件，
-支持增量保存、按需加载曲线/系列数据，并兼容旧纯 JSON 格式读取。
+支持增量保存、按需加载曲线/系列数据。
 """
 from __future__ import annotations
 
@@ -15,14 +15,13 @@ from models.schemas import Curve, DataSeries, Project
 
 
 class ZipProjectSerializer:
-    """ZIP + JSON 格式的项目序列化器。
+    """ZIP 格式的项目序列化器。
 
     特点：
     - project.json 只含元数据，树和配置秒开
     - 曲线点数据分块存储，按需加载
     - 增量保存：只写变更块
     - 原子写入：临时文件 + rename
-    - 兼容纯 JSON 格式读取
     """
 
     FORMAT_VERSION = "1"
@@ -31,20 +30,14 @@ class ZipProjectSerializer:
 
     @staticmethod
     def detect_format(path: str) -> str:
-        """检测格式: 'zip' | 'json' | 'unknown'"""
+        """检测格式: 'zip' | 'unknown'"""
         try:
             with zipfile.ZipFile(path, 'r') as zf:
-                if 'meta.json' in zf.namelist():
+                if 'project.json' in zf.namelist():
                     return 'zip'
         except (zipfile.BadZipFile, FileNotFoundError):
             pass
-        # 尝试作为 JSON 读取
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                json.load(f)
-            return 'json'
-        except Exception:
-            return 'unknown'
+        return 'unknown'
 
     # ── save ────────────────────────────────────────────────────
 
@@ -150,7 +143,7 @@ class ZipProjectSerializer:
         """加载项目。只读 project.json + meta.json，数据按需加载。
 
         Args:
-            path: 项目文件路径（.aline ZIP 或 .pyline JSON）。
+            path: 项目文件路径（.aline ZIP 文件）。
 
         Returns:
             Project 对象。ZIP 格式下 series/curve 的数据点需通过
@@ -159,20 +152,9 @@ class ZipProjectSerializer:
         Raises:
             ValueError: 不支持的文件格式。
         """
-        format_ = ZipProjectSerializer.detect_format(path)
-
-        if format_ == 'json':
-            # 旧格式：全量加载 → 转新格式保存时升级
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return Project(**data)
-
-        if format_ == 'zip':
-            with zipfile.ZipFile(path, 'r') as zf:
-                project_data = json.loads(zf.read('project.json').decode('utf-8'))
-            return Project(**project_data)
-
-        raise ValueError(f"不支持的项目文件格式: {path}")
+        with zipfile.ZipFile(path, 'r') as zf:
+            project_data = json.loads(zf.read('project.json').decode('utf-8'))
+        return Project(**project_data)
 
     # ── 按需加载数据 ────────────────────────────────────────────
 
@@ -219,43 +201,6 @@ class ZipProjectSerializer:
                 return result
         except KeyError:
             return None
-
-    # ── 格式迁移 ────────────────────────────────────────────────
-
-    @staticmethod
-    def migrate_from_json(json_path: str, zip_path: str) -> None:
-        """将旧 JSON 格式迁移为 ZIP 容器格式。
-
-        读取纯 JSON 项目文件，以 ZIP 容器格式写入目标路径，
-        包含完整的项目数据和所有曲线/系列数据。
-
-        Args:
-            json_path: 旧格式 JSON 文件路径。
-            zip_path: 目标 ZIP 文件路径。
-        """
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        project = Project(**data)
-
-        # 收集所有系列与曲线 ID，确保数据完整写入
-        all_series: set[str] = set()
-        for df in project.data_files:
-            for s in df.series:
-                all_series.add(s.id)
-        for ds in project.datasets:
-            for s in ds.series:
-                all_series.add(s.id)
-
-        all_curves: set[str] = set()
-        for img in project.images:
-            for c in img.curves:
-                all_curves.add(c.id)
-
-        ZipProjectSerializer.save(
-            project, zip_path,
-            modified_series_ids=all_series,
-            modified_curve_ids=all_curves,
-        )
 
     # ── 内部辅助 ────────────────────────────────────────────────
 

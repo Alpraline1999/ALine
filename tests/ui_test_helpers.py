@@ -67,7 +67,6 @@ def make_project(name="ui_test"):
     from models.schemas import DataFile, DataSeries
     pm = ProjectManager()
     p = pm.create_new(name)
-    pm.migrate_to_v2(p)
     s = DataSeries(name="s1", x=[1.0, 2.0, 3.0, 4.0, 5.0],
                    y=[2.0, 4.0, 6.0, 8.0, 10.0])
     df = DataFile(name="test.csv", series=[s])

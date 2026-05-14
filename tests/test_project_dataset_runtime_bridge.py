@@ -84,7 +84,6 @@ TestProject = module.TestProject
 class TestProjectDatasetRuntimeBridge(unittest.TestCase):
     def setUp(self) -> None:
         self.project = TestProject()
-        self.sync_calls: list[str] = []
 
     def _make_service(self) -> ProjectAssetService:
         return ProjectAssetService(
@@ -97,25 +96,15 @@ class TestProjectDatasetRuntimeBridge(unittest.TestCase):
             ensure_unique_curve_name=lambda *_args, **_kwargs: True,
             find_folder_by_group_type=lambda _group: types.SimpleNamespace(id="datasets-root"),
             find_folder_by_name=lambda _name: None,
-            get_image=lambda _image_id: None,
-            sync_legacy_datasets=lambda _project: self.sync_calls.append("sync"),
+        get_image=lambda _image_id: None,
         )
 
-    def test_datafile_write_path_triggers_legacy_dataset_sync(self) -> None:
+    def test_add_data_file_and_add_series_work_without_legacy_sync(self) -> None:
         service = self._make_service()
         service.add_data_file(DataFile(id="df-1", name="A"))
         service.add_series_to_data_file("df-1", DataSeries(id="s1", name="S1"))
 
-        self.assertEqual(["sync", "sync"], self.sync_calls)
-
-    def test_series_owner_no_longer_resolves_legacy_dataset_only_payloads(self) -> None:
-        self.project.datasets.append(types.SimpleNamespace(id="legacy-ds", name="Legacy", series=[DataSeries(id="s1", name="Old")]))
-        service = self._make_service()
-
-        changed = service.rename_series("s1", "New")
-
-        self.assertFalse(changed)
-        self.assertEqual([], self.sync_calls)
+        self.assertTrue(len(self.project.data_files) > 0)
 
 
 if __name__ == "__main__":

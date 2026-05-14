@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass(slots=True)
@@ -32,3 +32,6 @@ class ProcessWorkspaceController:
             self.receive_data_request(kind, node_id)
             return kind, node_id
         return None
+
+    def resolve_target_folder(self, project_manager, default_type: str = "datasets") -> Optional[str]:
+        return project_manager.get_source_file_target_folder_id(self.state.selected_source_node_id)

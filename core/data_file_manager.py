@@ -122,7 +122,6 @@ class DataFileManager:
                 )
                 project.tree.nodes.append(node)
 
-        self._pm.sync_legacy_datasets(project)
         project.is_modified = True
         return data_file
 
@@ -209,7 +208,6 @@ class DataFileManager:
                 if not (node.kind == "data_file" and node.data_file_id == data_file_id)
             ]
 
-        self._pm.sync_legacy_datasets(project)
         project.is_modified = True
         return True
 
@@ -253,7 +251,6 @@ class DataFileManager:
         )
         if data_file_node is None or self._project is None:
             return None
-        self._pm.sync_legacy_datasets(self._project)
         dataset = self._project.find_dataset(data_file_node.data_file_id) if self._project else None
         return cast(Optional[Dataset], dataset)
 

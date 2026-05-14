@@ -1,11 +1,7 @@
 """
-统一数据模型 — ALine + PyLine 兼容
+统一数据模型 — ALine 项目模型
 
-兼容策略：
-- PyLine 原有模型（CalibrationData / Curve / MaskData / ImageWork）完全保留，字段不变
-- ALine 新增字段全部带默认值，Pydantic 加载旧 .pyline 文件不会报错
-- v0.2 新增：ProjectTree（树形结构）、DataFile、SavedPipeline、ReportTemplate、AI* 模型
-- v0.3 新增：FolderNode.group_type、AIPromptNode/AISkillNode/AIAgentNode 拆分、FigureConfig 完整字段
+所有模型均保持向后兼容加载现有 .aline ZIP 文件。
 """
 from __future__ import annotations
 
@@ -101,8 +97,7 @@ class DataSeries(BaseModel):
     color: str = "#0078D4"
     visible: bool = True
     source: str = "manual"
-    # "manual" | "imported_file" | "computed" | "pyline_curve_copy"
-    source_curve_id: Optional[str] = None  # 来源于 PyLine Curve 时记录原始 id
+    source_curve_id: Optional[str] = None  # 来源于 Curve 时记录原始 id
     source_file_path: str = ""  # 来源文件路径（用于追溯）
     import_params: dict[str, Any] = {}     # 导入参数快照（如解析方式、跳过行数等）
 
@@ -321,17 +316,11 @@ class PlotTheme(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────
-# Project 根节点（同时兼容 .pyline 格式）
+# Project 根节点
 # ─────────────────────────────────────────────────────────────
 
 class Project(BaseModel):
     """项目根节点。
-
-    兼容性保证：
-    - PyLine 旧字段（images / imported_curves）全部保留
-    - ALine 新字段（datasets / analyses / figures）全部带默认值
-    - Pydantic 加载旧 .pyline 文件时新字段取默认值，不崩溃
-    - `aline_version` 为 None 时表示纯 PyLine 项目
     """
     # ── PyLine 字段（保持原样）─────────────────────
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -358,7 +347,7 @@ class Project(BaseModel):
     ai_prompts: List["AIPrompt"] = []
     ai_skills: List["AISkill"] = []
     ai_agents: List["AIAgent"] = []
-    tree: Optional["ProjectTree"] = None  # None = 旧文件，migrate_to_v2 时自动构建
+    tree: Optional["ProjectTree"] = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -564,7 +553,7 @@ TreeNodeUnion = Annotated[
         FolderNode, DataFileNode, SourceFileNode, ImageWorkNode, PictureNode,
         PipelineNode, FigureTemplateNode, ReportTemplateNode, AnalysisResultNode,
         AIPromptNode, AISkillNode, AIAgentNode,
-        AIToolNode,   # 保留用于读取 v0.2 旧文件
+        AIToolNode,
     ],
     Field(discriminator="kind")
 ]

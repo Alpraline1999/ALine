@@ -1,7 +1,5 @@
 """
-项目管理器 — 兼容读写 .pyline / .aline 文件
-
-完整保留 PyLine 原有所有方法，新增 ALine 数据/分析管理接口。
+项目管理器 — 管理多项目打开、保存、CRUD 操作。
 """
 from __future__ import annotations
 
@@ -108,15 +106,6 @@ _TOOL_NODE_PARENT_GROUP = {
     "ai_agent": "agent_group",
 }
 
-_LEGACY_TOOL_GROUP_TYPES = {
-    "tools", "tool_set", "pipeline_group", "template_group", "figure_template_group",
-    "report_template_group", "ai_group", "prompt_group", "skill_group", "agent_group",
-}
-
-_LEGACY_TOOL_NODE_KINDS = {
-    "pipeline", "figure_template", "report_template", "ai_prompt", "ai_skill", "ai_agent", "ai_tool",
-}
-
 _NON_REMOVABLE_FOLDER_GROUP_TYPES = set(_GROUP_DISPLAY_NAMES.keys())
 
 
@@ -124,7 +113,6 @@ class ProjectManager:
     """项目管理器（全局单例）。
 
     支持多项目同时打开，维护当前项目概念。
-    同时兼容 .pyline（旧格式）和 .aline / .pyline（含 ALine 扩展字段）。
     """
 
     def __init__(self) -> None:
@@ -137,14 +125,13 @@ class ProjectManager:
             aline_version=_ALINE_VERSION,
         )
         self._project_repository = services.repository
-        self._project_migration_service = services.migration_service
+        self._project_tree_init_service = services.tree_init_service
         self._project_backup_manager = services.backup_manager
         self._project_tree_service = services.tree_service
         self._project_asset_service = services.asset_service
         self._project_session = services.session
 
         self._serializer = ProjectSerializer(
-            migration_service=self._project_migration_service,
             aline_version=_ALINE_VERSION,
         )
         self._tree_manager = TreeManager()
@@ -425,8 +412,7 @@ class ProjectManager:
         self._projects.append(project)
         self._current_project_id = project.id
 
-        # 为新项目直接初始化当前树结构（不经过旧数据迁移路径）
-        self._project_migration_service.init_new_project_tree(project)
+        self._project_tree_init_service.init_new_project_tree(project)
 
         if create_structure:
             base_dir = self._normalize_path(parent_dir or os.getcwd())
@@ -456,14 +442,7 @@ class ProjectManager:
 
         self._current_project_id = project.id
 
-        # 迁移旧版本文件
-        self._project_migration_service.migrate_to_v2(project)
-        self._project_migration_service.migrate_to_v3(project)
         return project
-
-    def open_file(self, file_path: str) -> Project:
-        """Alias for open() for backward compatibility."""
-        return self.open(file_path)
 
     def save(self, file_path: Optional[str] = None) -> str:
         if self.current_project is None:
@@ -1091,40 +1070,47 @@ class ProjectManager:
     # ─────────────────────────────────────────────
 
     def add_dataset(self, name: str) -> Optional[Dataset]:
-        """兼容入口：运行时实际创建 DataFile，并同步兼容 datasets 镜像。"""
-        data_file = self.add_data_file(DataFile(id=str(uuid.uuid4()), name=name))
-        if data_file is None or self.current_project is None:
+        from models.schemas import Dataset
+        project = self.current_project
+        if project is None:
             return None
-        self.sync_legacy_datasets(self.current_project)
-        return self.current_project.find_dataset(data_file.data_file_id)
+        dataset = Dataset(name=name)
+        project.datasets.append(dataset)
+        project.is_modified = True
+        return dataset
 
     def remove_dataset(self, dataset_id: str) -> bool:
         project = self.current_project
         if project is None:
             return False
-        node = next((item for item in getattr(project.tree, "nodes", []) if item.kind == "data_file" and item.data_file_id == dataset_id), None)
-        if node is None:
-            return False
-        changed = self.delete_node(node.id)
+        before = len(project.datasets)
+        project.datasets = [ds for ds in project.datasets if ds.id != dataset_id]
+        changed = len(project.datasets) < before
         if changed:
-            self.sync_legacy_datasets(project)
+            project.is_modified = True
         return changed
 
     def rename_dataset(self, dataset_id: str, new_name: str) -> bool:
         project = self.current_project
         if project is None:
             return False
-        node = next((item for item in getattr(project.tree, "nodes", []) if item.kind == "data_file" and item.data_file_id == dataset_id), None)
-        if node is None:
-            return False
-        changed = self.rename_node(node.id, new_name)
-        if changed:
-            self.sync_legacy_datasets(project)
-        return changed
+        for ds in project.datasets:
+            if ds.id == dataset_id:
+                ds.name = new_name
+                project.is_modified = True
+                return True
+        return False
 
     def add_series_to_dataset(self, dataset_id: str, series: DataSeries) -> bool:
-        """兼容入口：运行时实际追加到 DataFile。"""
-        return self.add_series_to_data_file(dataset_id, series)
+        project = self.current_project
+        if project is None:
+            return False
+        for ds in project.datasets:
+            if ds.id == dataset_id:
+                ds.series.append(series)
+                project.is_modified = True
+                return True
+        return False
 
     def remove_series(self, dataset_id: str, series_id: str) -> bool:
         del dataset_id
@@ -1154,10 +1140,6 @@ class ProjectManager:
         return self._project_asset_service.move_series_to_data_file(series_id, target_data_file_id)
 
     def import_curve_as_series(self, curve_id: str, dataset_id: str) -> Optional[DataSeries]:
-        """将 PyLine 图像提取曲线复制为 ALine DataSeries（核心互通方法）。
-
-        复制 Curve.x_actual / y_actual 到新 DataSeries，保留来源引用。
-        """
         if self.current_project is None:
             return None
         curve = self.get_curve(curve_id)
@@ -1171,7 +1153,6 @@ class ProjectManager:
             x=list(curve.x_actual),
             y=list(curve.y_actual),
             color=curve.color,
-            source="pyline_curve_copy",
             source_curve_id=curve.id,
             x_label=x_label,
             y_label=y_label,
@@ -1256,92 +1237,11 @@ class ProjectManager:
     # v0.2 迁移
     # ─────────────────────────────────────────────
 
-    def migrate_to_v2(self, project: Optional[Project] = None) -> None:
-        self._project_migration_service.migrate_to_v2(project or self.current_project)
-
-    def migrate_to_v3(self, project: Optional[Project] = None) -> None:
-        self._project_migration_service.migrate_to_v3(project or self.current_project)
-
     def _init_new_project_tree(self, p: Project) -> None:
-        """直接为新建（空）项目创建 v0.3 标准树结构。"""
-        self._project_migration_service.init_new_project_tree(p)
-
-    def _migrate_project_assets_to_global(self, project: Project) -> bool:
-        changed = False
-
-        for pipeline in list(project.saved_pipelines):
-            global_assets.ensure_saved_pipeline(pipeline)
-            changed = True
-        if project.saved_pipelines:
-            project.saved_pipelines = []
-
-        for figure in list(project.figures):
-            global_assets.ensure_figure_template(figure)
-            changed = True
-        if project.figures:
-            project.figures = []
-
-        for template in list(project.report_templates):
-            global_assets.ensure_report_template(template)
-            changed = True
-        if project.report_templates:
-            project.report_templates = []
-
-        for prompt in list(project.ai_prompts):
-            global_assets.ensure_ai_prompt(prompt)
-            changed = True
-        if project.ai_prompts:
-            project.ai_prompts = []
-
-        for skill in list(project.ai_skills):
-            global_assets.ensure_ai_skill(skill)
-            changed = True
-        if project.ai_skills:
-            project.ai_skills = []
-
-        for agent in list(project.ai_agents):
-            global_assets.ensure_ai_agent(agent)
-            changed = True
-        if project.ai_agents:
-            project.ai_agents = []
-
-        if project.tree is not None:
-            tree = project.tree
-            removed_ids: set[str] = set()
-
-            def _collect_descendants(parent_id: str) -> None:
-                for child in tree.get_children(parent_id):
-                    removed_ids.add(child.id)
-                    _collect_descendants(child.id)
-
-            for node in list(tree.nodes):
-                canonical_group = self._canonical_group_type(getattr(node, "group_type", None))
-                if node.kind in _LEGACY_TOOL_NODE_KINDS or canonical_group in _LEGACY_TOOL_GROUP_TYPES:
-                    removed_ids.add(node.id)
-                    _collect_descendants(node.id)
-
-            if removed_ids:
-                project.tree.nodes = [node for node in project.tree.nodes if node.id not in removed_ids]
-                changed = True
-
-        if changed:
-            project.is_modified = True
-        return changed
-
-    def sync_legacy_datasets(self, project: Optional[Project] = None) -> None:
-        """将 data_files[*].series 同步回 datasets，作为兼容镜像保留。"""
-        p = project or self.current_project
-        if p is None:
-            return
-        from models.schemas import Dataset
-
-        p.datasets = [
-            Dataset(id=df.id, name=df.name, series=list(df.series))
-            for df in p.data_files
-        ]
+        self._project_tree_init_service.init_new_project_tree(p)
 
     # ─────────────────────────────────────────────
-    # v0.2 树节点 CRUD
+    # 树节点 CRUD
     # ─────────────────────────────────────────────
 
     def add_folder(self, name: str, parent_id: Optional[str] = None, group_type: Optional[str] = None) -> Optional[FolderNode]:
@@ -1504,7 +1404,6 @@ class ProjectManager:
         analysis_folder, analysis_changed = self._ensure_group_folder(p, "analysis_result_group", None, 4)
         changed = changed or source_changed or ds_changed or picture_changed or img_changed
         changed = changed or analysis_changed
-        changed = self._migrate_project_assets_to_global(p) or changed
 
         for folder in (source_folder, ds_folder, picture_folder, img_folder, analysis_folder):
             if folder is None:
@@ -1703,7 +1602,6 @@ class ProjectManager:
                     x=list(curve.x_actual),
                     y=list(curve.y_actual),
                     color=curve.color,
-                    source="pyline_curve_copy",
                     source_curve_id=curve.id,
                 )
             return None
@@ -1729,7 +1627,6 @@ class ProjectManager:
                             x=list(c.x_actual),
                             y=list(c.y_actual),
                             color=c.color,
-                            source="pyline_curve_copy",
                             source_curve_id=c.id,
                         )
             return None
@@ -1768,7 +1665,6 @@ class ProjectManager:
                                 x=list(c.x_actual),
                                 y=list(c.y_actual),
                                 color=c.color,
-                                source="pyline_curve_copy",
                                 source_curve_id=c.id,
                             ))
                     return result

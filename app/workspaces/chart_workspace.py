@@ -44,3 +44,6 @@ class ChartWorkspaceController:
 
     def clear_series_selection(self) -> None:
         self.state.style_target = None
+
+    def resolve_target_folder(self, project_manager, default_type: str = "datasets") -> Optional[str]:
+        return project_manager.get_picture_target_folder_id(self.state.selected_tree_id)

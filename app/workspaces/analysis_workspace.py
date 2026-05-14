@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass(slots=True)
@@ -26,3 +26,6 @@ class AnalysisWorkspaceController:
         if kind.endswith("_to_analysis"):
             kind = kind[:-12]
         return kind, node_id
+
+    def resolve_target_folder(self, project_manager, default_type: str = "datasets") -> Optional[str]:
+        return project_manager.get_analysis_result_target_folder_id(self.state.selected_tree_node_id)

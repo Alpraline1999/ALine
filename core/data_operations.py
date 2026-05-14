@@ -205,7 +205,6 @@ def curve_to_series(curve: Curve, x_label: str = "x", y_label: str = "y") -> Dat
         x=list(curve.x_actual),
         y=list(curve.y_actual),
         color=curve.color,
-        source="pyline_curve_copy",
         source_curve_id=curve.id,
         x_label=x_label,
         y_label=y_label,

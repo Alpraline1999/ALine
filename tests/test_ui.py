@@ -34,7 +34,7 @@ _PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJ_ROOT not in sys.path:
     sys.path.insert(0, _PROJ_ROOT)
 
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QWidget, QDialog
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QWidget, QDialog, QTreeWidgetItem
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
 
@@ -247,7 +247,6 @@ class TestProjectTreeWidget(unittest.TestCase):
         from models.schemas import DataFile, DataSeries
 
         other = self.pm.create_new("tree_second")
-        self.pm.migrate_to_v3(other)
         self.pm.set_current_project(other.id)
         self.pm.add_data_file(DataFile(name="other.csv", series=[DataSeries(name="s2", x=[1.0], y=[2.0])]))
         self.pm.set_current_project(self.p.id)
@@ -903,7 +902,6 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertIsNotNone(empty_folder)
 
         other_project = self.pm.create_new("other_cleanup_context")
-        self.pm.migrate_to_v2(other_project)
         self.pm.set_current_project(other_project.id)
         self.widget.refresh()
 
@@ -923,7 +921,6 @@ class TestProjectTreeWidget(unittest.TestCase):
         self.assertIsNotNone(empty_folder)
 
         other_project = self.pm.create_new("other_cleanup_explicit")
-        self.pm.migrate_to_v2(other_project)
         self.pm.set_current_project(other_project.id)
         self.widget.refresh()
 
@@ -1034,6 +1031,29 @@ class TestProjectTreeWidget(unittest.TestCase):
 
         dialog._data_file_target_combo.setCurrentIndex.assert_called_once_with(1)
         dialog._data_file_target_combo.setEnabled.assert_called_once_with(False)
+
+    def test_delegate_paint_wrap_mode_does_not_crash_with_sample_item(self):
+        from ui.widgets.project_tree_delegate import ProjectTreeWrapAnywhereDelegate
+
+        tree = self.widget._tree
+        delegate = tree.itemDelegate()
+        self.assertIsInstance(delegate, ProjectTreeWrapAnywhereDelegate)
+
+        self.widget.set_name_display_mode("wrap")
+        QApplication.processEvents()
+
+        test_item = QTreeWidgetItem(tree)
+        test_item.setText(0, "A very long node name that should wrap anywhere in the tree view delegate")
+        tree.addTopLevelItem(test_item)
+        tree.show()
+        QApplication.processEvents()
+
+        tree.viewport().resize(120, 60)
+        tree.viewport().repaint()
+        QApplication.processEvents()
+
+        self.widget.set_name_display_mode("elide")
+        QApplication.processEvents()
 
 
 class TestNavigationStack(unittest.TestCase):
@@ -4782,7 +4802,6 @@ class TestDataPage(unittest.TestCase):
         self.assertIn("文件夹: 图片集", self.page._stats_title_label.text())
 
     def test_picture_root_cannot_be_renamed_from_management_panel(self):
-        self.pm.migrate_to_v3(self.p)
         picture_root = self.pm._find_folder_by_group_type("pictures")
         self.assertIsNotNone(picture_root)
 
@@ -10522,7 +10541,6 @@ class TestMainWindow(unittest.TestCase):
 
     def test_tree_root_switches_current_project(self):
         other = self.pm.create_new("mw_other")
-        self.pm.migrate_to_v3(other)
         self.pm.set_current_project(self.p.id)
         self.win._tree_panel.tree.refresh()
         project_item = self.win._tree_panel.tree._tree.topLevelItem(1)
@@ -10714,6 +10732,18 @@ class TestMainWindow(unittest.TestCase):
         self.assertIs(self.win.stackedWidget.currentWidget(), self.win.digitize_page)
         load_mock.assert_called_once_with("curve-id")
         export_mock.assert_called_once_with()
+
+    def test_theme_switch_benchmark_runs_all_pages_without_crash(self):
+        start = time.perf_counter()
+        self.win._update_all_pages_theme()
+        elapsed = time.perf_counter() - start
+
+        self.win.resize(1320, 900)
+        self.win.show()
+        QApplication.processEvents()
+
+        self.win._update_all_pages_theme()
+        self.assertLess(elapsed, 2.0, f"Theme update took {elapsed:.3f}s — ensure no regressions")
 
 
 class TestMainWindowPictureRoute(unittest.TestCase):

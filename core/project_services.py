@@ -5,7 +5,7 @@ from typing import Callable, TYPE_CHECKING
 
 from core.project_asset_service import ProjectAssetService
 from core.project_backup_manager import ProjectBackupManager
-from core.project_migration_service import ProjectMigrationService
+from core.project_migration_service import ProjectTreeInitService
 from core.project_repository import ProjectRepository
 from core.project_session import ProjectSession
 from core.project_tree_service import ProjectTreeService
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class ProjectServiceBundle:
     repository: ProjectRepository
-    migration_service: ProjectMigrationService
+    tree_init_service: ProjectTreeInitService
     backup_manager: ProjectBackupManager
     tree_service: ProjectTreeService
     asset_service: ProjectAssetService
@@ -36,19 +36,17 @@ def build_project_services(
         project_file_suffix=project_file_suffix,
         aline_version=aline_version,
         normalize_path=manager._normalize_path,
-        sync_legacy_datasets=manager.sync_legacy_datasets,
         sync_project_backups=manager._sync_project_backups,
         add_recent_project=add_recent,
     )
-    migration_service = ProjectMigrationService(
+    tree_init_service = ProjectTreeInitService(
         ensure_project_tree_groups=lambda p: (manager._ensure_project_tree_groups(p), None)[1],
-        migrate_project_assets_to_global=manager._migrate_project_assets_to_global,
     )
     backup_manager = ProjectBackupManager(manager)
     tree_service = ProjectTreeService(
         get_current_project=lambda: manager.current_project,
         clear_last_error=manager._clear_last_operation_error,
-        ensure_project_tree=migration_service.migrate_to_v2,
+        ensure_project_tree=tree_init_service.init_new_project_tree,
         canonical_group_type=manager._canonical_group_type,
         ensure_unique_tree_child_name=manager._ensure_unique_tree_child_name,
         rename_source_file=manager.rename_source_file,
@@ -64,7 +62,7 @@ def build_project_services(
     asset_service = ProjectAssetService(
         get_current_project=lambda: manager.current_project,
         clear_last_error=manager._clear_last_operation_error,
-        ensure_project_tree=migration_service.migrate_to_v2,
+        ensure_project_tree=tree_init_service.init_new_project_tree,
         ensure_unique_tree_child_name=manager._ensure_unique_tree_child_name,
         next_unique_tree_child_name=manager._next_unique_tree_child_name,
         ensure_unique_series_name=manager._ensure_unique_series_name,
@@ -72,7 +70,6 @@ def build_project_services(
         find_folder_by_group_type=manager._find_folder_by_group_type,
         find_folder_by_name=manager._find_folder_by_name,
         get_image=manager.get_image,
-        sync_legacy_datasets=manager.sync_legacy_datasets,
     )
     session = ProjectSession(
         list_projects=lambda: manager._projects,
@@ -87,7 +84,7 @@ def build_project_services(
     )
     return ProjectServiceBundle(
         repository=repository,
-        migration_service=migration_service,
+        tree_init_service=tree_init_service,
         backup_manager=backup_manager,
         tree_service=tree_service,
         asset_service=asset_service,

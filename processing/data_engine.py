@@ -34,7 +34,9 @@ from __future__ import annotations
 import cmath
 import contextvars
 import copy
+import logging
 import math
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.expression_execution import DEFAULT_EXPRESSION_EXECUTOR
@@ -53,9 +55,37 @@ from core.line_tools import (
 )
 from core.extension_invoker import invoke_processing_extension_handler
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PipelineCopyBudget:
+    """Tracks and limits data copies during pipeline execution."""
+    max_deep_copies: int = 100
+    deep_copy_count: int = 0
+    max_list_materializations: int = 500
+    list_materialization_count: int = 0
+
+    def record_deep_copy(self) -> None:
+        self.deep_copy_count += 1
+        if self.deep_copy_count > self.max_deep_copies:
+            logger.warning("PipelineCopyBudget: deep copy budget exceeded (%d)", self.max_deep_copies)
+
+    def record_list_materialization(self) -> None:
+        self.list_materialization_count += 1
+
+    @property
+    def within_budget(self) -> bool:
+        return self.deep_copy_count <= self.max_deep_copies
+
 
 # 当前 pipeline 执行期间的 "已选择列表" 池，供 _op_resample(mode=align) 等使用。
 _pipeline_pool: contextvars.ContextVar = contextvars.ContextVar("_pipeline_pool", default=[])
+
+# 当前 pipeline 执行期间的复制预算。
+_pipeline_budget: contextvars.ContextVar[Optional[PipelineCopyBudget]] = contextvars.ContextVar(
+    "_pipeline_budget", default=None
+)
 
 
 XY = Tuple[List[float], List[float]]
@@ -87,25 +117,33 @@ def apply_pipeline_to_lines(
     ops: List[Dict[str, Any]],
     *,
     selected_lines: Optional[List[PipelineLine]] = None,
+    budget: Optional[PipelineCopyBudget] = None,
 ) -> PipelineResult:
     """执行 pipeline。见模块文档开头的执行语义说明。
 
     lines           : 活动集（通常是"已选择列表"中被勾选的那些曲线）。
     selected_lines  : 完整"已选择列表"池；不传时等同 lines。
+    budget          : 可选的复制预算跟踪器。
     """
     active = _normalize_pipeline_lines(lines)
-    pool = _normalize_pipeline_lines(selected_lines) if selected_lines is not None else [copy.deepcopy(line) for line in active]
+    if selected_lines is not None:
+        pool = _normalize_pipeline_lines(selected_lines)
+    else:
+        pool = [copy.deepcopy(line) for line in active]
+        _record_budget_deep_copy()
 
     pairing = _find_single_pairing_op(ops)
 
     warnings: List[str] = []
-    token = _pipeline_pool.set(pool)
+    pool_token = _pipeline_pool.set(pool)
+    budget_token = _pipeline_budget.set(budget)
     try:
         if pairing is None:
             return _apply_pipeline_without_pairing(active, ops, warnings)
         return _apply_pipeline_with_pairing(active, pool, ops, pairing, warnings)
     finally:
-        _pipeline_pool.reset(token)
+        _pipeline_pool.reset(pool_token)
+        _pipeline_budget.reset(budget_token)
 
 
 def _apply_pipeline_without_pairing(
@@ -162,9 +200,11 @@ def apply_operation_to_lines(lines: List[PipelineLine], op: Dict[str, Any]) -> P
             return _apply_multiline_processing_extension(custom_op, working_lines, p)
 
         processed_lines: List[PipelineLine] = []
+        input_copies = [copy.deepcopy(line) for line in working_lines]
+        _record_budget_deep_copy()
         for index, line in enumerate(working_lines):
-            ordered_inputs = [copy.deepcopy(line)]
-            ordered_inputs.extend(copy.deepcopy(item) for pos, item in enumerate(working_lines) if pos != index)
+            ordered_inputs = [input_copies[index]]
+            ordered_inputs.extend(item for pos, item in enumerate(input_copies) if pos != index)
             result_line = invoke_processing_extension_handler(
                 custom_op.handler,
                 ordered_inputs,
@@ -206,6 +246,12 @@ def _apply_builtin_operation(xs: List[float], ys: List[float], t: str, p: Dict[s
     if t == "filter":
         return _op_filter(xs, ys, p)
     return xs, ys
+
+
+def _record_budget_deep_copy() -> None:
+    budget = _pipeline_budget.get()
+    if budget is not None:
+        budget.record_deep_copy()
 
 
 def _normalize_pipeline_lines(lines: List[PipelineLine]) -> List[PipelineLine]:
@@ -300,6 +346,7 @@ def _resolve_pairing_inputs(op: Dict[str, Any], pool: List[PipelineLine]) -> Lis
     if extension is not None and lines_number is not None and not present:
         raise ValueError(f"{extension.name} 需要显式选择输入曲线")
     chosen = [copy.deepcopy(_pick_from_pool(pool, idx)) for idx in indices]
+    _record_budget_deep_copy()
     if extension is not None:
         _validate_multiline_processing_extension(extension, chosen)
     return chosen

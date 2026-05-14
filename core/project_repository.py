@@ -14,7 +14,6 @@ class ProjectRepository:
     project_file_suffix: str
     aline_version: str
     normalize_path: Callable[[str], str]
-    sync_legacy_datasets: Callable[[Project], None]
     sync_project_backups: Callable[[Project, str, str | None], None]
     add_recent_project: Callable[[str, str], None]
 
@@ -40,10 +39,8 @@ class ProjectRepository:
         project.file_path = normalized_path
         project.is_modified = False
 
-        format_ = ZipProjectSerializer.detect_format(normalized_path)
-        if format_ == 'zip':
-            from core.lazy_series import convert_to_lazy
-            convert_to_lazy(project, normalized_path)
+        from core.lazy_series import convert_to_lazy
+        convert_to_lazy(project, normalized_path)
 
         self.add_recent_project(normalized_path, project.name)
         return project
@@ -64,7 +61,6 @@ class ProjectRepository:
         if project.aline_version is None:
             project.aline_version = self.aline_version
 
-        self.sync_legacy_datasets(project)
         self.sync_project_backups(project, normalized_path, previous_path)
 
         # Collect all data IDs for ZIP container save

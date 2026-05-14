@@ -8,6 +8,12 @@ from __future__ import annotations
 import math
 from typing import List, Tuple
 
+from core.line_tools import (
+    interp_linear,
+    resample_uniform as _core_resample_uniform,
+    resample_uniform_spacing as _core_resample_uniform_spacing,
+)
+
 
 def smooth_moving_average(
     x: List[float],
@@ -83,14 +89,7 @@ def resample_uniform(
     Returns:
         (x_new, y_new)
     """
-    if len(x) < 2 or n_points < 2:
-        return list(x), list(y)
-    x_min, x_max = x[0], x[-1]
-    if x_min == x_max:
-        return list(x), list(y)
-    x_new = [x_min + i * (x_max - x_min) / (n_points - 1) for i in range(n_points)]
-    y_new = [_interp(xv, x, y) for xv in x_new]
-    return x_new, y_new
+    return _core_resample_uniform(x, y, n_points)
 
 
 def resample_uniform_spacing(
@@ -99,21 +98,7 @@ def resample_uniform_spacing(
     spacing: float,
 ) -> Tuple[List[float], List[float]]:
     """按固定间距重采样，并始终保留末端点。"""
-    if len(x) < 2 or spacing <= 0:
-        return list(x), list(y)
-    x_min, x_max = x[0], x[-1]
-    if x_min == x_max:
-        return list(x), list(y)
-
-    x_new = [x_min]
-    next_x = x_min + spacing
-    while next_x < x_max - 1e-12:
-        x_new.append(next_x)
-        next_x += spacing
-    if not math.isclose(x_new[-1], x_max, rel_tol=0.0, abs_tol=1e-12):
-        x_new.append(x_max)
-    y_new = [_interp(xv, x, y) for xv in x_new]
-    return x_new, y_new
+    return _core_resample_uniform_spacing(x, y, spacing)
 
 
 # ── 内部辅助 ────────────────────────────────────────────────
@@ -160,17 +145,3 @@ def _mat_inv(m: List[List[float]]) -> List[List[float]]:
     return [row[n:] for row in aug]
 
 
-def _interp(x_val: float, x: List[float], y: List[float]) -> float:
-    if x_val <= x[0]:
-        return y[0]
-    if x_val >= x[-1]:
-        return y[-1]
-    lo, hi = 0, len(x) - 1
-    while lo + 1 < hi:
-        mid = (lo + hi) // 2
-        if x[mid] <= x_val:
-            lo = mid
-        else:
-            hi = mid
-    t = (x_val - x[lo]) / (x[hi] - x[lo])
-    return y[lo] + t * (y[hi] - y[lo])

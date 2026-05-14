@@ -694,7 +694,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             if c:
                 self._selected_source_kind = "curve"
                 self._selected_source_node_id = obj_id
-                self._src_series_batch = [DataSeries(name=c.name, x=list(c.x_actual), y=list(c.y_actual), color=c.color, source="pyline_curve_copy", source_curve_id=c.id)]
+                self._src_series_batch = [DataSeries(name=c.name, x=list(c.x_actual), y=list(c.y_actual), color=c.color, source_curve_id=c.id)]
                 self._src_xs = list(c.x_actual)
                 self._src_ys = list(c.y_actual)
                 self._selected_src_id = obj_id

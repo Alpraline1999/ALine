@@ -18,7 +18,6 @@ class ProjectAssetService:
     find_folder_by_group_type: Callable[[str], Any | None]
     find_folder_by_name: Callable[[str], Any | None]
     get_image: Callable[[str], Any | None]
-    sync_legacy_datasets: Callable[[Project | None], None]
 
     def add_data_file(
         self,
@@ -45,7 +44,6 @@ class ProjectAssetService:
         order = project.tree.get_siblings_max_order(parent_id) + 1
         node = DataFileNode(name=data_file.name, parent_id=parent_id, data_file_id=data_file.id, order=order)
         project.tree.nodes.append(node)
-        self.sync_legacy_datasets(project)
         project.is_modified = True
         return node
 
@@ -66,7 +64,6 @@ class ProjectAssetService:
         if not self.ensure_unique_series_name(data_file.name, data_file.series, series.name, owner_label="数据文件"):
             return False
         data_file.series.append(series)
-        self.sync_legacy_datasets(project)
         project.is_modified = True
         return True
 
@@ -87,7 +84,6 @@ class ProjectAssetService:
         series.name = new_name
         project = self.get_current_project()
         if project is not None:
-            self.sync_legacy_datasets(project)
             project.is_modified = True
         return True
 
@@ -100,7 +96,6 @@ class ProjectAssetService:
         owner.series = [item for item in owner.series if item.id != series_id]
         changed = len(owner.series) < before
         if changed:
-            self.sync_legacy_datasets(project)
             project.is_modified = True
         return changed
 
@@ -119,7 +114,6 @@ class ProjectAssetService:
             return False
         owner.series = [item for item in owner.series if item.id != series_id]
         target.series.append(series)
-        self.sync_legacy_datasets(project)
         project.is_modified = True
         return True
 

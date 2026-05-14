@@ -72,7 +72,7 @@ class TestProjectRepository(unittest.TestCase):
             project_file_suffix=".aline",
             aline_version="0.1.0",
             normalize_path=lambda path: str(Path(path).resolve()),
-            sync_legacy_datasets=lambda project: calls.setdefault("sync_legacy", []).append(project.id),
+            
             sync_project_backups=lambda project, path, previous: calls.setdefault("sync_backups", []).append((project.id, path, previous)),
             add_recent_project=lambda path, name: calls.setdefault("recent", []).append((path, name)),
         )
@@ -89,7 +89,6 @@ class TestProjectRepository(unittest.TestCase):
             self.assertEqual("0.1.0", project.aline_version)
             self.assertFalse(project.is_modified)
             self.assertEqual([(saved_path, "Repo Save")], calls["recent"])
-            self.assertEqual([project.id], calls["sync_legacy"])
             self.assertEqual([(project.id, saved_path, None)], calls["sync_backups"])
             self.assertTrue(Path(saved_path).exists())
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass(slots=True)
@@ -34,3 +34,6 @@ class DataWorkspaceController:
         self.state.selected_id = None
         self.state.selected_node_kind = None
         self.state.selected_node_id = None
+
+    def resolve_target_folder(self, project_manager, default_type: str = "datasets") -> Optional[str]:
+        return project_manager.get_source_file_target_folder_id(self.state.selected_node_id)

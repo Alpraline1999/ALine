@@ -1914,7 +1914,6 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
             x=x_vals,
             y=y_vals,
             color=curve.color,
-            source="pyline_curve_copy",
             source_curve_id=curve.id,
         )
 

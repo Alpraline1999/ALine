@@ -96,51 +96,7 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(payload["typed_axis_config"]["x_label"], "Time")
 
 
-class TestRecentProjects(unittest.TestCase):
-
-    def test_load_recent_ignores_legacy_pyline_recent_file(self):
-        import core.recent_projects as recent_projects
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            current_file = temp_root / ".aline_recent.json"
-            legacy_file = temp_root / ".pyline_recent.json"
-            project_path = temp_root / "legacy_project.aline"
-            project_path.write_text("{}", encoding="utf-8")
-            legacy_file.write_text(
-                json.dumps([
-                    {
-                        "path": str(project_path),
-                        "name": "legacy",
-                        "opened_at": "2026-04-27T10:00:00",
-                    }
-                ]),
-                encoding="utf-8",
-            )
-
-            with mock.patch.object(recent_projects, "_RECENT_FILE", str(current_file)):
-                self.assertEqual(recent_projects.load_recent(), [])
-
-
-class TestShortcutManager(unittest.TestCase):
-
-    def test_shortcut_manager_ignores_legacy_pyline_config(self):
-        from core.shortcut_manager import ShortcutManager
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            current_file = temp_root / "aline" / "shortcuts.json"
-            legacy_file = temp_root / "pyline" / "shortcuts.json"
-            legacy_file.parent.mkdir(parents=True, exist_ok=True)
-            legacy_file.write_text(
-                json.dumps({"open_project": "Ctrl+Shift+O"}),
-                encoding="utf-8",
-            )
-
-            with mock.patch.object(ShortcutManager, "_CONFIG_FILE", current_file):
-                manager = ShortcutManager()
-
-            self.assertEqual(manager.get("open_project"), "Ctrl+O")
+class TestTreeNodeDiscriminatedUnion(unittest.TestCase):
 
     def test_tree_node_discriminated_union_folder(self):
         from models.schemas import FolderNode, ProjectTree
@@ -284,9 +240,7 @@ class TestProjectManager(unittest.TestCase):
         ds = Dataset(name="ds1")
         ds.series.append(DataSeries(name="s1", x=[1, 2], y=[3, 4]))
         p.datasets.append(ds)
-        self.pm.migrate_to_v2(p)
         node_count = len(p.tree.nodes)
-        self.pm.migrate_to_v2(p)  # 幂等：第二次调用不应改变
         self.assertEqual(len(p.tree.nodes), node_count)
 
     def test_migrate_creates_folder_nodes(self):
@@ -294,14 +248,12 @@ class TestProjectManager(unittest.TestCase):
         p = self.pm.create_new("m2")
         p.datasets.append(Dataset(name="ds1"))
         p.images.append(ImageWork(name="img1", image_path=""))
-        self.pm.migrate_to_v2(p)
         kinds = [n.kind for n in p.tree.nodes]
         # At minimum, folder nodes should be created
         self.assertIn("folder", kinds)
 
     def test_new_project_tree_contains_only_business_root_groups(self):
         p = self.pm.create_new("grouped_tree")
-        self.pm.migrate_to_v3(p)
         folder_map = {
             (node.name, getattr(node, "group_type", None), node.parent_id)
             for node in p.tree.nodes
@@ -318,7 +270,6 @@ class TestProjectManager(unittest.TestCase):
         from core.project_name_rules import ensure_unique_tree_child_name, next_unique_tree_child_name
 
         p = self.pm.create_new("name_rules")
-        self.pm.migrate_to_v3(p)
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
@@ -457,33 +408,8 @@ class TestProjectManager(unittest.TestCase):
             self.assertEqual(reopened_picture.plot_snapshot.series[0].name, "series-a")
             self.assertEqual(reopened_picture.plot_snapshot.applied_extensions[0].extension_version, "1.2.3")
 
-    def test_migrate_to_v3_removes_legacy_tools_folder(self):
-        from models.schemas import FolderNode, ProjectTree
-
-        p = self.pm.create_new("legacy_tools")
-        ds = FolderNode(name="数据集", group_type="datasets", order=0)
-        imgs = FolderNode(name="图片集", group_type="images", order=1)
-        tools = FolderNode(name="工具集", group_type="tools", order=2)
-        pipelines = FolderNode(name="Pipelines", group_type="pipeline_group", parent_id=tools.id, order=0)
-        reports = FolderNode(name="报告模板组", group_type="report_template_group", parent_id=tools.id, order=1)
-        ai_group = FolderNode(name="AI 工具", group_type="ai_group", parent_id=tools.id, order=2)
-        p.tree = ProjectTree(nodes=[ds, imgs, tools, pipelines, reports, ai_group])
-
-        self.pm.migrate_to_v3(p)
-
-        root_map = {
-            (node.name, getattr(node, "group_type", None), node.parent_id)
-            for node in p.tree.nodes
-            if node.kind == "folder"
-        }
-        self.assertNotIn(("工具集", "tools", None), root_map)
-        self.assertNotIn(("Pipelines", "pipeline_group", None), root_map)
-        self.assertNotIn(("报告模板组", "report_template_group", None), root_map)
-        self.assertNotIn(("AI 工具", "ai_group", None), root_map)
-
     def test_add_folder(self):
         self.pm.create_new("test")
-        self.pm.migrate_to_v2()
         node = self.pm.add_folder("my_folder")
         self.assertIsNotNone(node)
         self.assertEqual(node.kind, "folder")
@@ -492,7 +418,6 @@ class TestProjectManager(unittest.TestCase):
     def test_add_data_file(self):
         from models.schemas import DataFile, DataSeries
         p = self.pm.create_new("test")
-        self.pm.migrate_to_v2(p)
         folder = self.pm.add_folder("data_folder")
         df = DataFile(name="exp.csv", series=[DataSeries(name="x", x=[1,2], y=[3,4])])
         node = self.pm.add_data_file(df, folder.id)
@@ -504,7 +429,6 @@ class TestProjectManager(unittest.TestCase):
         from models.schemas import DataFile
 
         p = self.pm.create_new("dup_df")
-        self.pm.migrate_to_v2(p)
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
@@ -520,7 +444,6 @@ class TestProjectManager(unittest.TestCase):
         from models.schemas import DataFile
 
         p = self.pm.create_new("mixed_kind_dup")
-        self.pm.migrate_to_v2(p)
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
@@ -535,7 +458,6 @@ class TestProjectManager(unittest.TestCase):
         from models.schemas import DataFile
 
         p = self.pm.create_new("dup_df_auto")
-        self.pm.migrate_to_v2(p)
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
@@ -605,7 +527,6 @@ class TestProjectManager(unittest.TestCase):
         from models.schemas import DataFile
 
         self.pm.create_new("move_conflict")
-        self.pm.migrate_to_v2()
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
         folder_a = self.pm.add_folder("A", parent_id=datasets_root.id, group_type="datasets")
@@ -625,7 +546,6 @@ class TestProjectManager(unittest.TestCase):
         from models.schemas import DataFile, DataSeries
 
         self.pm.create_new("dup_virtual")
-        self.pm.migrate_to_v2()
 
         data_file = self.pm.add_data_file(DataFile(name="dup.csv", series=[
             DataSeries(name="s1", x=[1.0], y=[2.0]),
@@ -658,7 +578,6 @@ class TestProjectManager(unittest.TestCase):
 
     def test_rename_node(self):
         p = self.pm.create_new("test")
-        self.pm.migrate_to_v2(p)
         folder = self.pm.add_folder("original")
         result = self.pm.rename_node(folder.id, "renamed")
         self.assertTrue(result)
@@ -678,7 +597,6 @@ class TestProjectManager(unittest.TestCase):
 
     def test_delete_node_with_cascade(self):
         p = self.pm.create_new("test")
-        self.pm.migrate_to_v2(p)
         parent = self.pm.add_folder("parent")
         child = self.pm.add_folder("child", parent.id)
         # Add a data_file under child
@@ -697,7 +615,6 @@ class TestProjectManager(unittest.TestCase):
         from models.schemas import DataFile
 
         p = self.pm.create_new("test")
-        self.pm.migrate_to_v2(p)
         root = self.pm.add_folder("root")
         empty_child = self.pm.add_folder("empty_child", root.id)
         nested_parent = self.pm.add_folder("nested_parent", root.id)
@@ -717,7 +634,6 @@ class TestProjectManager(unittest.TestCase):
 
     def test_remove_empty_folders_prunes_managed_group_subfolders(self):
         p = self.pm.create_new("managed_empty_cleanup")
-        self.pm.migrate_to_v2(p)
         datasets_root = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(datasets_root)
 
@@ -748,7 +664,6 @@ class TestProjectManager(unittest.TestCase):
 
     def test_move_node_rejects_folder_move(self):
         p = self.pm.create_new("move_guard")
-        self.pm.migrate_to_v3(p)
         folder = self.pm.add_folder("user_folder")
         datasets_folder = self.pm._find_folder_by_group_type("datasets")
         self.assertIsNotNone(folder)
@@ -769,14 +684,13 @@ class TestProjectManager(unittest.TestCase):
     def test_save_and_reload(self):
         from models.schemas import DataFile, DataSeries
         p = self.pm.create_new("save_test")
-        self.pm.migrate_to_v2(p)
         df = DataFile(name="file.csv", series=[DataSeries(name="s1", x=[1,2,3], y=[4,5,6])])
         self.pm.add_data_file(df)
         with tempfile.NamedTemporaryFile(suffix=".aline", delete=False) as f:
             path = f.name
         try:
             self.pm.save(path)
-            p2 = self.pm.open_file(path)
+            p2 = self.pm.open(path)
             self.assertIsNotNone(p2.tree)
             names = [n.name for n in p2.tree.nodes]
             self.assertIn("file.csv", names)
@@ -784,33 +698,13 @@ class TestProjectManager(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_sync_datasets_on_save(self):
-        """DataFile 应在保存时同步到 datasets。"""
-        from models.schemas import DataFile, DataSeries
-        p = self.pm.create_new("sync_test")
-        self.pm.migrate_to_v2(p)
-        df = DataFile(name="compat.csv",
-                      series=[DataSeries(name="s1", x=[1], y=[2])])
-        self.pm.add_data_file(df)
-        with tempfile.NamedTemporaryFile(suffix=".aline", delete=False) as f:
-            path = f.name
-        try:
-            self.pm.save(path)
-            self.pm.close_current_project()
-            p2 = self.pm.open(path)
-            self.assertIsNotNone(p2.datasets)
-            self.assertTrue(len(p2.datasets) > 0)
-            self.assertEqual(p2.datasets[0].name, "compat.csv")
-        finally:
-            os.unlink(path)
-
-    def test_open_rejects_non_aline_project_file(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".pyline", delete=False, encoding="utf-8") as f:
+    def test_open_rejects_non_aline_suffix(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".dat", delete=False, encoding="utf-8") as f:
             json.dump({"id": "legacy", "name": "legacy"}, f)
             path = f.name
         try:
             with self.assertRaisesRegex(ValueError, r"\.aline"):
-                self.pm.open_file(path)
+                self.pm.open(path)
         finally:
             os.unlink(path)
 
@@ -833,13 +727,17 @@ class TestProjectManager(unittest.TestCase):
         self.assertIsNotNone(found)
 
     def test_dataset_crud(self):
-        p = self.pm.create_new("t")
-        ds = self.pm.add_dataset("ds1")
+        self.pm.create_new("ds_test")
+        ds = self.pm.add_dataset("Test DS")
         self.assertIsNotNone(ds)
-        self.assertTrue(self.pm.rename_dataset(ds.id, "renamed_ds"))
-        self.assertEqual(p.find_dataset(ds.id).name, "renamed_ds")
-        self.assertTrue(self.pm.remove_dataset(ds.id))
-        self.assertIsNone(p.find_dataset(ds.id))
+        self.assertEqual(ds.name, "Test DS")
+
+    def test_add_series_to_dataset(self):
+        from models.schemas import DataSeries
+        self.pm.create_new("ds_test")
+        ds = self.pm.add_dataset("ds1")
+        s = DataSeries(name="s1", x=[1], y=[2])
+        self.assertTrue(self.pm.add_series_to_dataset(ds.id, s))
 
     def test_collect_all_series(self):
         from models.schemas import DataSeries, Dataset
@@ -2259,8 +2157,8 @@ class TestAnalysisEngine(unittest.TestCase):
 
         calls = []
 
-        def _handler(lines, params):
-            calls.append((list(lines), dict(params)))
+        def _handler(context, params):
+            calls.append((list(context.visible_series), dict(params)))
 
         extension = PlotExtension(
             type="phase_probe",
@@ -2590,7 +2488,6 @@ class TestDataOperations(unittest.TestCase):
         self.assertEqual(s.name, "test_curve")
         self.assertEqual(s.x, [1.0, 2.0])
         self.assertEqual(s.y, [3.0, 4.0])
-        self.assertEqual(s.source, "pyline_curve_copy")
 
 
 class TestExporter(unittest.TestCase):
@@ -2679,7 +2576,6 @@ class TestCommandLayer(unittest.TestCase):
         self._restore_assets = _patch_global_assets()
         self.pm = ProjectManager()
         self.p = self.pm.create_new("ai_test")
-        self.pm.migrate_to_v2(self.p)
         from models.schemas import DataFile, DataSeries
         s = DataSeries(name="col1", x=[float(i) for i in range(20)],
                        y=[float(i) ** 2 for i in range(20)])
@@ -3217,18 +3113,6 @@ class TestProjectManagerV3(unittest.TestCase):
                        if n.kind == "folder" and n.group_type is not None]
         self.assertGreater(len(group_types), 0)
 
-    def test_migrate_to_v3_infers_group_type(self):
-        """旧 v0.2 文件迁移到 v0.3 后，系统文件夹应有 group_type"""
-        from core.project_manager import ProjectManager
-        pm2 = ProjectManager()
-        p2 = pm2.create_new("old")
-        p2.tree = None  # 模拟旧 v0.2 无树
-        pm2.migrate_to_v2(p2)
-        pm2.migrate_to_v3(p2)
-        group_types = [n.group_type for n in p2.tree.nodes
-                       if n.kind == "folder" and n.group_type is not None]
-        self.assertGreater(len(group_types), 0)
-
     def test_add_ai_prompt(self):
         from core.global_assets import global_assets
 
@@ -3548,16 +3432,21 @@ class TestCommandLayerV3(unittest.TestCase):
 
         import core.project_manager as pm_module
         import ai.command_layer as cl_module
+        import ai.command_registry as cr_module
         self._orig_pm = pm_module.project_manager
         self._orig_cl = cl_module.project_manager
+        self._orig_cr = cr_module.project_manager
         pm_module.project_manager = self.pm
         cl_module.project_manager = self.pm
+        cr_module.project_manager = self.pm
 
     def tearDown(self):
         import core.project_manager as pm_module
         import ai.command_layer as cl_module
+        import ai.command_registry as cr_module
         pm_module.project_manager = self._orig_pm
         cl_module.project_manager = self._orig_cl
+        cr_module.project_manager = self._orig_cr
         self._restore_assets()
 
     def test_list_image_works_empty(self):

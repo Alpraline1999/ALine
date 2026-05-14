@@ -529,10 +529,6 @@ class MainWindow(FluentWindow):
     # ─────────────────────────────────────────────────────────
 
     def _on_project_created(self, name: str):
-        p = project_manager.current_project
-        if p is not None:
-            project_manager.migrate_to_v2(p)
-            project_manager.migrate_to_v3(p)
         self._update_window_title()
         self.digitize_page.refresh_project_tree()
         self.data_page.refresh()
@@ -541,10 +537,6 @@ class MainWindow(FluentWindow):
         self.switchTo(self.data_page)
 
     def _on_project_opened(self, file_path: str):
-        p = project_manager.current_project
-        if p is not None:
-            project_manager.migrate_to_v2(p)
-            project_manager.migrate_to_v3(p)
         self._update_window_title()
         self.digitize_page.refresh_project_tree()
         self.data_page.refresh()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import unittest
 from unittest import mock
 
@@ -36,6 +37,16 @@ class TestMultiCurveMean(unittest.TestCase):
 
         self.assertEqual(32, len(result))
         self.assertLessEqual(call_count, len(lines) + 1)
+
+    def test_multi_curve_mean_perf_guardrail(self) -> None:
+        curves = [
+            [[float(x), float(x * offset)] for x in range(2000)]
+            for offset in range(1, 51)
+        ]
+        t0 = time.perf_counter()
+        multi_curve_mean_module.multi_curve_mean_handler(curves, {})
+        elapsed = time.perf_counter() - t0
+        self.assertLess(elapsed, 5.0, f"multi_curve_mean took {elapsed:.3f}s, exceeded 5s guardrail")
 
 
 if __name__ == "__main__":

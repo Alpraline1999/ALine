@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import (
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QKeySequenceEdit,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     BodyLabel,
     CardWidget,
@@ -20,12 +28,14 @@ from qfluentwidgets import (
     SwitchSettingCard,
 )
 
+from core.ai.providers import get_provider_preset
 from core.shortcut_manager import shortcut_manager
 from core.ui_preferences import get_tree_name_display_mode, is_page_tree_focus_mode_enabled
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.theme import (
     body_text_style_sheet,
     card_title_style_sheet,
+    error_text_style_sheet,
     placeholder_text_style_sheet,
     secondary_text_style_sheet,
 )
@@ -313,6 +323,408 @@ def build_extensions_tab(page) -> QWidget:
     page._attach_setting_card_control(page._external_extension_number_decimals_card, decimals_row)
     page._extension_other_settings_card.addSettingCard(page._external_extension_number_decimals_card)
     layout.addWidget(page._extension_other_settings_card)
+
+    layout.addStretch()
+    return outer
+
+
+def build_general_tab(page) -> QWidget:
+    outer = SmoothScrollArea()
+    outer.setWidgetResizable(True)
+    outer.setFrameShape(QFrame.Shape.NoFrame)
+    outer.setStyleSheet(page._transparent_scroll_style())
+
+    content = QWidget()
+    content.setStyleSheet("background: transparent;")
+    layout = QVBoxLayout(content)
+    layout.setSpacing(12)
+    layout.setContentsMargins(*page._tab_content_margins())
+    outer.setWidget(content)
+
+    appearance_group = SettingCardGroup("外观", content)
+    page._appearance_card = appearance_group
+    page._appearance_title = page._bind_theme_label_style(
+        appearance_group.titleLabel,
+        lambda: card_title_style_sheet(font_size=18),
+    )
+
+    theme_card = SettingCard(FIF.BRUSH, "主题", "切换浅色、深色或跟随系统。", appearance_group)
+    page._theme_label = theme_card.titleLabel
+    page._bind_setting_card_styles(
+        theme_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    page.theme_combo = ComboBox(theme_card)
+    page.theme_combo.setMinimumWidth(148)
+    page.theme_combo.addItems(["浅色", "深色", "跟随系统"])
+    page.theme_combo.setCurrentIndex(2)
+    page.theme_combo.currentIndexChanged.connect(page.on_theme_changed)
+    page._attach_setting_card_control(theme_card, page.theme_combo)
+    appearance_group.addSettingCard(theme_card)
+
+    tree_mode_card = SettingCard(FIF.INFO, "项目树长名称显示", "控制项目树长名称使用自动换行还是省略显示。", appearance_group)
+    page._tree_display_mode_label = tree_mode_card.titleLabel
+    page._bind_setting_card_styles(
+        tree_mode_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    page._tree_display_mode_combo = ComboBox(tree_mode_card)
+    page._tree_display_mode_combo.setMinimumWidth(148)
+    page._tree_display_mode_combo.addItems(["自动换行", "部分隐藏"])
+    current_mode = get_tree_name_display_mode()
+    current_index = 1 if current_mode == "elide" else 0
+    page._tree_display_mode_combo.setCurrentIndex(current_index)
+    page._tree_display_mode_combo.currentIndexChanged.connect(page._on_tree_display_mode_changed)
+    page._attach_setting_card_control(tree_mode_card, page._tree_display_mode_combo)
+    appearance_group.addSettingCard(tree_mode_card)
+
+    focus_mode_card = SwitchSettingCard(
+        FIF.INFO,
+        "项目树页面专注模式",
+        "开启后，功能页中的共享项目树只显示当前页面直接相关的节点。",
+        parent=appearance_group,
+    )
+    page._page_tree_focus_mode_card = focus_mode_card
+    page._page_tree_focus_mode_checkbox = focus_mode_card
+    page._page_tree_focus_mode_label = focus_mode_card.titleLabel
+    page._page_tree_focus_mode_hint = focus_mode_card.contentLabel
+    page._bind_setting_card_styles(
+        focus_mode_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    focus_mode_card.setChecked(is_page_tree_focus_mode_enabled())
+    focus_mode_card.checkedChanged.connect(page._on_page_tree_focus_mode_changed)
+    appearance_group.addSettingCard(focus_mode_card)
+
+    onboarding_card = SettingCard(
+        FIF.HELP,
+        "新手引导",
+        "点击后会重新播放主页引导，并重置数据管理、处理、可视化、分析和图片数字化页面的 TeachingTip 状态。",
+        appearance_group,
+    )
+    page._onboarding_label = onboarding_card.titleLabel
+    page._onboarding_hint = onboarding_card.contentLabel
+    page._bind_setting_card_styles(
+        onboarding_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    page._replay_onboarding_btn = PushButton("重新显示引导", onboarding_card)
+    page._replay_onboarding_btn.clicked.connect(page.replay_onboarding_requested.emit)
+    page._attach_setting_card_control(onboarding_card, page._replay_onboarding_btn)
+    appearance_group.addSettingCard(onboarding_card)
+    layout.addWidget(appearance_group)
+
+    layout.addStretch()
+    return outer
+
+
+def build_shortcuts_tab(page) -> QWidget:
+    outer = SmoothScrollArea()
+    outer.setWidgetResizable(True)
+    outer.setFrameShape(QFrame.Shape.NoFrame)
+    outer.setStyleSheet(page._transparent_scroll_style())
+
+    content = QWidget()
+    content.setStyleSheet("background: transparent;")
+    layout = QVBoxLayout(content)
+    layout.setSpacing(12)
+    layout.setContentsMargins(*page._tab_content_margins())
+    outer.setWidget(content)
+
+    page._shortcuts_card = SettingCardGroup("快捷键", content)
+    page._shortcuts_title = page._shortcuts_card.titleLabel
+    page._bind_theme_label_style(page._shortcuts_title, lambda: card_title_style_sheet(font_size=18))
+
+    sc_content = QWidget(page._shortcuts_card)
+    sc_form = QFormLayout(sc_content)
+    sc_form.setSpacing(6)
+    sc_form.setContentsMargins(0, 4, 0, 4)
+
+    for definition in shortcut_manager.list_definitions():
+        action = definition.action
+        label = f"[{definition.category}] {definition.label}"
+        edit = QKeySequenceEdit(sc_content)
+        edit.setKeySequence(QKeySequence(shortcut_manager.get(action)))
+        page._apply_shortcut_edit_style(edit, focused=False)
+        edit.installEventFilter(page)
+        row_lbl = BodyLabel(label + ":", sc_content)
+        page._bind_theme_label_style(row_lbl, body_text_style_sheet)
+
+        conflict_lbl = BodyLabel("", sc_content)
+        page._bind_theme_label_style(conflict_lbl, lambda: error_text_style_sheet(font_size=10))
+        conflict_lbl.setVisible(False)
+
+        edit_col = QWidget(sc_content)
+        ecol_layout = QVBoxLayout(edit_col)
+        ecol_layout.setContentsMargins(0, 0, 0, 0)
+        ecol_layout.setSpacing(1)
+        ecol_layout.addWidget(edit)
+        ecol_layout.addWidget(conflict_lbl)
+
+        sc_form.addRow(row_lbl, edit_col)
+        page._shortcut_edits[action] = edit
+        page._shortcut_rows[action] = edit_col
+        page._shortcut_labels.append(row_lbl)
+        page._conflict_labels[action] = conflict_lbl
+        edit.keySequenceChanged.connect(lambda ks, a=action: page._check_shortcut_conflict(a, ks))
+
+    btn_container = QWidget(page._shortcuts_card)
+    btn_row = QHBoxLayout(btn_container)
+    btn_row.setContentsMargins(0, 0, 0, 0)
+    btn_row.setSpacing(8)
+    apply_btn = PushButton("应用快捷键", btn_container)
+    apply_btn.clicked.connect(page._on_apply_shortcuts)
+    reset_btn = PushButton("恢复默认", btn_container)
+    reset_btn.clicked.connect(page._on_reset_shortcuts)
+    btn_row.addWidget(apply_btn)
+    btn_row.addWidget(reset_btn)
+    btn_row.addStretch()
+
+    shortcuts_editor_card = ExpandGroupSettingCard(
+        FIF.INFO,
+        "快捷键映射",
+        "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击\u201c应用快捷键\u201d保存。",
+        page._shortcuts_card,
+    )
+    page._shortcuts_editor_card = shortcuts_editor_card
+    page._bind_theme_text_in_widget(
+        shortcuts_editor_card,
+        "快捷键映射",
+        body_text_style_sheet,
+        first_only=True,
+    )
+    page._bind_theme_text_in_widget(
+        shortcuts_editor_card,
+        "所有已注册的界面动作都会显示在这里。点击输入框后按下新快捷键，再点击\u201c应用快捷键\u201d保存。",
+        lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    shortcuts_editor_card.setExpand(True)
+    filter_container = QWidget(shortcuts_editor_card)
+    filter_layout = QVBoxLayout(filter_container)
+    filter_layout.setContentsMargins(0, 0, 0, 0)
+    filter_layout.setSpacing(6)
+    page._shortcut_filter_edit = LineEdit(filter_container)
+    page._shortcut_filter_edit.setPlaceholderText("筛选快捷键动作，例如\u201c分析\u201d或\u201c导出\u201d")
+    page._shortcut_filter_edit.setClearButtonEnabled(True)
+    page._shortcut_filter_edit.setToolTip("按动作名称、分类或关键词筛选快捷键")
+    page._shortcut_filter_edit.textChanged.connect(page._filter_shortcut_rows)
+    page._apply_shortcut_filter_style()
+    page._shortcut_filter_edit.setMinimumWidth(280)
+    filter_layout.addWidget(page._shortcut_filter_edit)
+    shortcuts_editor_card.addGroupWidget(filter_container)
+    shortcuts_editor_card.addGroupWidget(sc_content)
+    shortcuts_editor_card.addGroupWidget(btn_container)
+    page._shortcuts_card.addSettingCard(shortcuts_editor_card)
+
+    layout.addWidget(page._shortcuts_card)
+    layout.addStretch()
+    return outer
+
+
+def build_ai_tab(page) -> QWidget:
+    outer = SmoothScrollArea()
+    outer.setWidgetResizable(True)
+    outer.setFrameShape(QFrame.Shape.NoFrame)
+    outer.setStyleSheet(page._transparent_scroll_style())
+
+    content = QWidget()
+    content.setStyleSheet("background: transparent;")
+    layout = QVBoxLayout(content)
+    layout.setSpacing(12)
+    layout.setContentsMargins(*page._tab_content_margins())
+    outer.setWidget(content)
+
+    # ── AI 接口配置 ──
+    page._ai_card = CardWidget(content)
+    ai_layout = QVBoxLayout(page._ai_card)
+    page._apply_card_layout_metrics(ai_layout)
+
+    ai_title = BodyLabel("AI 接口", page._ai_card)
+    page._bind_theme_label_style(ai_title, lambda: card_title_style_sheet(font_size=18))
+    ai_layout.addWidget(ai_title)
+
+    page._ai_provider_hint = BodyLabel("", page._ai_card)
+    page._ai_provider_hint.setWordWrap(True)
+    page._bind_theme_label_style(page._ai_provider_hint, lambda: placeholder_text_style_sheet(font_size=11))
+    ai_layout.addWidget(page._ai_provider_hint)
+
+    form = QFormLayout()
+    form.setSpacing(8)
+
+    page._ai_provider_combo = ComboBox(page._ai_card)
+    for provider_key in page._provider_keys:
+        page._ai_provider_combo.addItem(get_provider_preset(provider_key)["label"])
+    page._ai_provider_combo.currentIndexChanged.connect(page._on_ai_provider_changed)
+    form.addRow("接口类型:", page._ai_provider_combo)
+
+    page._ai_url_edit = LineEdit(page._ai_card)
+    page._ai_url_edit.setPlaceholderText("例: https://api.openai.com/v1  或  http://localhost:11434")
+    page._ai_url_edit.setToolTip("AI 接口的 Base URL，OpenAI 填官方地址，Ollama 填本地地址")
+    form.addRow("API 地址:", page._ai_url_edit)
+
+    page._ai_key_edit = LineEdit(page._ai_card)
+    page._ai_key_edit.setPlaceholderText("sk-...（OpenAI 必填，Ollama 可选）")
+    page._ai_key_edit.setToolTip("API 认证密钥，OpenAI/商用接口通常必填；Ollama 本地部署可留空，服务端代理可填写")
+    form.addRow("API Key:", page._ai_key_edit)
+
+    page._ai_model_preset_combo = ComboBox(page._ai_card)
+    page._ai_model_preset_combo.currentIndexChanged.connect(page._on_model_preset_changed)
+    form.addRow("推荐模型:", page._ai_model_preset_combo)
+
+    page._ai_model_edit = LineEdit(page._ai_card)
+    form.addRow("模型名称:", page._ai_model_edit)
+
+    page._ai_timeout_edit = LineEdit(page._ai_card)
+    page._ai_timeout_edit.setPlaceholderText("60")
+    page._ai_timeout_edit.setToolTip("等待 AI 响应的超时秒数，网络较慢或模型较大时可适当增大")
+    form.addRow("超时(秒):", page._ai_timeout_edit)
+
+    page._ai_temperature_edit = LineEdit(page._ai_card)
+    page._ai_temperature_edit.setPlaceholderText("0.7")
+    page._ai_temperature_edit.setToolTip("控制回复随机性：0 = 完全确定性，1-2 = 创造性更高。\n一般推荐 0.5~0.8，精确计算任务建议 0")
+    form.addRow("Temperature:", page._ai_temperature_edit)
+
+    page._ai_top_p_edit = LineEdit(page._ai_card)
+    page._ai_top_p_edit.setPlaceholderText("1.0")
+    page._ai_top_p_edit.setToolTip("核采样概率阈值，与 Temperature 配合使用。\n1.0 表示不限制，通常保持默认 1.0 即可")
+    form.addRow("Top P:", page._ai_top_p_edit)
+
+    page._ai_max_tokens_edit = LineEdit(page._ai_card)
+    page._ai_max_tokens_edit.setPlaceholderText("2048")
+    page._ai_max_tokens_edit.setToolTip("单次回复的最大 token 数量，超出后截断\n日常对话 2048 足够，长文档分析可调高至 4096")
+    form.addRow("Max Tokens:", page._ai_max_tokens_edit)
+
+    page._ai_ollama_keep_alive_edit = LineEdit(page._ai_card)
+    page._ai_ollama_keep_alive_edit.setPlaceholderText("5m")
+    page._ai_ollama_keep_alive_edit.setToolTip("Ollama 模型在内存中保持加载的时长\n格式：数字+单位，如 5m / 1h / 0（永久）。仅 Ollama 接口生效")
+    form.addRow("Ollama Keep-Alive:", page._ai_ollama_keep_alive_edit)
+
+    page._ai_ollama_num_ctx_edit = LineEdit(page._ai_card)
+    page._ai_ollama_num_ctx_edit.setPlaceholderText("4096")
+    page._ai_ollama_num_ctx_edit.setToolTip("Ollama 模型上下文窗口大小（token 数量）\n越大可处理更长的历史记录，但内存占用也更高。仅 Ollama 接口生效")
+    form.addRow("Ollama Num Ctx:", page._ai_ollama_num_ctx_edit)
+
+    page._ai_system_prompt_edit = PlainTextEdit(page._ai_card)
+    page._ai_system_prompt_edit.setPlaceholderText("全局系统提示，例如：优先用中文回答，并保持术语统一。")
+    page._ai_system_prompt_edit.setFixedHeight(96)
+    form.addRow("系统提示:", page._ai_system_prompt_edit)
+
+    ai_layout.addLayout(form)
+
+    ai_btn_row = QHBoxLayout()
+    save_ai_btn = PrimaryPushButton("保存配置")
+    save_ai_btn.clicked.connect(page._save_ai_config)
+    test_ai_btn = PushButton("测试连接")
+    test_ai_btn.clicked.connect(page._test_ai_connection)
+    page._ai_refresh_models_btn = PushButton("探测模型")
+    page._ai_refresh_models_btn.clicked.connect(page._refresh_available_models)
+    ai_btn_row.addWidget(save_ai_btn)
+    ai_btn_row.addWidget(test_ai_btn)
+    ai_btn_row.addWidget(page._ai_refresh_models_btn)
+    ai_btn_row.addStretch()
+    ai_layout.addLayout(ai_btn_row)
+
+    layout.addWidget(page._ai_card)
+
+    page._ai_tool_items: list[dict] = []  # {source, type, name, desc, item}
+
+    page._ai_tools_card = CardWidget(content)
+    ai_tools_layout = QVBoxLayout(page._ai_tools_card)
+    page._apply_card_layout_metrics(ai_tools_layout)
+
+    ai_tools_title = BodyLabel("AI 工具管理", page._ai_tools_card)
+    page._bind_theme_label_style(ai_tools_title, lambda: card_title_style_sheet(font_size=18))
+    ai_tools_layout.addWidget(ai_tools_title)
+
+    page._ai_tools_project_label = BodyLabel("当前项目: 未打开", page._ai_tools_card)
+    page._bind_theme_label_style(page._ai_tools_project_label, body_text_style_sheet)
+    ai_tools_layout.addWidget(page._ai_tools_project_label)
+
+    page._ai_tools_summary_label = BodyLabel("内置 0 · Prompt 0 · Skill 0 · Agent 0", page._ai_tools_card)
+    page._bind_theme_label_style(page._ai_tools_summary_label, secondary_text_style_sheet)
+    ai_tools_layout.addWidget(page._ai_tools_summary_label)
+
+    # 工具选择下拉框
+    selector_row = QHBoxLayout()
+    selector_row.addWidget(BodyLabel("选择工具:", page._ai_tools_card))
+    page._ai_tool_selector = ComboBox(page._ai_tools_card)
+    page._ai_tool_selector.setMinimumWidth(300)
+    page._ai_tool_selector.currentIndexChanged.connect(page._on_ai_tool_selected)
+    selector_row.addWidget(page._ai_tool_selector, 1)
+    ai_tools_layout.addLayout(selector_row)
+
+    # 工具详情卡片
+    page._ai_tool_detail_card = CardWidget(page._ai_tools_card)
+    detail_layout = QVBoxLayout(page._ai_tool_detail_card)
+    detail_layout.setSpacing(6)
+    detail_layout.setContentsMargins(12, 10, 12, 10)
+
+    detail_name_row = QHBoxLayout()
+    detail_name_row.addWidget(BodyLabel("名称:", page._ai_tool_detail_card))
+    page._ai_tool_detail_name = BodyLabel("—", page._ai_tool_detail_card)
+    page._bind_theme_label_style(
+        page._ai_tool_detail_name,
+        lambda: f"{body_text_style_sheet()} font-weight: bold;",
+    )
+    detail_name_row.addWidget(page._ai_tool_detail_name, 1)
+    detail_layout.addLayout(detail_name_row)
+
+    detail_type_row = QHBoxLayout()
+    detail_type_row.addWidget(BodyLabel("类型:", page._ai_tool_detail_card))
+    page._ai_tool_detail_type = BodyLabel("—", page._ai_tool_detail_card)
+    page._bind_theme_label_style(page._ai_tool_detail_type, secondary_text_style_sheet)
+    detail_type_row.addWidget(page._ai_tool_detail_type, 1)
+    detail_layout.addLayout(detail_type_row)
+
+    detail_desc_row = QHBoxLayout()
+    detail_desc_row.addWidget(BodyLabel("描述:", page._ai_tool_detail_card))
+    page._ai_tool_detail_desc = BodyLabel("—", page._ai_tool_detail_card)
+    page._ai_tool_detail_desc.setWordWrap(True)
+    detail_desc_row.addWidget(page._ai_tool_detail_desc, 1)
+    detail_layout.addLayout(detail_desc_row)
+
+    detail_action_row = QHBoxLayout()
+    page._ai_tool_edit_btn = PushButton("编辑", page._ai_tool_detail_card)
+    page._ai_tool_edit_btn.setEnabled(False)
+    page._ai_tool_edit_btn.clicked.connect(page._on_edit_selected_ai_tool)
+    page._ai_tool_delete_btn = PushButton("删除", page._ai_tool_detail_card)
+    page._ai_tool_delete_btn.setEnabled(False)
+    page._ai_tool_delete_btn.clicked.connect(page._on_delete_selected_ai_tool)
+    detail_action_row.addWidget(page._ai_tool_edit_btn)
+    detail_action_row.addWidget(page._ai_tool_delete_btn)
+    detail_action_row.addStretch()
+    detail_layout.addLayout(detail_action_row)
+
+    ai_tools_layout.addWidget(page._ai_tool_detail_card)
+
+    # 创建按钮行
+    ai_tools_btn_row = QHBoxLayout()
+    new_prompt_btn = PushButton("新建 Prompt", page._ai_tools_card)
+    new_prompt_btn.clicked.connect(lambda: page._open_ai_tool_dialog("prompt"))
+    new_skill_btn = PushButton("新建 Skill", page._ai_tools_card)
+    new_skill_btn.clicked.connect(lambda: page._open_ai_tool_dialog("skill"))
+    new_agent_btn = PushButton("新建 Agent", page._ai_tools_card)
+    new_agent_btn.clicked.connect(lambda: page._open_ai_tool_dialog("agent"))
+    refresh_ai_tools_btn = PushButton("刷新", page._ai_tools_card)
+    refresh_ai_tools_btn.clicked.connect(page._refresh_ai_tools_panel)
+    ai_tools_btn_row.addWidget(new_prompt_btn)
+    ai_tools_btn_row.addWidget(new_skill_btn)
+    ai_tools_btn_row.addWidget(new_agent_btn)
+    ai_tools_btn_row.addWidget(refresh_ai_tools_btn)
+    ai_tools_btn_row.addStretch()
+    ai_tools_layout.addLayout(ai_tools_btn_row)
+
+    layout.addWidget(page._ai_tools_card)
+
+    # 兼容字段（隐藏）
+    from qfluentwidgets import ListWidget as _ListWidget
+    page._tmpl_card = CardWidget(content)
+    page._tmpl_card.hide()
+    page._tmpl_list = _ListWidget(page._tmpl_card)
 
     layout.addStretch()
     return outer
