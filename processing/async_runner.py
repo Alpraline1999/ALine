@@ -79,12 +79,32 @@ class _PipelineWorker(QObject):
 
     def run(self) -> None:
         try:
-            from processing.data_engine import apply_pipeline_to_lines
+            from processing.data_engine import (
+                _find_single_pairing_op,
+                apply_pipeline_to_lines,
+            )
 
             total = len(self._ops)
             if total == 0:
                 self.progress.emit(100, "完成")
                 self.finished.emit(self._lines, [])
+                return
+
+            pairing = _find_single_pairing_op(self._ops)
+
+            if pairing is not None:
+                # 多曲线扩展（如 multi_curve_mean）需要完整 pipeline 上下文：
+                # 前序操作（如重采样）的输出必须传递到 pairing op，
+                # 逐步骤执行会导致 pairing op 从原始 pool 读数出错。
+                # 一次性传递所有 ops，由 apply_pipeline_to_lines 内部协调。
+                self.progress.emit(50, "正在执行多曲线操作…")
+                result, warnings = apply_pipeline_to_lines(
+                    self._lines,
+                    self._ops,
+                    selected_lines=self._selected_lines,
+                )
+                self.progress.emit(100, "完成")
+                self.finished.emit(result, warnings)
                 return
 
             result = self._lines

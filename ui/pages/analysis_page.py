@@ -36,6 +36,22 @@ from app.workspaces.analysis_workspace import AnalysisWorkspaceController, Analy
 def _run_analysis_inner(t: str, inputs: list, options) -> Any:
     """Module-level wrapper for background task execution."""
     return run_analysis(t, inputs, options)
+
+
+def _ensure_list(value: Any, default: Optional[list] = None) -> list:
+    """Safely coerce a value to a list, guarding against bool.
+
+    ``list(True)`` raises TypeError. This helper ensures bool values
+    are treated as empty/fallback instead of crashing.
+    """
+    if isinstance(value, bool):
+        return list(default or [])
+    if value is None:
+        return list(default or [])
+    try:
+        return list(value)
+    except TypeError:
+        return list(default or [])
 from core.report_templates import DEFAULT_REPORT_TEMPLATE
 from core.shortcut_manager import ShortcutBindingSet
 from core.task_runner import TaskManager
@@ -772,12 +788,15 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
     def _normalized_table_sections(self, result: dict) -> List[Dict[str, Any]]:
         sections: List[Dict[str, Any]] = []
-        raw_sections = list(result.get("tables") or result.get("table_sections") or [])
+        raw_tables = result.get("tables")
+        if isinstance(raw_tables, bool):
+            raw_tables = None
+        raw_sections = _ensure_list(raw_tables or result.get("table_sections"))
         for index, item in enumerate(raw_sections):
             if not isinstance(item, dict):
                 continue
-            headers = list(item.get("headers") or item.get("columns") or [])
-            rows = list(item.get("rows") or [])
+            headers = _ensure_list(item.get("headers") or item.get("columns"))
+            rows = _ensure_list(item.get("rows"))
             if not headers or not rows:
                 continue
             sections.append({
@@ -789,7 +808,10 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
     def _normalized_text_sections(self, result: dict) -> List[Dict[str, str]]:
         sections: List[Dict[str, str]] = []
-        raw_sections = list(result.get("texts") or result.get("text_sections") or [])
+        raw_texts = result.get("texts")
+        if isinstance(raw_texts, bool):
+            raw_texts = None
+        raw_sections = _ensure_list(raw_texts or result.get("text_sections"))
         for index, item in enumerate(raw_sections):
             if isinstance(item, str):
                 clean_content = item.strip()
@@ -829,7 +851,10 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
         result_lines = self._analysis_result_lines(r)
         line_lookup = {item["line_name"]: item["line"] for item in result_lines}
-        custom_series = list(r.get("_plot_series", []) or r.get("plot_series", []) or [])
+        raw_plot = r.get("_plot_series", [])
+        if isinstance(raw_plot, bool):
+            raw_plot = None
+        custom_series = _ensure_list(raw_plot or r.get("plot_series"))
         for index, series in enumerate(custom_series):
             if not isinstance(series, dict):
                 continue
@@ -901,7 +926,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     @staticmethod
     def _analysis_result_lines(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
-        for index, item in enumerate(list(result.get("lines") or []), start=1):
+        for index, item in enumerate(_ensure_list(result.get("lines")), start=1):
             if not isinstance(item, dict):
                 continue
             line_name = str(item.get("line_name") or item.get("name") or f"结果曲线 {index}").strip()
@@ -917,24 +942,24 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
         analysis_type = str(result.get("analysis_type") or "").strip()
         if analysis_type == "curve_fit":
-            fit_x = list(result.get("fit_x") or [])
-            fit_y = list(result.get("fit_y") or [])
+            fit_x = _ensure_list(result.get("fit_x"))
+            fit_y = _ensure_list(result.get("fit_y"))
             if len(fit_x) == len(fit_y) and fit_x:
                 return [{"line_name": "拟合曲线", "line": line_from_xy(fit_x, fit_y)}]
         elif analysis_type == "error_compare":
-            error_x = list(result.get("error_x") or [])
-            error_y = list(result.get("error_y") or [])
+            error_x = _ensure_list(result.get("error_x"))
+            error_y = _ensure_list(result.get("error_y"))
             if len(error_x) == len(error_y) and error_x:
                 return [{"line_name": "误差曲线", "line": line_from_xy(error_x, error_y)}]
         elif analysis_type == "peak_detect":
             peak_points = [
                 (float(point["x"]), float(point["y"]))
-                for point in list(result.get("peaks") or [])
+                for point in _ensure_list(result.get("peaks"))
                 if isinstance(point, dict) and point.get("x") is not None and point.get("y") is not None
             ]
             valley_points = [
                 (float(point["x"]), float(point["y"]))
-                for point in list(result.get("valleys") or [])
+                for point in _ensure_list(result.get("valleys"))
                 if isinstance(point, dict) and point.get("x") is not None and point.get("y") is not None
             ]
             merged_points = sorted(
@@ -997,7 +1022,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         view["detail_tables"] = []
         view["detail_text_widgets"] = []
 
-        summary_items = list(normalized.get("summary_items") or [])
+        summary_items = _ensure_list(normalized.get("summary_items"))
         if summary_items:
             details_layout.addWidget(make_section_label("摘要信息", view["details_container"]))
             summary_table = _SelectableResultTable(view["details_container"])
@@ -1006,16 +1031,16 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             details_layout.addWidget(summary_table)
             view["detail_summary_table"] = summary_table
 
-        for section in list(normalized.get("tables") or []):
+        for section in _ensure_list(normalized.get("tables")):
             details_layout.addWidget(make_section_label(str(section.get("title") or "结果表"), view["details_container"]))
             table = _SelectableResultTable(view["details_container"])
-            headers = [str(header) for header in list(section.get("headers") or [])]
+            headers = [str(header) for header in _ensure_list(section.get("headers"))]
             self._configure_result_table(table, headers)
-            self._set_result_table_rows(table, [list(row) for row in list(section.get("rows") or [])])
+            self._set_result_table_rows(table, [list(row) for row in _ensure_list(section.get("rows"))])
             details_layout.addWidget(table)
             view["detail_tables"].append(table)
 
-        for section in list(normalized.get("texts") or []):
+        for section in _ensure_list(normalized.get("texts")):
             details_layout.addWidget(make_section_label(str(section.get("title") or "说明"), view["details_container"]))
             text_label = BodyLabel(str(section.get("content") or ""), view["details_container"])
             text_label.setWordWrap(True)
@@ -1236,7 +1261,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         if series is None:
             return candidates
         for analysis in project.analyses:
-            if series.id not in list(analysis.input_series_ids or []):
+            if series.id not in _ensure_list(analysis.input_series_ids):
                 continue
             result = self._rehydrate_saved_result_payload(analysis)
             analysis_type = str(analysis.analysis_type or result.get("analysis_type") or "")
@@ -1338,15 +1363,16 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             normalized = self._normalize_analysis_output(t, view.get("selected") or [], r)
             view["normalized_result"] = normalized
         summary_stack = view.get("summary_stack")
+        summary_items = _ensure_list(normalized.get("summary_items"))
         if summary_stack is None:
-            self._set_summary_rows(view["summary_table"], list(normalized.get("summary_items") or []))
+            self._set_summary_rows(view["summary_table"], summary_items)
             return
         if normalized.get("tables") or normalized.get("texts"):
             self._populate_detail_summary_view(view, normalized)
             summary_stack.setCurrentWidget(view["details_scroll"])
             return
         summary_stack.setCurrentWidget(view["summary_table"])
-        self._set_summary_rows(view["summary_table"], list(normalized.get("summary_items") or []))
+        self._set_summary_rows(view["summary_table"], summary_items)
 
     def _analysis_tab_key_for_index(self, index: int) -> Optional[str]:
         if 0 <= index < len(self._analysis_tab_keys):
@@ -1896,7 +1922,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             node_id = inp["node_id"]
             series = project_manager.get_series_from_node(kind, node_id)
             if series and series.x:
-                result.append((list(series.x), list(series.y), series.name))
+                result.append((_ensure_list(series.x), _ensure_list(series.y), series.name))
         return result
 
     # ─────────────────────────────────────────────────────────
@@ -2096,9 +2122,9 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         plotted = False
         has_labels = False
         palette = ["#0078D4", "#D13438", "#107C10", "#8764B8"]
-        for index, series in enumerate(list(plot.get("series") or [])):
-            xs = list(series.get("x", []) or [])
-            ys = list(series.get("y", []) or [])
+        for index, series in enumerate(_ensure_list(plot.get("series"))):
+            xs = _ensure_list(series.get("x"))
+            ys = _ensure_list(series.get("y"))
             if not xs or not ys or len(xs) != len(ys):
                 continue
             label = str(series.get("label") or "").strip()
@@ -2218,7 +2244,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         if view is None:
             return
         analysis_type = str(view.get("analysis_type") or self._current_analysis_type())
-        selected = list(view.get("selected") or [])
+        selected = _ensure_list(view.get("selected"))
         result = view.get("result")
         normalized = view.get("normalized_result")
         if result is not None:
@@ -2248,8 +2274,8 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         if table is None:
             return
 
-        normalized = self._normalize_analysis_output(analysis_type, view.get("selected") if isinstance(view, dict) else [], dict(result or {}))
-        self._set_summary_rows(table, list(normalized.get("summary_items") or []))
+        normalized = self._normalize_analysis_output(analysis_type, view.get("selected") if isinstance(view, dict) else [], result if isinstance(result, dict) else {})
+        self._set_summary_rows(table, _ensure_list(normalized.get("summary_items")))
         if isinstance(view, dict) and view.get("summary_stack") is not None and view.get("summary_table") is not None:
             view["summary_stack"].setCurrentWidget(view["summary_table"])
 
@@ -2259,7 +2285,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
     def _default_analysis_result_name(self) -> str:
         active_view = self._active_analysis_view()
-        active_result = dict(active_view.get("result") or {}) if isinstance(active_view, dict) else dict(self._result or {})
+        active_result = dict(active_view.get("result")) if isinstance(active_view, dict) and isinstance(active_view.get("result"), dict) else (dict(self._result) if isinstance(self._result, dict) else {})
         type_label = self._analysis_type_label(self._current_analysis_type())
         source_name = str(active_result.get("source_name") or "").strip()
         if source_name:
@@ -2268,7 +2294,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
     def _save_result(self):
         active_view = self._active_analysis_view()
-        active_result = dict(active_view.get("result") or {}) if isinstance(active_view, dict) else None
+        active_result = dict(active_view.get("result")) if isinstance(active_view, dict) and isinstance(active_view.get("result"), dict) else None
         if not active_result:
             InfoBar.warning("提示", "请先运行分析", parent=self,
                             position=InfoBarPosition.TOP)
@@ -2291,12 +2317,14 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             return
 
         input_series_ids = []
-        for item in list(active_view.get("inputs") or []) if isinstance(active_view, dict) else []:
-            series = project_manager.get_series_from_node(item["kind"], item["node_id"])
-            if series is not None:
-                input_series_ids.append(series.id)
+        view_inputs = _ensure_list(active_view.get("inputs")) if isinstance(active_view, dict) else []
+        for item in view_inputs:
+            if isinstance(item, dict):
+                series = project_manager.get_series_from_node(item.get("kind", ""), item.get("node_id", ""))
+                if series is not None:
+                    input_series_ids.append(series.id)
         input_snapshots = []
-        for item in list(active_view.get("inputs") or []) if isinstance(active_view, dict) else []:
+        for item in view_inputs:
             if isinstance(item, dict):
                 series = project_manager.get_series_from_node(item.get("kind", ""), item.get("node_id", ""))
                 input_snapshots.append({
@@ -2348,7 +2376,10 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             if isinstance(active_result, dict) and active_result:
                 return dict(active_result)
             return {}
-        return dict(self._result or {}) if isinstance(self._result, dict) else {}
+        result = self._result
+        if not isinstance(result, dict):
+            return {}
+        return dict(result)
 
     def _analysis_output_series_options(self) -> List[Dict[str, Any]]:
         result = self._current_analysis_result_payload()
@@ -2357,7 +2388,10 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             return []
 
         labels_by_line: Dict[str, str] = {}
-        custom_series = list(result.get("_plot_series", []) or result.get("plot_series", []) or [])
+        raw_plot = result.get("_plot_series", [])
+        if isinstance(raw_plot, bool):
+            raw_plot = None
+        custom_series = _ensure_list(raw_plot or result.get("plot_series"))
         for series in custom_series:
             if not isinstance(series, dict):
                 continue
@@ -2723,7 +2757,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
 
     def _build_report_render_context(self, selected_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         results = [item for item in selected_results if isinstance(item, dict) and isinstance(item.get("result"), dict)]
-        primary = dict(results[0]["result"]) if results else dict(self._result or {})
+        primary = dict(results[0]["result"]) if results else (dict(self._result) if isinstance(self._result, dict) else {})
         if not results and primary:
             results = [{
                 "title": primary.get("title") or primary.get("source_name") or self._analysis_type_label(primary.get("analysis_type", "")),
@@ -2761,7 +2795,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             if analysis_type == "correlation" and result.get("r") is not None:
                 return f"r={result['r']:.6f}"
             if analysis_type == "peak_detect":
-                return f"峰值={len(result.get('peaks', []) or [])}，波谷={len(result.get('valleys', []) or [])}"
+                return f"峰值={len(_ensure_list(result.get('peaks')))}，波谷={len(_ensure_list(result.get('valleys')))}"
             if analysis_type == "error_compare":
                 return f"MAE={result.get('mae', 0):.6f}，RMSE={result.get('rmse', 0):.6f}"
             if analysis_type == "spectrum_analysis":
@@ -2772,8 +2806,8 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             return "-"
 
         def _params_table(result: Dict[str, Any]) -> Optional[str]:
-            params = list(result.get("params", []) or [])
-            names = list(result.get("param_names", []) or [])
+            params = _ensure_list(result.get("params"))
+            names = _ensure_list(result.get("param_names"))
             if not params or not names:
                 return None
             rows = ["| 参数 | 值 |", "|------|-----|"]
@@ -2808,10 +2842,10 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             params_table = _params_table(result)
             if params_table:
                 lines.extend(["", params_table])
-            peaks_table = _points_table("峰值列表", list(result.get("peaks", []) or []))
+            peaks_table = _points_table("峰值列表", _ensure_list(result.get("peaks")))
             if peaks_table:
                 lines.extend(["", peaks_table])
-            valleys_table = _points_table("波谷列表", list(result.get("valleys", []) or []))
+            valleys_table = _points_table("波谷列表", _ensure_list(result.get("valleys")))
             if valleys_table:
                 lines.extend(["", valleys_table])
             return "\n".join(lines).strip()
@@ -2958,7 +2992,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._rebuild_input_list()
 
     def _rehydrate_saved_result_payload(self, analysis) -> Dict[str, Any]:
-        result = dict(analysis.summary or {})
+        result = dict(analysis.summary) if isinstance(analysis.summary, dict) else {}
         result.setdefault("analysis_type", analysis.analysis_type)
         if analysis.result_series_id is None:
             return result
@@ -3019,7 +3053,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         view["analysis_type"] = analysis_type
         view["selected"] = list(selected)
         view["inputs"] = [dict(item) for item in inputs]
-        view["params"] = dict(analysis.params or {})
+        view["params"] = dict(analysis.params) if isinstance(analysis.params, dict) else {}
         # 来源追溯信息
         snapshots = getattr(analysis, "input_snapshots", []) or []
         template_info = getattr(analysis, "template_snapshot", {}) or {}

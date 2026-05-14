@@ -16,6 +16,22 @@ from core.extension_runtime import invoke_analysis_extension_handler
 from core.line_tools import line_from_xy
 from core.report_templates import DEFAULT_REPORT_TEMPLATE
 
+
+def _ensure_list(value: Any, default: Optional[list[Any]] = None) -> list[Any]:
+    """Safely coerce a value to a list, guarding against bool.
+
+    ``list(True)`` raises TypeError. This helper ensures bool values
+    are treated as empty/fallback instead of crashing.
+    """
+    if isinstance(value, bool):
+        return list(default or [])
+    if value is None:
+        return list(default or [])
+    try:
+        return list(value)
+    except TypeError:
+        return list(default or [])
+
 # ─────────────────────────────────────────────────────────────
 # 曲线拟合
 # ─────────────────────────────────────────────────────────────
@@ -396,8 +412,8 @@ def _build_curve_fit_analysis_result(first: Dict[str, Any], params: Dict[str, An
         {"label": "R²", "value": result.get("r2")},
         {"label": "数据源", "value": result.get("source_name", "")},
     ]
-    param_names = list(result.get("param_names", []) or [])
-    param_values = list(result.get("params", []) or [])
+    param_names = _ensure_list(result.get("param_names"))
+    param_values = _ensure_list(result.get("params"))
     if param_names and param_values:
         result["table_sections"] = [
             {
@@ -428,18 +444,19 @@ def run_analysis(
     inputs: List[Dict[str, Any]],
     params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    params = dict(params or {})
+    params = dict(params) if isinstance(params, dict) else {}
     normalized_inputs = [
         {
-            "x": list(item.get("x", []) or []),
-            "y": list(item.get("y", []) or []),
+            "x": _ensure_list(item.get("x")),
+            "y": _ensure_list(item.get("y")),
             "name": item.get("name", ""),
         }
         for item in inputs
+        if isinstance(item, dict)
     ]
     custom_analysis = extension_registry.get_analysis(analysis_type)
     if custom_analysis is not None:
-        return cast(Dict[str, Any], invoke_analysis_extension_handler(custom_analysis.handler, normalized_inputs, params))
+        return invoke_analysis_extension_handler(custom_analysis.handler, normalized_inputs, params)
     if analysis_type == "curve_fit":
         if not normalized_inputs:
             raise ValueError("curve_fit 需要至少一条输入数据")
@@ -484,8 +501,8 @@ def run_analysis(
                     "value": f"{distance_value}（{'X 值间距' if distance_mode == 'x_distance' else '采样点数'}）",
                 }
             )
-        peak_points = list(result.get("peaks", []) or [])
-        valley_points = list(result.get("valleys", []) or [])
+        peak_points = _ensure_list(result.get("peaks"))
+        valley_points = _ensure_list(result.get("valleys"))
         merged_points = [
             {"type": "波峰", "x": point.get("x"), "y": point.get("y")}
             for point in peak_points
@@ -746,7 +763,7 @@ def _placeholder_key_from_token(token: str) -> str:
 def _analysis_extension_report_placeholders() -> List[Dict[str, str]]:
     entries: List[Dict[str, str]] = []
     for extension in sorted(extension_registry.list_analysis(), key=lambda item: item.name.casefold()):
-        for raw_item in list(getattr(extension, "report_placeholders", []) or []):
+        for raw_item in _ensure_list(getattr(extension, "report_placeholders", [])):
             if isinstance(raw_item, str):
                 token = _normalize_report_placeholder_token(raw_item)
                 label = _placeholder_key_from_token(token)

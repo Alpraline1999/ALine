@@ -6,6 +6,7 @@ from typing import Any
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QTextDocument, QTextOption
 from qfluentwidgets import Action, FluentIcon as FIF, RoundMenu
+from core.i18n import _
 
 
 def _series_color_icon(color_str: str) -> QPixmap:
@@ -52,16 +53,16 @@ _ROOT_GROUP_ORDER = {
 }
 
 _ROOT_GROUP_LABELS = {
-    "source_files": "源文件",
-    "datasets": "数据集",
-    "dataset_set": "数据集",
-    "pictures": "图片集",
-    "picture_set": "图片集",
-    "analysis_result_group": "分析结果",
-    "images": "数字化",
-    "image_set": "数字化",
-    "tools": "工具",
-    "tool_set": "工具",
+    "source_files": _("源文件"),
+    "datasets": _("数据集"),
+    "dataset_set": _("数据集"),
+    "pictures": _("图片集"),
+    "picture_set": _("图片集"),
+    "analysis_result_group": _("分析结果"),
+    "images": _("数字化"),
+    "image_set": _("数字化"),
+    "tools": _("工具"),
+    "tool_set": _("工具"),
 }
 
 
@@ -246,8 +247,8 @@ _SYNTHETIC_GLOBAL_KINDS = frozenset({
 })
 
 _EXTENSION_CONFIG_GROUPS = [
-    ("plot", "绘图扩展", getattr(FIF, "PENCIL_INK", FIF.DEVELOPER_TOOLS)),
-    ("processing", "处理扩展", FIF.DEVELOPER_TOOLS),
-    ("analysis", "分析扩展", FIF.SEARCH),
-    ("digitize", "数字化扩展", getattr(FIF, "LABEL", FIF.PHOTO)),
+    ("plot", _("绘图扩展"), getattr(FIF, "PENCIL_INK", FIF.DEVELOPER_TOOLS)),
+    ("processing", _("处理扩展"), FIF.DEVELOPER_TOOLS),
+    ("analysis", _("分析扩展"), FIF.SEARCH),
+    ("digitize", _("数字化扩展"), getattr(FIF, "LABEL", FIF.PHOTO)),
 ]

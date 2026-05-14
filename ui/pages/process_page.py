@@ -1280,17 +1280,20 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
     def _on_async_pipeline_finished(self, result_lines: list, warnings: list) -> None:
         source_templates, all_series = self._async_source_batch_ref
         template_series = source_templates or all_series
+        def _safe_list(value):
+            if isinstance(value, bool):
+                return []
+            return list(value or [])
         rebuilt = [
             DataSeries(
                 name=str(line.get("name", source_series.name) or source_series.name),
-                x=list(line.get("x", []) or []),
-                y=list(line.get("y", []) or []),
+                x=_safe_list(line.get("x")),
+                y=_safe_list(line.get("y")),
                 x_label=str(line.get("x_label", source_series.x_label) or source_series.x_label),
                 y_label=str(line.get("y_label", source_series.y_label) or source_series.y_label),
                 color=str(line.get("color", source_series.color) or source_series.color),
                 visible=bool(line.get("visible", source_series.visible)),
                 source="computed",
-                source_curve_id=line.get("source_curve_id", source_series.source_curve_id),
             )
             for line, source_series in zip(
                 result_lines,
@@ -1434,8 +1437,8 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         rebuilt = [
             DataSeries(
                 name=str(line.get("name", source_series.name) or source_series.name),
-                x=list(line.get("x", []) or []),
-                y=list(line.get("y", []) or []),
+                x=list(line.get("x", []) or []) if not isinstance(line.get("x"), bool) else [],
+                y=list(line.get("y", []) or []) if not isinstance(line.get("y"), bool) else [],
                 x_label=str(line.get("x_label", source_series.x_label) or source_series.x_label),
                 y_label=str(line.get("y_label", source_series.y_label) or source_series.y_label),
                 color=str(line.get("color", source_series.color) or source_series.color),

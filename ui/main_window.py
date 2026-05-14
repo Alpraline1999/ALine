@@ -31,6 +31,7 @@ from core.global_assets import global_assets
 from core.app_context import get_app_context
 from core.ui_preferences import is_page_tree_focus_mode_enabled, reset_all_onboarding_progress
 from core.shortcut_manager import ShortcutBindingSet, shortcut_manager
+from core.i18n import _
 
 
 class _PMProxy:
@@ -133,19 +134,19 @@ class _SharedTreePanel(QWidget):
         left_group.setSpacing(2)
 
         self.new_project_btn = ToolButton(FIF.FOLDER_ADD, self)
-        self.new_project_btn.setToolTip("新建项目")
+        self.new_project_btn.setToolTip(_("新建项目"))
         left_group.addWidget(self.new_project_btn)
 
         self.open_project_btn = ToolButton(FIF.FOLDER, self)
-        self.open_project_btn.setToolTip("打开项目")
+        self.open_project_btn.setToolTip(_("打开项目"))
         left_group.addWidget(self.open_project_btn)
 
         self.save_project_btn = ToolButton(FIF.SAVE, self)
-        self.save_project_btn.setToolTip("保存当前项目")
+        self.save_project_btn.setToolTip(_("保存当前项目"))
         left_group.addWidget(self.save_project_btn)
 
         self.close_project_btn = ToolButton(FIF.CLOSE, self)
-        self.close_project_btn.setToolTip("关闭当前项目")
+        self.close_project_btn.setToolTip(_("关闭当前项目"))
         left_group.addWidget(self.close_project_btn)
 
         toolbar.addWidget(left_group_container, 1)
@@ -165,15 +166,15 @@ class _SharedTreePanel(QWidget):
         self._toolbar_right_group = right_group
 
         self.tree_expand_toggle_btn = ToolButton(_TREE_EXPAND_ALL_ICON, self)
-        self.tree_expand_toggle_btn.setToolTip("全部展开")
+        self.tree_expand_toggle_btn.setToolTip(_("全部展开"))
         right_group.addWidget(self.tree_expand_toggle_btn)
 
         self.tree_manage_btn = ToolButton(FIF.ALIGNMENT, self)
-        self.tree_manage_btn.setToolTip("项目树管理")
+        self.tree_manage_btn.setToolTip(_("项目树管理"))
         right_group.addWidget(self.tree_manage_btn)
 
         self.extension_toggle_btn = ToolButton(_EXTENSION_PANEL_HIDE_ICON, self)
-        self.extension_toggle_btn.setToolTip("隐藏扩展面板")
+        self.extension_toggle_btn.setToolTip(_("隐藏扩展面板"))
         self.extension_toggle_btn.hide()
         right_group.addWidget(self.extension_toggle_btn)
 
@@ -276,13 +277,13 @@ class MainWindow(FluentWindow):
         self.settings_page.setObjectName("settingsPage")
 
         # ── 导航注册（新顺序：数据管理优先）──────────────────
-        self.addSubInterface(self.home_page,     FIF.HOME,            "主页",    NavigationItemPosition.TOP)
-        self.addSubInterface(self.data_page,     _DATA_PAGE_NAV_ICON, "数据管理", NavigationItemPosition.TOP)
-        self.addSubInterface(self.chart_page,    FIF.PIE_SINGLE,      "数据可视化",   NavigationItemPosition.TOP)
-        self.addSubInterface(self.process_page,  FIF.DEVELOPER_TOOLS, "数据处理", NavigationItemPosition.TOP)
-        self.addSubInterface(self.analysis_page, FIF.SEARCH,          "数据分析", NavigationItemPosition.TOP)
-        self.addSubInterface(self.digitize_page, _DIGITIZE_PAGE_NAV_ICON, "图片数字化", NavigationItemPosition.TOP)
-        self.addSubInterface(self.settings_page, FIF.SETTING,         "设置",    NavigationItemPosition.BOTTOM)
+        self.addSubInterface(self.home_page,     FIF.HOME,            _("主页"),    NavigationItemPosition.TOP)
+        self.addSubInterface(self.data_page,     _DATA_PAGE_NAV_ICON, _("数据管理"), NavigationItemPosition.TOP)
+        self.addSubInterface(self.chart_page,    FIF.PIE_SINGLE,      _("数据可视化"),   NavigationItemPosition.TOP)
+        self.addSubInterface(self.process_page,  FIF.DEVELOPER_TOOLS, _("数据处理"), NavigationItemPosition.TOP)
+        self.addSubInterface(self.analysis_page, FIF.SEARCH,          _("数据分析"), NavigationItemPosition.TOP)
+        self.addSubInterface(self.digitize_page, _DIGITIZE_PAGE_NAV_ICON, _("图片数字化"), NavigationItemPosition.TOP)
+        self.addSubInterface(self.settings_page, FIF.SETTING,         _("设置"),    NavigationItemPosition.BOTTOM)
 
         self._tree_toggle_nav_btn = NavigationToolButton(FIF.MENU, self)
         self.navigationInterface.insertWidget(
@@ -291,7 +292,7 @@ class MainWindow(FluentWindow):
             widget=self._tree_toggle_nav_btn,
             onClick=self._toggle_tree_panel,
             position=NavigationItemPosition.TOP,
-            tooltip="隐藏项目树",
+            tooltip=_("隐藏项目树"),
         )
 
         # 永久 COMPACT（图标）模式
@@ -465,14 +466,14 @@ class MainWindow(FluentWindow):
             return
         if not supported:
             button.setIcon(_EXTENSION_PANEL_SHOW_ICON.icon())
-            button.setToolTip("当前页面没有扩展面板")
+            button.setToolTip(_("当前页面没有扩展面板"))
             return
         extension_page = cast(_ExtensionPanelPage, interface)
         if bool(extension_page.is_extension_panel_visible()) != self._view_state.shared_extension_panel_visible:
             extension_page.set_extension_panel_visible(self._view_state.shared_extension_panel_visible)
         visible = self._view_state.shared_extension_panel_visible
         button.setIcon((_EXTENSION_PANEL_HIDE_ICON if visible else _EXTENSION_PANEL_SHOW_ICON).icon())
-        button.setToolTip("隐藏扩展面板" if visible else "显示扩展面板")
+        button.setToolTip(_("隐藏扩展面板") if visible else _("显示扩展面板"))
 
     def _update_tree_panel_visibility(self, interface) -> None:
         kinds = self._tree_kinds_for_interface(interface)
@@ -482,7 +483,7 @@ class MainWindow(FluentWindow):
         self._tree_panel.setVisible(tree_visible)
         self._apply_tree_panel_width(tree_visible)
         self._tree_toggle_nav_btn.setEnabled(show)
-        self._tree_toggle_nav_btn.setToolTip("显示项目树" if self._view_state.tree_panel_user_hidden else "隐藏项目树")
+        self._tree_toggle_nav_btn.setToolTip(_("显示项目树") if self._view_state.tree_panel_user_hidden else _("隐藏项目树"))
         self._update_extension_panel_toggle_button(interface)
         if show:
             self._tree_panel.tree.set_filter_kinds(kinds, focus_root_group_types=focus_groups)
@@ -565,51 +566,51 @@ class MainWindow(FluentWindow):
         QTimer.singleShot(0, lambda: self.home_page.start_onboarding(force=True))
 
     def _create_project_from_panel(self) -> None:
-        name, ok = TextInputDialog.get_text(self, "新建项目", placeholder="请输入项目名称")
+        name, ok = TextInputDialog.get_text(self, _("新建项目"), placeholder=_("请输入项目名称"))
         if not ok:
             return
         clean_name = name.strip()
         if not clean_name:
             return
-        base_dir = QFileDialog.getExistingDirectory(self, "选择项目保存目录", "")
+        base_dir = QFileDialog.getExistingDirectory(self, _("选择项目保存目录"), "")
         if not base_dir:
             return
         try:
             project_manager.create_new(clean_name, parent_dir=base_dir, create_structure=True)
         except Exception as exc:
-            show_error(self, "错误", f"创建项目失败:\n{exc}")
+            show_error(self, _("错误"), f"{_('创建项目失败')}:\n{exc}")
             return
         self._on_project_created(clean_name)
 
     def _open_project_from_panel(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "打开项目",
+            _("打开项目"),
             "",
-            "ALine 项目 (*.aline);;所有文件 (*)",
+            _("ALine 项目 (*.aline);;所有文件 (*)"),
         )
         if not file_path:
             return
         try:
             project_manager.open(file_path)
         except Exception as exc:
-            show_error(self, "错误", f"无法打开项目:\n{exc}")
+            show_error(self, _("错误"), f"{_('无法打开项目')}:\n{exc}")
             return
         self._on_project_opened(file_path)
 
     def _save_current_project_from_panel(self) -> bool:
         project = project_manager.current_project
         if project is None:
-            show_warning(self, "提示", "请先打开项目")
+            show_warning(self, _("提示"), _("请先打开项目"))
             return False
 
         file_path = project.file_path
         if file_path is None:
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
-                "保存项目",
+                _("保存项目"),
                 f"{project.name}.aline",
-                "ALine 项目 (*.aline)",
+                _("ALine 项目 (*.aline)"),
             )
         if not file_path:
             return False
@@ -617,7 +618,7 @@ class MainWindow(FluentWindow):
         try:
             project_manager.save(file_path)
         except Exception as exc:
-            show_error(self, "保存失败", exc)
+            show_error(self, _("保存失败"), exc)
             return False
 
         self.data_page.refresh()
@@ -625,20 +626,20 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
         self._update_window_title()
-        show_success(self, "已保存", file_path)
+        show_success(self, _("已保存"), file_path)
         return True
 
     def _save_current_project_as_from_panel(self) -> bool:
         project = project_manager.current_project
         if project is None:
-            show_warning(self, "提示", "请先打开项目")
+            show_warning(self, _("提示"), _("请先打开项目"))
             return False
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "另存项目",
+            _("另存项目"),
             f"{project.name}.aline",
-            "ALine 项目 (*.aline)",
+            _("ALine 项目 (*.aline)"),
         )
         if not file_path:
             return False
@@ -646,7 +647,7 @@ class MainWindow(FluentWindow):
         try:
             project_manager.save(file_path)
         except Exception as exc:
-            show_error(self, "保存失败", exc)
+            show_error(self, _("保存失败"), exc)
             return False
 
         self.data_page.refresh()
@@ -654,7 +655,7 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
         self._update_window_title()
-        show_success(self, "已另存", file_path)
+        show_success(self, _("已另存"), file_path)
         return True
 
     def _close_current_project_from_panel(self) -> None:
@@ -748,7 +749,7 @@ class MainWindow(FluentWindow):
         unsaved = [p for p in project_manager.projects if p.is_modified]
         if unsaved:
             names = "、".join(p.name for p in unsaved)
-            dlg = MessageBox("未保存的更改", f"以下项目有未保存的更改：\n{names}\n\n确定要退出吗？", self)
+            dlg = MessageBox(_("未保存的更改"), f"{_('以下项目有未保存的更改')}：\n{names}\n\n{_('确定要退出吗？')}", self)
             if not dlg.exec():
                 event.ignore()
                 return

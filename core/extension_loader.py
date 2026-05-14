@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import importlib.metadata
 import sys
+import re
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast, Dict, Iterable, List, Optional
@@ -163,7 +165,7 @@ def _check_extension_compatibility(report: LoadReport) -> None:
     for category, store in categories.items():
         store_dict = cast(dict[str, Any], store)
         for type_id, ext in list(store_dict.items()):
-            api_version = getattr(ext, "aline_api_version", "")
+            api_version = getattr(ext, "aline_api_version", "") or getattr(ext, "api_version", "")
             result = ExtensionValidator.check_compatibility(api_version, ALINE_VERSION)
             if result == "incompatible":
                 report.errors.append(
@@ -177,6 +179,92 @@ def _check_extension_compatibility(report: LoadReport) -> None:
                 )
 
 
+def _parse_dependency_spec(spec: str) -> tuple[str, str]:
+    text = str(spec or "").strip()
+    if not text:
+        return "", ""
+    match = re.match(r"^([A-Za-z0-9_.-]+)\s*([<>=!]{1,2}\s*[\d.]+)?$", text)
+    if match is None:
+        return text, ""
+    name = match.group(1)
+    requirement = (match.group(2) or "").strip()
+    return name, requirement
+
+
+def _compare_versions(left: str, right: str) -> int:
+    def _parts(value: str) -> tuple[int, ...]:
+        items = []
+        for part in value.split("."):
+            try:
+                items.append(int(part))
+            except ValueError:
+                items.append(0)
+        return tuple(items)
+
+    left_parts = _parts(left)
+    right_parts = _parts(right)
+    if left_parts < right_parts:
+        return -1
+    if left_parts > right_parts:
+        return 1
+    return 0
+
+
+def _check_extension_dependencies(report: LoadReport) -> None:
+    installed_extensions: dict[str, tuple[str, str]] = {}
+    for store in (
+        extension_registry._processing,
+        extension_registry._analysis,
+        extension_registry._plot,
+        extension_registry._digitize,
+    ):
+        store_dict = cast(dict[str, Any], store)
+        for ext in store_dict.values():
+            ext_name = str(getattr(ext, "name", "") or "").strip()
+            ext_type = str(getattr(ext, "type", "") or "").strip()
+            ext_version = str(getattr(ext, "version", "") or "")
+            if ext_name:
+                installed_extensions.setdefault(ext_name, (ext_type, ext_version))
+            if ext_type:
+                installed_extensions.setdefault(ext_type, (ext_type, ext_version))
+
+    for store in (
+        extension_registry._processing,
+        extension_registry._analysis,
+        extension_registry._plot,
+        extension_registry._digitize,
+    ):
+        store_dict = cast(dict[str, Any], store)
+        for ext in list(store_dict.values()):
+            for dep in getattr(ext, "depends_on", []) or []:
+                dep_name, requirement = _parse_dependency_spec(str(dep))
+                if not dep_name:
+                    continue
+                dep_extension = installed_extensions.get(dep_name)
+                if dep_extension is not None:
+                    _dep_type, dep_version = dep_extension
+                    if requirement.startswith(">="):
+                        required = requirement[2:].strip()
+                        if _compare_versions(dep_version, required) < 0:
+                            report.errors.append(
+                                f"扩展 '{ext.name}' 依赖 {dep_name}{requirement}，当前版本 {dep_version}"
+                            )
+                    continue
+                try:
+                    if requirement:
+                        installed_version = importlib.metadata.version(dep_name)
+                        if requirement.startswith(">="):
+                            required = requirement[2:].strip()
+                            if _compare_versions(installed_version, required) < 0:
+                                report.errors.append(
+                                    f"扩展 '{ext.name}' 依赖 Python 包 {dep_name}{requirement}，当前版本 {installed_version}"
+                                )
+                        continue
+                    importlib.metadata.version(dep_name)
+                except importlib.metadata.PackageNotFoundError:
+                    report.errors.append(f"扩展 '{ext.name}' 缺少依赖: {dep_name}")
+
+
 def _load_from_files(builtin_files: Iterable[str], external_files: Iterable[str]) -> LoadReport:
     report = LoadReport()
     for path in builtin_files:
@@ -185,6 +273,7 @@ def _load_from_files(builtin_files: Iterable[str], external_files: Iterable[str]
         _load_file(str(path), source_kind="external", report=report)
     _wrap_external_extensions_with_sandbox()
     _check_extension_compatibility(report)
+    _check_extension_dependencies(report)
     extension_registry._last_load_report = _load_report_to_dict(report)
     default_dir = (
         str(Path(list(builtin_files)[0]).parent) if builtin_files

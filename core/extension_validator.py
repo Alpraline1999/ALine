@@ -66,6 +66,11 @@ class ExtensionValidator:
             if not getattr(field, "label", None):
                 errors.append(f"config_fields[{i}] 缺少 label")
 
+        depends_on = getattr(ext, "depends_on", None) or []
+        for i, item in enumerate(depends_on):
+            if not str(item).strip():
+                errors.append(f"depends_on[{i}] 不能为空")
+
         return errors
 
     @staticmethod
@@ -131,7 +136,7 @@ class ExtensionValidator:
             return ExtensionValidator.check_api_compatibility(arg1, arg2)
         ext = arg1
         aline_version = arg2
-        api_version = getattr(ext, "api_version", None)
+        api_version = getattr(ext, "aline_api_version", None) or getattr(ext, "api_version", None)
         if not api_version:
             return []
         warnings: List[str] = []

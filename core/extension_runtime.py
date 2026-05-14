@@ -83,6 +83,9 @@ def _normalize_analysis_result_lines(payload: Dict[str, Any]) -> Dict[str, Any]:
     raw_lines = payload.get("lines")
     if raw_lines is None:
         return {}
+    if isinstance(raw_lines, bool):
+        payload["lines"] = []
+        return {}
     if not isinstance(raw_lines, (list, tuple)):
         raise ValueError("分析扩展结果中的 lines 必须是包含 {line_name, line} 的列表")
 
@@ -109,6 +112,11 @@ def _normalize_analysis_result_lines(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _normalize_analysis_plot_series(payload: Dict[str, Any], line_lookup: Dict[str, Any]) -> None:
     raw_plot_series = payload.get("_plot_series", payload.get("plot_series"))
     if raw_plot_series is None:
+        return
+    if isinstance(raw_plot_series, bool):
+        payload["_plot_series"] = []
+        if "plot_series" in payload:
+            payload["plot_series"] = []
         return
     if not isinstance(raw_plot_series, (list, tuple)):
         raise ValueError("分析扩展结果中的 _plot_series 必须是列表")
@@ -141,8 +149,8 @@ def invoke_analysis_extension_handler(
     inputs: List[Dict[str, Any]],
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
-    normalized_inputs = [dict(item or {}) for item in inputs]
-    result = handler(series_payloads_to_lines(normalized_inputs), dict(params))
+    normalized_inputs = [dict(item) for item in inputs if isinstance(item, dict)]
+    result = handler(series_payloads_to_lines(normalized_inputs), dict(params) if isinstance(params, dict) else {})
     if not isinstance(result, dict):
         import logging
         logging.getLogger(__name__).warning(

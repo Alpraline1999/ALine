@@ -229,7 +229,7 @@ def extension_lines_picker_visible(lines_number: Optional[Tuple[int, int]]) -> b
 def normalize_extension_lines_list(raw: Any) -> List[int]:
     if isinstance(raw, dict):
         raw = raw.get("lines_list")
-    if raw in (None, "", False):
+    if raw is None or raw == "" or raw is False or raw is True:
         return []
 
     items: List[Any]
@@ -352,6 +352,7 @@ class ProcessingExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     aline_api_version: str = ""
+    depends_on: list[str] = field(default_factory=list)
     supports_progress: bool = False
     supports_cancel: bool = False
     min_app_version: str = ""
@@ -404,6 +405,7 @@ class AnalysisExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     aline_api_version: str = ""
+    depends_on: list[str] = field(default_factory=list)
     supports_progress: bool = False
     supports_cancel: bool = False
     min_app_version: str = ""
@@ -456,6 +458,7 @@ class PlotExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     aline_api_version: str = ""
+    depends_on: list[str] = field(default_factory=list)
     supports_progress: bool = False
     supports_cancel: bool = False
     min_app_version: str = ""
@@ -510,6 +513,7 @@ class DigitizeExtension:
     capabilities: set[str] = field(default_factory=set)
     api_version: str = ""
     aline_api_version: str = ""
+    depends_on: list[str] = field(default_factory=list)
     supports_progress: bool = False
     supports_cancel: bool = False
     min_app_version: str = ""
@@ -728,6 +732,12 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
             str(c) for c in getattr(extension, "capabilities", set()) or set()
         ),
         "api_version": str(getattr(extension, "api_version", "") or ""),
+        "aline_api_version": str(getattr(extension, "aline_api_version", "") or ""),
+        "depends_on": [
+            str(item).strip()
+            for item in getattr(extension, "depends_on", []) or []
+            if str(item).strip()
+        ],
         "supports_progress": bool(getattr(extension, "supports_progress", False)),
         "supports_cancel": bool(getattr(extension, "supports_cancel", False)),
         "min_app_version": str(getattr(extension, "min_app_version", "") or ""),
@@ -791,7 +801,7 @@ def extension_entry_display_info(
     if entry.get("post_render_mutation"):
         caps_parts.append("后处理")
     capabilities_label = "、".join(caps_parts) if caps_parts else ""
-    api_ver = str(entry.get("api_version") or "").strip()
+    api_ver = str(entry.get("aline_api_version") or entry.get("api_version") or "").strip()
     min_ver = str(entry.get("min_app_version") or "").strip()
     tested = list(entry.get("tested_app_range") or [])
     authority = str(entry.get("style_authority") or "advisory")

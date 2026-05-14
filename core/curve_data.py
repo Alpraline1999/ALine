@@ -166,6 +166,8 @@ def series_payload_to_curve_buffer(item: Any) -> CurveBuffer:
 def series_payloads_to_curve_batch(raw: Any) -> list[CurveBuffer]:
     if raw is None:
         return []
+    if isinstance(raw, bool):
+        return []
     if isinstance(raw, str) and not raw.strip():
         return []
     if isinstance(raw, (list, tuple)) and len(raw) == 0:

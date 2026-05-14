@@ -70,12 +70,16 @@ def _normalize_point(raw: Any, index: int) -> Point:
 
 
 def normalize_line(raw: Any) -> Line:
+    if isinstance(raw, bool):
+        return []
     if not isinstance(raw, (list, tuple)):
         raise ValueError("line 必须是 point-list，即 [[x, y], ...]")
     return [_normalize_point(point, index) for index, point in enumerate(list(raw))]
 
 
 def normalize_lines(raw: Any) -> List[Line]:
+    if isinstance(raw, bool):
+        return []
     if raw in (None, "", [], ()):
         return []
     return [normalize_line(item) for item in list(raw)]
@@ -260,7 +264,7 @@ def _sorted_line(line: Line) -> Line:
     return line_from_xy(sorted_xs, sorted_ys)
 
 
-def _lines_share_same_x(lines: List[Line]) -> bool:
+def _lines_share_same_x(lines: List[Line], *, tol: float = 1e-6) -> bool:
     if len(lines) < 2:
         return True
     base_x, _base_y = line_xy(lines[0])
@@ -269,7 +273,7 @@ def _lines_share_same_x(lines: List[Line]) -> bool:
         if len(current_x) != len(base_x):
             return False
         for left, right in zip(base_x, current_x):
-            if not math.isclose(left, right, rel_tol=0.0, abs_tol=1e-9):
+            if not math.isclose(left, right, rel_tol=0.0, abs_tol=tol):
                 return False
     return True
 

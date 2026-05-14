@@ -2346,7 +2346,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         choices = self._plot_style_choices()
         self._template_combo.blockSignals(True)
         self._template_combo.clear()
-        self._template_combo.addItem("无")
+        self._template_combo.addItem("默认样式")
         self._plot_style_refs = [None]
         for label, node_id in choices:
             self._template_combo.addItem(label)
@@ -2652,7 +2652,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         templates = global_assets.list_curve_style_templates()
         self._curve_style_template_combo.blockSignals(True)
         self._curve_style_template_combo.clear()
-        self._curve_style_template_combo.addItem("无")
+        self._curve_style_template_combo.addItem("默认样式")
         self._curve_style_template_ids = [None]
         for item in templates:
             self._curve_style_template_combo.addItem(item.name)

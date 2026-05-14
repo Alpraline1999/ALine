@@ -1,5 +1,4 @@
 """扩展 API 兼容重导出层。新代码请直接引用对应模块。"""
-from typing import Any
 
 from core.extension_definition import *  # noqa: F401, F403
 from core.extension_definition import (  # noqa: F401
@@ -35,12 +34,10 @@ from core.extension_types import (  # noqa: F401
 
 from core.extension_validator import ExtensionValidator  # noqa: F401
 
-from core.extension_registry import extension_registry as _reg
-
-def register_processing_extension(extension: Any) -> None: _reg.register_processing(extension)
-def register_analysis_extension(extension: Any) -> None: _reg.register_analysis(extension)
-def register_plot_extension(extension: Any) -> None: _reg.register_plot(extension)
-def register_digitize_extension(extension: Any) -> None: _reg.register_digitize(extension)
+register_processing_extension = extension_registry.register_processing
+register_analysis_extension = extension_registry.register_analysis
+register_plot_extension = extension_registry.register_plot
+register_digitize_extension = extension_registry.register_digitize
 
 __all__ = [
     "AnalysisExtension", "CurveStyleExtension", "DigitizeExtension",

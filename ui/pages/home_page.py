@@ -30,6 +30,7 @@ from core.app_context import get_app_context
 from core.recent_projects import load_recent, remove_recent
 from ui.widgets.extension_panel import show_extension_load_report_dialog
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
+from core.i18n import _
 
 
 class _PMProxy:
@@ -156,9 +157,9 @@ class _HomeBannerWidget(QWidget):
 
         self._hero_title = LargeTitleLabel("ALine", self)
 
-        self._hero_subtitle = SubtitleLabel("一站式科研数据管理与可视化工作台", self)
+        self._hero_subtitle = SubtitleLabel(_("一站式科研数据管理与可视化工作台"), self)
 
-        self._hero_hint = QLabel("项目、数据、绘图和分析结果在同一工作台内流转。", self)
+        self._hero_hint = QLabel(_("项目、数据、绘图和分析结果在同一工作台内流转。"), self)
         self._hero_hint.setWordWrap(False)
         self._hero_hint.setMaximumWidth(self._hero_hint_max_width)
         self._hero_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -167,24 +168,24 @@ class _HomeBannerWidget(QWidget):
         self._link_cards.append(
             self._link_card_view.addCard(
                 self._card_icon_path,
-                "软件主页",
-                "预留软件主页入口，后续替换为正式介绍页面。",
+                _("软件主页"),
+                _("预留软件主页入口，后续替换为正式介绍页面。"),
                 "https://example.com",
             )
         )
         self._link_cards.append(
             self._link_card_view.addCard(
                 FIF.GITHUB,
-                "GitHub 仓库",
-                "预留代码仓库入口，后续替换为正式仓库地址。",
+                _("GitHub 仓库"),
+                _("预留代码仓库入口，后续替换为正式仓库地址。"),
                 "https://example.com",
             )
         )
         self._link_cards.append(
             self._link_card_view.addCard(
                 self._card_icon_path,
-                "扩展社区",
-                "预留扩展社区入口，后续替换为正式社区。",
+                _("扩展社区"),
+                _("预留扩展社区入口，后续替换为正式社区。"),
                 "https://example.com",
             )
         )
@@ -359,12 +360,12 @@ class HomePage(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(20)
 
-        self._new_btn = PrimaryPushButton("新建项目", self)
+        self._new_btn = PrimaryPushButton(_("新建项目"), self)
         self._new_btn.setFixedWidth(150)
         self._new_btn.clicked.connect(self.on_new_project)
         btn_layout.addWidget(self._new_btn)
 
-        self._open_btn = PrimaryPushButton("打开项目", self)
+        self._open_btn = PrimaryPushButton(_("打开项目"), self)
         self._open_btn.setFixedWidth(150)
         self._open_btn.clicked.connect(self.on_open_project)
         btn_layout.addWidget(self._open_btn)
@@ -377,14 +378,14 @@ class HomePage(QWidget):
         # 最近项目
         layout.addSpacing(12)
         recent_header = QHBoxLayout()
-        self._recent_label = BodyLabel("最近项目", self)
+        self._recent_label = BodyLabel(_("最近项目"), self)
         self._recent_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         recent_header.addWidget(self._recent_label)
         recent_header.addStretch()
         layout.addLayout(recent_header)
 
         # 无最近项目占位
-        self._no_recent = make_empty_state_label("暂无最近项目", self)
+        self._no_recent = make_empty_state_label(_("暂无最近项目"), self)
         self._no_recent.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._no_recent.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._no_recent)
@@ -596,32 +597,32 @@ class HomePage(QWidget):
             OnboardingStep(
                 lambda: self._banner,
                 TeachingTipTailPosition.BOTTOM,
-                "主页入口留在这里",
-                "顶部 Banner 预留了软件主页和 GitHub 仓库卡片，后续可直接补充链接和封面。",
+                _("主页入口留在这里"),
+                _("顶部 Banner 预留了软件主页和 GitHub 仓库卡片，后续可直接补充链接和封面。"),
             ),
             OnboardingStep(
                 lambda: self._new_btn,
                 TeachingTipTailPosition.BOTTOM,
-                "先建项目",
-                "数据、图表和结果都会落在同一项目里，先建项目最稳妥。",
+                _("先建项目"),
+                _("数据、图表和结果都会落在同一项目里，先建项目最稳妥。"),
             ),
             OnboardingStep(
                 lambda: self._open_btn,
                 TeachingTipTailPosition.BOTTOM,
-                "也可以继续上次工作",
-                "已有 .aline 项目时，从这里恢复项目树和页面状态。",
+                _("也可以继续上次工作"),
+                _("已有 .aline 项目时，从这里恢复项目树和页面状态。"),
             ),
             OnboardingStep(
                 lambda: self._recent_label,
                 TeachingTipTailPosition.BOTTOM,
-                "最近项目会留在这里",
-                "常做的项目可以直接回到上次位置。",
+                _("最近项目会留在这里"),
+                _("常做的项目可以直接回到上次位置。"),
             ),
         ]
 
     def _request_quick_start(self, destination: str) -> None:
         if project_manager.current_project is None:
-            InfoBar.warning(title="提示", content="请先新建项目或打开现有项目", parent=self._notification_parent(), duration=3000)
+            InfoBar.warning(title=_("提示"), content=_("请先新建项目或打开现有项目"), parent=self._notification_parent(), duration=3000)
             return
         self.quick_start_requested.emit(destination)
 
@@ -629,7 +630,7 @@ class HomePage(QWidget):
         """打开最近项目"""
         import os
         if not os.path.exists(path):
-            InfoBar.warning(title="文件不存在", content=f"项目文件已移动或删除:\n{path}", parent=self._notification_parent(), duration=5000)
+            InfoBar.warning(title=_("文件不存在"), content=f"{_('项目文件已移动或删除')}:\n{path}", parent=self._notification_parent(), duration=5000)
             remove_recent(path)
             self.refresh_recent()
             return
@@ -637,7 +638,7 @@ class HomePage(QWidget):
             project_manager.open(path)
             self.project_opened.emit(path)
         except Exception as e:
-            InfoBar.error(title="错误", content=f"无法打开项目:\n{str(e)}", parent=self._notification_parent(), duration=5000)
+            InfoBar.error(title=_("错误"), content=f"{_('无法打开项目')}:\n{str(e)}", parent=self._notification_parent(), duration=5000)
 
     def _on_remove_recent(self, path: str):
         """从最近列表移除"""
@@ -652,31 +653,31 @@ class HomePage(QWidget):
 
     def on_new_project(self):
         """新建项目"""
-        name, ok = TextInputDialog.get_text(self, "新建项目", placeholder="请输入项目名称")
+        name, ok = TextInputDialog.get_text(self, _("新建项目"), placeholder=_("请输入项目名称"))
         if not ok:
             return
         name = name.strip()
         if name:
-            base_dir = QFileDialog.getExistingDirectory(self, "选择项目保存目录", "")
+            base_dir = QFileDialog.getExistingDirectory(self, _("选择项目保存目录"), "")
             if not base_dir:
                 return
             try:
                 project_manager.create_new(name, parent_dir=base_dir, create_structure=True)
                 self.project_created.emit(name)
             except Exception as e:
-                InfoBar.error(title="错误", content=f"创建项目失败:\n{str(e)}", parent=self._notification_parent(), duration=5000)
+                InfoBar.error(title=_("错误"), content=f"{_('创建项目失败')}:\n{str(e)}", parent=self._notification_parent(), duration=5000)
 
     def on_open_project(self):
         """打开项目"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "打开项目",
+            _("打开项目"),
             "",
-            "ALine 项目 (*.aline);;所有文件 (*)"
+            _("ALine 项目 (*.aline);;所有文件 (*)")
         )
         if file_path:
             try:
                 project_manager.open(file_path)
                 self.project_opened.emit(file_path)
             except Exception as e:
-                InfoBar.error(title="错误", content=f"无法打开项目:\n{str(e)}", parent=self._notification_parent(), duration=5000)
+                InfoBar.error(title=_("错误"), content=f"{_('无法打开项目')}:\n{str(e)}", parent=self._notification_parent(), duration=5000)

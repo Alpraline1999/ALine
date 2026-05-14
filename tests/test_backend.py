@@ -2121,6 +2121,27 @@ class TestAnalysisEngine(unittest.TestCase):
                 {},
             )
 
+    def test_analysis_extension_bool_result_fields_do_not_crash(self):
+        from core.extension_api import invoke_analysis_extension_handler
+
+        def _bool_payload(_lines, _params):
+            return {
+                "analysis_type": "bool_payload",
+                "lines": True,
+                "_plot_series": True,
+                "summary_items": True,
+            }
+
+        result = invoke_analysis_extension_handler(
+            _bool_payload,
+            [{"x": [0.0, 1.0], "y": [1.0, 2.0], "name": "demo"}],
+            {},
+        )
+        self.assertEqual(result["analysis_type"], "bool_payload")
+        self.assertEqual(result.get("lines"), [])
+        self.assertEqual(result.get("_plot_series"), [])
+        self.assertEqual(result.get("summary_items"), True)
+
     def test_build_extension_entry_exposes_normalized_metadata_and_resolved_options(self):
         from core.extension_api import ExtensionConfigField, ProcessingExtension, build_extension_entry
 
