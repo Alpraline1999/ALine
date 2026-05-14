@@ -1315,7 +1315,13 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
         self._pipeline_warnings = []
         self._cancel_pipeline_btn.hide()
         self._cancel_async_runner()
-        self._set_stats_message(f"处理错误: {error_msg}", is_error=True)
+        # 输入不足类错误用简短提示，不按错误样式显示
+        if "至少需要" in error_msg or "最多支持" in error_msg:
+            first_line = error_msg.split("\n", 1)[0]
+            clean_msg = first_line.split(": ", 1)[-1] if ": " in first_line else first_line
+            self._set_stats_message(f"提示: {clean_msg}")
+        else:
+            self._set_stats_message(f"处理错误: {error_msg}", is_error=True)
 
     def _on_async_pipeline_cancelled(self) -> None:
         self._out_series_batch = []

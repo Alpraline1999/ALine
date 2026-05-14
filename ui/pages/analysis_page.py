@@ -1461,10 +1461,13 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         if not inputs:
             InfoBar.warning("提示", "当前结果没有可复跑的输入", parent=self, position=InfoBarPosition.TOP)
             return
+        # 从保存的结果中提取 extension_options，直接传给 _run_analysis（绕过 UI 文本编辑器读取）
+        saved_params = view.get("params") if isinstance(view.get("params"), dict) else {}
+        saved_options = dict(saved_params.get("extension_options") or {}) if isinstance(saved_params.get("extension_options"), dict) else None
         self._sync_state_from_analysis_view(view)
         self._update_result_action_buttons()
         self._set_analysis_status("已恢复当前配置，正在重新运行分析…")
-        self._run_analysis()
+        self._run_analysis(forced_extension_options=saved_options)
 
     def _current_analysis_view(self) -> Optional[Dict[str, Any]]:
         if not hasattr(self, "_analysis_tabs") or not self._analysis_tab_keys:
@@ -1900,15 +1903,19 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     # 运行分析
     # ─────────────────────────────────────────────────────────
 
-    def _run_analysis(self):
+    def _run_analysis(self, forced_extension_options: Optional[Dict[str, Any]] = None):
         analysis_type = self._current_analysis_type()
         extension_options: Optional[Dict[str, Any]] = None
         effective_extension_options: Optional[Dict[str, Any]] = None
         try:
             input_payloads: List[dict]
             if extension_registry.get_analysis(analysis_type) is not None:
-                extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
-                input_payloads, effective_extension_options = self._effective_extension_analysis_options(analysis_type, extension_options)
+                if forced_extension_options is not None:
+                    extension_options = dict(forced_extension_options)
+                    input_payloads, effective_extension_options = self._effective_extension_analysis_options(analysis_type, extension_options)
+                else:
+                    extension_options = self._current_extension_analysis_options(analysis_type, raise_on_error=True)
+                    input_payloads, effective_extension_options = self._effective_extension_analysis_options(analysis_type, extension_options)
                 selected = self._get_data_for_inputs(input_payloads)
             else:
                 input_payloads = self._analysis_input_payloads(analysis_type)
