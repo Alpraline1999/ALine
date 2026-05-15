@@ -36,14 +36,22 @@ class ProjectTreeCommandService:
     project_modified: Callable[[], None]
     last_error_message: Callable[[], str]
 
-    def delete_node(self, node_id: str, node_name: str) -> None:
+    def _activate_project(self, project_id: str | None) -> None:
+        if project_id:
+            project_manager.set_current_project(project_id)
+
+    def delete_node(self, node_id: str, node_name: str, *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         if not self.confirm_delete("确认删除", f"确定要删除「{node_name}」及其所有内容吗？"):
             return
-        project_manager.delete_node(node_id)
+        if not project_manager.delete_node(node_id):
+            self.notify_warning("删除失败", self.last_error_message() or "当前节点不存在或无法删除")
+            return
         self.refresh()
         self.project_modified()
 
-    def add_child_folder(self, parent_id: str) -> None:
+    def add_child_folder(self, parent_id: str, *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         name, ok = self.prompt_text("新建子文件夹", "文件夹名称:", "输入子文件夹名称")
         if not ok:
             return
@@ -55,7 +63,8 @@ class ProjectTreeCommandService:
         self.select_node(folder.id)
         self.project_modified()
 
-    def add_dataset_node(self, parent_id: str) -> None:
+    def add_dataset_node(self, parent_id: str, *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         name, ok = self.prompt_text("新建数据集", "数据集名称:", "输入数据集名称")
         if not ok:
             return
@@ -82,7 +91,8 @@ class ProjectTreeCommandService:
             return
         self.notify_warning("重命名失败", self.last_error_message() or "名称已存在或当前节点不支持重命名")
 
-    def rename_selected_item(self, kind: str, node_id: str, current_name: str) -> bool:
+    def rename_selected_item(self, kind: str, node_id: str, current_name: str, *, project_id: str | None = None) -> bool:
+        self._activate_project(project_id)
         title_map = {
             "folder": "重命名文件夹",
             "data_file": "重命名数据文件",
@@ -105,7 +115,8 @@ class ProjectTreeCommandService:
         self.project_modified()
         return True
 
-    def edit_selected_item_remark(self, kind: str, node_id: str, current_name: str, current_remark: str = "") -> bool:
+    def edit_selected_item_remark(self, kind: str, node_id: str, current_name: str, current_remark: str = "", *, project_id: str | None = None) -> bool:
+        self._activate_project(project_id)
         if kind.startswith("global_") or kind == "project":
             return False
         title_map = {
@@ -154,7 +165,8 @@ class ProjectTreeCommandService:
         self.notify_success("清理完成", f"已移除 {len(removed_ids)} 个空文件夹")
         return True
 
-    def delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
+    def delete_virtual(self, kind: str, node_id: str, node_name: str, *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         if not self.confirm_delete("确认删除", f"确定要删除「{node_name}」吗？"):
             return
         if kind == "series":
@@ -210,7 +222,8 @@ class ProjectTreeCommandService:
         if failed:
             self.notify_warning("批量移动未完成", self.last_error_message() or f"有 {failed} 项移动失败")
 
-    def move_virtual(self, kind: str, node_id: str, choices: list[tuple[str, str]]) -> None:
+    def move_virtual(self, kind: str, node_id: str, choices: list[tuple[str, str]], *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         labels = [label for label, _ in choices]
         selected, ok = self.choose_item("移动到", "目标父级:", labels)
         if not ok or not selected:
@@ -327,7 +340,8 @@ class ProjectTreeCommandService:
             self.refresh()
             self.project_modified()
 
-    def import_source_files(self, parent_id: str | None = None) -> None:
+    def import_source_files(self, parent_id: str | None = None, *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         clean_paths = [path for path in self.choose_files("导入源文件", "所有文件 (*.*)") if path]
         if not clean_paths:
             return
@@ -339,7 +353,8 @@ class ProjectTreeCommandService:
         self.select_node(nodes[-1].id)
         self.project_modified()
 
-    def import_digitize_images(self, parent_id: str | None = None) -> None:
+    def import_digitize_images(self, parent_id: str | None = None, *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         clean_paths = [
             path
             for path in self.choose_files(
@@ -383,7 +398,9 @@ class ProjectTreeCommandService:
         *,
         parent_id: str | None = None,
         display_name: str | None = None,
+        project_id: str | None = None,
     ) -> str | None:
+        self._activate_project(project_id)
         if not self.supports_digitize_import(source_path):
             return None
         try:
@@ -393,7 +410,8 @@ class ProjectTreeCommandService:
             return None
         return self.linked_tree_node_id("image_work", "image_work_id", image.id)
 
-    def import_data_file(self, parent_id: str | None = None) -> None:
+    def import_data_file(self, parent_id: str | None = None, *, project_id: str | None = None) -> None:
+        self._activate_project(project_id)
         file_path = self.choose_file(
             "导入数据文件",
             "数据文件 (*.csv *.txt *.dat *.tsv *.xlsx *.xls *.json *.npy *.npz);;所有文件 (*)",
@@ -413,7 +431,9 @@ class ProjectTreeCommandService:
         *,
         target_folder_id: str | None = None,
         target_data_file_id: str | None = None,
+        project_id: str | None = None,
     ) -> str | None:
+        self._activate_project(project_id)
         if not self.supports_data_file_import(source_path):
             self.notify_warning("导入失败", "当前文件类型不支持导入为数据文件")
             return None

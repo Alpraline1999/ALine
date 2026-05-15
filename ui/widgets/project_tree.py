@@ -606,9 +606,10 @@ class ProjectTreeWidget(QWidget):
                                 item.addChild(child)
 
                 is_root_folder = kind == "folder" and parent_id is None and getattr(node, "group_type", None) in _ROOT_GROUP_TYPES
+                managed_group_type = self._folder_collection_group(node.id) if kind == "folder" else None
                 is_protected_folder = self._is_protected_folder(node)
                 show_empty_folder = not self._filter_kinds or "folder" in self._filter_kinds
-                if kind == "folder" and not show_empty_folder and item.childCount() == 0 and not is_root_folder and not is_protected_folder:
+                if kind == "folder" and not show_empty_folder and item.childCount() == 0 and not is_root_folder and not is_protected_folder and managed_group_type is None:
                     parent_item.removeChild(item)
                     continue
             else:
@@ -617,7 +618,8 @@ class ProjectTreeWidget(QWidget):
                 if self._filter_kinds and kind == "folder" and not self._node_has_visible_children(project, node):
                     is_root_folder = parent_id is None and getattr(node, "group_type", None) in _ROOT_GROUP_TYPES
                     is_protected = self._is_protected_folder(node)
-                    if not is_root_folder and not is_protected:
+                    managed_group_type = self._folder_collection_group(node.id)
+                    if not is_root_folder and not is_protected and managed_group_type is None:
                         parent_item.removeChild(item)
                         continue
 
@@ -1058,14 +1060,14 @@ class ProjectTreeWidget(QWidget):
     # 命令（提供给菜单构建器的回调）
     # ─────────────────────────────────────────────────────────
 
-    def _cmd_delete(self, node_id: str, node_name: str) -> None:
-        self._command_service.delete_node(node_id, node_name)
+    def _cmd_delete(self, node_id: str, node_name: str, *, project_id: Optional[str] = None) -> None:
+        self._command_service.delete_node(node_id, node_name, project_id=project_id)
 
-    def _cmd_add_child_folder(self, parent_id: str) -> None:
-        self._command_service.add_child_folder(parent_id)
+    def _cmd_add_child_folder(self, parent_id: str, *, project_id: Optional[str] = None) -> None:
+        self._command_service.add_child_folder(parent_id, project_id=project_id)
 
-    def _cmd_add_dataset_node(self, parent_id: str) -> None:
-        self._command_service.add_dataset_node(parent_id)
+    def _cmd_add_dataset_node(self, parent_id: str, *, project_id: Optional[str] = None) -> None:
+        self._command_service.add_dataset_node(parent_id, project_id=project_id)
 
     def _confirm_tree_delete(self, title: str, message: str) -> bool:
         w = MessageBox(title, message, self._dialog_parent())
@@ -1094,14 +1096,14 @@ class ProjectTreeWidget(QWidget):
         path, _ = QFileDialog.getOpenFileName(self._dialog_parent(), title, "", file_filter)
         return path
 
-    def _cmd_import_data_file(self, parent_id: Optional[str] = None) -> None:
-        self._command_service.import_data_file(parent_id)
+    def _cmd_import_data_file(self, parent_id: Optional[str] = None, *, project_id: Optional[str] = None) -> None:
+        self._command_service.import_data_file(parent_id, project_id=project_id)
 
-    def _cmd_import_source_files(self, parent_id: Optional[str] = None) -> None:
-        self._command_service.import_source_files(parent_id)
+    def _cmd_import_source_files(self, parent_id: Optional[str] = None, *, project_id: Optional[str] = None) -> None:
+        self._command_service.import_source_files(parent_id, project_id=project_id)
 
-    def _cmd_import_digitize_images(self, parent_id: Optional[str] = None) -> None:
-        self._command_service.import_digitize_images(parent_id)
+    def _cmd_import_digitize_images(self, parent_id: Optional[str] = None, *, project_id: Optional[str] = None) -> None:
+        self._command_service.import_digitize_images(parent_id, project_id=project_id)
 
     def _cmd_rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
         self._command_service.rename_virtual(kind, node_id, current_name)
@@ -1126,8 +1128,8 @@ class ProjectTreeWidget(QWidget):
     def _cmd_move_batch(self, payloads: List[Dict[str, object]], choices: List[Tuple[str, str]]) -> None:
         self._command_service.move_batch(payloads, choices)
 
-    def _cmd_delete_virtual(self, kind: str, node_id: str, node_name: str) -> None:
-        self._command_service.delete_virtual(kind, node_id, node_name)
+    def _cmd_delete_virtual(self, kind: str, node_id: str, node_name: str, *, project_id: Optional[str] = None) -> None:
+        self._command_service.delete_virtual(kind, node_id, node_name, project_id=project_id)
 
     def _cmd_rename_global(self, kind: str, node_id: str, current_name: str) -> None:
         self._command_service.rename_global(kind, node_id, current_name)
@@ -1213,8 +1215,8 @@ class ProjectTreeWidget(QWidget):
         order = p.tree.get_siblings_max_order(target_id) + 1
         return project_manager.move_node(node_id, target_id, order)
 
-    def _cmd_move_virtual(self, kind: str, node_id: str, choices: List[Tuple[str, str]]) -> None:
-        self._command_service.move_virtual(kind, node_id, choices)
+    def _cmd_move_virtual(self, kind: str, node_id: str, choices: List[Tuple[str, str]], *, project_id: Optional[str] = None) -> None:
+        self._command_service.move_virtual(kind, node_id, choices, project_id=project_id)
 
     def _selected_items_for_context_menu(self, anchor_item: ProjectTreeItem) -> List[ProjectTreeItem]:
         selected_items = [item for item in self._tree.selectedItems() if item is not None]

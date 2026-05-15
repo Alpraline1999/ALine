@@ -75,6 +75,17 @@ class TestProjectTreeContextMenuRuntime(unittest.TestCase):
             actions = self._open_context_menu(root.id)
             self.assertIn("新建子文件夹", actions, group_type)
 
+    def test_empty_managed_child_folder_remains_visible_under_filter(self) -> None:
+        root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(root)
+        child = self.pm.add_folder("Empty Child", parent_id=root.id, group_type="datasets")
+        self.assertIsNotNone(child)
+
+        self.widget.set_filter_kinds(["data_file"])
+        self.widget.refresh()
+
+        self.assertIsNotNone(self.widget._find_item(child.id))
+
     def test_data_file_context_menu_remark_delete_and_rename_execute(self) -> None:
         data_node = next(node for node in self.project.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id)
 
@@ -105,6 +116,27 @@ class TestProjectTreeContextMenuRuntime(unittest.TestCase):
 
         self.assertEqual(self.pm.get_node_by_id(other_node.id).name, "other-renamed.csv")
         self.assertEqual(self.pm.get_node_by_id(first_node.id).name, self.df.name)
+
+    def test_context_menu_actions_use_anchor_project_when_selection_points_to_another_project(self) -> None:
+        from models.schemas import DataFile, DataSeries
+
+        other_project = self.pm.create_new("tree_ctx_runtime_other")
+        other_df = DataFile(name="other_project.csv", series=[DataSeries(name="other_project", x=[1.0, 2.0], y=[2.0, 3.0])])
+        other_node = self.pm.add_data_file(other_df)
+        self.widget.refresh()
+
+        first_project_node = next(
+            node
+            for node in self.project.tree.nodes
+            if node.kind == "data_file" and node.data_file_id == self.df.id
+        )
+        self.widget.select_node(first_project_node.id)
+
+        with mock.patch("app.project_tree_command_service.NodeRemarkDialog.get_remark", return_value=("跨项目备注", True)):
+            self._open_context_menu(other_node.id)["设置备注"].trigger()
+
+        self.assertEqual(self.pm.get_node_by_id(other_node.id).remark, "跨项目备注")
+        self.assertEqual(self.pm.current_project_id, other_project.id)
 
 
 if __name__ == "__main__":
