@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from unittest import mock
+from pathlib import Path
+import tempfile
 
 import os
 import sys
@@ -100,6 +102,73 @@ class TestProjectTreeContextMenuRuntime(unittest.TestCase):
         with mock.patch("qfluentwidgets.MessageBox.exec", return_value=True):
             self._open_context_menu(data_node.id)["删除"].trigger()
         self.assertIsNone(self.pm.get_node_by_id(data_node.id))
+
+    def test_folder_context_menu_remark_delete_and_rename_execute(self) -> None:
+        root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(root)
+        folder = self.pm.add_folder("Folder A", parent_id=root.id, group_type="datasets")
+        self.assertIsNotNone(folder)
+        self.widget.refresh()
+
+        with mock.patch("app.project_tree_command_service.NodeRemarkDialog.get_remark", return_value=("右键文件夹备注", True)):
+            self._open_context_menu(folder.id)["设置备注"].trigger()
+        self.assertEqual(getattr(self.pm.get_node_by_id(folder.id), "remark", ""), "右键文件夹备注")
+
+        with mock.patch("ui.widgets.project_tree.TextInputDialog.get_text", return_value=("Folder Renamed", True)):
+            self._open_context_menu(folder.id)["重命名"].trigger()
+        self.assertEqual(self.pm.get_node_by_id(folder.id).name, "Folder Renamed")
+
+        with mock.patch("qfluentwidgets.MessageBox.exec", return_value=True):
+            self._open_context_menu(folder.id)["删除"].trigger()
+        self.assertIsNone(self.pm.get_node_by_id(folder.id))
+
+    def test_managed_root_folder_import_actions_execute(self) -> None:
+        class _FakeImportDialog:
+            def __init__(self, file_path: str):
+                self._file_path = file_path
+
+            def exec(self) -> bool:
+                return True
+
+            def get_results(self) -> list[object]:
+                from models.schemas import DataSeries
+
+                return [DataSeries(name="Imported Series", x=[1.0, 2.0], y=[3.0, 4.0])]
+
+            def get_file_name(self) -> str:
+                return Path(self._file_path).name
+
+            def get_source_path(self) -> str:
+                return self._file_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source_file = tmp_path / "source.txt"
+            source_file.write_text("abc", encoding="utf-8")
+            image_file = tmp_path / "image.png"
+            image_file.write_bytes(b"png")
+            data_file = tmp_path / "data.csv"
+            data_file.write_text("x,y\n1,2\n", encoding="utf-8")
+
+            source_root = self.pm._find_folder_by_group_type("source_files")
+            datasets_root = self.pm._find_folder_by_group_type("datasets")
+            images_root = self.pm._find_folder_by_group_type("images")
+            self.assertIsNotNone(source_root)
+            self.assertIsNotNone(datasets_root)
+            self.assertIsNotNone(images_root)
+
+            with mock.patch.object(self.widget._command_service, "choose_files", return_value=[str(source_file)]):
+                self._open_context_menu(source_root.id)["批量导入源文件..."].trigger()
+            self.assertIsNotNone(next((node for node in self.pm.current_project.tree.nodes if node.kind == "source_file" and node.name == "source.txt"), None))
+
+            with mock.patch.object(self.widget._command_service, "choose_file", return_value=str(data_file)), \
+                 mock.patch.object(self.widget._command_service, "create_source_file_import_dialog", side_effect=lambda path: _FakeImportDialog(path)):
+                self._open_context_menu(datasets_root.id)["导入数据文件..."].trigger()
+            self.assertIsNotNone(next((node for node in self.pm.current_project.tree.nodes if node.kind == "data_file" and node.name == "data.csv"), None))
+
+            with mock.patch.object(self.widget._command_service, "choose_files", return_value=[str(image_file)]):
+                self._open_context_menu(images_root.id)["导入图片..."].trigger()
+            self.assertIsNotNone(next((node for node in self.pm.current_project.tree.nodes if node.kind == "image_work" and node.name == "image.png"), None))
 
     def test_context_menu_actions_target_anchor_item_instead_of_previous_selection(self) -> None:
         from models.schemas import DataFile, DataSeries
