@@ -401,6 +401,7 @@ def build_general_tab(page) -> QWidget:
     appearance_group.addSettingCard(focus_mode_card)
 
     language_card = SettingCard(getattr(FIF, "LANGUAGE", FIF.INFO), _("语言"), _("切换应用界面语言，重启后生效。"), appearance_group)
+    page._lang_card = language_card
     page._language_title = language_card.titleLabel
     page._bind_setting_card_styles(
         language_card,

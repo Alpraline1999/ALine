@@ -44,7 +44,7 @@ from core.ui_preferences import (
     set_page_tree_focus_mode_enabled,
     set_tree_name_display_mode,
 )
-from core.i18n import reload_translations
+from core.i18n import _, reload_translations
 from core.ai.providers import (
     get_provider_preset,
     list_builtin_models,
@@ -430,6 +430,7 @@ class SettingsPage(QWidget):
             return
         language = set_ui_language(self._language_keys[idx])
         reload_translations()
+        self.refresh_language_ui()
         self.language_changed.emit(language)
         from qfluentwidgets import InfoBar, InfoBarPosition
         label_map = {
@@ -443,6 +444,87 @@ class SettingsPage(QWidget):
             parent=self._notification_parent(),
             position=InfoBarPosition.TOP,
         )
+
+    def refresh_language_ui(self) -> None:
+        """重建设置页可见文案，确保当前页立即切换到新语言。"""
+        layout = self.layout()
+        if layout is None:
+            return
+
+        current_tab = self._tabs.currentIndex() if self._tabs is not None else 0
+        if self._tabs is not None:
+            layout.removeWidget(self._tabs)
+            self._tabs.setParent(None)
+            self._tabs.deleteLater()
+
+        self._extension_height_watch_targets.clear()
+        self._theme_style_actions.clear()
+        self._shortcut_edits.clear()
+        self._shortcut_rows.clear()
+        self._shortcut_labels.clear()
+        self._conflict_labels.clear()
+        self._extension_empty_hints.clear()
+        self._extension_option_layouts.clear()
+        self._external_extension_empty_hints.clear()
+        self._external_extension_option_layouts.clear()
+        self._builtin_extension_checkboxes.clear()
+        self._builtin_extension_checkbox_groups.clear()
+        self._external_extension_checkboxes.clear()
+        self._external_extension_checkbox_groups.clear()
+        self._extension_specs_by_source = {"builtin": [], "external": []}
+        self._title_label = None
+        self._theme_label = None
+        self._tree_display_mode_label = None
+        self._tree_display_mode_combo = None
+        self._page_tree_focus_mode_label = None
+        self._page_tree_focus_mode_card = None
+        self._page_tree_focus_mode_checkbox = None
+        self._page_tree_focus_mode_hint = None
+        self._language_title = None
+        self._language_combo = None
+        self._appearance_title = None
+        self._extension_card = None
+        self._builtin_extension_card = None
+        self._external_extension_card = None
+        self._extension_other_settings_card = None
+        self._builtin_extension_management_card = None
+        self._external_extension_management_card = None
+        self._extension_status_card = None
+        self._extension_actions_card = None
+        self._extension_title = None
+        self._extension_hint = None
+        self._builtin_section_hint = None
+        self._external_section_hint = None
+        self._external_extensions_dirs_card = None
+        self._external_extensions_dir_label = None
+        self._external_extensions_dir_edit = None
+        self._browse_external_extensions_dir_btn = None
+        self._external_extensions_enabled_checkbox = None
+        self._external_extensions_sandbox_checkbox = None
+        self._external_extension_number_decimals_card = None
+        self._external_extension_number_decimals_slider = None
+        self._external_extension_number_decimals_value_label = None
+        self._refresh_external_extensions_btn = None
+        self._builtin_extensions_enabled_checkbox = None
+        self._extension_tabs = None
+        self._external_extension_tabs = None
+        self._onboarding_label = None
+        self._onboarding_hint = None
+        self._replay_onboarding_btn = None
+        self._lang_title = None
+        self._lang_card = None
+        self._lang_placeholder = None
+        self._shortcuts_title = None
+        self._shortcuts_editor_card = None
+        self._tmpl_card = None
+        self._tmpl_list = None
+        self.theme_combo = None
+        self._shortcut_filter_edit = None
+        self._provider_keys = list_provider_keys()
+
+        self.setup_ui()
+        if self._tabs is not None and 0 <= current_tab < self._tabs.count():
+            self._tabs.setCurrentIndex(current_tab)
 
     def _clear_builtin_extension_options(self) -> None:
         self._builtin_extension_checkboxes.clear()

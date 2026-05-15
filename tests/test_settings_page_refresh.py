@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from core import ui_preferences
+from core.i18n import reload_translations
 from ui.pages.process_page import ProcessPage
 from ui.pages.settings_page import SettingsPage
 
@@ -54,3 +58,27 @@ class TestSettingsPageRefresh(unittest.TestCase):
     def test_process_page_refresh_input_choices_exists_for_runtime_language_refresh(self) -> None:
         page = ProcessPage()
         page.refresh_input_choices()
+
+    def test_refresh_language_ui_rebuilds_translated_language_card(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            original_config_path = ui_preferences._CONFIG_PATH
+            ui_preferences._CONFIG_PATH = Path(tmp) / "ui_preferences.json"
+            try:
+                ui_preferences.set_ui_language("en_US")
+                reload_translations()
+
+                page = SettingsPage()
+                try:
+                    page.refresh_language_ui()
+                    QApplication.processEvents()
+                    self.assertIsNotNone(page._lang_card)
+                    self.assertEqual(page._lang_card.titleLabel.text(), "Language")
+                    self.assertEqual(
+                        page._lang_card.contentLabel.text(),
+                        "Switch the application language. Restart to apply fully.",
+                    )
+                finally:
+                    page.deleteLater()
+                    QApplication.processEvents()
+            finally:
+                ui_preferences._CONFIG_PATH = original_config_path

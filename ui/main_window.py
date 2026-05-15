@@ -446,7 +446,9 @@ class MainWindow(FluentWindow):
         self.home_page.refresh_extension_summary()
         self.data_page.refresh()
         self.process_page.refresh_processing_extensions()
-        self.process_page.refresh_input_choices()
+        refresh_input_choices = getattr(self.process_page, "refresh_input_choices", None)
+        if callable(refresh_input_choices):
+            refresh_input_choices()
         self.analysis_page.refresh_analysis_type_choices()
         self.chart_page._refresh_curve_style_template_combo()
         self.chart_page._refresh_template_combo(self.chart_page._applied_plot_style_ref)
