@@ -76,20 +76,14 @@ class _PreviewGestureFilter(QObject):
         return None
 
     def _reset(self) -> bool:
-        if self._buttons is not None:
-            self._buttons.fit.click()
-            self._sync()
-            return True
         if callable(self._reset_callback):
             self._reset_callback()
-            self._sync()
             return True
         if self._toolbar is None:
             return False
         reset = getattr(self._toolbar, "home", None)
         if callable(reset):
             reset()
-            self._sync()
             return True
         return False
 
@@ -137,7 +131,9 @@ class _PreviewGestureFilter(QObject):
         button = self._buttons.pan if mode == "pan" else self._buttons.box_zoom
         if bool(button.isChecked()) == checked:
             return
-        button.click()
+        blocker = QSignalBlocker(button)
+        button.setChecked(checked)
+        del blocker
 
     def _has_persistent_toolbar_mode(self) -> bool:
         return bool(preview_navigation_mode(self._toolbar))
@@ -150,7 +146,6 @@ class _PreviewGestureFilter(QObject):
             return False
         if not self._has_persistent_toolbar_mode():
             self._temporary_mode = mode
-            self._toggle_button_for_mode(mode, True)
         elif preview_navigation_mode(self._toolbar) != mode:
             return False
         mouse_button = MouseButton.RIGHT if mode == "pan" else MouseButton.LEFT
@@ -162,7 +157,6 @@ class _PreviewGestureFilter(QObject):
         else:
             self._toolbar.press_zoom(mouse_event)
         self._active_mode = mode
-        self._sync()
         return True
 
     def _drag_mode(self, watched, event) -> bool:
@@ -176,7 +170,6 @@ class _PreviewGestureFilter(QObject):
             self._toolbar.drag_pan(mouse_event)
         elif self._active_mode == "zoom":
             self._toolbar.drag_zoom(mouse_event)
-        self._sync()
         return True
 
     def _finish_mode(self, watched, event) -> bool:
@@ -192,11 +185,7 @@ class _PreviewGestureFilter(QObject):
         elif self._active_mode == "zoom":
             self._toolbar.release_zoom(mouse_event)
         self._active_mode = ""
-        temporary_mode = self._temporary_mode
         self._temporary_mode = ""
-        if temporary_mode:
-            self._toggle_button_for_mode(temporary_mode, False)
-        self._sync()
         return True
 
     def eventFilter(self, watched, event) -> bool:
@@ -208,17 +197,9 @@ class _PreviewGestureFilter(QObject):
             delta = event.angleDelta().y() if hasattr(event, "angleDelta") else 0
             if delta == 0:
                 return False
-            if self._buttons is not None:
-                if delta > 0:
-                    self._buttons.zoom_in.click()
-                else:
-                    self._buttons.zoom_out.click()
-                self._sync()
-                return True
             callback = self._zoom_in_callback if delta > 0 else self._zoom_out_callback
             if callable(callback):
                 callback()
-                self._sync()
                 return True
             return False
         if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.RightButton:
