@@ -626,12 +626,13 @@ class MainWindow(FluentWindow):
         self._on_project_created(clean_name)
 
     def _open_project_from_panel(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, selected_filter = QFileDialog.getOpenFileName(
             self,
             _("打开项目"),
             "",
             _("ALine 项目 (*.aline);;所有文件 (*)"),
         )
+        del selected_filter
         if not file_path:
             return
         try:
@@ -649,12 +650,13 @@ class MainWindow(FluentWindow):
 
         file_path = project.file_path
         if file_path is None:
-            file_path, _ = QFileDialog.getSaveFileName(
+            file_path, selected_filter = QFileDialog.getSaveFileName(
                 self,
                 _("保存项目"),
                 f"{project.name}.aline",
                 _("ALine 项目 (*.aline)"),
             )
+            del selected_filter
         if not file_path:
             return False
 
@@ -678,12 +680,13 @@ class MainWindow(FluentWindow):
             show_warning(self, _("提示"), _("请先打开项目"))
             return False
 
-        file_path, _ = QFileDialog.getSaveFileName(
+        file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             _("另存项目"),
             f"{project.name}.aline",
             _("ALine 项目 (*.aline)"),
         )
+        del selected_filter
         if not file_path:
             return False
 
