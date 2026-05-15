@@ -88,6 +88,7 @@ from ui.matplotlib_fonts import list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.matplotlib_preview import (
+    attach_preview_gesture_buttons,
     build_preview_toolbar,
     create_navigation_toolbar,
     preview_navigation_mode,
@@ -454,6 +455,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 box_zoom_toggle_callback=self._toggle_chart_preview_box_zoom_mode,
                 tooltip_position=ToolTipPosition.BOTTOM,
             )
+            attach_preview_gesture_buttons(self._canvas, preview_buttons)
             self._chart_preview_fit_btn = preview_buttons.fit
             self._chart_preview_zoom_in_btn = preview_buttons.zoom_in
             self._chart_preview_zoom_out_btn = preview_buttons.zoom_out

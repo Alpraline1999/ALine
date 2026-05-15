@@ -94,7 +94,10 @@ def _global_asset_sort_key(asset) -> tuple[int, int, str, str]:
 
 
 def add_menu_action(menu: RoundMenu, icon, text: str, callback) -> Action:
-    action = Action(icon, text, triggered=callback)
+    def _triggered(_checked: bool = False):
+        return callback()
+
+    action = Action(icon, text, triggered=_triggered)
     menu.addAction(action)
     return action
 

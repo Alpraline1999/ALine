@@ -92,6 +92,7 @@ from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.matplotlib_preview import (
+    attach_preview_gesture_buttons,
     build_preview_toolbar,
     create_navigation_toolbar,
     sync_preview_nav_toggle_states,
@@ -638,6 +639,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                 pan_toggle_callback=lambda checked, ref=view_ref: self._toggle_analysis_preview_pan_mode(ref.get("view"), checked),
                 box_zoom_toggle_callback=lambda checked, ref=view_ref: self._toggle_analysis_preview_box_zoom_mode(ref.get("view"), checked),
             )
+            attach_preview_gesture_buttons(canvas, preview_buttons)
             plot_layout.addLayout(preview_toolbar)
             plot_layout.addWidget(canvas, stretch=1)
         else:
@@ -2019,7 +2021,8 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _on_analysis_finished(self, task_id: str, result: Any, t: str, selected: list, expected_job_id: str) -> None:
         if self._task_manager._current_job_ids.get("analysis") != expected_job_id:
             return
-        self._result = result
+        sanitized_result = _sanitize_analysis_payload(result) if isinstance(result, dict) else result
+        self._result = sanitized_result
         self._show_result(t, selected)
         self._run_analysis_btn.setEnabled(True)
         self._cancel_analysis_btn.hide()
@@ -2056,14 +2059,15 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         tab_key = f"temp:{tab_number}"
         title = f"{self._analysis_type_label(t)} #{tab_number}"
         view = self._ensure_analysis_result_tab(tab_key, title)
-        view["result"] = dict(r)
+        safe_result = _sanitize_analysis_payload(dict(r))
+        view["result"] = safe_result
         view["analysis_type"] = t
         view["selected"] = list(selected)
         view["inputs"] = [dict(item) for item in self._selected_inputs]
         view["params"] = self._current_analysis_params()
         view["analysis_name"] = title
         view["temporary"] = True
-        self._render_result_view(view, t, selected, r)
+        self._render_result_view(view, t, selected, safe_result)
         self._analysis_tabs.setCurrentIndex(self._analysis_tab_keys.index(tab_key))
         self._sync_state_from_analysis_view(view)
         self._set_analysis_status(f"分析完成，已生成临时结果标签“{title}”。")

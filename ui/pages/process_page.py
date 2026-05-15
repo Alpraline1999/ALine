@@ -51,6 +51,7 @@ from ui.widgets.extension_panel import ExtensionConfigPanel
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.matplotlib_preview import (
+    attach_preview_gesture_buttons,
     build_preview_toolbar,
     create_navigation_toolbar,
     preview_navigation_mode,
@@ -603,6 +604,7 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             self._preview_zoom_out_btn = preview_buttons.zoom_out
             self._preview_pan_btn = preview_buttons.pan
             self._preview_box_zoom_btn = preview_buttons.box_zoom
+            attach_preview_gesture_buttons(self._canvas, preview_buttons)
             rv.addLayout(preview_toolbar)
             self._canvas.setMinimumHeight(260)
             rv.addWidget(self._canvas, stretch=1)

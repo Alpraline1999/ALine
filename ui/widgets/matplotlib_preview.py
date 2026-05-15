@@ -45,6 +45,11 @@ class _PreviewGestureFilter(QObject):
         self._zoom_in_callback = zoom_in_callback
         self._zoom_out_callback = zoom_out_callback
         self._active_mode: str = ""
+        self._temporary_mode: str = ""
+        self._buttons: Optional[PreviewToolbarButtons] = None
+
+    def set_buttons(self, buttons: PreviewToolbarButtons) -> None:
+        self._buttons = buttons
 
     @staticmethod
     def _event_pos(event) -> QPointF:
@@ -71,6 +76,10 @@ class _PreviewGestureFilter(QObject):
         return None
 
     def _reset(self) -> bool:
+        if self._buttons is not None:
+            self._buttons.fit.click()
+            self._sync()
+            return True
         if callable(self._reset_callback):
             self._reset_callback()
             self._sync()
@@ -118,13 +127,28 @@ class _PreviewGestureFilter(QObject):
             self._toolbar.zoom()
         self._sync()
 
+    def _toggle_button_for_mode(self, mode: str, checked: bool) -> None:
+        if self._buttons is None:
+            return
+        button = self._buttons.pan if mode == "pan" else self._buttons.box_zoom
+        if bool(button.isChecked()) == checked:
+            return
+        button.click()
+
+    def _has_persistent_toolbar_mode(self) -> bool:
+        return bool(preview_navigation_mode(self._toolbar))
+
     def _start_mode(self, watched, event, mode: str) -> bool:
         if self._toolbar is None or MouseButton is None:
             return False
         pos = self._event_pos(event)
         if self._axis_at(watched, pos) is None:
             return False
-        self._activate_toolbar_mode(mode)
+        if not self._has_persistent_toolbar_mode():
+            self._temporary_mode = mode
+            self._toggle_button_for_mode(mode, True)
+        elif preview_navigation_mode(self._toolbar) != mode:
+            return False
         mouse_event = self._build_mouse_event(watched, "button_press_event", pos, button=MouseButton.LEFT, gui_event=event)
         if mouse_event is None:
             return False
@@ -162,6 +186,10 @@ class _PreviewGestureFilter(QObject):
         elif self._active_mode == "zoom":
             self._toolbar.release_zoom(mouse_event)
         self._active_mode = ""
+        temporary_mode = self._temporary_mode
+        self._temporary_mode = ""
+        if temporary_mode:
+            self._toggle_button_for_mode(temporary_mode, False)
         self._sync()
         return True
 
@@ -174,6 +202,13 @@ class _PreviewGestureFilter(QObject):
             delta = event.angleDelta().y() if hasattr(event, "angleDelta") else 0
             if delta == 0:
                 return False
+            if self._buttons is not None:
+                if delta > 0:
+                    self._buttons.zoom_in.click()
+                else:
+                    self._buttons.zoom_out.click()
+                self._sync()
+                return True
             callback = self._zoom_in_callback if delta > 0 else self._zoom_out_callback
             if callable(callback):
                 callback()
@@ -182,6 +217,16 @@ class _PreviewGestureFilter(QObject):
             return False
         if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.RightButton:
             return self._reset()
+        if self._temporary_mode and event.type() in {QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease}:
+            if event.type() == QEvent.Type.MouseMove:
+                return self._drag_mode(watched, event)
+            if self._temporary_mode == "zoom" and event.button() == Qt.MouseButton.LeftButton:
+                return self._finish_mode(watched, event)
+            if self._temporary_mode == "pan" and event.button() == Qt.MouseButton.RightButton:
+                return self._finish_mode(watched, event)
+            return False
+        if self._has_persistent_toolbar_mode():
+            return False
         if event.type() == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.RightButton:
                 return self._start_mode(watched, event, "pan")
@@ -222,6 +267,12 @@ def create_navigation_toolbar(
     canvas.installEventFilter(gesture_filter)
     setattr(canvas, "_preview_gesture_filter", gesture_filter)
     return toolbar
+
+
+def attach_preview_gesture_buttons(canvas, buttons: PreviewToolbarButtons) -> None:
+    gesture_filter = getattr(canvas, "_preview_gesture_filter", None)
+    if gesture_filter is not None and hasattr(gesture_filter, "set_buttons"):
+        gesture_filter.set_buttons(buttons)
 
 
 def build_preview_toolbar(

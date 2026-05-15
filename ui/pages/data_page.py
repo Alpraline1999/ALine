@@ -42,6 +42,7 @@ from ui.theme import (
 )
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.matplotlib_preview import (
+    attach_preview_gesture_buttons,
     build_preview_toolbar,
     create_navigation_toolbar,
     preview_navigation_mode,
@@ -961,6 +962,7 @@ class DataPage(QWidget):
             self._preview_zoom_out_btn = preview_buttons.zoom_out
             self._preview_pan_btn = preview_buttons.pan
             self._preview_box_zoom_btn = preview_buttons.box_zoom
+            attach_preview_gesture_buttons(self._preview_canvas, preview_buttons)
             preview_toolbar_layout.addLayout(preview_toolbar)
             plot_preview_layout.addWidget(self._preview_canvas, stretch=1)
             self._sync_preview_nav_toggle_states()
@@ -2352,6 +2354,10 @@ class DataPage(QWidget):
             changed = project_manager.set_analysis_result_remark(self._selected_node_id, remark)
         else:
             changed = project_manager.set_node_remark(self._selected_node_id, remark)
+        if changed:
+            self._refresh_management_panel()
+            self._draw_preview()
+            self.project_modified.emit()
 
     @staticmethod
     def _canonical_folder_group(group_type: Optional[str]) -> Optional[str]:
