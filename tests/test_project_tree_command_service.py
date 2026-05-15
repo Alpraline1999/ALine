@@ -228,6 +228,13 @@ def _load_command_service_module():
         def get_curve_remark(self, node_id: str) -> str:
             return ""
 
+        def set_analysis_result_remark(self, node_id: str, remark: str) -> bool:
+            self.remarks.append(("analysis_result", node_id, remark))
+            return True
+
+        def get_analysis_result_remark(self, node_id: str) -> str:
+            return ""
+
         def remove_empty_folders(self, root_id: str | None = None):
             self.removed_empty_folder_args.append(root_id)
             return ["f1", "f2"]
@@ -406,6 +413,18 @@ class TestProjectTreeCommandService(unittest.TestCase):
         get_remark.assert_called_once_with(parent, "设置备注 · Folder A", remark="原备注")
         self.assertEqual([("node", "f1", "备注内容")], project_manager.remarks)
         self.assertEqual(["refresh", "select:f1", "modified"], state["calls"])
+
+    def test_edit_analysis_result_remark_routes_to_analysis_result_api(self) -> None:
+        from unittest import mock
+
+        service, state = self._make_service()
+
+        with mock.patch.object(module.NodeRemarkDialog, "get_remark", return_value=("分析备注", True)):
+            changed = service.edit_selected_item_remark("analysis_result", "a-node-1", "Result A", "")
+
+        self.assertTrue(changed)
+        self.assertEqual([("analysis_result", "a-node-1", "分析备注")], project_manager.remarks)
+        self.assertEqual(["refresh", "select:a-node-1", "modified"], state["calls"])
 
     def test_prune_empty_folders_reports_success(self) -> None:
         service, state = self._make_service()

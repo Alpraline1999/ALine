@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from ui.pages.process_page import ProcessPage
 from ui.pages.settings_page import SettingsPage
 
 
@@ -49,3 +50,7 @@ class TestSettingsPageRefresh(unittest.TestCase):
         if hasattr(page, "_tmpl_list"):
             delattr(page, "_tmpl_list")
         page.refresh_templates()
+
+    def test_process_page_refresh_input_choices_exists_for_runtime_language_refresh(self) -> None:
+        page = ProcessPage()
+        page.refresh_input_choices()

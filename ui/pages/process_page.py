@@ -584,6 +584,9 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
                 self._canvas,
                 panel,
                 sync_callback=self._sync_preview_nav_toggle_states,
+                reset_callback=self._reset_preview_view,
+                zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
+                zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 panel,
@@ -814,6 +817,9 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
             refresh = getattr(widget, "refresh_input_choices", None)
             if callable(refresh):
                 refresh()
+
+    def refresh_input_choices(self) -> None:
+        self._refresh_input_dependent_param_widgets()
 
     def _current_pipeline_definition(self):
         return build_pipeline_extension_definition(self._ops)

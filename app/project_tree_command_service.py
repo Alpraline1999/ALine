@@ -299,6 +299,8 @@ class ProjectTreeCommandService:
             return project_manager.set_series_remark(node_id, remark)
         if kind == "curve":
             return project_manager.set_curve_remark(node_id, remark)
+        if kind == "analysis_result":
+            return project_manager.set_analysis_result_remark(node_id, remark)
         return project_manager.set_node_remark(node_id, remark)
 
     def get_node_remark(self, kind: str, node_id: str) -> str:
@@ -306,6 +308,8 @@ class ProjectTreeCommandService:
             return project_manager.get_series_remark(node_id)
         if kind == "curve":
             return project_manager.get_curve_remark(node_id)
+        if kind == "analysis_result":
+            return project_manager.get_analysis_result_remark(node_id)
         return project_manager.get_node_remark(node_id)
 
     def rename_global(self, kind: str, node_id: str, current_name: str) -> None:

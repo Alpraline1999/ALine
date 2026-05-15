@@ -52,6 +52,39 @@ def _ensure_list(value: Any, default: Optional[list] = None) -> list:
         return list(value)
     except TypeError:
         return list(default or [])
+
+
+def _sanitize_analysis_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized = {key: _sanitize_analysis_payload(item) for key, item in value.items()}
+        for key in (
+            "lines",
+            "fit_x",
+            "fit_y",
+            "error_x",
+            "error_y",
+            "peaks",
+            "valleys",
+            "plot_series",
+            "_plot_series",
+            "summary_items",
+            "tables",
+            "table_sections",
+            "texts",
+            "text_sections",
+            "params",
+            "param_names",
+            "input_refs",
+            "active_input_refs",
+        ):
+            if isinstance(sanitized.get(key), bool):
+                sanitized[key] = []
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_analysis_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_analysis_payload(item) for item in value]
+    return value
 from core.report_templates import DEFAULT_REPORT_TEMPLATE
 from core.shortcut_manager import ShortcutBindingSet
 from core.task_runner import TaskManager
@@ -592,6 +625,9 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                 canvas,
                 plot_widget,
                 sync_callback=lambda ref=view_ref: self._sync_analysis_preview_nav_toggle_states(ref.get("view")),
+                reset_callback=lambda ref=view_ref: self._reset_analysis_preview_view(ref.get("view")),
+                zoom_in_callback=lambda ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 0.8),
+                zoom_out_callback=lambda ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 1.25),
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 plot_widget,
@@ -2340,8 +2376,10 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             name=clean_name,
             analysis_type=active_result.get("analysis_type", "analysis"),
             input_series_ids=input_series_ids,
-            params=dict(active_view.get("params") or {}) if isinstance(active_view, dict) else self._current_analysis_params(),
-            summary=dict(active_result),
+            params=_sanitize_analysis_payload(
+                dict(active_view.get("params") or {}) if isinstance(active_view, dict) else self._current_analysis_params()
+            ),
+            summary=_sanitize_analysis_payload(dict(active_result)),
             input_snapshots=input_snapshots,
             template_snapshot={"template_id": template_id, "template_name": template_name},
         )
@@ -2956,7 +2994,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
     def _analysis_inputs_payloads(self, analysis) -> List[dict]:
         payloads: List[dict] = []
         raw_input_refs = analysis.params.get("input_refs", []) if isinstance(analysis.params, dict) else []
-        for item in raw_input_refs:
+        for item in _ensure_list(raw_input_refs):
             if not isinstance(item, dict):
                 continue
             kind = item.get("kind")
@@ -2992,7 +3030,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         self._rebuild_input_list()
 
     def _rehydrate_saved_result_payload(self, analysis) -> Dict[str, Any]:
-        result = dict(analysis.summary) if isinstance(analysis.summary, dict) else {}
+        result = _sanitize_analysis_payload(dict(analysis.summary) if isinstance(analysis.summary, dict) else {})
         result.setdefault("analysis_type", analysis.analysis_type)
         if analysis.result_series_id is None:
             return result

@@ -440,6 +440,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 self._canvas,
                 right_card,
                 sync_callback=self._sync_chart_preview_nav_toggle_states,
+                reset_callback=self._reset_chart_preview_view,
+                zoom_in_callback=lambda: self._zoom_chart_preview_axes(0.8),
+                zoom_out_callback=lambda: self._zoom_chart_preview_axes(1.25),
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 right_card,

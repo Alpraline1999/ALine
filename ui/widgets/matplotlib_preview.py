@@ -10,8 +10,11 @@ from qfluentwidgets import FluentIcon as FIF, ToggleToolButton, ToolButton, Tool
 from ui.theme import install_fluent_tooltip
 
 try:
+    from matplotlib.backend_bases import MouseButton, MouseEvent
     from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 except Exception:  # pragma: no cover - matplotlib 不可用时退化
+    MouseButton = None
+    MouseEvent = None
     NavigationToolbar = None
 
 
@@ -25,15 +28,23 @@ class PreviewToolbarButtons:
 
 
 class _PreviewGestureFilter(QObject):
-    def __init__(self, toolbar, sync_callback: Optional[Callable[[], None]], parent: Optional[QObject] = None):
+    def __init__(
+        self,
+        toolbar,
+        sync_callback: Optional[Callable[[], None]],
+        *,
+        reset_callback: Optional[Callable[[], None]] = None,
+        zoom_in_callback: Optional[Callable[[], None]] = None,
+        zoom_out_callback: Optional[Callable[[], None]] = None,
+        parent: Optional[QObject] = None,
+    ):
         super().__init__(parent)
         self._toolbar = toolbar
         self._sync_callback = sync_callback
+        self._reset_callback = reset_callback
+        self._zoom_in_callback = zoom_in_callback
+        self._zoom_out_callback = zoom_out_callback
         self._active_mode: str = ""
-        self._active_axis = None
-        self._press_pos: Optional[QPointF] = None
-        self._press_xlim: tuple[float, float] | None = None
-        self._press_ylim: tuple[float, float] | None = None
 
     @staticmethod
     def _event_pos(event) -> QPointF:
@@ -59,20 +70,11 @@ class _PreviewGestureFilter(QObject):
                 continue
         return None
 
-    @staticmethod
-    def _zoom_axis(axis, center_x: float, center_y: float, factor: float) -> None:
-        x0, x1 = axis.get_xlim()
-        y0, y1 = axis.get_ylim()
-        width = abs(x1 - x0) * factor
-        height = abs(y1 - y0) * factor
-        if width == 0:
-            width = 1.0
-        if height == 0:
-            height = 1.0
-        axis.set_xlim(center_x - width / 2.0, center_x + width / 2.0)
-        axis.set_ylim(center_y - height / 2.0, center_y + height / 2.0)
-
     def _reset(self) -> bool:
+        if callable(self._reset_callback):
+            self._reset_callback()
+            self._sync()
+            return True
         if self._toolbar is None:
             return False
         reset = getattr(self._toolbar, "home", None)
@@ -89,107 +91,134 @@ class _PreviewGestureFilter(QObject):
         elif mode == "zoom":
             self._toolbar.zoom()
 
-    def _pan_axis(self, axis, start_pos: QPointF, current_pos: QPointF) -> None:
-        start_data = axis.transData.inverted().transform((start_pos.x(), start_pos.y()))
-        current_data = axis.transData.inverted().transform((current_pos.x(), current_pos.y()))
-        dx = float(start_data[0] - current_data[0])
-        dy = float(start_data[1] - current_data[1])
-        x0, x1 = self._press_xlim or axis.get_xlim()
-        y0, y1 = self._press_ylim or axis.get_ylim()
-        axis.set_xlim(x0 + dx, x1 + dx)
-        axis.set_ylim(y0 + dy, y1 + dy)
+    def _build_mouse_event(self, canvas, event_name: str, pos: QPointF, *, button=None, gui_event=None):
+        if canvas is None or MouseEvent is None:
+            return None
+        return MouseEvent(
+            event_name,
+            canvas,
+            pos.x(),
+            pos.y(),
+            button=button,
+            key=None,
+            step=0,
+            dblclick=False,
+            guiEvent=gui_event,
+        )
 
-    def _box_zoom_axis(self, axis, start_pos: QPointF, end_pos: QPointF) -> None:
-        start_data = axis.transData.inverted().transform((start_pos.x(), start_pos.y()))
-        end_data = axis.transData.inverted().transform((end_pos.x(), end_pos.y()))
-        x0, x1 = float(start_data[0]), float(end_data[0])
-        y0, y1 = float(start_data[1]), float(end_data[1])
-        if abs(x0 - x1) < 1e-9 or abs(y0 - y1) < 1e-9:
+    def _activate_toolbar_mode(self, mode: str) -> None:
+        current_mode = preview_navigation_mode(self._toolbar)
+        if mode == current_mode:
             return
-        axis.set_xlim(min(x0, x1), max(x0, x1))
-        axis.set_ylim(min(y0, y1), max(y0, y1))
+        if current_mode:
+            self._clear_toolbar_mode()
+        if mode == "pan":
+            self._toolbar.pan()
+        elif mode == "zoom":
+            self._toolbar.zoom()
+        self._sync()
+
+    def _start_mode(self, watched, event, mode: str) -> bool:
+        if self._toolbar is None or MouseButton is None:
+            return False
+        pos = self._event_pos(event)
+        if self._axis_at(watched, pos) is None:
+            return False
+        self._activate_toolbar_mode(mode)
+        mouse_event = self._build_mouse_event(watched, "button_press_event", pos, button=MouseButton.LEFT, gui_event=event)
+        if mouse_event is None:
+            return False
+        if mode == "pan":
+            self._toolbar.press_pan(mouse_event)
+        else:
+            self._toolbar.press_zoom(mouse_event)
+        self._active_mode = mode
+        self._sync()
+        return True
+
+    def _drag_mode(self, watched, event) -> bool:
+        if not self._active_mode:
+            return False
+        pos = self._event_pos(event)
+        mouse_event = self._build_mouse_event(watched, "motion_notify_event", pos, gui_event=event)
+        if mouse_event is None:
+            return False
+        if self._active_mode == "pan":
+            self._toolbar.drag_pan(mouse_event)
+        elif self._active_mode == "zoom":
+            self._toolbar.drag_zoom(mouse_event)
+        self._sync()
+        return True
+
+    def _finish_mode(self, watched, event) -> bool:
+        if not self._active_mode or MouseButton is None:
+            return False
+        pos = self._event_pos(event)
+        mouse_event = self._build_mouse_event(watched, "button_release_event", pos, button=MouseButton.LEFT, gui_event=event)
+        if mouse_event is None:
+            return False
+        if self._active_mode == "pan":
+            self._toolbar.release_pan(mouse_event)
+        elif self._active_mode == "zoom":
+            self._toolbar.release_zoom(mouse_event)
+        self._active_mode = ""
+        self._sync()
+        return True
 
     def eventFilter(self, watched, event) -> bool:
         if self._toolbar is None:
             return False
         if event.type() == QEvent.Type.Wheel:
-            pos = self._event_pos(event)
-            axis = self._axis_at(watched, pos)
-            if axis is None:
+            if self._axis_at(watched, self._event_pos(event)) is None:
                 return False
             delta = event.angleDelta().y() if hasattr(event, "angleDelta") else 0
             if delta == 0:
                 return False
-            try:
-                center_x, center_y = axis.transData.inverted().transform((pos.x(), pos.y()))
-            except Exception:
-                return False
-            self._zoom_axis(axis, float(center_x), float(center_y), 0.8 if delta > 0 else 1.25)
-            watched.draw_idle()
-            self._sync()
-            return True
+            callback = self._zoom_in_callback if delta > 0 else self._zoom_out_callback
+            if callable(callback):
+                callback()
+                self._sync()
+                return True
+            return False
         if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.RightButton:
             return self._reset()
         if event.type() == QEvent.Type.MouseButtonPress:
-            pos = self._event_pos(event)
-            axis = self._axis_at(watched, pos)
-            if axis is None:
-                return False
-            self._clear_toolbar_mode()
             if event.button() == Qt.MouseButton.RightButton:
-                self._active_mode = "pan"
-                self._active_axis = axis
-                self._press_pos = pos
-                self._press_xlim = axis.get_xlim()
-                self._press_ylim = axis.get_ylim()
-                return True
+                return self._start_mode(watched, event, "pan")
             if event.button() == Qt.MouseButton.LeftButton:
-                self._active_mode = "zoom"
-                self._active_axis = axis
-                self._press_pos = pos
-                self._press_xlim = axis.get_xlim()
-                self._press_ylim = axis.get_ylim()
-                return True
+                return self._start_mode(watched, event, "zoom")
             return False
         if event.type() == QEvent.Type.MouseMove:
-            if self._active_axis is None or self._press_pos is None:
-                return False
-            if event.buttons() & Qt.MouseButton.RightButton and self._active_mode == "pan":
-                self._pan_axis(self._active_axis, self._press_pos, self._event_pos(event))
-                watched.draw_idle()
-                self._sync()
-                return True
-            return False
+            return self._drag_mode(watched, event)
         if event.type() == QEvent.Type.MouseButtonRelease:
-            if self._active_axis is None or self._press_pos is None:
-                return False
             if self._active_mode == "zoom" and event.button() == Qt.MouseButton.LeftButton:
-                self._box_zoom_axis(self._active_axis, self._press_pos, self._event_pos(event))
-                watched.draw_idle()
-                self._sync()
-                self._active_axis = None
-                self._active_mode = ""
-                self._press_pos = None
-                self._press_xlim = None
-                self._press_ylim = None
-                return True
+                return self._finish_mode(watched, event)
             if self._active_mode == "pan" and event.button() == Qt.MouseButton.RightButton:
-                self._active_axis = None
-                self._active_mode = ""
-                self._press_pos = None
-                self._press_xlim = None
-                self._press_ylim = None
-                self._sync()
-                return True
+                return self._finish_mode(watched, event)
         return False
 
 
-def create_navigation_toolbar(canvas, parent: QWidget, *, sync_callback: Optional[Callable[[], None]] = None):
+def create_navigation_toolbar(
+    canvas,
+    parent: QWidget,
+    *,
+    sync_callback: Optional[Callable[[], None]] = None,
+    reset_callback: Optional[Callable[[], None]] = None,
+    zoom_in_callback: Optional[Callable[[], None]] = None,
+    zoom_out_callback: Optional[Callable[[], None]] = None,
+):
     if canvas is None or NavigationToolbar is None:
         return None
     toolbar = NavigationToolbar(canvas, parent)
     toolbar.hide()
-    gesture_filter = _PreviewGestureFilter(toolbar, sync_callback, canvas)
+    gesture_filter = _PreviewGestureFilter(
+        toolbar,
+        sync_callback,
+        reset_callback=reset_callback,
+        zoom_in_callback=zoom_in_callback,
+        zoom_out_callback=zoom_out_callback,
+        parent=canvas,
+    )
     canvas.installEventFilter(gesture_filter)
     setattr(canvas, "_preview_gesture_filter", gesture_filter)
     return toolbar

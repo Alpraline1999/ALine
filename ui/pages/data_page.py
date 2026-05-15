@@ -405,6 +405,10 @@ class DataPage(QWidget):
                 QEvent.Type.MouseButtonDblClick,
             }:
                 self._hide_fluent_tooltip()
+        if watched is getattr(self, "_manage_help_label", None):
+            if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
+                self._edit_current_node_remark()
+                return True
         if watched in preview_targets:
             if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
                 file_path = self._supported_drop_file_path(event.mimeData())
@@ -621,6 +625,8 @@ class DataPage(QWidget):
         self._manage_help_label = CaptionLabel("数据文件、系列、图像和源文件会按当前节点能力开放管理动作。", panel)
         self._manage_help_label.setWordWrap(True)
         self._apply_muted_summary_label_style(self._manage_help_label)
+        self._manage_help_label.setCursor(Qt.CursorShape.IBeamCursor)
+        self._manage_help_label.installEventFilter(self)
         manage_layout.addWidget(self._manage_help_label)
 
         name_row = QHBoxLayout()
@@ -937,6 +943,9 @@ class DataPage(QWidget):
                 self._preview_canvas,
                 self._plot_preview_panel,
                 sync_callback=self._sync_preview_nav_toggle_states,
+                reset_callback=self._reset_preview_view,
+                zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
+                zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 self._plot_preview_toolbar_widget,
@@ -2096,8 +2105,7 @@ class DataPage(QWidget):
             curve = self._find_curve(project, self._selected_node_id) if project is not None else None
             return "" if curve is None else str(getattr(curve, "remark", "") or "")
         if self._selected_node_kind == "analysis_result":
-            node = self._current_tree_node()
-            return "" if node is None else str(getattr(node, "remark", "") or "")
+            return project_manager.get_analysis_result_remark(self._selected_node_id)
         if self._selected_node_kind == "image_work":
             node = self._current_tree_node()
             return "" if node is None else str(getattr(node, "remark", "") or "")
@@ -2341,12 +2349,7 @@ class DataPage(QWidget):
         elif self._selected_node_kind == "curve":
             changed = project_manager.set_curve_remark(self._selected_node_id, remark)
         elif self._selected_node_kind == "analysis_result":
-            analysis = project_manager.current_project.find_analysis(self._selected_node_id) if project_manager.current_project is not None else None
-            if analysis is not None:
-                analysis.remark = remark.strip()
-                if project_manager.current_project is not None:
-                    project_manager.current_project.is_modified = True
-                changed = True
+            changed = project_manager.set_analysis_result_remark(self._selected_node_id, remark)
         else:
             changed = project_manager.set_node_remark(self._selected_node_id, remark)
 
@@ -3780,6 +3783,7 @@ class DataPage(QWidget):
         self._manage_name_edit.setEnabled(self._can_rename_current_node())
         self._btn_apply_name.setEnabled(self._can_rename_current_node())
         self._btn_delete_node.setEnabled(self._can_delete_current_node())
+        remark_text = self._current_node_remark().strip()
         if is_source_file_leaf or import_group is not None:
             self._btn_export.setEnabled(False)
         if not enabled:
@@ -3793,15 +3797,15 @@ class DataPage(QWidget):
             source_path = self._current_source_file_path()
             self._btn_import_source_to_data.setEnabled(bool(source_path) and self._supports_dataset_import(source_path))
             self._btn_import_source_to_digitize.setEnabled(bool(source_path) and self._supports_digitize_import(source_path))
-            self._manage_help_label.setText("源文件节点支持重命名、删除，以及按文件类型直接导入到数据集或数字化。")
+            self._manage_help_label.setText(remark_text or "未设置备注")
         elif import_group == "source_files":
-            self._manage_help_label.setText("源文件文件夹可重命名/删除；右侧文件管理器用于浏览系统文件并导入为源文件。")
+            self._manage_help_label.setText(remark_text or "未设置备注")
         elif import_group == "datasets":
-            self._manage_help_label.setText("数据集文件夹可重命名/删除；右侧文件管理器用于浏览外部数据文件并导入到当前数据集目录。")
+            self._manage_help_label.setText(remark_text or "未设置备注")
         elif import_group == "images":
-            self._manage_help_label.setText("数字化文件夹可重命名/删除；右侧文件管理器用于浏览系统图片并导入到当前数字化目录。")
+            self._manage_help_label.setText(remark_text or "未设置备注")
         else:
-            self._manage_help_label.setText("数据文件、系列、图像、图片和分析结果按当前节点能力开放重命名、删除、导出或继续流转。")
+            self._manage_help_label.setText(remark_text or "未设置备注")
         self._refresh_pending_source_controls()
 
     # ─────────────────────────────────────────────────────────

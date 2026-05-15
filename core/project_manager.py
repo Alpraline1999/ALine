@@ -1296,6 +1296,34 @@ class ProjectManager:
             self.current_project.is_modified = True
         return True
 
+    def get_analysis_result_remark(self, node_id: str) -> str:
+        node = self.get_node_by_id(node_id)
+        if node is None or getattr(node, "kind", None) != "analysis_result":
+            return ""
+        analysis_id = getattr(node, "analysis_id", None)
+        analysis = self.current_project.find_analysis(analysis_id) if self.current_project is not None and analysis_id else None
+        if analysis is not None and str(getattr(analysis, "remark", "") or "").strip():
+            return str(getattr(analysis, "remark", "") or "")
+        return str(getattr(node, "remark", "") or "")
+
+    def set_analysis_result_remark(self, node_id: str, remark: str) -> bool:
+        node = self.get_node_by_id(node_id)
+        if node is None or getattr(node, "kind", None) != "analysis_result":
+            return False
+        clean = str(remark or "").strip()
+        changed = False
+        if getattr(node, "remark", "") != clean:
+            setattr(node, "remark", clean)
+            changed = True
+        analysis_id = getattr(node, "analysis_id", None)
+        analysis = self.current_project.find_analysis(analysis_id) if self.current_project is not None and analysis_id else None
+        if analysis is not None and getattr(analysis, "remark", "") != clean:
+            analysis.remark = clean
+            changed = True
+        if changed and self.current_project is not None:
+            self.current_project.is_modified = True
+        return analysis is not None or node is not None
+
     def get_children(self, parent_id: Optional[str]) -> list["TreeNodeUnion"]:
         p = self.current_project
         if p is None or p.tree is None:
