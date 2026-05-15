@@ -1879,12 +1879,8 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                         continue
                     if 0 <= offset < len(self._selected_inputs):
                         payloads.append(self._selected_inputs[offset])
-            elif picker_visible:
-                payloads = []
             else:
                 payloads = _implicit_payloads()
-        elif picker_visible:
-            payloads = []
         else:
             payloads = _implicit_payloads()
         return payloads

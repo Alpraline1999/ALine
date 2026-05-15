@@ -1219,12 +1219,9 @@ class ProjectTreeWidget(QWidget):
     def _selected_items_for_context_menu(self, anchor_item: ProjectTreeItem) -> List[ProjectTreeItem]:
         selected_items = [item for item in self._tree.selectedItems() if item is not None]
         if anchor_item not in selected_items:
-            anchor_project_id = self._item_project_id(anchor_item)
-            selected_project_ids = {self._item_project_id(item) for item in selected_items}
-            if not selected_items or len(selected_project_ids) != 1 or anchor_project_id not in selected_project_ids:
-                self._tree.clearSelection()
-                anchor_item.setSelected(True)
-                selected_items = [anchor_item]
+            self._tree.clearSelection()
+            anchor_item.setSelected(True)
+            selected_items = [anchor_item]
         self._tree.setCurrentItem(anchor_item)
         return selected_items
 

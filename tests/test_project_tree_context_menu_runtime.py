@@ -90,6 +90,22 @@ class TestProjectTreeContextMenuRuntime(unittest.TestCase):
             self._open_context_menu(data_node.id)["删除"].trigger()
         self.assertIsNone(self.pm.get_node_by_id(data_node.id))
 
+    def test_context_menu_actions_target_anchor_item_instead_of_previous_selection(self) -> None:
+        from models.schemas import DataFile, DataSeries
+
+        other = DataFile(name="other.csv", series=[DataSeries(name="other", x=[0.0, 1.0], y=[1.0, 2.0])])
+        other_node = self.pm.add_data_file(other)
+        self.widget.refresh()
+
+        first_node = next(node for node in self.project.tree.nodes if node.kind == "data_file" and node.data_file_id == self.df.id)
+        self.widget.select_node(first_node.id)
+
+        with mock.patch("ui.widgets.project_tree.TextInputDialog.get_text", return_value=("other-renamed.csv", True)):
+            self._open_context_menu(other_node.id)["重命名"].trigger()
+
+        self.assertEqual(self.pm.get_node_by_id(other_node.id).name, "other-renamed.csv")
+        self.assertEqual(self.pm.get_node_by_id(first_node.id).name, self.df.name)
+
 
 if __name__ == "__main__":
     unittest.main()
