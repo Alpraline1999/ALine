@@ -93,6 +93,17 @@ PipelineLine = Dict[str, Any]
 PipelineResult = Tuple[List[PipelineLine], List[str]]
 
 
+def _ensure_list(value: Any, default: Optional[list[Any]] = None) -> list[Any]:
+    if isinstance(value, bool):
+        return list(default or [])
+    if value is None:
+        return list(default or [])
+    try:
+        return list(value)
+    except TypeError:
+        return list(default or [])
+
+
 def apply_pipeline(xs: List[float], ys: List[float], ops: List[Dict[str, Any]]) -> XY:
     """按顺序执行操作列表，返回新的 (xs, ys)；原始数据不变。"""
     lines, _warnings = apply_pipeline_to_lines([
@@ -100,7 +111,7 @@ def apply_pipeline(xs: List[float], ys: List[float], ops: List[Dict[str, Any]]) 
     ], ops)
     if not lines:
         return [], []
-    return list(lines[0].get("x", []) or []), list(lines[0].get("y", []) or [])
+    return _ensure_list(lines[0].get("x")), _ensure_list(lines[0].get("y"))
 
 
 def apply_operation(xs: List[float], ys: List[float], op: Dict[str, Any]) -> XY:
@@ -109,7 +120,7 @@ def apply_operation(xs: List[float], ys: List[float], op: Dict[str, Any]) -> XY:
     ], op)
     if not lines:
         return [], []
-    return list(lines[0].get("x", []) or []), list(lines[0].get("y", []) or [])
+    return _ensure_list(lines[0].get("x")), _ensure_list(lines[0].get("y"))
 
 
 def apply_pipeline_to_lines(
@@ -221,7 +232,7 @@ def apply_operation_to_lines(lines: List[PipelineLine], op: Dict[str, Any]) -> P
 
     processed_lines = []
     for line in working_lines:
-        nx, ny = _apply_builtin_operation(list(line.get("x", []) or []), list(line.get("y", []) or []), t, p)
+        nx, ny = _apply_builtin_operation(_ensure_list(line.get("x")), _ensure_list(line.get("y")), t, p)
         processed_lines.append(_merge_line_payload(line, {"x": nx, "y": ny}))
     return processed_lines, []
 
@@ -259,14 +270,14 @@ def _normalize_pipeline_lines(lines: List[PipelineLine]) -> List[PipelineLine]:
     for index, item in enumerate(lines or []):
         if isinstance(item, dict):
             payload = dict(item)
-            xs = list(payload.get("x", []) or [])
-            ys = list(payload.get("y", []) or [])
+            xs = _ensure_list(payload.get("x"))
+            ys = _ensure_list(payload.get("y"))
             payload["x"] = xs
             payload["y"] = ys
             payload["name"] = str(payload.get("name", f"line_{index + 1}") or f"line_{index + 1}")
         else:
-            xs = list(getattr(item, "x", []) or [])
-            ys = list(getattr(item, "y", []) or [])
+            xs = _ensure_list(getattr(item, "x", None))
+            ys = _ensure_list(getattr(item, "y", None))
             payload = {
                 "name": str(getattr(item, "name", f"line_{index + 1}") or f"line_{index + 1}"),
                 "x": xs,
@@ -282,8 +293,8 @@ def _merge_line_payload(base: PipelineLine, update: Dict[str, Any]) -> PipelineL
         if key in {"warnings", "lines"}:
             continue
         merged[key] = value
-    merged["x"] = list(merged.get("x", []) or [])
-    merged["y"] = list(merged.get("y", []) or [])
+    merged["x"] = _ensure_list(merged.get("x"))
+    merged["y"] = _ensure_list(merged.get("y"))
     merged["name"] = str(merged.get("name", "") or "")
     return merged
 
@@ -408,7 +419,7 @@ def _normalize_processing_output_lines(payload: Any, template_line: PipelineLine
 
 
 def _sorted_line_payload(line: PipelineLine) -> PipelineLine:
-    xs, ys = _sorted_unique_xy(list(line.get("x", []) or []), list(line.get("y", []) or []))
+    xs, ys = _sorted_unique_xy(_ensure_list(line.get("x")), _ensure_list(line.get("y")))
     return _merge_line_payload(line, {"x": xs, "y": ys})
 
 
@@ -417,7 +428,7 @@ def _op_pairwise_compute(lines: List[PipelineLine], p: Dict[str, Any]) -> Pipeli
         raise ValueError("双曲线计算需要恰好选择两条输入曲线")
 
     aligned_lines, _warnings = align_lines_to_common_x(
-        [line_from_xy(list(line.get("x", []) or []), list(line.get("y", []) or [])) for line in lines],
+        [line_from_xy(_ensure_list(line.get("x")), _ensure_list(line.get("y"))) for line in lines],
         {"align_mode": "strict"},
     )
     primary_payload, secondary_payload = lines
@@ -575,7 +586,7 @@ def _op_resample(xs: List[float], ys: List[float], p: dict) -> XY:
             target = _pick_from_pool(pool, target_idx)
         except (ValueError, IndexError):
             return x_sorted, y_sorted
-        target_x = list(target.get("x", []) or [])
+        target_x = _ensure_list(target.get("x"))
         if not target_x or _x_values_equal(x_sorted, target_x):
             return x_sorted, y_sorted
         algorithm = str(p.get("algorithm", "linear") or "linear").strip().lower()
@@ -607,14 +618,14 @@ def _apply_resample_to_lines(lines: List[PipelineLine], params: Dict[str, Any]) 
     if not working_lines:
         return [], []
     if len(working_lines) == 1:
-        xs, ys = _op_resample(list(working_lines[0].get("x", []) or []), list(working_lines[0].get("y", []) or []), params)
+        xs, ys = _op_resample(_ensure_list(working_lines[0].get("x")), _ensure_list(working_lines[0].get("y")), params)
         return [_merge_line_payload(working_lines[0], {"x": xs, "y": ys})], []
 
     mode = str(params.get("mode", "spacing") or "spacing").strip().lower()
     if mode == "align":
         rebuilt: List[PipelineLine] = []
         for line in working_lines:
-            xs, ys = _op_resample(list(line.get("x", []) or []), list(line.get("y", []) or []), params)
+            xs, ys = _op_resample(_ensure_list(line.get("x")), _ensure_list(line.get("y")), params)
             rebuilt.append(_merge_line_payload(line, {"x": xs, "y": ys}))
         return rebuilt, []
 
@@ -634,13 +645,13 @@ def _apply_resample_to_lines(lines: List[PipelineLine], params: Dict[str, Any]) 
         grid_params["resample_mode"] = "count"
         grid_params["n"] = max(2, int(params.get("n", 200) or 200))
 
-    grid_lines = [line_from_xy(list(line.get("x", []) or []), list(line.get("y", []) or [])) for line in working_lines]
+    grid_lines = [line_from_xy(_ensure_list(line.get("x")), _ensure_list(line.get("y"))) for line in working_lines]
     grid = _build_alignment_grid(grid_lines, grid_params)
     algorithm = str(params.get("algorithm", "linear") or "linear").strip().lower()
     rebuilt = [
         _merge_line_payload(line, {
             "x": list(grid),
-            "y": _resample_to_grid(list(line.get("x", []) or []), list(line.get("y", []) or []), grid, algorithm),
+            "y": _resample_to_grid(_ensure_list(line.get("x")), _ensure_list(line.get("y")), grid, algorithm),
         })
         for line in working_lines
     ]

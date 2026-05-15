@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from core.extension_api import normalize_extension_lines_list
-from processing.data_engine import _op_lines_list
+from processing.data_engine import _op_lines_list, apply_operation_to_lines
 
 
 class TestExtensionProtocolCleanup(unittest.TestCase):
@@ -17,6 +17,16 @@ class TestExtensionProtocolCleanup(unittest.TestCase):
         indices, present = _op_lines_list(op)
         self.assertEqual(indices, [])
         self.assertFalse(present)
+
+    def test_pipeline_line_payload_bool_fields_are_normalized(self) -> None:
+        lines, warnings = apply_operation_to_lines(
+            [{"name": "bad", "x": True, "y": True}],
+            {"type": "crop", "params": {"x_min": 0.0, "x_max": 1.0}},
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(lines[0]["x"], [])
+        self.assertEqual(lines[0]["y"], [])
 
 
 if __name__ == "__main__":
