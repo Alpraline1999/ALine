@@ -381,12 +381,12 @@ msgid "手动取点"
 msgstr "手动取点"
 
 #: ui/pages/home_page.py:146
-msgid "一站式科研数据管理与可视化工作台"
-msgstr "一站式科研数据管理与可视化工作台"
+msgid "一站式二维曲线数据工作台"
+msgstr "一站式二维曲线数据工作台"
 
 #: ui/pages/home_page.py:148
-msgid "项目、数据、绘图和分析结果在同一工作台内流转。"
-msgstr "项目、数据、绘图和分析结果在同一工作台内流转。"
+msgid "项目、数据、处理、绘图和分析在同一工作台内流转。"
+msgstr "项目、数据、处理、绘图和分析在同一工作台内流转。"
 
 #: ui/pages/home_page.py:157
 msgid "软件主页"

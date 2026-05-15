@@ -157,7 +157,7 @@ class _HomeBannerWidget(QWidget):
 
         self._hero_title = LargeTitleLabel("ALine", self)
 
-        self._hero_subtitle = SubtitleLabel(_("一站式科研数据管理与可视化工作台"), self)
+        self._hero_subtitle = SubtitleLabel(_("一站式二维曲线数据工作台"), self)
 
         self._hero_hint = QLabel(_("项目、数据、绘图和分析结果在同一工作台内流转。"), self)
         self._hero_hint.setWordWrap(False)
