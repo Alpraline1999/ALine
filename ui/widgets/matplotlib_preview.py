@@ -103,11 +103,15 @@ class _PreviewGestureFilter(QObject):
     def _build_mouse_event(self, canvas, event_name: str, pos: QPointF, *, button=None, gui_event=None):
         if canvas is None or MouseEvent is None:
             return None
+        if gui_event is not None and hasattr(canvas, "mouseEventCoords"):
+            x, y = canvas.mouseEventCoords(gui_event)
+        else:
+            x, y = pos.x(), pos.y()
         return MouseEvent(
             event_name,
             canvas,
-            pos.x(),
-            pos.y(),
+            x,
+            y,
             button=button,
             key=None,
             step=0,
@@ -149,7 +153,8 @@ class _PreviewGestureFilter(QObject):
             self._toggle_button_for_mode(mode, True)
         elif preview_navigation_mode(self._toolbar) != mode:
             return False
-        mouse_event = self._build_mouse_event(watched, "button_press_event", pos, button=MouseButton.LEFT, gui_event=event)
+        mouse_button = MouseButton.RIGHT if mode == "pan" else MouseButton.LEFT
+        mouse_event = self._build_mouse_event(watched, "button_press_event", pos, button=mouse_button, gui_event=event)
         if mouse_event is None:
             return False
         if mode == "pan":
@@ -178,7 +183,8 @@ class _PreviewGestureFilter(QObject):
         if not self._active_mode or MouseButton is None:
             return False
         pos = self._event_pos(event)
-        mouse_event = self._build_mouse_event(watched, "button_release_event", pos, button=MouseButton.LEFT, gui_event=event)
+        mouse_button = MouseButton.RIGHT if self._active_mode == "pan" else MouseButton.LEFT
+        mouse_event = self._build_mouse_event(watched, "button_release_event", pos, button=mouse_button, gui_event=event)
         if mouse_event is None:
             return False
         if self._active_mode == "pan":
