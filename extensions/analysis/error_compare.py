@@ -4,7 +4,7 @@ import math
 from typing import Any, Dict, List
 
 from core.extension_api import AnalysisExtension
-from extensions.processing.extension_tools import line_from_xy, line_xy, normalize_lines
+from extensions.processing.extension_tools import align_lines_to_common_x, line_from_xy, line_xy, normalize_lines
 
 
 VERSION = "0.1.0"
@@ -39,14 +39,16 @@ def compute_error_metrics(xs1: List[float], ys1: List[float], xs2: List[float], 
 
 
 def _handler(lines, params):
-    del params
     normalized_lines = normalize_lines(lines)
     if len(normalized_lines) < 2:
         raise ValueError("error_compare 需要两条输入数据")
-    first = normalized_lines[0]
-    second = normalized_lines[1]
-    x1, y1 = line_xy(first)
-    x2, y2 = line_xy(second)
+
+    aligned_lines, _warnings = align_lines_to_common_x(normalized_lines[:2], {"align_mode": "auto"})
+    if len(aligned_lines) < 2:
+        raise ValueError("对齐后有效曲线不足 2 条")
+
+    x1, y1 = line_xy(aligned_lines[0])
+    x2, y2 = line_xy(aligned_lines[1])
     result = compute_error_metrics(
         x1,
         y1,
