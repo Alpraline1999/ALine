@@ -62,6 +62,31 @@ from .project_tree_delegate import ProjectTreeWrapAnywhereDelegate
 from .project_tree_drag_drop import ProjectTreeDragDropHelper
 from .project_tree_menu_commands import ProjectTreeMenuBuilder
 
+# ── 全局资源导入/导出 类型标记 ──────────────────────────
+_ALINE_EXPORT_TYPE_MAP: dict[str, str] = {
+    "global_pipeline": "pipeline",
+    "global_curve_style_template": "curve_style",
+    "global_plot_style": "plot_style",
+    "global_report_template": "report_template",
+    "global_extension_config": "extension_config",
+}
+
+_IMPORT_KIND_TO_ASSET_TYPE: dict[str, str] = {
+    "pipeline": "pipeline",
+    "curve_style": "curve_style",
+    "plot_style": "plot_style",
+    "report_template": "report_template",
+    "extension_config": "extension_config",
+}
+
+_IMPORT_KIND_LABEL: dict[str, str] = {
+    "pipeline": "Pipelines",
+    "curve_style": "曲线样式",
+    "plot_style": "绘图样式",
+    "report_template": "报告模板",
+    "extension_config": "扩展配置",
+}
+
 
 class _PMProxy:
     __slots__ = ()
@@ -244,6 +269,8 @@ class ProjectTreeWidget(QWidget):
             _cmd_import_source_files=self._cmd_import_source_files,
             _cmd_import_digitize_images=self._cmd_import_digitize_images,
             _cmd_rename_global=self._cmd_rename_global,
+            _cmd_import_global_assets=self._cmd_import_global_assets,
+            _cmd_export_global_asset=self._cmd_export_global_asset,
             _cmd_prune_empty_folders=self._cmd_prune_empty_folders,
             _cmd_move_batch=self._cmd_move_batch,
             _cmd_move_virtual=self._cmd_move_virtual,
@@ -804,9 +831,6 @@ class ProjectTreeWidget(QWidget):
             visible_children += 1
         if _allowed("plot_styles"):
             plot_group = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
-            plot_themes = sorted(global_assets.list_plot_themes(include_builtin=True), key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)))
-            for theme in plot_themes:
-                plot_group.addChild(self._make_synthetic_item(theme.name, "global_plot_theme", make_plot_style_asset_key("theme", theme.id), FIF.PIE_SINGLE))
             templates = global_assets.list_figure_templates()
             for tmpl in sorted(
                 templates,
@@ -2044,6 +2068,7 @@ class ProjectTreeWidget(QWidget):
         config_payload = global_assets.export_extension_config_to_json(config_id)
         if config_payload is None:
             return
+        config_payload["_aline_asset_type"] = "extension_config"
         default_name = f"{str(config_payload.get('name') or 'extension_config').strip()}.json"
         file_path, _ = QFileDialog.getSaveFileName(self, "导出扩展配置", default_name, "JSON (*.json)")
         if not file_path:
@@ -2112,3 +2137,293 @@ class ProjectTreeWidget(QWidget):
             counter += 1
             name = f"{base_name} ({counter})"
         return name
+
+    # ─────────────────────────────────────────────────────────
+    # 全局资源导入 / 导出
+    # ─────────────────────────────────────────────────────────
+
+    def _cmd_import_global_assets(self, group_node_id: str) -> None:
+        """从 .json 文件批量导入全局资源。"""
+        from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
+        from core.extension_api import extension_registry
+        from core.extension_definition import compare_extension_versions
+        from models.schemas import SavedPipeline, FigureConfig, ReportTemplate, CurveStyleTemplate
+        from core.global_assets import ExtensionConfigPreset
+        from ui.widgets.import_conflict_dialog import ImportConflictDialog
+        from ui.dialogs.fluent_dialogs import TextInputDialog
+        import copy
+
+        # 确定目标类型
+        target_info: Optional[dict] = None
+        if group_node_id == "__global_pipelines__":
+            target_info = {"kind": "pipeline", "model": SavedPipeline, "list_fn": lambda: global_assets.list_saved_pipelines(), "add_fn": lambda item: global_assets.add_saved_pipeline(item), "get_fn": lambda i: global_assets.get_saved_pipeline(getattr(i, "id", ""))}
+        elif group_node_id == "__global_curve_styles__":
+            target_info = {"kind": "curve_style", "model": CurveStyleTemplate, "list_fn": lambda: [t for t in global_assets.list_curve_style_templates(include_builtin=True) if not getattr(t, "is_builtin", False)], "add_fn": lambda item: global_assets.add_curve_style_template(item), "get_fn": lambda i: global_assets.get_curve_style_template(getattr(i, "id", ""))}
+        elif group_node_id == "__global_plot_styles__":
+            target_info = {"kind": "plot_style", "model": FigureConfig, "list_fn": lambda: [t for t in global_assets.list_figure_templates() if not getattr(t, "is_builtin", False)], "add_fn": lambda item: global_assets.add_figure_template(item), "get_fn": lambda i: global_assets.get_figure_template(getattr(i, "id", ""))}
+        elif group_node_id == "__global_report_templates__":
+            target_info = {"kind": "report_template", "model": ReportTemplate, "list_fn": lambda: [t for t in global_assets.list_report_templates(include_builtin=True) if not getattr(t, "is_builtin", False)], "add_fn": lambda item: global_assets.add_report_template(item), "get_fn": lambda i: global_assets.get_report_template(getattr(i, "id", ""))}
+        elif group_node_id == "__global_extension_configs__":
+            target_info = {"kind": "extension_config", "model": ExtensionConfigPreset, "list_fn": lambda: global_assets.list_extension_configs(), "add_fn": lambda item: global_assets.add_extension_config(category=str(getattr(item, "category", "") or "").strip(), extension_type=str(getattr(item, "extension_type", "") or "").strip(), extension_name=str(getattr(item, "extension_name", "") or "").strip(), extension_version=getattr(item, "extension_version", None), name=str(getattr(item, "name", "") or "").strip(), options=dict(getattr(item, "options", {}) or {}))}
+        elif group_node_id.startswith("extension_config_group|") and "|" in group_node_id and "|empty" not in group_node_id:
+            category = group_node_id.split("|", 1)[1]
+            target_info = {"kind": "extension_config", "model": ExtensionConfigPreset, "category": category, "list_fn": lambda: global_assets.list_extension_configs(category=category), "add_fn": lambda item: global_assets.add_extension_config(category=category, extension_type=str(getattr(item, "extension_type", "")), extension_name=str(getattr(item, "extension_name", "")), extension_version=getattr(item, "extension_version", None), name=str(getattr(item, "name", "")), options=dict(getattr(item, "options", {}) or {})), "get_fn": lambda i: global_assets.get_extension_config(getattr(i, "id", ""))}
+
+        if target_info is None:
+            return
+
+        # 选择文件
+        file_paths, _ = QFileDialog.getOpenFileNames(self, "选择要导入的 JSON 文件", "", "JSON (*.json)")
+        if not file_paths:
+            return
+
+        model_cls = target_info["model"]
+        expected_asset_type = _IMPORT_KIND_TO_ASSET_TYPE.get(target_info["kind"])
+        kind_label = _IMPORT_KIND_LABEL.get(target_info["kind"], target_info["kind"])
+
+        # ── Phase 1：加载 → 类型校验 → 内容校验 → 反序列化 ──
+        validated_entries: list[dict] = []
+        phase1_errors: list[str] = []
+
+        for file_path in file_paths:
+            file_name = Path(file_path).name
+            try:
+                with open(file_path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except Exception as exc:
+                phase1_errors.append(f"{file_name}: 读取失败 - {exc}")
+                continue
+
+            # _aline_asset_type 校验（全部 5 种资源统一处理）
+            file_asset_type = data.get("_aline_asset_type")
+            if file_asset_type is not None and file_asset_type != expected_asset_type:
+                phase1_errors.append(f"{file_name}: 类型不匹配 (文件类型「{file_asset_type}」, 目标类型「{expected_asset_type}」)")
+                continue
+
+            # 扩展配置内容校验
+            if target_info["kind"] == "extension_config":
+                ext_type = str(data.get("extension_type") or "").strip()
+                ext_version = str(data.get("extension_version") or "1.0.0").strip()
+                if ext_type:
+                    found_ext = None
+                    for ext in extension_registry.iter_extensions():
+                        if getattr(ext, "type", "") == ext_type:
+                            found_ext = ext
+                            break
+                    if found_ext is None:
+                        phase1_errors.append(f"{file_name}: 没有对应扩展「{ext_type}」")
+                        continue
+                    try:
+                        cmp = compare_extension_versions(ext_version, getattr(found_ext, "version", "1.0.0"))
+                        if cmp != 0:
+                            InfoBar.warning("版本不一致",
+                                            f"导入 v{ext_version}，当前 v{getattr(found_ext, 'version', '?')}",
+                                            parent=self._dialog_parent(), position=InfoBarPosition.TOP, duration=3000)
+                    except (ValueError, AttributeError):
+                        pass
+
+            # 反序列化
+            try:
+                if target_info["kind"] == "extension_config":
+                    item = model_cls(**data)
+                else:
+                    item = model_cls.model_validate(data)
+            except Exception as exc:
+                phase1_errors.append(f"{file_name}: 数据解析失败 - {exc}")
+                continue
+
+            validated_entries.append({
+                "item": item,
+                "file_path": file_path,
+                "file_name": file_name,
+            })
+
+        # 报告 Phase 1 错误
+        if phase1_errors:
+            error_msg = "\n".join(phase1_errors[:10])
+            if len(phase1_errors) > 10:
+                error_msg += f"\n...及其他 {len(phase1_errors) - 10} 个错误"
+            MessageBox("导入错误", f"以下文件无法导入:\n{error_msg}", self._dialog_parent()).exec()
+
+        if not validated_entries:
+            self._notify_tree_warning("导入失败", "没有有效的文件可导入")
+            return
+
+        # ── 确认对话框 ──
+        file_list_str = "\n".join(f"- {e['file_name']}" for e in validated_entries)
+        confirm = MessageBox(
+            "确认导入",
+            f"即将导入 {len(validated_entries)} 个文件为 {kind_label}\n\n文件清单:\n{file_list_str}\n\n是否继续?",
+            self._dialog_parent(),
+        )
+        if not confirm.exec():
+            return
+
+        # ── Phase 2：冲突检测 + 添加 ──
+        list_fn = target_info["list_fn"]
+        add_fn = target_info["add_fn"]
+        existing_items = list_fn()
+        existing_names = {str(getattr(item, "name", "") or "").strip() for item in existing_items}
+        existing_ids = {str(getattr(item, "id", "") or "").strip() for item in existing_items}
+
+        apply_to_all = False
+        global_skip_or_overwrite: Optional[str] = None
+        imported_count = 0
+        skipped_count = 0
+        overwritten_count = 0
+
+        for entry in validated_entries:
+            item = entry["item"]
+            item_name = str(getattr(item, "name", "") or "").strip()
+            item_id = str(getattr(item, "id", "") or "").strip()
+
+            # 冲突检测
+            name_conflict = item_name and item_name in existing_names
+            id_conflict = item_id and item_id in existing_ids
+
+            if name_conflict or id_conflict:
+                if not apply_to_all:
+                    existing_info_lines = []
+                    if id_conflict:
+                        existing_info_lines.append("ID 已存在")
+                    if name_conflict:
+                        existing_info_lines.append(f"名称「{item_name}」已存在")
+                    dialog = ImportConflictDialog(
+                        item_name or item_id,
+                        existing_info="; ".join(existing_info_lines),
+                        imported_info=entry["file_path"],
+                        parent=self._dialog_parent(),
+                    )
+                    dialog.exec()
+                    result_action = dialog.result_action
+                    apply_to_all = dialog.apply_to_all
+                    if apply_to_all:
+                        global_skip_or_overwrite = result_action
+                else:
+                    result_action = global_skip_or_overwrite  # type: ignore
+
+                if result_action == "skip":
+                    skipped_count += 1
+                    continue
+                elif result_action == "overwrite":
+                    if target_info["kind"] == "extension_config":
+                        if id_conflict:
+                            global_assets.delete_extension_config(item_id)
+                    else:
+                        if id_conflict:
+                            if target_info["kind"] == "pipeline":
+                                global_assets.delete_saved_pipeline(item_id)
+                            elif target_info["kind"] == "curve_style":
+                                global_assets.delete_curve_style_template(item_id)
+                            elif target_info["kind"] == "plot_style":
+                                global_assets.delete_figure_template(item_id)
+                            elif target_info["kind"] == "report_template":
+                                global_assets.delete_report_template(item_id)
+                    if item_name in existing_names:
+                        existing_names.discard(item_name)
+                    if item_id in existing_ids:
+                        existing_ids.discard(item_id)
+                elif result_action == "rename":
+                    suggested = f"{item_name} ({imported_count + 1})"
+                    user_name, ok = TextInputDialog.get_text(
+                        self._dialog_parent(), "重命名",
+                        f"为「{item_name}」输入新名称:", text=suggested,
+                    )
+                    if not ok or not user_name.strip():
+                        skipped_count += 1
+                        continue
+                    new_name = user_name.strip()
+                    if hasattr(item, "name"):
+                        item.name = new_name
+                    item_name = new_name
+                    if hasattr(item, "id") and item_id and item_id in existing_ids:
+                        import uuid
+                        new_id = str(uuid.uuid4())
+                        item.id = new_id
+                        item_id = new_id
+                else:
+                    skipped_count += 1
+                    continue
+
+            # 添加
+            try:
+                if target_info["kind"] == "extension_config":
+                    add_fn(item)
+                elif target_info["kind"] == "pipeline":
+                    global_assets.add_saved_pipeline(item)
+                elif target_info["kind"] == "curve_style":
+                    global_assets.add_curve_style_template(copy.deepcopy(item))
+                elif target_info["kind"] == "plot_style":
+                    global_assets.add_figure_template(copy.deepcopy(item))
+                elif target_info["kind"] == "report_template":
+                    global_assets.add_report_template(copy.deepcopy(item))
+                imported_count += 1
+                existing_names.add(item_name)
+                if item_id:
+                    existing_ids.add(item_id)
+            except Exception as exc:
+                self._notify_tree_warning("添加失败", f"{item_name}\n{exc}")
+                continue
+
+        self.refresh()
+        summary_parts = [f"成功导入 {imported_count} 个"]
+        if skipped_count:
+            summary_parts.append(f"跳过 {skipped_count} 个")
+        self._notify_tree_success("导入完成", "，".join(summary_parts))
+
+    def _cmd_export_global_asset(self, kind: str, node_id: str, name: str) -> None:
+        """导出单个全局资源为 .json 文件。"""
+        from core.global_assets import global_assets, parse_plot_style_asset_key
+        from core.global_assets import ExtensionConfigPreset
+
+        # 根据 kind 获取资源
+        item = None
+        if kind == "global_pipeline":
+            item = global_assets.get_saved_pipeline(node_id)
+        elif kind == "global_curve_style_template":
+            item = global_assets.get_curve_style_template(node_id)
+        elif kind == "global_plot_style":
+            style_type, asset_id = parse_plot_style_asset_key(node_id)
+            item = global_assets.get_figure_template(asset_id)
+        elif kind == "global_report_template":
+            item = global_assets.get_report_template(node_id)
+        elif kind == "global_extension_config":
+            item = global_assets.get_extension_config(node_id)
+
+        if item is None:
+            self._notify_tree_warning("导出失败", "未找到该资源")
+            return
+
+        # 内置资源不导出
+        if bool(getattr(item, "is_builtin", False)):
+            self._notify_tree_warning("导出失败", "内置资源不可导出")
+            return
+
+        # 序列化
+        try:
+            payload = item.model_dump()
+        except Exception as exc:
+            self._notify_tree_warning("导出失败", f"序列化错误: {exc}")
+            return
+
+        # 清理 ID（让导入时自动生成新 ID）
+        payload.pop("id", None)
+
+        # 写入类型标记（用于导入时校验）
+        asset_type = _ALINE_EXPORT_TYPE_MAP.get(kind)
+        if asset_type:
+            payload["_aline_asset_type"] = asset_type
+
+        default_name = f"{str(name or 'resource').strip()}.json"
+        file_path, _ = QFileDialog.getSaveFileName(self, "导出资源", default_name, "JSON (*.json)")
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            self._notify_tree_warning("导出失败", str(exc))
+            return
+
+        self._notify_tree_success("已导出", file_path)

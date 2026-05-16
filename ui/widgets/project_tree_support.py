@@ -141,7 +141,6 @@ _KIND_CONFIG = {
     "global_report_template": (FIF.DOCUMENT, "#8C6C00"),
     "global_curve_style_template": (FIF.PENCIL_INK, "#107C10"),
     "global_plot_style": (FIF.PIE_SINGLE,    "#8C6C00"),
-    "global_plot_theme": (FIF.PIE_SINGLE,    "#8C6C00"),
         "global_extension_config": (getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "#0078D4"),
     "global_ai_prompt": (FIF.CHAT,           "#881798"),
     "global_ai_skill": (FIF.DEVELOPER_TOOLS, "#881798"),
@@ -245,7 +244,7 @@ _ROLE = Qt.ItemDataRole.UserRole
 _PROJECT_ROLE = Qt.ItemDataRole.UserRole + 1
 _SYNTHETIC_GLOBAL_KINDS = frozenset({
     "global_root", "global_group", "global_pipeline",
-    "global_report_template", "global_curve_style_template", "global_plot_style", "global_plot_theme", "global_extension_config",
+    "global_report_template", "global_curve_style_template", "global_plot_style", "global_extension_config",
     "global_ai_prompt", "global_ai_skill", "global_ai_agent",
 })
 

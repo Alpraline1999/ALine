@@ -25,12 +25,19 @@ from qfluentwidgets import (
     SettingCardGroup,
     Slider,
     SmoothScrollArea,
+    SpinBox,
     SwitchSettingCard,
 )
 
 from core.ai.providers import get_provider_preset
 from core.shortcut_manager import shortcut_manager
-from core.ui_preferences import get_tree_name_display_mode, get_ui_language, is_page_tree_focus_mode_enabled
+from core.ui_preferences import (
+    get_tree_name_display_mode,
+    get_ui_language,
+    is_page_tree_focus_mode_enabled,
+    get_auto_save_enabled,
+    get_auto_save_interval_seconds,
+)
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.theme import (
     body_text_style_sheet,
@@ -437,6 +444,70 @@ def build_general_tab(page) -> QWidget:
     appearance_group.addSettingCard(onboarding_card)
     layout.addWidget(appearance_group)
 
+    # ── 自动保存 ──
+    auto_save_group = SettingCardGroup(_("自动保存"), content)
+    page._auto_save_group = auto_save_group
+    page._auto_save_group_title = page._bind_theme_label_style(
+        auto_save_group.titleLabel,
+        lambda: card_title_style_sheet(font_size=18),
+    )
+
+    auto_save_enable_card = SwitchSettingCard(
+        FIF.SAVE,
+        _("启用自动保存"),
+        _("定时自动保存当前项目，不影响手动保存操作。"),
+        parent=auto_save_group,
+    )
+    page._auto_save_enable_card = auto_save_enable_card
+    page._bind_setting_card_styles(
+        auto_save_enable_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    auto_save_enable_card.setChecked(get_auto_save_enabled())
+    auto_save_enable_card.checkedChanged.connect(page._on_auto_save_enabled_changed)
+    auto_save_group.addSettingCard(auto_save_enable_card)
+
+    auto_save_interval_card = SettingCard(
+        FIF.UPDATE,
+        _("自动保存间隔"),
+        _("自动保存之间的等待时间。更改后立即生效。"),
+        parent=auto_save_group,
+    )
+    page._auto_save_interval_card = auto_save_interval_card
+    page._bind_setting_card_styles(
+        auto_save_interval_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+
+    interval_spin = SpinBox(auto_save_interval_card)
+    interval_spin.setRange(1, 999)
+    total_seconds = get_auto_save_interval_seconds()
+    # Determine initial unit: use minutes if ≥ 60, hours if ≥ 3600, else seconds
+    if total_seconds >= 3600:
+        interval_spin.setValue(max(1, total_seconds // 3600))
+        default_unit_idx = 2
+    elif total_seconds >= 60:
+        interval_spin.setValue(max(1, total_seconds // 60))
+        default_unit_idx = 1
+    else:
+        interval_spin.setValue(max(1, total_seconds))
+        default_unit_idx = 0
+    page._auto_save_interval_spin = interval_spin
+    interval_spin.valueChanged.connect(page._on_auto_save_interval_changed)
+
+    interval_unit = ComboBox(auto_save_interval_card)
+    interval_unit.addItems([_("秒"), _("分"), _("时")])
+    interval_unit.setCurrentIndex(default_unit_idx)
+    page._auto_save_interval_unit = interval_unit
+    interval_unit.currentIndexChanged.connect(page._on_auto_save_interval_unit_changed)
+
+    row = page._build_setting_card_row(auto_save_interval_card, interval_spin, interval_unit)
+    page._attach_setting_card_control(auto_save_interval_card, row)
+    auto_save_group.addSettingCard(auto_save_interval_card)
+
+    layout.addWidget(auto_save_group)
     layout.addStretch()
     return outer
 
@@ -522,6 +593,7 @@ def build_shortcuts_tab(page) -> QWidget:
         lambda: placeholder_text_style_sheet(font_size=11),
     )
     shortcuts_editor_card.setExpand(True)
+    shortcuts_editor_card.viewLayout.setContentsMargins(16, 0, 16, 0)
     filter_container = QWidget(shortcuts_editor_card)
     filter_layout = QVBoxLayout(filter_container)
     filter_layout.setContentsMargins(0, 0, 0, 0)

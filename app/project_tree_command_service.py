@@ -36,12 +36,27 @@ class ProjectTreeCommandService:
     project_modified: Callable[[], None]
     last_error_message: Callable[[], str]
 
-    def _activate_project(self, project_id: str | None) -> None:
-        if project_id:
-            project_manager.set_current_project(project_id)
+    def _resolve_project_id_for_node(self, node_id: str | None) -> str | None:
+        if not node_id:
+            return None
+        finder = getattr(project_manager, "find_project_containing_node", None)
+        if not callable(finder):
+            return None
+        project = finder(node_id)
+        return None if project is None else getattr(project, "id", None)
+
+    def _activate_project(self, project_id: str | None = None, *, node_id: str | None = None, parent_id: str | None = None) -> None:
+        resolved = project_id
+        if resolved:
+            if not project_manager.get_project(resolved):
+                resolved = None
+        if not resolved:
+            resolved = self._resolve_project_id_for_node(node_id) or self._resolve_project_id_for_node(parent_id)
+        if resolved:
+            project_manager.set_current_project(resolved)
 
     def delete_node(self, node_id: str, node_name: str, *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=node_id)
         if not self.confirm_delete("确认删除", f"确定要删除「{node_name}」及其所有内容吗？"):
             return
         if not project_manager.delete_node(node_id):
@@ -51,7 +66,7 @@ class ProjectTreeCommandService:
         self.project_modified()
 
     def add_child_folder(self, parent_id: str, *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=parent_id)
         name, ok = self.prompt_text("新建子文件夹", "文件夹名称:", "输入子文件夹名称")
         if not ok:
             return
@@ -64,7 +79,7 @@ class ProjectTreeCommandService:
         self.project_modified()
 
     def add_dataset_node(self, parent_id: str, *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=parent_id)
         name, ok = self.prompt_text("新建数据集", "数据集名称:", "输入数据集名称")
         if not ok:
             return
@@ -80,6 +95,7 @@ class ProjectTreeCommandService:
         self.project_modified()
 
     def rename_virtual(self, kind: str, node_id: str, current_name: str) -> None:
+        self._activate_project(None, node_id=node_id)
         title = "重命名数据列" if kind == "series" else "重命名曲线"
         new_name, ok = self.prompt_existing_text(title, "名称:", current_name)
         if not ok or not new_name.strip():
@@ -92,7 +108,7 @@ class ProjectTreeCommandService:
         self.notify_warning("重命名失败", self.last_error_message() or "名称已存在或当前节点不支持重命名")
 
     def rename_selected_item(self, kind: str, node_id: str, current_name: str, *, project_id: str | None = None) -> bool:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=node_id)
         title_map = {
             "folder": "重命名文件夹",
             "data_file": "重命名数据文件",
@@ -116,7 +132,7 @@ class ProjectTreeCommandService:
         return True
 
     def edit_selected_item_remark(self, kind: str, node_id: str, current_name: str, current_remark: str = "", *, project_id: str | None = None) -> bool:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=node_id)
         if kind.startswith("global_") or kind == "project":
             return False
         title_map = {
@@ -166,7 +182,7 @@ class ProjectTreeCommandService:
         return True
 
     def delete_virtual(self, kind: str, node_id: str, node_name: str, *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=node_id)
         if not self.confirm_delete("确认删除", f"确定要删除「{node_name}」吗？"):
             return
         if kind == "series":
@@ -178,6 +194,8 @@ class ProjectTreeCommandService:
             self.project_modified()
 
     def delete_batch(self, payloads: list[dict[str, object]]) -> None:
+        if payloads:
+            self._activate_project(None, node_id=str(payloads[0].get("node_id", "")))
         count = len(payloads)
         names = [str(item["name"]) for item in payloads[:5]]
         summary = "\n".join(f"- {name}" for name in names)
@@ -201,6 +219,8 @@ class ProjectTreeCommandService:
             self.project_modified()
 
     def move_batch(self, payloads: list[dict[str, object]], choices: list[tuple[str, str]]) -> None:
+        if payloads:
+            self._activate_project(None, node_id=str(payloads[0].get("node_id", "")))
         labels = [label for label, _ in choices]
         selected, ok = self.choose_item("批量移动到", "目标父级:", labels)
         if not ok or not selected:
@@ -223,7 +243,7 @@ class ProjectTreeCommandService:
             self.notify_warning("批量移动未完成", self.last_error_message() or f"有 {failed} 项移动失败")
 
     def move_virtual(self, kind: str, node_id: str, choices: list[tuple[str, str]], *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=node_id)
         labels = [label for label, _ in choices]
         selected, ok = self.choose_item("移动到", "目标父级:", labels)
         if not ok or not selected:
@@ -242,12 +262,9 @@ class ProjectTreeCommandService:
         if kind == "global_curve_style_template":
             item = global_assets.get_curve_style_template(node_id)
             return bool(item is not None and not item.is_builtin)
-        if kind in ("global_plot_style", "global_plot_theme"):
+        if kind == "global_plot_style":
             style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                return global_assets.get_figure_template(asset_id) is not None
-            item = global_assets.get_plot_theme(asset_id)
-            return bool(item is not None and not item.is_builtin)
+            return global_assets.get_figure_template(asset_id) is not None
         if kind == "global_extension_config":
             item = global_assets.get_extension_config(node_id)
             return bool(item is not None and not item.is_default)
@@ -268,11 +285,9 @@ class ProjectTreeCommandService:
             return global_assets.update_report_template(node_id, name=clean_name)
         if kind == "global_curve_style_template":
             return global_assets.update_curve_style_template(node_id, name=clean_name)
-        if kind in ("global_plot_style", "global_plot_theme"):
+        if kind == "global_plot_style":
             style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                return global_assets.update_figure_template(asset_id, name=clean_name)
-            return global_assets.update_plot_theme(asset_id, name=clean_name)
+            return global_assets.update_figure_template(asset_id, name=clean_name)
         if kind == "global_extension_config":
             return global_assets.update_extension_config(node_id, name=clean_name) is not None
         if kind == "global_ai_prompt":
@@ -292,11 +307,9 @@ class ProjectTreeCommandService:
             return global_assets.delete_report_template(node_id)
         if kind == "global_curve_style_template":
             return global_assets.delete_curve_style_template(node_id)
-        if kind in ("global_plot_style", "global_plot_theme"):
+        if kind == "global_plot_style":
             style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                return global_assets.delete_figure_template(asset_id)
-            return global_assets.delete_plot_theme(asset_id)
+            return global_assets.delete_figure_template(asset_id)
         if kind == "global_extension_config":
             return global_assets.delete_extension_config(node_id)
         if kind == "global_ai_prompt":
@@ -341,7 +354,7 @@ class ProjectTreeCommandService:
             self.project_modified()
 
     def import_source_files(self, parent_id: str | None = None, *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=parent_id)
         clean_paths = [path for path in self.choose_files("导入源文件", "所有文件 (*.*)") if path]
         if not clean_paths:
             return
@@ -354,7 +367,7 @@ class ProjectTreeCommandService:
         self.project_modified()
 
     def import_digitize_images(self, parent_id: str | None = None, *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=parent_id)
         clean_paths = [
             path
             for path in self.choose_files(
@@ -400,7 +413,7 @@ class ProjectTreeCommandService:
         display_name: str | None = None,
         project_id: str | None = None,
     ) -> str | None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=parent_id)
         if not self.supports_digitize_import(source_path):
             return None
         try:
@@ -411,7 +424,7 @@ class ProjectTreeCommandService:
         return self.linked_tree_node_id("image_work", "image_work_id", image.id)
 
     def import_data_file(self, parent_id: str | None = None, *, project_id: str | None = None) -> None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=parent_id)
         file_path = self.choose_file(
             "导入数据文件",
             "数据文件 (*.csv *.txt *.dat *.tsv *.xlsx *.xls *.json *.npy *.npz);;所有文件 (*)",
@@ -433,7 +446,7 @@ class ProjectTreeCommandService:
         target_data_file_id: str | None = None,
         project_id: str | None = None,
     ) -> str | None:
-        self._activate_project(project_id)
+        self._activate_project(project_id, node_id=target_data_file_id, parent_id=target_folder_id)
         if not self.supports_data_file_import(source_path):
             self.notify_warning("导入失败", "当前文件类型不支持导入为数据文件")
             return None
@@ -458,6 +471,7 @@ class ProjectTreeCommandService:
         target_folder_id: str | None = None,
         target_data_file_id: str | None = None,
     ) -> str | None:
+        self._activate_project(None, node_id=target_data_file_id, parent_id=target_folder_id)
         series_list = dialog.get_results()
         if not series_list:
             return None

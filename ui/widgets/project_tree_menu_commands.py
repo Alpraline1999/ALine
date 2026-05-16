@@ -73,6 +73,8 @@ class ProjectTreeMenuBuilder:
         _cmd_import_source_files: Callable,
         _cmd_import_digitize_images: Callable,
         _cmd_rename_global: Callable,
+        _cmd_import_global_assets: Callable,
+        _cmd_export_global_asset: Callable,
         _cmd_prune_empty_folders: Callable,
         _cmd_move_batch: Callable,
         _cmd_move_virtual: Callable,
@@ -129,6 +131,8 @@ class ProjectTreeMenuBuilder:
         self._cmd_import_source_files = _cmd_import_source_files
         self._cmd_import_digitize_images = _cmd_import_digitize_images
         self._cmd_rename_global = _cmd_rename_global
+        self._cmd_import_global_assets = _cmd_import_global_assets
+        self._cmd_export_global_asset = _cmd_export_global_asset
         self._cmd_prune_empty_folders = _cmd_prune_empty_folders
         self._cmd_move_batch = _cmd_move_batch
         self._cmd_move_virtual = _cmd_move_virtual
@@ -218,6 +222,17 @@ class ProjectTreeMenuBuilder:
             )
             menu.exec(self._tree.viewport().mapToGlobal(pos))
 
+    def _item_project_id(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
+        if item is None:
+            return None
+        project_id = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if project_id:
+            return project_id
+        parent = item.parent()
+        if parent is not None:
+            return self._item_project_id(parent)
+        return None
+
     def _activate_item_project(self, item: Optional[QTreeWidgetItem]) -> None:
         if item is None:
             return
@@ -231,17 +246,6 @@ class ProjectTreeMenuBuilder:
         d = item.data(0, Qt.ItemDataRole.UserRole)
         if d:
             return d[0], d[1]
-        return None
-
-    def _item_project_id(self, item: Optional[QTreeWidgetItem]) -> Optional[str]:
-        if item is None:
-            return None
-        project_id = item.data(0, Qt.ItemDataRole.UserRole + 1)
-        if project_id:
-            return project_id
-        parent = item.parent()
-        if parent is not None:
-            return self._item_project_id(parent)
         return None
 
     def _build_batch_menu(self, menu: RoundMenu, batch_payloads: list[dict[str, object]], selected_items: list[QTreeWidgetItem], pos) -> None:
@@ -285,9 +289,21 @@ class ProjectTreeMenuBuilder:
             manage_entries.append((FIF.DOCUMENT, "应用到分析页", self._page_dispatcher.make_activation_callback(kind, node_id)))
         elif kind == "global_curve_style_template":
             manage_entries.append((FIF.PENCIL_INK, "应用到可视化", self._page_dispatcher.make_activation_callback(kind, node_id)))
-        elif kind in ("global_plot_style", "global_plot_theme"):
+        elif kind == "global_plot_style":
             manage_entries.append((FIF.PIE_SINGLE, "应用到可视化", self._page_dispatcher.make_activation_callback(kind, node_id)))
         elif kind == "global_group":
+            # 导入菜单：分组根节点
+            if node_id == "__global_pipelines__":
+                manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
+            elif node_id == "__global_curve_styles__":
+                manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
+            elif node_id == "__global_plot_styles__":
+                manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
+            elif node_id == "__global_report_templates__":
+                manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
+            elif node_id == "__global_extension_configs__":
+                manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
+            # 新建配置（扩展配置子分组专用）
             if self._parse_extension_config_group_node_id(node_id) is not None:
                 manage_entries.append((FIF.ADD, "新建配置", lambda: self._cmd_create_extension_config(node_id)))
         elif kind == "global_extension_config":
@@ -298,6 +314,10 @@ class ProjectTreeMenuBuilder:
                 manage_entries.append((getattr(FIF, "PIN", FIF.SETTING), "设为默认", lambda: self._cmd_set_default_extension_config(node_id)))
         elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
             manage_entries.append((FIF.EDIT, "在设置中查看", self._page_dispatcher.make_activation_callback(kind, node_id)))
+        # 导出菜单：非 builtin 叶子节点
+        if kind in ("global_pipeline", "global_curve_style_template", "global_plot_style", "global_report_template"):
+            if not node_id.startswith("builtin:"):
+                manage_entries.append((FIF.SAVE, "导出为文件", lambda: self._cmd_export_global_asset(kind, node_id, item.text(0))))
         if self._can_edit_global_asset(kind, node_id):
             manage_entries.extend([
                 (FIF.EDIT, "重命名", lambda: self._cmd_rename_global(kind, node_id, item.text(0))),
@@ -341,53 +361,50 @@ class ProjectTreeMenuBuilder:
 
     def _build_folder_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         node = project_manager.get_node_by_id(node_id)
         is_protected = self._is_protected_folder(node)
         managed_group_type = self._folder_collection_group(node_id)
         if managed_group_type in self._MANAGED_FOLDER_GROUP_TYPES:
             if managed_group_type == "datasets":
-                import_entries.append((self._NEW_DATASET_ACTION_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id, project_id=project_id)))
-                import_entries.append((self._IMPORT_DATA_ACTION_ICON, "导入数据文件...", lambda: self._cmd_import_data_file(node_id, project_id=project_id)))
+                import_entries.append((self._NEW_DATASET_ACTION_ICON, "新建数据集", lambda: self._cmd_add_dataset_node(node_id)))
+                import_entries.append((self._IMPORT_DATA_ACTION_ICON, "导入数据文件...", lambda: self._cmd_import_data_file(node_id)))
             if managed_group_type == "source_files":
-                import_entries.append((FIF.DOWNLOAD, "批量导入源文件...", lambda: self._cmd_import_source_files(node_id, project_id=project_id)))
+                import_entries.append((FIF.DOWNLOAD, "批量导入源文件...", lambda: self._cmd_import_source_files(node_id)))
             if managed_group_type == "images":
-                import_entries.append((FIF.PHOTO, "导入图片...", lambda: self._cmd_import_digitize_images(node_id, project_id=project_id)))
-            import_entries.append((FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id, project_id=project_id)))
+                import_entries.append((FIF.PHOTO, "导入图片...", lambda: self._cmd_import_digitize_images(node_id)))
+            import_entries.append((FIF.FOLDER_ADD, "新建子文件夹", lambda: self._cmd_add_child_folder(node_id)))
             if managed_group_type == "pictures":
                 manage_entries.append((self._PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id)))
             elif managed_group_type == "source_files":
                 manage_entries.append((self._SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id)))
         if not is_protected:
             manage_entries.extend([
-                (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("folder", node_id, current_name, project_id=project_id)),
-                (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="folder", node_id=node_id, current_name=current_name, project_id=project_id)),
-                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+                (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("folder", node_id, current_name)),
+                (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="folder", node_id=node_id, current_name=current_name)),
+                (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
             ])
             move_choices = self._move_target_choices("folder", node_id)
             if move_choices:
-                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("folder", node_id, move_choices, project_id=project_id)))
+                manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("folder", node_id, move_choices)))
         if managed_group_type in self._MANAGED_FOLDER_GROUP_TYPES:
             manage_entries.append((FIF.SYNC, "清理空子文件夹", lambda: self._cmd_prune_empty_folders(node_id, scope_label=current_name)))
 
     def _build_data_file_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         move_choices = self._move_target_choices("data_file", node_id)
         manage_entries.extend([
             (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("data_file_to_chart", node_id)),
             (FIF.DEVELOPER_TOOLS, "发送到处理", self._page_dispatcher.make_activation_callback("data_file_to_process", node_id)),
             (FIF.SEARCH, "发送到分析", self._page_dispatcher.make_activation_callback("data_file_to_analysis", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("data_file", node_id, current_name, project_id=project_id)),
-            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="data_file", node_id=node_id, current_name=current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("data_file", node_id, current_name)),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="data_file", node_id=node_id, current_name=current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
         if move_choices:
-            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("data_file", node_id, move_choices, project_id=project_id)))
+            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("data_file", node_id, move_choices)))
 
     def _build_source_file_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         move_choices = self._move_target_choices("source_file", node_id)
         import_entries.extend([
             (self._IMPORT_DATA_ACTION_ICON, "导入到数据集", self._page_dispatcher.make_activation_callback("source_file_to_data", node_id)),
@@ -395,118 +412,110 @@ class ProjectTreeMenuBuilder:
         ])
         manage_entries.extend([
             (self._SOURCE_FOLDER_ICON, "在文件夹打开", lambda: self._open_source_file_folder(node_id, source_node=True)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("source_file", node_id, current_name, project_id=project_id)),
-            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="source_file", node_id=node_id, current_name=current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("source_file", node_id, current_name)),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="source_file", node_id=node_id, current_name=current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
         if move_choices:
-            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("source_file", node_id, move_choices, project_id=project_id)))
+            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("source_file", node_id, move_choices)))
 
     def _build_series_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         move_choices = self._move_target_choices("series", node_id)
         manage_entries.extend([
             (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("series_to_chart", node_id)),
             (FIF.DEVELOPER_TOOLS, "发送到处理", self._page_dispatcher.make_activation_callback("series_to_process", node_id)),
             (FIF.SEARCH, "发送到分析", self._page_dispatcher.make_activation_callback("series_to_analysis", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("series", node_id, current_name, project_id=project_id)),
-            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="series", node_id=node_id, current_name=current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual("series", node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("series", node_id, current_name)),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="series", node_id=node_id, current_name=current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual("series", node_id, current_name)),
         ])
         if move_choices:
-            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("series", node_id, move_choices, project_id=project_id)))
+            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("series", node_id, move_choices)))
 
     def _build_image_work_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         move_choices = self._move_target_choices("image_work", node_id)
         manage_entries.extend([
             (FIF.ADD, "新增曲线", self._page_dispatcher.make_activation_callback("image_work_add_curve", node_id)),
             (self._OPEN_DIGITIZE_ACTION_ICON, "打开取点", self._page_dispatcher.make_activation_callback("image_work", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("image_work", node_id, current_name, project_id=project_id)),
-            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="image_work", node_id=node_id, current_name=current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("image_work", node_id, current_name)),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="image_work", node_id=node_id, current_name=current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
         if move_choices:
-            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("image_work", node_id, move_choices, project_id=project_id)))
+            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("image_work", node_id, move_choices)))
 
     def _build_picture_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         move_choices = self._move_target_choices("picture", node_id)
         manage_entries.extend([
             (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("picture_to_chart", node_id)),
             (self._PICTURE_GROUP_ICON, "在文件夹打开", lambda: self._open_picture_folder(node_id, picture_node=True)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("picture", node_id, current_name, project_id=project_id)),
-            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="picture", node_id=node_id, current_name=current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("picture", node_id, current_name)),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="picture", node_id=node_id, current_name=current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
         if move_choices:
-            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("picture", node_id, move_choices, project_id=project_id)))
+            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("picture", node_id, move_choices)))
 
     def _build_curve_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         move_choices = self._move_target_choices("curve", node_id)
         manage_entries.extend([
             (self._IMPORT_DATA_ACTION_ICON, "导出为数据列", self._page_dispatcher.make_activation_callback("curve_export_to_data_file", node_id)),
             (FIF.PIE_SINGLE, "发送到可视化", self._page_dispatcher.make_activation_callback("curve_to_chart", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("curve", node_id, current_name, project_id=project_id)),
-            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="curve", node_id=node_id, current_name=current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual("curve", node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("curve", node_id, current_name)),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="curve", node_id=node_id, current_name=current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete_virtual("curve", node_id, current_name)),
         ])
         if move_choices:
-            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("curve", node_id, move_choices, project_id=project_id)))
+            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("curve", node_id, move_choices)))
 
     def _build_pipeline_menu(self, node_id: str, item, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         manage_entries.extend([
             (FIF.DEVELOPER_TOOLS, "加载到处理页", self._page_dispatcher.make_activation_callback("pipeline", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("pipeline", node_id, current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("pipeline", node_id, current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
 
     def _build_figure_template_menu(self, node_id: str, item, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         manage_entries.extend([
             (FIF.PIE_SINGLE, "加载到可视化", self._page_dispatcher.make_activation_callback("figure_template", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("figure_template", node_id, current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("figure_template", node_id, current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
 
     def _build_report_template_menu(self, node_id: str, item, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         manage_entries.extend([
             (FIF.SEARCH, "加载到分析页", self._page_dispatcher.make_activation_callback("report_template", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("report_template", node_id, current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("report_template", node_id, current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
 
     def _build_analysis_result_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         move_choices = self._move_target_choices("analysis_result", node_id)
         manage_entries.extend([
             (FIF.SEARCH, "发送到分析页", self._page_dispatcher.make_activation_callback("analysis_result", node_id)),
-            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("analysis_result", node_id, current_name, project_id=project_id)),
-            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="analysis_result", node_id=node_id, current_name=current_name, project_id=project_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.EDIT, "重命名", lambda: self._command_service.rename_selected_item("analysis_result", node_id, current_name)),
+            (getattr(FIF, "INFO", FIF.SEARCH), "设置备注", lambda: self._edit_node_remark(kind="analysis_result", node_id=node_id, current_name=current_name)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
         if move_choices:
-            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("analysis_result", node_id, move_choices, project_id=project_id)))
+            manage_entries.append((FIF.SYNC, "移动到...", lambda: self._cmd_move_virtual("analysis_result", node_id, move_choices)))
 
     def _build_ai_menu(self, kind: str, node_id: str, item, manage_entries: list) -> None:
         current_name = item.text(0)
-        project_id = self._item_project_id(item)
         manage_entries.extend([
             (FIF.EDIT, "编辑", self._page_dispatcher.make_activation_callback(kind, node_id)),
-            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name, project_id=project_id)),
+            (FIF.DELETE, "删除", lambda: self._cmd_delete(node_id, current_name)),
         ])
 
-    def _edit_node_remark(self, kind: str, node_id: str, current_name: str, *, project_id: str | None = None) -> None:
+    def _edit_node_remark(self, kind: str, node_id: str, current_name: str) -> None:
         current_remark = self._command_service.get_node_remark(kind, node_id)
-        self._command_service.edit_selected_item_remark(kind, node_id, current_name, current_remark, project_id=project_id)
+        if self._command_service.edit_selected_item_remark(kind, node_id, current_name, current_remark):
+            self._project_modified()

@@ -68,7 +68,7 @@ from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
 from core.app_context import get_app_context
 from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
-from models.schemas import Curve, CurveStyleTemplate, DataFile, DataSeries, Dataset, FigureConfig, PlotTheme, ReportTemplate, SavedPipeline
+from models.schemas import Curve, CurveStyleTemplate, DataFile, DataSeries, Dataset, FigureConfig, ReportTemplate, SavedPipeline
 from app.workspaces.data_workspace import DataWorkspaceController, DataWorkspaceState
 from ui.dialogs.export_flow import choose_curve_file_export_plan, curve_export_file_filter
 from ui.dialogs.fluent_dialogs import TextInputDialog
@@ -944,14 +944,15 @@ class DataPage(QWidget):
                 self._preview_canvas,
                 self._plot_preview_panel,
                 sync_callback=self._sync_preview_nav_toggle_states,
-                reset_callback=self._reset_preview_view,
+                reset_callback=lambda: self._reset_preview_view(sync_buttons=True),
+                gesture_reset_callback=lambda: self._reset_preview_view(sync_buttons=False),
                 zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
                 zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 self._plot_preview_toolbar_widget,
                 button_size=WORKBENCH_BUTTON_HEIGHT,
-                reset_callback=self._reset_preview_view,
+                reset_callback=lambda _checked=False: self._reset_preview_view(sync_buttons=True),
                 zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
                 zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
                 pan_toggle_callback=self._toggle_preview_pan_mode,
@@ -2011,6 +2012,10 @@ class DataPage(QWidget):
             self._selected_node_id = None
         self._refresh_management_panel()
 
+    def refresh_node_panel(self) -> None:
+        """刷新节点管理面板（备注等信息），不触发全页刷新。"""
+        self._refresh_management_panel()
+
     def _clear_preview(self):
         self._set_extension_config_editor_mode(False)
         self._show_preview_mode()
@@ -2835,7 +2840,6 @@ class DataPage(QWidget):
             "global_pipeline": "全局流程链",
             "global_curve_style_template": "全局曲线样式",
             "global_plot_style": "全局绘图样式",
-            "global_plot_theme": "全局绘图样式",
             "global_report_template": "全局报告模板",
             "global_extension_config": "全局扩展配置",
         }
@@ -2873,16 +2877,13 @@ class DataPage(QWidget):
             return "全局分组"
         if kind == "global_pipeline" and node_id:
             item = global_assets.get_saved_pipeline(node_id)
-            return item.name or node_id
+            return item.name or node_id if item is not None else node_id
         if kind == "global_curve_style_template" and node_id:
             item = global_assets.get_curve_style_template(node_id)
-            return item.name or node_id
-        if kind in {"global_plot_style", "global_plot_theme"} and node_id:
+            return item.name or node_id if item is not None else node_id
+        if kind == "global_plot_style" and node_id:
             style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                item = global_assets.get_figure_template(asset_id)
-            else:
-                item = global_assets.get_plot_theme(asset_id)
+            item = global_assets.get_figure_template(asset_id)
             return "" if item is None else getattr(item, "name", asset_id) or asset_id
         if kind == "global_report_template" and node_id:
             item = global_assets.get_report_template(node_id)
@@ -2935,7 +2936,6 @@ class DataPage(QWidget):
             "global_pipeline": FIF.DEVELOPER_TOOLS,
             "global_curve_style_template": FIF.PENCIL_INK,
             "global_plot_style": FIF.PIE_SINGLE,
-            "global_plot_theme": FIF.PIE_SINGLE,
             "global_report_template": FIF.DOCUMENT,
             "global_extension_config": getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
         }
@@ -3278,14 +3278,13 @@ class DataPage(QWidget):
                 ],
                 json.dumps(template.model_dump(), ensure_ascii=False, indent=2),
             )
-        if kind in {"global_plot_style", "global_plot_theme"}:
+        if kind == "global_plot_style":
             style_type, asset_id = parse_plot_style_asset_key(node_id)
-            if style_type == "template":
-                template = global_assets.get_figure_template(asset_id)
-                if template is None:
-                    return "", [], None
-                title = template.name or "图表模板"
-                return (
+            template = global_assets.get_figure_template(asset_id)
+            if template is None:
+                return "", [], None
+            title = template.name or "图表模板"
+            return (
                     title,
                     [
                         f"模板名称: {template.name or '默认模板'}",
@@ -3295,20 +3294,6 @@ class DataPage(QWidget):
                     ],
                     json.dumps(template.model_dump(), ensure_ascii=False, indent=2),
                 )
-            theme = global_assets.get_plot_theme(asset_id)
-            if theme is None:
-                return "", [], None
-            title = theme.name or "绘图样式"
-            return (
-                title,
-                [
-                    f"模板名称: {theme.name or '默认模板'}",
-                    "类型: 绘图样式",
-                    f"说明: {getattr(theme, 'description', '') or '无'}",
-                    f"内置: {'是' if bool(getattr(theme, 'is_builtin', False)) else '否'}",
-                ],
-                json.dumps(theme.model_dump(), ensure_ascii=False, indent=2),
-            )
         if kind == "global_report_template":
             template = global_assets.get_report_template(node_id)
             if template is None:
@@ -3347,7 +3332,7 @@ class DataPage(QWidget):
         if kind == "global_curve_style_template":
             self._save_global_curve_style_template(node_id, raw_text)
             return
-        if kind in {"global_plot_style", "global_plot_theme"}:
+        if kind == "global_plot_style":
             self._save_global_plot_template(kind, node_id, raw_text)
             return
         if kind == "global_report_template":
@@ -3401,38 +3386,6 @@ class DataPage(QWidget):
 
     def _save_global_plot_template(self, kind: str, node_id: str, raw_text: str) -> None:
         style_type, asset_id = parse_plot_style_asset_key(node_id)
-        if style_type != "template":
-            theme = global_assets.get_plot_theme(asset_id)
-            if theme is None:
-                InfoBar.warning("保存失败", "当前绘图主题不存在", parent=self, position=InfoBarPosition.TOP)
-                return
-            try:
-                payload = json.loads(raw_text)
-                model = PlotTheme.model_validate(payload)
-            except json.JSONDecodeError as exc:
-                InfoBar.warning("保存失败", f"JSON 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列附近", parent=self, position=InfoBarPosition.TOP)
-                return
-            except Exception as exc:
-                InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
-                return
-            if not global_assets.update_plot_theme(
-                asset_id,
-                name=model.name,
-                description=model.description,
-                canvas_mode=model.canvas_mode,
-                grid_color=model.grid_color,
-                foreground_color=model.foreground_color,
-                background_color=model.background_color,
-                state=model.state,
-            ):
-                InfoBar.warning("保存失败", "当前绘图主题未能更新", parent=self, position=InfoBarPosition.TOP)
-                return
-            self.project_modified.emit()
-            self._show_global_template_editor(kind, node_id)
-            self._refresh_management_panel()
-            InfoBar.success("已保存", f'绘图主题 "{model.name or theme.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
-            return
-
         template = global_assets.get_figure_template(asset_id)
         if template is None:
             InfoBar.warning("保存失败", "当前图表模板不存在", parent=self, position=InfoBarPosition.TOP)
@@ -3637,7 +3590,7 @@ class DataPage(QWidget):
                     item.addChild(self._make_preview_tree_item(f"创建时间: {template.created_at}", getattr(FIF, "DATE_TIME", FIF.DOCUMENT)))
             return item
 
-        if kind in {"global_plot_style", "global_plot_theme"}:
+        if kind == "global_plot_style":
             style_type, asset_id = parse_plot_style_asset_key(node_id)
             if style_type == "template":
                 template = global_assets.get_figure_template(asset_id)
@@ -3651,13 +3604,6 @@ class DataPage(QWidget):
                             item.addChild(self._make_preview_tree_item(f"X 轴: {typed_axis.x_label}", getattr(FIF, "INFO", FIF.DOCUMENT)))
                         if getattr(typed_axis, "y_label", ""):
                             item.addChild(self._make_preview_tree_item(f"Y 轴: {typed_axis.y_label}", getattr(FIF, "INFO", FIF.DOCUMENT)))
-            else:
-                theme = global_assets.get_plot_theme(asset_id)
-                if theme is not None:
-                    item.addChild(self._make_preview_tree_item("类型: 主题样式", getattr(FIF, "INFO", FIF.DOCUMENT)))
-                    if getattr(theme, "description", ""):
-                        item.addChild(self._make_preview_tree_item(f"说明: {theme.description}", getattr(FIF, "INFO", FIF.DOCUMENT)))
-                    item.addChild(self._make_preview_tree_item(f"内置: {'是' if bool(getattr(theme, 'is_builtin', False)) else '否'}", getattr(FIF, "INFO", FIF.DOCUMENT)))
             return item
 
         if kind == "global_report_template":
@@ -3898,9 +3844,10 @@ class DataPage(QWidget):
     def _zoom_preview_axes(self, factor: float) -> None:
         zoom_figure_axes(self._preview_figure, self._preview_canvas, factor, redraw_callback=self._draw_preview)
 
-    def _reset_preview_view(self) -> None:
+    def _reset_preview_view(self, *, sync_buttons: bool = True) -> None:
         self._draw_preview()
-        self._sync_preview_nav_toggle_states()
+        if sync_buttons:
+            self._sync_preview_nav_toggle_states()
 
     def _draw_preview(self, *_args) -> None:
         if self._preview_figure is None or self._preview_canvas is None:
@@ -3950,7 +3897,6 @@ class DataPage(QWidget):
         axis.grid(True, color=gc, alpha=0.35)
         self._preview_figure.tight_layout()
         self._preview_canvas.draw()
-        self._sync_preview_nav_toggle_states()
 
     def _show_xy_preview(self, xs, ys, name: str, x_label: str = "X", y_label: str = "Y"):
         """填充绘图预览和统计摘要。"""
@@ -5230,7 +5176,7 @@ class DataPage(QWidget):
             self._set_actions_enabled(False)
             self._refresh_management_panel()
             return
-        if kind in {"global_pipeline", "global_curve_style_template", "global_plot_style", "global_plot_theme", "global_report_template"} and self._show_global_template_editor(kind, node_id):
+        if kind in {"global_pipeline", "global_curve_style_template", "global_plot_style", "global_report_template"} and self._show_global_template_editor(kind, node_id):
             self._selected_type = None
             self._selected_id = None
             self._set_actions_enabled(False)
