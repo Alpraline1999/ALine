@@ -1,46 +1,8 @@
 from __future__ import annotations
 
-import math
-
 from core.extension_api import AnalysisExtension, ExtensionConfigField
+from extensions.analysis.analysis_tools import correlation as _correlation
 from extensions.processing.extension_tools import line_from_xy, line_xy, normalize_lines
-
-
-def _pearson(values_a, values_b):
-    count = min(len(values_a), len(values_b))
-    if count < 2:
-        return 0.0
-    trimmed_a = list(values_a[:count])
-    trimmed_b = list(values_b[:count])
-    mean_a = sum(trimmed_a) / count
-    mean_b = sum(trimmed_b) / count
-    covariance = sum((left - mean_a) * (right - mean_b) for left, right in zip(trimmed_a, trimmed_b))
-    std_a = math.sqrt(sum((value - mean_a) ** 2 for value in trimmed_a))
-    std_b = math.sqrt(sum((value - mean_b) ** 2 for value in trimmed_b))
-    if std_a <= 1e-12 or std_b <= 1e-12:
-        return 0.0
-    return covariance / (std_a * std_b)
-
-
-def _ranks(values):
-    indexed = sorted(enumerate(values), key=lambda item: item[1])
-    ranks = [0.0] * len(values)
-    index = 0
-    while index < len(indexed):
-        end = index
-        while end + 1 < len(indexed) and indexed[end + 1][1] == indexed[index][1]:
-            end += 1
-        rank = (index + end) / 2.0 + 1.0
-        for current in range(index, end + 1):
-            ranks[indexed[current][0]] = rank
-        index = end + 1
-    return ranks
-
-
-def _correlation(values_a, values_b, method):
-    if method == "spearman":
-        return _pearson(_ranks(values_a), _ranks(values_b))
-    return _pearson(values_a, values_b)
 
 
 def multi_curve_correlation(lines, params):
@@ -54,9 +16,11 @@ def multi_curve_correlation(lines, params):
     comparison_items = []
     for index, line in enumerate(aligned_lines[1:], start=2):
         _line_x, line_y = line_xy(line)
+        corr_result = _correlation(primary_y, line_y, method)
         comparison_items.append({
             "name": f"line_{index}",
-            "correlation": _correlation(primary_y, line_y, method),
+            "correlation": corr_result["r"],
+            "p_value": corr_result.get("p_value"),
         })
 
     best_match = max(comparison_items, key=lambda item: abs(item["correlation"])) if comparison_items else {"name": "", "correlation": 0.0}
@@ -68,6 +32,19 @@ def multi_curve_correlation(lines, params):
         [item["correlation"] for item in comparison_items],
     )
 
+    p_values = [item["p_value"] for item in comparison_items if item.get("p_value") is not None]
+    summary_items = [
+        {"label": "主曲线", "value": primary_name},
+        {"label": "对比数量", "value": len(comparison_items)},
+        {"label": "方法", "value": method},
+        {"label": "最佳匹配", "value": f"{best_match['name']} (r={best_match['correlation']:.4f})"},
+        {"label": "平均相关系数", "value": f"{average_correlation:.4f}"},
+    ]
+    if p_values:
+        min_p = min(p_values)
+        significant = sum(1 for p in p_values if p < 0.05)
+        summary_items.append({"label": "显著对比数", "value": f"{significant}/{len(p_values)}（p<0.05）"})
+
     return {
         "analysis_type": "multi_curve_correlation",
         "source_name": primary_name,
@@ -78,6 +55,7 @@ def multi_curve_correlation(lines, params):
         "best_correlation": best_match["correlation"],
         "average_correlation": average_correlation,
         "alignment_note": "",
+        "summary_items": summary_items,
         "comparison_details": comparison_items,
         "x_label": "对比序号",
         "y_label": "相关系数",
@@ -109,7 +87,7 @@ def register_extensions(registry):
             lines_number=(2, -1),
             settings=True,
             source_kind="builtin",
-            tool_tier="experimental",
+            tool_tier="tool",
             config_fields=[
                 ExtensionConfigField(
                     key="method",
