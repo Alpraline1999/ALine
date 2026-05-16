@@ -43,6 +43,10 @@ from core.ui_preferences import (
     set_ui_language,
     set_page_tree_focus_mode_enabled,
     set_tree_name_display_mode,
+    get_auto_save_enabled,
+    set_auto_save_enabled,
+    get_auto_save_interval_seconds,
+    set_auto_save_interval_seconds,
 )
 from core.i18n import _, reload_translations
 from core.ai.providers import (
@@ -71,6 +75,7 @@ class SettingsPage(QWidget):
     project_modified = Signal()
     assets_modified = Signal()
     replay_onboarding_requested = Signal()
+    auto_save_settings_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -139,6 +144,13 @@ class SettingsPage(QWidget):
         self._tmpl_list = None
         self.theme_combo = None
         self._shortcut_filter_edit = None
+        self._auto_save_group = None
+        self._auto_save_group_title = None
+        self._auto_save_enable_card = None
+        self._auto_save_interval_card = None
+        self._auto_save_interval_spin = None
+        self._auto_save_interval_unit = None
+        self._auto_save_unit_factors = [1, 60, 3600]
         self._shortcut_edits: dict[str, QKeySequenceEdit] = {}
         self._shortcut_rows: dict[str, QWidget] = {}
         self._shortcut_labels: list[BodyLabel] = []
@@ -320,6 +332,7 @@ class SettingsPage(QWidget):
     @staticmethod
     def _attach_setting_card_control(card: SettingCard, widget: QWidget, *, alignment: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignRight) -> None:
         card.hBoxLayout.addWidget(widget, 0, alignment | Qt.AlignmentFlag.AlignVCenter)
+        card.hBoxLayout.addSpacing(16)
 
     @staticmethod
     def _build_setting_card_row(parent: QWidget, *widgets: QWidget) -> QWidget:
@@ -445,6 +458,43 @@ class SettingsPage(QWidget):
             position=InfoBarPosition.TOP,
         )
 
+    # ── 自动保存 ──────────────────────────────────────────────
+
+    def _on_auto_save_enabled_changed(self, checked: bool) -> None:
+        set_auto_save_enabled(bool(checked))
+        self.auto_save_settings_changed.emit()
+
+    def _on_auto_save_interval_changed(self, _value: int) -> None:
+        self._persist_auto_save_interval()
+
+    def _on_auto_save_interval_unit_changed(self, _index: int) -> None:
+        if self._auto_save_interval_spin is None or self._auto_save_interval_unit is None:
+            return
+        current_seconds = self._auto_save_interval_spin.value() * self._get_auto_save_unit_factor()
+        new_idx = self._auto_save_interval_unit.currentIndex()
+        if 0 <= new_idx < len(self._auto_save_unit_factors):
+            new_factor = self._auto_save_unit_factors[new_idx]
+            new_value = max(1, round(current_seconds / new_factor))
+            self._auto_save_interval_spin.blockSignals(True)
+            self._auto_save_interval_spin.setValue(new_value)
+            self._auto_save_interval_spin.blockSignals(False)
+        self._persist_auto_save_interval()
+
+    def _get_auto_save_unit_factor(self) -> int:
+        if self._auto_save_interval_unit is None:
+            return 60
+        idx = self._auto_save_interval_unit.currentIndex()
+        if 0 <= idx < len(self._auto_save_unit_factors):
+            return self._auto_save_unit_factors[idx]
+        return 60
+
+    def _persist_auto_save_interval(self) -> None:
+        if self._auto_save_interval_spin is None or self._auto_save_interval_unit is None:
+            return
+        interval_seconds = self._auto_save_interval_spin.value() * self._get_auto_save_unit_factor()
+        set_auto_save_interval_seconds(interval_seconds)
+        self.auto_save_settings_changed.emit()
+
     def refresh_language_ui(self) -> None:
         """重建设置页可见文案，确保当前页立即切换到新语言。"""
         layout = self.layout()
@@ -520,6 +570,12 @@ class SettingsPage(QWidget):
         self._tmpl_list = None
         self.theme_combo = None
         self._shortcut_filter_edit = None
+        self._auto_save_group = None
+        self._auto_save_group_title = None
+        self._auto_save_enable_card = None
+        self._auto_save_interval_card = None
+        self._auto_save_interval_spin = None
+        self._auto_save_interval_unit = None
         self._provider_keys = list_provider_keys()
 
         self.setup_ui()

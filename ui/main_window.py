@@ -259,6 +259,9 @@ class MainWindow(FluentWindow):
         self._setup_shortcuts()
         self._setup_theme_watcher()
         self._setup_project_signals()
+        self._auto_save_timer = QTimer(self)
+        self._auto_save_timer.setSingleShot(False)
+        self._auto_save_timer.timeout.connect(self._auto_save_project)
 
     def _setup_ui(self):
         self.setWindowTitle("ALine")
@@ -402,6 +405,7 @@ class MainWindow(FluentWindow):
         self.settings_page.replay_onboarding_requested.connect(self._replay_home_onboarding)
         self.settings_page.language_changed.connect(self._on_language_changed)
         self.settings_page.extensions_reloaded.connect(self._on_extensions_reloaded)
+        self.settings_page.auto_save_settings_changed.connect(self._update_auto_save_timer)
         self.settings_page.project_modified.connect(self._on_project_modified)
         self.settings_page.assets_modified.connect(self._tree_panel.tree.refresh)
         self.digitize_page.project_modified.connect(self._on_project_modified)
@@ -580,6 +584,7 @@ class MainWindow(FluentWindow):
         self.data_page.refresh()
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
+        self._update_auto_save_timer()
         self.switchTo(self.data_page)
 
     def _on_project_opened(self, file_path: str):
@@ -588,11 +593,72 @@ class MainWindow(FluentWindow):
         self.data_page.refresh()
         self._tree_panel.tree.refresh()
         self.settings_page.refresh_templates()
+        self._update_auto_save_timer()
         self.switchTo(self.data_page)
 
     def _on_project_modified(self):
         if project_manager.current_project:
             project_manager.current_project.is_modified = True
+        self._update_window_title()
+        if hasattr(self, "data_page"):
+            self.data_page.refresh_node_panel()
+
+    # ── 自动保存 ──────────────────────────────────────────────
+
+    def _update_auto_save_timer(self) -> None:
+        """根据偏好和当前项目状态启动/停止/重启自动保存计时器。"""
+        from core.ui_preferences import get_auto_save_enabled, get_auto_save_interval_seconds
+
+        enabled = get_auto_save_enabled()
+        project = project_manager.current_project
+        has_saved_project = project is not None and project.file_path is not None
+
+        if enabled and has_saved_project:
+            interval = max(1000, get_auto_save_interval_seconds() * 1000)
+            self._auto_save_timer.start(interval)
+        else:
+            self._auto_save_timer.stop()
+
+    def _auto_save_project(self) -> None:
+        """自动保存当前项目。"""
+        project = project_manager.current_project
+        if project is None:
+            return
+        if not project.is_modified:
+            return
+
+        file_path = project.file_path
+        if file_path is None:
+            # 未保存过的新项目 — 弹出另存为对话框
+            from PySide6.QtWidgets import QFileDialog
+            from qfluentwidgets import InfoBar, InfoBarPosition
+            file_path, selected_filter = QFileDialog.getSaveFileName(
+                self,
+                _("保存项目"),
+                f"{project.name}.aline",
+                _("ALine 项目 (*.aline)"),
+            )
+            del selected_filter
+            if not file_path:
+                return
+
+        try:
+            project_manager.save(file_path)
+        except Exception as exc:
+            show_error(self, _("自动保存失败"), str(exc))
+            return
+
+        show_success(self, _("自动保存"), file_path)
+
+        # 刷新 UI
+        if hasattr(self, "data_page"):
+            self.data_page.refresh()
+        if hasattr(self, "digitize_page"):
+            self.digitize_page.refresh_project_tree()
+        if hasattr(self, "_tree_panel"):
+            self._tree_panel.tree.refresh()
+        if hasattr(self, "settings_page"):
+            self.settings_page.refresh_templates()
         self._update_window_title()
 
     def _on_home_quick_start_requested(self, destination: str) -> None:
@@ -720,6 +786,7 @@ class MainWindow(FluentWindow):
                 return
 
         project_manager.close_current_project()
+        self._update_auto_save_timer()
         self.data_page.refresh()
         self.digitize_page.clear_current_image()
         self.digitize_page.refresh_project_tree()

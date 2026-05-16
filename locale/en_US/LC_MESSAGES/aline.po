@@ -153,3 +153,39 @@ msgstr "Extension Configs"
 
 msgid "Pipelines"
 msgstr "Pipelines"
+
+#: ui/pages/settings_page_support.py
+msgid "自动保存"
+msgstr "Auto Save"
+
+#: ui/pages/settings_page_support.py
+msgid "启用自动保存"
+msgstr "Enable auto save"
+
+#: ui/pages/settings_page_support.py
+msgid "定时自动保存当前项目，不影响手动保存操作。"
+msgstr "Periodically save the current project. Does not affect manual saves."
+
+#: ui/pages/settings_page_support.py
+msgid "自动保存间隔"
+msgstr "Auto save interval"
+
+#: ui/pages/settings_page_support.py
+msgid "自动保存之间的等待时间。更改后立即生效。"
+msgstr "Waiting time between auto saves. Changes take effect immediately."
+
+#: ui/pages/settings_page_support.py
+msgid "秒"
+msgstr "Seconds"
+
+#: ui/pages/settings_page_support.py
+msgid "分"
+msgstr "Minutes"
+
+#: ui/pages/settings_page_support.py
+msgid "时"
+msgstr "Hours"
+
+#: ui/main_window.py
+msgid "自动保存失败"
+msgstr "Auto save failed"

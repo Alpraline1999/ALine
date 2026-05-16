@@ -551,3 +551,39 @@ msgstr ""
 msgid "切换浅色、深色或跟随系统。"
 msgstr ""
 
+#: ui/pages/settings_page_support.py
+msgid "自动保存"
+msgstr ""
+
+#: ui/pages/settings_page_support.py
+msgid "启用自动保存"
+msgstr ""
+
+#: ui/pages/settings_page_support.py
+msgid "定时自动保存当前项目，不影响手动保存操作。"
+msgstr ""
+
+#: ui/pages/settings_page_support.py
+msgid "自动保存间隔"
+msgstr ""
+
+#: ui/pages/settings_page_support.py
+msgid "自动保存之间的等待时间。更改后立即生效。"
+msgstr ""
+
+#: ui/pages/settings_page_support.py
+msgid "秒"
+msgstr ""
+
+#: ui/pages/settings_page_support.py
+msgid "分"
+msgstr ""
+
+#: ui/pages/settings_page_support.py
+msgid "时"
+msgstr ""
+
+#: ui/main_window.py
+msgid "自动保存失败"
+msgstr ""
+

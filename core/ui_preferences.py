@@ -21,6 +21,8 @@ class UIPreferences(BaseModel):
     home_onboarding_completed: bool = False
     page_onboarding_completed: dict[str, bool] = Field(default_factory=dict)
     data_page_source_favorites: list[str] = Field(default_factory=list)
+    auto_save_enabled: bool = True
+    auto_save_interval_seconds: int = 300
 
     @classmethod
     def load(cls) -> "UIPreferences":
@@ -141,3 +143,25 @@ def set_data_page_source_favorites(paths: list[str]) -> list[str]:
     prefs.data_page_source_favorites = normalized
     prefs.save()
     return list(prefs.data_page_source_favorites)
+
+
+def get_auto_save_enabled() -> bool:
+    return bool(UIPreferences.load().auto_save_enabled)
+
+
+def set_auto_save_enabled(enabled: bool) -> bool:
+    prefs = UIPreferences.load()
+    prefs.auto_save_enabled = bool(enabled)
+    prefs.save()
+    return bool(prefs.auto_save_enabled)
+
+
+def get_auto_save_interval_seconds() -> int:
+    return max(30, int(UIPreferences.load().auto_save_interval_seconds or 300))
+
+
+def set_auto_save_interval_seconds(interval: int) -> int:
+    prefs = UIPreferences.load()
+    prefs.auto_save_interval_seconds = max(30, int(interval))
+    prefs.save()
+    return int(prefs.auto_save_interval_seconds)
