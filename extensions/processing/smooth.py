@@ -8,12 +8,19 @@ from processing.smoother import smooth_moving_average, smooth_savgol
 def _smooth_handler(lines, params):
     xs, ys = line_xy(primary_line(lines))
     options = dict(params or {})
+    n = len(ys)
     method = options.get("method", "savgol")
     if method == "savgol":
-        nx, ny = smooth_savgol(list(xs), list(ys), int(options.get("window", 11)), int(options.get("poly", 3)))
+        window = max(3, min(int(options.get("window", 11) or 11), n if n % 2 == 1 else n - 1))
+        if window % 2 == 0:
+            window = max(3, window - 1)
+        if window < 3:
+            return line_from_xy(list(xs), list(ys))
+        nx, ny = smooth_savgol(list(xs), list(ys), window, int(options.get("poly", 3)))
         return line_from_xy(nx, ny)
     if method == "moving_avg":
-        nx, ny = smooth_moving_average(list(xs), list(ys), int(options.get("window", 5)))
+        window = max(2, min(int(options.get("window", 5) or 5), n))
+        nx, ny = smooth_moving_average(list(xs), list(ys), window)
         return line_from_xy(nx, ny)
     return line_from_xy(list(xs), list(ys))
 
