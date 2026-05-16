@@ -83,6 +83,27 @@ _EXTENSION_SOURCE_HINTS = {
     "digitize": ("register_digitize", "DigitizeExtension"),
 }
 
+
+def _coerce_iterable_items(value: Any) -> list[Any]:
+    """Return a list-like copy while treating bool/None as empty.
+
+    A number of extension metadata fields are declared as list-ish in the
+    dataclasses, but custom extensions can still hand us stray bool values.
+    Those must not be fed into ``list(...)`` or ``for ... in ...``.
+    """
+    if value is None or isinstance(value, bool):
+        return []
+    if isinstance(value, (str, bytes)):
+        return [value] if value else []
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, tuple):
+        return list(value)
+    try:
+        return list(value)
+    except TypeError:
+        return []
+
 _EXTENSION_TOOL_TIER_LABELS = {
     "tool": _("工具"),
     "experimental": _("实验"),
@@ -105,7 +126,7 @@ def normalize_extension_field_type(
 ) -> str:
     explicit = str(field_type or "string").strip().lower()
     field_key = str(key or "").strip().casefold()
-    has_choices = bool(list(choices or []))
+    has_choices = bool(_coerce_iterable_items(choices))
 
     if explicit == "lines":
         return "lines"
@@ -613,7 +634,7 @@ def extension_config_fields(
     extension: Any, *, include_implicit_lines: bool = False
 ) -> List[Dict[str, Any]]:
     normalized_fields: List[Dict[str, Any]] = []
-    for field_item in getattr(extension, "config_fields", []) or []:
+    for field_item in _coerce_iterable_items(getattr(extension, "config_fields", [])):
         normalized = _coerce_config_field(field_item)
         normalized_fields.append(normalized)
 
@@ -725,29 +746,26 @@ def build_extension_entry(extension: Any) -> Dict[str, Any]:
         "lines_number": list(lines_number) if lines_number is not None else None,
         "report_placeholders": [
             dict(item)
-            for item in getattr(extension, "report_placeholders", []) or []
+            for item in _coerce_iterable_items(getattr(extension, "report_placeholders", []))
             if isinstance(item, dict)
         ],
         "capabilities": set(
-            str(c) for c in getattr(extension, "capabilities", set()) or set()
+            str(c) for c in _coerce_iterable_items(getattr(extension, "capabilities", set()))
         ),
         "api_version": str(getattr(extension, "api_version", "") or ""),
         "aline_api_version": str(getattr(extension, "aline_api_version", "") or ""),
         "depends_on": [
             str(item).strip()
-            for item in getattr(extension, "depends_on", []) or []
+            for item in _coerce_iterable_items(getattr(extension, "depends_on", []))
             if str(item).strip()
         ],
         "supports_progress": bool(getattr(extension, "supports_progress", False)),
         "supports_cancel": bool(getattr(extension, "supports_cancel", False)),
         "min_app_version": str(getattr(extension, "min_app_version", "") or ""),
-        "tested_app_range": list(
-            str(v) for v in getattr(extension, "tested_app_range", []) or []
-        ),
+        "tested_app_range": [str(v) for v in _coerce_iterable_items(getattr(extension, "tested_app_range", []))],
         "style_authority": str(getattr(extension, "style_authority", "advisory")),
         "authoritative_fields": set(
-            str(f)
-            for f in getattr(extension, "authoritative_fields", set()) or set()
+            str(f) for f in _coerce_iterable_items(getattr(extension, "authoritative_fields", set()))
         ),
         "post_render_mutation": bool(getattr(extension, "post_render_mutation", False)),
     }
@@ -803,7 +821,7 @@ def extension_entry_display_info(
     capabilities_label = "、".join(caps_parts) if caps_parts else ""
     api_ver = str(entry.get("aline_api_version") or entry.get("api_version") or "").strip()
     min_ver = str(entry.get("min_app_version") or "").strip()
-    tested = list(entry.get("tested_app_range") or [])
+    tested = _coerce_iterable_items(entry.get("tested_app_range"))
     authority = str(entry.get("style_authority") or "advisory")
     authority_label = "强制接管" if authority == "authoritative" else ""
     authoritative_fields = set(
@@ -837,9 +855,7 @@ def extension_entry_parameter_help_text(entry: Optional[Dict[str, Any]]) -> str:
 
     fields = [
         dict(item)
-        for item in (
-            entry.get("normalized_config_fields") or entry.get("config_fields") or []
-        )
+        for item in _coerce_iterable_items(entry.get("normalized_config_fields") or entry.get("config_fields"))
         if isinstance(item, dict)
     ]
     if not fields:
@@ -886,7 +902,7 @@ def extension_entry_parameter_help_text(entry: Optional[Dict[str, Any]]) -> str:
         description = str(field.get("description") or "").strip()
         if description:
             parts.append(description)
-        choices = [str(item) for item in (field.get("choices") or []) if str(item)]
+        choices = [str(item) for item in _coerce_iterable_items(field.get("choices")) if str(item)]
         if choices:
             parts.append(f"可选值: {', '.join(choices)}")
         default = field.get("default")

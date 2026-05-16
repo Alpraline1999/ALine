@@ -52,7 +52,7 @@ def merge_nested_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, 
 
 
 def normalize_plot_extension_phases(raw: Any) -> Tuple[str, ...]:
-    if raw in (None, "", [], ()):
+    if raw in (None, "", [], ()) or isinstance(raw, bool):
         return ("before_plot", "after_plot")
     if isinstance(raw, str):
         values = [raw]
