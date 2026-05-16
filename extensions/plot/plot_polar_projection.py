@@ -51,6 +51,8 @@ def draw_polar_projection(plot_context, params):
     if figure is None or not normalized_lines:
         return
 
+    preserve_original = bool(params.get("preserve_original", False))
+
     style = _axis_line_style(previous_axis)
     theta_unit = str(params.get("theta_unit", "degree") or "degree").strip().lower()
     xs, ys = line_xy(normalized_lines[0])
@@ -72,8 +74,14 @@ def draw_polar_projection(plot_context, params):
         theta_values.append(theta_values[0])
         radius_values.append(radius_values[0])
 
-    figure.clear()
-    axis = cast(Any, figure.add_subplot(111, projection="polar"))
+    import matplotlib.pyplot as _plt
+
+    if preserve_original:
+        polar_figure = _plt.figure()
+        axis = cast(Any, polar_figure.add_subplot(111, projection="polar"))
+    else:
+        figure.clear()
+        axis = cast(Any, figure.add_subplot(111, projection="polar"))
     axis.set_theta_zero_location(str(params.get("zero_location", "N") or "N"))
     axis.set_theta_direction(-1 if str(params.get("direction", "counterclockwise")) == "clockwise" else 1)
 
@@ -132,7 +140,7 @@ def register_extensions(registry):
             type="plot_polar_projection",
             name="极坐标绘图",
             handler=draw_polar_projection,
-            description="将当前选中曲线或首条可见曲线重绘为极坐标图。",
+            description="将当前选中曲线或首条可见曲线绘制为极坐标图。",
             version="0.1.0",
             settings=True,
             source_kind="builtin",
@@ -161,6 +169,7 @@ def register_extensions(registry):
                 ExtensionConfigField(key="alpha", description="曲线透明度。", field_type="limited", default=0.95, min_value=0.0, max_value=1.0, step=0.01),
                 ExtensionConfigField(key="fill_alpha", description="填充透明度；0 表示不填充。", field_type="limited", default=0.0, min_value=0.0, max_value=1.0, step=0.01),
                 ExtensionConfigField(key="radial_label_angle", description="径向标签角度；留空则沿用当前设置。", field_type="number", default=None),
+                ExtensionConfigField(key="preserve_original", description="保留原图，在新窗口中打开极坐标投影。", field_type="boolean", default=False),
             ],
         )
     )

@@ -11,12 +11,24 @@ COLOR_DIGITIZE_EXTENSION_TYPE = "builtin_digitize_color_detect"
 _BUILTIN_EXTENSION_VERSION = "0.1.0"
 
 
+def _resolve_tolerance(sampled_color: dict, tolerance: int) -> int:
+    """Auto-tolerance: 0 means estimate from sampled color brightness."""
+    if tolerance > 0:
+        return tolerance
+    # Estimate tolerance from color brightness
+    brightness = (int(sampled_color.get("r", 0) or 0) * 0.299
+                  + int(sampled_color.get("g", 0) or 0) * 0.587
+                  + int(sampled_color.get("b", 0) or 0) * 0.114)
+    return max(5, min(40, int(brightness / 8)))
+
+
 def _color_digitize(figure: str, params: Dict[str, Any]):
     sampled_color = dict(params.get("sampled_color") or {})
     if not sampled_color:
         raise ValueError("请先使用取色按钮采样颜色")
 
-    tolerance = int(params.get("tolerance", 20) or 20)
+    raw_tolerance = int(params.get("tolerance", 0) or 0)
+    tolerance = _resolve_tolerance(sampled_color, raw_tolerance)
     points = AutoExtractor.extract(
         str(figure or ""),
         target_r=int(sampled_color.get("r", 0) or 0),
@@ -56,10 +68,10 @@ def register_extensions(registry) -> None:
                 ExtensionConfigField(
                     key="tolerance",
                     label="颜色容差",
-                    description="颜色识别使用的容差强度。",
+                    description="颜色容差（0=自动，越大越宽松）。",
                     field_type="integer",
-                    default=20,
-                    min_value=1,
+                    default=0,
+                    min_value=0,
                     max_value=80,
                 ),
                 ExtensionConfigField(

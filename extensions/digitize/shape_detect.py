@@ -291,10 +291,13 @@ def _shape_digitize(figure: str, params: Dict[str, Any]):
         template_info=template_info,
         mask_polygons=params.get("mask_polygons"),
         mask_include_mode=bool(params.get("mask_include_mode", True)),
-        step=int(params.get("step", 5) or 5),
+        step=5,
         threshold=float(params.get("threshold", 0.65) or 0.65),
-        color_weight=float(params.get("color_weight", 0.7) or 0.7),
+        color_weight=0.7,
     )
+    max_matches = max(1, int(params.get("max_matches", 50) or 50))
+    if len(points) > max_matches:
+        points = points[:max_matches]
     xs = [float(point[0]) for point in list(points or [])]
     ys = [float(point[1]) for point in list(points or [])]
     return line_from_xy(xs, ys)
@@ -322,7 +325,7 @@ def register_extensions(registry) -> None:
                 ExtensionConfigField(
                     key="threshold",
                     label="匹配精度",
-                    description="形状匹配阈值。",
+                    description="形状匹配阈值（越低越严格）。",
                     field_type="limited",
                     default=0.65,
                     min_value=0.3,
@@ -330,23 +333,13 @@ def register_extensions(registry) -> None:
                     step=0.01,
                 ),
                 ExtensionConfigField(
-                    key="color_weight",
-                    label="颜色权重",
-                    description="颜色分数在总匹配评分中的占比。",
-                    field_type="limited",
-                    default=0.7,
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                ),
-                ExtensionConfigField(
-                    key="step",
-                    label="搜索步长",
-                    description="图像扫描步长。",
+                    key="max_matches",
+                    label="最大匹配数",
+                    description="最多识别多少个匹配形状。",
                     field_type="integer",
-                    default=5,
+                    default=50,
                     min_value=1,
-                    max_value=20,
+                    max_value=500,
                 ),
             ],
         )
