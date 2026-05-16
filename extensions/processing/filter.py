@@ -1,37 +1,53 @@
 from __future__ import annotations
 
+import warnings
+
 from core.extension_api import ExtensionConfigField, ProcessingExtension
 from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line, resolve_sample_rate
+
+
+def _to_normalized(value: float, sample_rate: float | None, cutoff_mode: str) -> float:
+    if cutoff_mode == "actual" and sample_rate is not None and sample_rate > 0:
+        nyquist = sample_rate / 2.0
+        if nyquist > 0:
+            return value / nyquist
+    return value
 
 
 def _filter_handler(lines, params):
     xs, ys = line_xy(primary_line(lines))
     options = dict(params or {})
-    cutoff = float(options.get("cutoff", 0.1))
-    order = int(options.get("order", 4))
-    mode = options.get("mode", "low")
+    mode = str(options.get("mode", "low") or "low").strip().lower()
     cutoff_mode = str(options.get("cutoff_mode", "normalized") or "normalized").strip().lower()
+    order = int(options.get("order", 3) or 3)
     sample_rate = resolve_sample_rate(list(xs), options)
-    if cutoff_mode == "actual":
-        if sample_rate is None or sample_rate <= 0:
-            return line_from_xy(list(xs), list(ys))
-        nyquist = sample_rate / 2.0
-        if nyquist <= 0:
-            return line_from_xy(list(xs), list(ys))
-        cutoff = cutoff / nyquist
-    cutoff = max(0.001, min(0.999, cutoff))
+
     try:
         import numpy as np
         from scipy.signal import butter, filtfilt
+    except ImportError:
+        warnings.warn("滤波需要 scipy，请安装 scipy 以启用此功能")
+        return line_from_xy(list(xs), list(ys))
 
+    if mode in ("bandpass", "bandstop"):
+        cutoff_low_raw = float(options.get("cutoff_low", 0.1) or 0.1)
+        cutoff_high_raw = float(options.get("cutoff_high", 0.4) or 0.4)
+        low = max(0.001, min(0.999, _to_normalized(cutoff_low_raw, sample_rate, cutoff_mode)))
+        high = max(0.001, min(0.999, _to_normalized(cutoff_high_raw, sample_rate, cutoff_mode)))
+        if low >= high:
+            return line_from_xy(list(xs), list(ys))
+        btype = "bandpass" if mode == "bandpass" else "bandstop"
+        coeffs = butter(order, [low, high], btype=btype, analog=False)
+    else:
+        cutoff = float(options.get("cutoff", 0.1) or 0.1)
+        cutoff = max(0.001, min(0.999, _to_normalized(cutoff, sample_rate, cutoff_mode)))
         btype = "high" if mode == "high" else "low"
         coeffs = butter(order, cutoff, btype=btype, analog=False)
-        if coeffs is None or len(coeffs) < 2:
-            return line_from_xy(list(xs), list(ys))
-        b, a = coeffs[0], coeffs[1]
-        return line_from_xy(list(xs), filtfilt(b, a, np.array(ys)).tolist())
-    except ImportError:
+
+    if coeffs is None or len(coeffs) < 2:
         return line_from_xy(list(xs), list(ys))
+    b, a = coeffs[0], coeffs[1]
+    return line_from_xy(list(xs), filtfilt(b, a, np.array(ys)).tolist())
 
 
 def register_extensions(registry) -> None:
@@ -52,7 +68,7 @@ def register_extensions(registry) -> None:
                     label="滤波模式",
                     field_type="selective",
                     default="low",
-                    choices=["low", "high"],
+                    choices=["low", "high", "bandpass", "bandstop"],
                 ),
                 ExtensionConfigField(
                     key="cutoff_mode",
@@ -61,7 +77,9 @@ def register_extensions(registry) -> None:
                     default="normalized",
                     choices=["normalized", "actual"],
                 ),
-                ExtensionConfigField(key="cutoff", label="截止频率", field_type="number", default=0.2),
+                ExtensionConfigField(key="cutoff", label="截止频率 (low/high)", field_type="number", default=0.2),
+                ExtensionConfigField(key="cutoff_low", label="低频截止 (band)", field_type="number", default=0.1),
+                ExtensionConfigField(key="cutoff_high", label="高频截止 (band)", field_type="number", default=0.4),
                 ExtensionConfigField(key="order", label="滤波阶数", field_type="integer", default=3, min_value=1),
                 ExtensionConfigField(key="sampling_rate", label="采样率", field_type="number", default=1.0),
             ],

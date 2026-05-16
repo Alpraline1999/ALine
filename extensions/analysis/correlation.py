@@ -57,6 +57,21 @@ def compute_correlation(ys1: List[float], ys2: List[float], method: str = "pears
         return {"method": "pearson", "r": r, "p_value": None}
 
 
+def _interpret_correlation(r: float) -> str:
+    """Return a human-readable interpretation of the correlation coefficient."""
+    abs_r = abs(r)
+    if abs_r >= 0.8:
+        strength = "强"
+    elif abs_r >= 0.5:
+        strength = "中等"
+    elif abs_r >= 0.3:
+        strength = "弱"
+    else:
+        strength = "极弱或无"
+    direction = "正相关" if r >= 0 else "负相关"
+    return f"{strength}{direction}"
+
+
 def _handler(lines, params):
     normalized_lines = normalize_lines(lines)
     if len(normalized_lines) < 2:
@@ -71,6 +86,19 @@ def _handler(lines, params):
         str(params.get("method", "pearson") or "pearson"),
     )
     result["analysis_type"] = "correlation"
+    r = result.get("r", 0.0)
+    p_value = result.get("p_value")
+    n = min(len(y1), len(y2))
+    result["summary_items"] = [
+        {"label": "相关系数 r", "value": f"{r:.6f}"},
+        {"label": "样本数 n", "value": n},
+        {"label": "判定", "value": _interpret_correlation(r)},
+    ]
+    if p_value is not None:
+        significance = "显著" if p_value < 0.05 else "不显著"
+        result["summary_items"].append(
+            {"label": "p 值", "value": f"{p_value:.6g}（{significance}）"},
+        )
     return result
 
 

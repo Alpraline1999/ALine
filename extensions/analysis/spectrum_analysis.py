@@ -58,7 +58,15 @@ def spectrum_analysis(lines, params):
     dominant_frequency = float(freqs[dominant_index]) if freqs.size else 0.0
     dominant_amplitude = float(amplitudes[dominant_index]) if amplitudes.size else 0.0
     line_color = str(params.get("line_color", "#0078D4"))
-    spectrum_line = line_from_xy(freqs.tolist(), amplitudes.tolist())
+    log_scale = bool(params.get("log_scale", False))
+    y_to_plot = amplitudes.tolist()
+    if log_scale and amplitudes.size:
+        min_amp = amplitudes[amplitudes > 0].min() if np.any(amplitudes > 0) else 1e-10
+        amplitudes_log = np.maximum(amplitudes, min_amp)
+        y_to_plot = np.log10(amplitudes_log).tolist()
+    else:
+        y_to_plot = amplitudes.tolist()
+    spectrum_line = line_from_xy(freqs.tolist(), y_to_plot)
 
     return {
         "analysis_type": "spectrum_analysis",
@@ -69,20 +77,38 @@ def spectrum_analysis(lines, params):
         "dominant_amplitude": dominant_amplitude,
         "spectrum_points": int(freqs.size),
         "x_label": "频率 (Hz)",
-        "y_label": "幅值",
+        "y_label": "幅值 (log₁₀)" if log_scale else "幅值",
         "plot_title": "当前数据 频谱",
+        "summary_items": [
+            {"label": "主频", "value": f"{dominant_frequency:.6g} Hz"},
+            {"label": "主峰幅值", "value": f"{dominant_amplitude:.6g}"},
+            {"label": "频率分辨率", "value": f"{float(sampling_rate / centered.size):.6g} Hz"},
+            {"label": "窗函数", "value": window_name},
+        ],
         "lines": [
             {
                 "line_name": "频谱",
                 "line": spectrum_line,
-            }
+            },
+            {
+                "line_name": "主频标记",
+                "line": line_from_xy([dominant_frequency], [y_to_plot[dominant_index]]),
+            },
         ],
         "_plot_series": [
             {
                 "name": "频谱",
                 "line": "频谱",
                 "color": line_color,
-            }
+            },
+            {
+                "name": f"主频: {dominant_frequency:.4g} Hz",
+                "line": "主频标记",
+                "kind": "markers",
+                "marker": "D",
+                "size": 60,
+                "color": "#D13438",
+            },
         ],
     }
 
@@ -98,7 +124,7 @@ def register_extensions(registry):
             lines_number=(1, 1),
             settings=True,
             source_kind="builtin",
-            tool_tier="experimental",
+            tool_tier="tool",
             config_fields=[
                 ExtensionConfigField(
                     key="sampling_rate",
@@ -112,6 +138,12 @@ def register_extensions(registry):
                     field_type="selective",
                     default="hann",
                     choices=("hann", "hamming", "blackman", "rect"),
+                ),
+                ExtensionConfigField(
+                    key="log_scale",
+                    description="纵轴使用对数坐标显示幅值。",
+                    field_type="boolean",
+                    default=False,
                 ),
                 ExtensionConfigField(
                     key="detrend",

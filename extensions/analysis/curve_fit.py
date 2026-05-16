@@ -85,13 +85,19 @@ def fit_curve(
     ss_res = float(np.sum((y - y_fit) ** 2))
     ss_tot = float(np.sum((y - y.mean()) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    n_params = len(popt) if model not in {"poly2", "poly3"} else (3 if model == "poly2" else 4)
+    n_eff = max(len(x) - n_params, 1)
+    residual_std = float(np.sqrt(ss_res / n_eff))
     x_dense = np.linspace(x.min(), x.max(), 300)
     y_dense = np.polyval(np.array(popt), x_dense).tolist() if model in {"poly2", "poly3"} else func(x_dense, *popt).tolist()
+    delta_1sigma = float(residual_std * 1.0)
+    delta_2sigma = float(residual_std * 2.0)
     return {
         "model": model,
         "params": [float(v) for v in popt],
         "param_names": param_names,
         "r2": r2,
+        "residual_std": residual_std,
         "fit_x": x_dense.tolist(),
         "fit_y": y_dense,
         "equation": eq_fmt(popt),
@@ -111,11 +117,14 @@ def _handler(lines, params):
         parse_optional_json_list(params.get("p0")),
     )
     fit_line = line_from_xy(result.get("fit_x", []), result.get("fit_y", []))
+    residual_std = result.get("residual_std")
     result["summary_items"] = [
         {"label": "模型", "value": result.get("model", "")},
         {"label": "方程", "value": result.get("equation", "")},
         {"label": "R²", "value": result.get("r2")},
     ]
+    if residual_std is not None and residual_std > 0:
+        result["summary_items"].append({"label": "残差标准差", "value": f"{residual_std:.6g}"})
     param_names = list(result.get("param_names", []) or [])
     param_values = list(result.get("params", []) or [])
     if param_names and param_values:
@@ -129,6 +138,18 @@ def _handler(lines, params):
     result["lines"] = [
         {"line_name": "拟合曲线", "line": fit_line},
     ]
+    # confidence band boundaries
+    fit_x = result.get("fit_x", [])
+    fit_y = result.get("fit_y", [])
+    if residual_std is not None and residual_std > 0 and fit_x and fit_y:
+        delta_1sigma = residual_std * 1.0
+        delta_2sigma = residual_std * 2.0
+        result["lines"].extend([
+            {"line_name": "+1σ", "line": line_from_xy(fit_x, [v + delta_1sigma for v in fit_y])},
+            {"line_name": "-1σ", "line": line_from_xy(fit_x, [v - delta_1sigma for v in fit_y])},
+            {"line_name": "+2σ", "line": line_from_xy(fit_x, [v + delta_2sigma for v in fit_y])},
+            {"line_name": "-2σ", "line": line_from_xy(fit_x, [v - delta_2sigma for v in fit_y])},
+        ])
     result["_plot_series"] = [
         {
             "name": "原始数据",
@@ -140,6 +161,13 @@ def _handler(lines, params):
         },
         {"name": "拟合曲线", "line": "拟合曲线", "color": "#D13438", "line_width": 2.0},
     ]
+    if residual_std is not None and residual_std > 0:
+        result["_plot_series"].extend([
+            {"name": "+1σ", "line": "+1σ", "color": "#D13438", "line_width": 0.6, "alpha": 0.4, "kind": "line"},
+            {"name": "-1σ", "line": "-1σ", "color": "#D13438", "line_width": 0.6, "alpha": 0.4, "kind": "line"},
+            {"name": "+2σ", "line": "+2σ", "color": "#D13438", "line_width": 0.4, "alpha": 0.2, "kind": "line"},
+            {"name": "-2σ", "line": "-2σ", "color": "#D13438", "line_width": 0.4, "alpha": 0.2, "kind": "line"},
+        ])
     result["analysis_type"] = "curve_fit"
     return result
 
