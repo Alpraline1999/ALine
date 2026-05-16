@@ -430,7 +430,7 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         controls_layout.addWidget(make_hsep())
 
         self._run_analysis_btn = PrimaryPushButton(FIF.PLAY, "运行分析")
-        self._run_analysis_btn.clicked.connect(self._run_analysis)
+        self._run_analysis_btn.clicked.connect(lambda _checked=False: self._run_analysis())
         apply_button_metrics(self._run_analysis_btn, min_width=WORKBENCH_BUTTON_MIN_WIDTH)
         controls_layout.addWidget(self._run_analysis_btn)
 
@@ -626,14 +626,15 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                 canvas,
                 plot_widget,
                 sync_callback=lambda ref=view_ref: self._sync_analysis_preview_nav_toggle_states(ref.get("view")),
-                reset_callback=lambda ref=view_ref: self._reset_analysis_preview_view(ref.get("view")),
+                reset_callback=lambda ref=view_ref: self._reset_analysis_preview_view(ref.get("view"), sync_buttons=True),
+                gesture_reset_callback=lambda ref=view_ref: self._reset_analysis_preview_view(ref.get("view"), sync_buttons=False),
                 zoom_in_callback=lambda ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 0.8),
                 zoom_out_callback=lambda ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 1.25),
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 plot_widget,
                 button_size=WORKBENCH_BUTTON_HEIGHT,
-                reset_callback=lambda _checked=False, ref=view_ref: self._reset_analysis_preview_view(ref.get("view")),
+                reset_callback=lambda _checked=False, ref=view_ref: self._reset_analysis_preview_view(ref.get("view"), sync_buttons=True),
                 zoom_in_callback=lambda _checked=False, ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 0.8),
                 zoom_out_callback=lambda _checked=False, ref=view_ref: self._zoom_analysis_preview_axes(ref.get("view"), 1.25),
                 pan_toggle_callback=lambda checked, ref=view_ref: self._toggle_analysis_preview_pan_mode(ref.get("view"), checked),
@@ -1528,7 +1529,26 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
         # 从保存的结果中提取 extension_options，直接传给 _run_analysis（绕过 UI 文本编辑器读取）
         saved_params = view.get("params") if isinstance(view.get("params"), dict) else {}
         saved_options = dict(saved_params.get("extension_options") or {}) if isinstance(saved_params.get("extension_options"), dict) else None
-        self._sync_state_from_analysis_view(view)
+
+        # 恢复分析类型、扩展参数、已选输入（无视 is_current_view 屏障）
+        analysis_type = view.get("analysis_type") or (view.get("result") or {}).get("analysis_type", "curve_fit")
+        if analysis_type in self._analysis_type_ids:
+            self._type_combo.setCurrentIndex(self._analysis_type_ids.index(analysis_type))
+        self._restore_analysis_params(view.get("params") or {})
+        input_refs = saved_params.get("input_refs") if isinstance(saved_params.get("input_refs"), list) else (view.get("inputs") or [])
+        self._selected_inputs = [dict(item) for item in input_refs if isinstance(item, dict)]
+        active_input_refs = saved_params.get("active_input_refs") if isinstance(saved_params.get("active_input_refs"), list) else (view.get("inputs") or [])
+        selected_ids = {
+            str(item.get("node_id"))
+            for item in active_input_refs
+            if isinstance(item, dict) and item.get("node_id")
+        }
+        current_node_id = next(
+            (str(item.get("node_id")) for item in active_input_refs if isinstance(item, dict) and item.get("node_id")),
+            None,
+        )
+        self._rebuild_input_list(selected_ids, current_node_id)
+
         self._update_result_action_buttons()
         self._set_analysis_status("已恢复当前配置，正在重新运行分析…")
         self._run_analysis(forced_extension_options=saved_options)
@@ -2208,7 +2228,6 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             ax.set_yticks([])
 
         canvas.draw()
-        self._sync_analysis_preview_nav_toggle_states(self._analysis_view_for_canvas(canvas))
 
     def _apply_result_canvas_background(self, canvas=None) -> None:
         canvas = self._canvas if canvas is None else canvas
@@ -2273,10 +2292,10 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
             redraw_callback=lambda current_view=view: self._redraw_analysis_preview_view(current_view),
         )
 
-    def _reset_analysis_preview_view(self, view: Optional[Dict[str, Any]]) -> None:
-        self._redraw_analysis_preview_view(view)
+    def _reset_analysis_preview_view(self, view: Optional[Dict[str, Any]], *, sync_buttons: bool = True) -> None:
+        self._redraw_analysis_preview_view(view, sync_buttons=sync_buttons)
 
-    def _redraw_analysis_preview_view(self, view: Optional[Dict[str, Any]]) -> None:
+    def _redraw_analysis_preview_view(self, view: Optional[Dict[str, Any]], *, sync_buttons: bool = False) -> None:
         if view is None:
             return
         analysis_type = str(view.get("analysis_type") or self._current_analysis_type())
@@ -2302,7 +2321,8 @@ class AnalysisPage(ExtensionPanelShellMixin, QWidget):
                 canvas=view.get("canvas"),
             )
             return
-        self._sync_analysis_preview_nav_toggle_states(view)
+        if sync_buttons:
+            self._sync_analysis_preview_nav_toggle_states(view)
 
     def _write_summary(self, analysis_type: str, result: Dict[str, Any]) -> None:
         view = self._active_analysis_view() or self._analysis_tab_views.get("current")

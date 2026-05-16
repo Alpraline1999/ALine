@@ -34,6 +34,7 @@ class _PreviewGestureFilter(QObject):
         sync_callback: Optional[Callable[[], None]],
         *,
         reset_callback: Optional[Callable[[], None]] = None,
+        gesture_reset_callback: Optional[Callable[[], None]] = None,
         zoom_in_callback: Optional[Callable[[], None]] = None,
         zoom_out_callback: Optional[Callable[[], None]] = None,
         parent: Optional[QObject] = None,
@@ -42,6 +43,7 @@ class _PreviewGestureFilter(QObject):
         self._toolbar = toolbar
         self._sync_callback = sync_callback
         self._reset_callback = reset_callback
+        self._gesture_reset_callback = gesture_reset_callback
         self._zoom_in_callback = zoom_in_callback
         self._zoom_out_callback = zoom_out_callback
         self._active_mode: str = ""
@@ -63,21 +65,26 @@ class _PreviewGestureFilter(QObject):
             self._sync_callback()
 
     @staticmethod
-    def _axis_at(canvas, pos: QPointF):
+    def _axis_at(canvas, pos: QPointF, *, gui_event=None):
         figure = getattr(canvas, "figure", None)
         if figure is None:
             return None
+        if gui_event is not None and hasattr(canvas, "mouseEventCoords"):
+            x, y = canvas.mouseEventCoords(gui_event)
+        else:
+            x, y = pos.x(), pos.y()
         for axis in figure.axes:
             try:
-                if axis.bbox.contains(pos.x(), pos.y()):
+                if axis.bbox.contains(x, y):
                     return axis
             except Exception:
                 continue
         return None
 
-    def _reset(self) -> bool:
-        if callable(self._reset_callback):
-            self._reset_callback()
+    def _reset(self, *, from_gesture: bool = False) -> bool:
+        callback = self._gesture_reset_callback if from_gesture and callable(self._gesture_reset_callback) else self._reset_callback
+        if callable(callback):
+            callback()
             return True
         if self._toolbar is None:
             return False
@@ -142,17 +149,22 @@ class _PreviewGestureFilter(QObject):
         if self._toolbar is None or MouseButton is None:
             return False
         pos = self._event_pos(event)
-        if self._axis_at(watched, pos) is None:
+        if self._axis_at(watched, pos, gui_event=event) is None:
             return False
         if not self._has_persistent_toolbar_mode():
             self._temporary_mode = mode
         elif preview_navigation_mode(self._toolbar) != mode:
             return False
-        mouse_button = MouseButton.RIGHT if mode == "pan" else MouseButton.LEFT
+        if mode == "pan":
+            mouse_button = MouseButton.LEFT
+        elif mode == "scale":
+            mouse_button = MouseButton.RIGHT
+        else:
+            mouse_button = MouseButton.LEFT
         mouse_event = self._build_mouse_event(watched, "button_press_event", pos, button=mouse_button, gui_event=event)
         if mouse_event is None:
             return False
-        if mode == "pan":
+        if mode in ("pan", "scale"):
             self._toolbar.press_pan(mouse_event)
         else:
             self._toolbar.press_zoom(mouse_event)
@@ -166,7 +178,7 @@ class _PreviewGestureFilter(QObject):
         mouse_event = self._build_mouse_event(watched, "motion_notify_event", pos, gui_event=event)
         if mouse_event is None:
             return False
-        if self._active_mode == "pan":
+        if self._active_mode in ("pan", "scale"):
             self._toolbar.drag_pan(mouse_event)
         elif self._active_mode == "zoom":
             self._toolbar.drag_zoom(mouse_event)
@@ -176,11 +188,16 @@ class _PreviewGestureFilter(QObject):
         if not self._active_mode or MouseButton is None:
             return False
         pos = self._event_pos(event)
-        mouse_button = MouseButton.RIGHT if self._active_mode == "pan" else MouseButton.LEFT
+        if self._active_mode == "pan":
+            mouse_button = MouseButton.LEFT
+        elif self._active_mode == "scale":
+            mouse_button = MouseButton.RIGHT
+        else:
+            mouse_button = MouseButton.LEFT
         mouse_event = self._build_mouse_event(watched, "button_release_event", pos, button=mouse_button, gui_event=event)
         if mouse_event is None:
             return False
-        if self._active_mode == "pan":
+        if self._active_mode in ("pan", "scale"):
             self._toolbar.release_pan(mouse_event)
         elif self._active_mode == "zoom":
             self._toolbar.release_zoom(mouse_event)
@@ -192,7 +209,7 @@ class _PreviewGestureFilter(QObject):
         if self._toolbar is None:
             return False
         if event.type() == QEvent.Type.Wheel:
-            if self._axis_at(watched, self._event_pos(event)) is None:
+            if self._axis_at(watched, self._event_pos(event), gui_event=event) is None:
                 return False
             delta = event.angleDelta().y() if hasattr(event, "angleDelta") else 0
             if delta == 0:
@@ -203,13 +220,15 @@ class _PreviewGestureFilter(QObject):
                 return True
             return False
         if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.RightButton:
-            return self._reset()
+            return self._reset(from_gesture=True)
         if self._temporary_mode and event.type() in {QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease}:
             if event.type() == QEvent.Type.MouseMove:
                 return self._drag_mode(watched, event)
             if self._temporary_mode == "zoom" and event.button() == Qt.MouseButton.LeftButton:
                 return self._finish_mode(watched, event)
             if self._temporary_mode == "pan" and event.button() == Qt.MouseButton.RightButton:
+                return self._finish_mode(watched, event)
+            if self._temporary_mode == "scale" and event.button() == Qt.MouseButton.MiddleButton:
                 return self._finish_mode(watched, event)
             return False
         if self._has_persistent_toolbar_mode():
@@ -219,6 +238,8 @@ class _PreviewGestureFilter(QObject):
                 return self._start_mode(watched, event, "pan")
             if event.button() == Qt.MouseButton.LeftButton:
                 return self._start_mode(watched, event, "zoom")
+            if event.button() == Qt.MouseButton.MiddleButton:
+                return self._start_mode(watched, event, "scale")
             return False
         if event.type() == QEvent.Type.MouseMove:
             return self._drag_mode(watched, event)
@@ -226,6 +247,8 @@ class _PreviewGestureFilter(QObject):
             if self._active_mode == "zoom" and event.button() == Qt.MouseButton.LeftButton:
                 return self._finish_mode(watched, event)
             if self._active_mode == "pan" and event.button() == Qt.MouseButton.RightButton:
+                return self._finish_mode(watched, event)
+            if self._active_mode == "scale" and event.button() == Qt.MouseButton.MiddleButton:
                 return self._finish_mode(watched, event)
         return False
 
@@ -236,6 +259,7 @@ def create_navigation_toolbar(
     *,
     sync_callback: Optional[Callable[[], None]] = None,
     reset_callback: Optional[Callable[[], None]] = None,
+    gesture_reset_callback: Optional[Callable[[], None]] = None,
     zoom_in_callback: Optional[Callable[[], None]] = None,
     zoom_out_callback: Optional[Callable[[], None]] = None,
 ):
@@ -247,6 +271,7 @@ def create_navigation_toolbar(
         toolbar,
         sync_callback,
         reset_callback=reset_callback,
+        gesture_reset_callback=gesture_reset_callback,
         zoom_in_callback=zoom_in_callback,
         zoom_out_callback=zoom_out_callback,
         parent=canvas,

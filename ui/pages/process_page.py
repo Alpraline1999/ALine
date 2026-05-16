@@ -585,14 +585,15 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
                 self._canvas,
                 panel,
                 sync_callback=self._sync_preview_nav_toggle_states,
-                reset_callback=self._reset_preview_view,
+                reset_callback=lambda: self._reset_preview_view(sync_buttons=True),
+                gesture_reset_callback=lambda: self._reset_preview_view(sync_buttons=False),
                 zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
                 zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
             )
             preview_toolbar, preview_buttons = build_preview_toolbar(
                 panel,
                 button_size=WORKBENCH_BUTTON_HEIGHT,
-                reset_callback=self._reset_preview_view,
+                reset_callback=lambda _checked=False: self._reset_preview_view(sync_buttons=True),
                 zoom_in_callback=lambda: self._zoom_preview_axes(0.8),
                 zoom_out_callback=lambda: self._zoom_preview_axes(1.25),
                 pan_toggle_callback=self._toggle_preview_pan_mode,
@@ -647,9 +648,10 @@ class ProcessPage(ExtensionPanelShellMixin, QWidget):
     def _zoom_preview_axes(self, factor: float) -> None:
         zoom_figure_axes(self._figure, self._canvas, factor, redraw_callback=self._draw_preview)
 
-    def _reset_preview_view(self) -> None:
+    def _reset_preview_view(self, *, sync_buttons: bool = True) -> None:
         self._draw_preview()
-        self._sync_preview_nav_toggle_states()
+        if sync_buttons:
+            self._sync_preview_nav_toggle_states()
 
     # ─────────────────────────────────────────────────────────
     # 数据源树
