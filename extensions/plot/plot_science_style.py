@@ -31,8 +31,23 @@ def _clamp(value, minimum, maximum, default):
 
 
 def _science_style_rcparams():
+    import warnings as _w
+
     import matplotlib.pyplot as plt
-    import scienceplots  # noqa: F401
+
+    try:
+        import scienceplots  # noqa: F401
+    except ImportError:
+        _w.warn("scienceplots 未安装，回退使用 seaborn-v0_8 风格")
+        original = plt.rcParams.copy()
+        try:
+            available = plt.style.available
+            fallback = "seaborn-v0_8" if "seaborn-v0_8" in available else ("ggplot" if "ggplot" in available else "default")
+            plt.style.use(fallback)
+            plt.rcParams["text.usetex"] = False
+            return dict(plt.rcParams)
+        finally:
+            plt.rcParams.update(original)
 
     original = plt.rcParams.copy()
     try:

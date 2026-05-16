@@ -96,7 +96,7 @@ def register_extensions(registry):
             lines_number=(2, 2),
             settings=True,
             source_kind="builtin",
-            tool_tier="experimental",
+            tool_tier="tool",
             phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="align_mode", description="坐标未对齐时的处理方式：auto 自动重采样，strict 直接报错。", field_type="selective", default="auto", choices=("auto", "strict")),

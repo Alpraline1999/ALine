@@ -59,13 +59,23 @@ def draw_reference_overlay(plot_context, params):
     band_half_width = max(0.0, coerce_float(params.get("band_half_width", 0.0), 0.0) or 0.0)
     show_reference_line = bool(params.get("show_reference_line", True))
     show_band = bool(params.get("show_band", True))
+    reference_stat = str(params.get("reference_stat", "mean") or "mean").strip().lower()
 
-    mean_level = sum(point[2] for point in points) / len(points) + offset
+    y_values = sorted(point[2] for point in points)
+    if reference_stat == "median":
+        count = len(y_values)
+        if count % 2 == 1:
+            ref_level = y_values[count // 2]
+        else:
+            ref_level = (y_values[count // 2 - 1] + y_values[count // 2]) / 2.0
+    else:
+        ref_level = sum(y_values) / len(y_values)
+    ref_level += offset
 
     if show_band and band_half_width > 0.0:
-        axis.axhspan(mean_level - band_half_width, mean_level + band_half_width, color=band_color, alpha=band_alpha, zorder=0)
+        axis.axhspan(ref_level - band_half_width, ref_level + band_half_width, color=band_color, alpha=band_alpha, zorder=0)
     if show_reference_line:
-        axis.axhline(mean_level, color=line_color, linestyle=line_style, linewidth=line_width, alpha=line_alpha, label=label)
+        axis.axhline(ref_level, color=line_color, linestyle=line_style, linewidth=line_width, alpha=line_alpha, label=label)
 
     precision = max(0, int(coerce_float(params.get("annotation_precision", 3), 3) or 3))
     if bool(params.get("annotate_peak", True)):
@@ -89,7 +99,7 @@ def draw_reference_overlay(plot_context, params):
 
     if bool(params.get("append_summary_to_title", True)):
         current_title = axis.get_title().strip()
-        summary = f"{label} = {mean_level:.{precision}f}"
+        summary = f"{label} = {ref_level:.{precision}f}"
         axis.set_title(summary if not current_title else f"{current_title}\n{summary}")
 
 
@@ -106,7 +116,8 @@ def register_extensions(registry):
             tool_tier="experimental",
             phases=("after_plot",),
             config_fields=[
-                ExtensionConfigField(key="show_reference_line", description="在 before_plot 阶段绘制一条水平参考线。", field_type="boolean", default=True),
+                ExtensionConfigField(key="show_reference_line", description="在图表上绘制一条水平参考线。", field_type="boolean", default=True),
+                ExtensionConfigField(key="reference_stat", description="参考线统计量：均值或中位数。", field_type="selective", default="mean", choices=("mean", "median")),
                 ExtensionConfigField(key="show_band", description="在参考线附近绘制一段半透明带状区域。", field_type="boolean", default=True),
                 ExtensionConfigField(key="line_color", description="参考线和峰值标记使用的颜色。", field_type="color", default="#C23B22"),
                 ExtensionConfigField(key="line_style", description="matplotlib 兼容的线型字符串。", field_type="selective", default="--", choices=("-", "--", "-.", ":")),
