@@ -669,7 +669,7 @@ class HomePage(QWidget):
 
     def on_open_project(self):
         """打开项目"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, _filter = QFileDialog.getOpenFileName(
             self,
             _("打开项目"),
             "",

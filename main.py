@@ -165,7 +165,11 @@ def main():
     setTheme(Theme.AUTO)
 
     # 初始化 AppContext（核心服务依赖容器）
-    from core.project_manager import ProjectManager
+    # 重要: 必须复用模块级 project_manager 单例, 不能新建实例,
+    # 否则 _PMProxy (menu builder) 和 app/project_tree_command_service 等
+    # 通过 from core.project_manager import project_manager 引用的是不同实例,
+    # 导致 set_current_project 对 command service 不生效。
+    from core.project_manager import project_manager as pm
     from core.tree_manager import TreeManager
     from core.data_file_manager import DataFileManager
     from core.analysis_manager import AnalysisManager
@@ -173,7 +177,6 @@ def main():
     from core.global_assets import global_assets
     from core.shortcut_manager import shortcut_manager
 
-    pm = ProjectManager()
     ctx = AppContext(
         project_manager=pm,
         tree_manager=TreeManager(),

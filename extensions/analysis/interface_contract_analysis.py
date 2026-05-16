@@ -76,8 +76,8 @@ def register_extensions(registry):
                 ExtensionConfigField(key="accent_color", label="强调色", description="color 参数示例。", field_type="color", default="#0078D4"),
             ],
             report_placeholders=[
-                {"token": "{{interface_line_count}}", "label": "接口示例曲线数", "description": "接口示例分析输入曲线数量。"},
-                {"token": "{{interface_point_count}}", "label": "接口示例点数", "description": "接口示例分析输入点总数。"},
+                {"token": "{{line_count}}", "label": "接口示例曲线数", "description": "接口示例分析输入曲线数量。"},
+                {"token": "{{point_count}}", "label": "接口示例点数", "description": "接口示例分析输入点总数。"},
             ],
         )
     )

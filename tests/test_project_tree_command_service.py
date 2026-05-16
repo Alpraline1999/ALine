@@ -164,6 +164,8 @@ def _load_command_service_module():
             self.source_file_batches: list[tuple[list[str], str | None, bool]] = []
             self.added_images: list[tuple[str, str, str | None]] = []
             self.added_series: list[tuple[str, object]] = []
+            self.current_project_id: str | None = None
+            self.projects: list[types.SimpleNamespace] = []
             self.return_node = types.SimpleNamespace(id="node-1")
             self.data_files = {"df-1": types.SimpleNamespace(name="Data A")}
 
@@ -178,11 +180,31 @@ def _load_command_service_module():
             self.source_file_batches.clear()
             self.added_images.clear()
             self.added_series.clear()
+            self.current_project_id = None
+            self.projects.clear()
             self.return_node = types.SimpleNamespace(id="node-1")
             self.data_files = {"df-1": types.SimpleNamespace(name="Data A")}
 
-        def delete_node(self, node_id: str) -> None:
+        def delete_node(self, node_id: str) -> bool:
             self.deleted.append(node_id)
+            return True
+
+        def get_project(self, project_id: str):
+            for project in self.projects:
+                if project.id == project_id:
+                    return project
+            return None
+
+        def set_current_project(self, project_id: str) -> None:
+            if self.get_project(project_id) is not None:
+                self.current_project_id = project_id
+
+        def find_project_containing_node(self, node_id: str):
+            for project in self.projects:
+                tree = getattr(project, "tree", None)
+                if tree is not None and tree.get_node(node_id) is not None:
+                    return project
+            return None
 
         def add_data_file(self, data_file, parent_id: str | None = None, auto_rename_on_conflict: bool = False):
             self.added.append(
@@ -381,6 +403,21 @@ class TestProjectTreeCommandService(unittest.TestCase):
         service.add_dataset_node("parent-1")
 
         self.assertEqual([("dataset-a", "parent-1", "", 0, False)], project_manager.added)
+        self.assertEqual(["refresh", "select:node-1", "modified"], state["calls"])
+
+    def test_add_dataset_node_activates_project_by_parent_node(self) -> None:
+        service, state = self._make_service(prompt_text=lambda *_args: ("dataset-b", True))
+        project_manager.projects = [
+            types.SimpleNamespace(
+                id="project-a",
+                tree=types.SimpleNamespace(get_node=lambda node_id: types.SimpleNamespace(id=node_id) if node_id == "parent-a" else None),
+            )
+        ]
+
+        service.add_dataset_node("parent-a")
+
+        self.assertEqual("project-a", project_manager.current_project_id)
+        self.assertEqual([("dataset-b", "parent-a", "", 0, False)], project_manager.added)
         self.assertEqual(["refresh", "select:node-1", "modified"], state["calls"])
 
     def test_rename_virtual_series_renames_then_refreshes(self) -> None:
