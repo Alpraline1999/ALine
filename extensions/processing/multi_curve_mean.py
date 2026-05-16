@@ -7,12 +7,11 @@ from extensions.processing.extension_tools import align_lines_to_common_x, BUILT
 
 
 def multi_curve_mean_handler(lines, params):
-    del params
     input_lines = list(lines or [])
     if len(input_lines) < 2:
         raise ValueError("多曲线均值至少需要 2 条输入曲线")
 
-    aligned_lines, warnings = align_lines_to_common_x(input_lines, {"align_mode": "strict"})
+    aligned_lines, _warnings = align_lines_to_common_x(input_lines, {"align_mode": "auto"})
     if len(aligned_lines) < 2:
         raise ValueError("多曲线均值至少需要 2 条输入曲线")
 
@@ -32,9 +31,6 @@ def multi_curve_mean_handler(lines, params):
             for row in zip(*(list(view) for view in y_views))
         ]
 
-    if warnings:
-        # strict line 协议下不再返回 warnings；对齐说明由运行时或上层界面处理。
-        pass
     return line_from_xy(list(primary_x), averaged)
 
 
@@ -44,7 +40,7 @@ def register_extensions(registry):
             type="multi_curve_mean",
             name="多曲线均值",
             handler=multi_curve_mean_handler,
-            description="对多条输入曲线计算逐点均值；要求输入曲线已对齐。",
+            description="对多条输入曲线计算逐点均值；曲线会自动对齐到公共 X 网格。",
             version=BUILTIN_EXTENSION_VERSION,
             lines_number=(2, -1),
             settings=True,

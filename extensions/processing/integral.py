@@ -7,7 +7,7 @@ from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, lin
 def _integral_handler(lines, params):
     x_values, y_values = line_xy(primary_line(lines))
     options = dict(params or {})
-    cumulative = bool(options.get("cumulative", True))
+    cumulative = bool(options.get("cumulative", False))
     count = len(x_values)
     if count < 2:
         return line_from_xy(x_values, y_values)
