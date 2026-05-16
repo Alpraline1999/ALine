@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Optional, Set
 
 from models.schemas import Project
 
@@ -16,6 +16,8 @@ class ProjectRepository:
     normalize_path: Callable[[str], str]
     sync_project_backups: Callable[[Project, str, str | None], None]
     add_recent_project: Callable[[str, str], None]
+    get_binary_workspace: Callable[[str], Any] = field(default=lambda pid: None)
+    get_empty_binary_folder_paths: Callable[[Project], Set[str]] = field(default=lambda p: set())
 
     def normalize_project_file_path(self, file_path: str, *, for_save: bool) -> str:
         normalized = self.normalize_path(file_path)
@@ -78,11 +80,39 @@ class ProjectRepository:
         for c in project.imported_curves:
             all_curves.add(c.id)
 
+        # Collect binary file paths for ZIP container save
+        modified_binary_paths: Set[str] = set()
+
+        # Include removed paths so old ZIP entries are excluded on save
+        ws = self.get_binary_workspace(project.id) if project.id else None
+        if ws is not None:
+            for removed in ws.removed_paths():
+                modified_binary_paths.add(removed)
+
+        for sf in project.source_files:
+            p = sf.file_path or ""
+            if p and not Path(p).is_absolute():
+                modified_binary_paths.add(p)
+        for img in project.images:
+            p = img.image_path or ""
+            if p and not Path(p).is_absolute():
+                modified_binary_paths.add(p)
+        for pic in project.pictures:
+            p = pic.image_path or ""
+            if p and not Path(p).is_absolute():
+                modified_binary_paths.add(p)
+
+        # Collect empty tree folder paths for ZIP persistence
+        empty_binary_dirs = self.get_empty_binary_folder_paths(project)
+
         from core.zip_serializer import ZipProjectSerializer
         ZipProjectSerializer.save(
             project, normalized_path,
             modified_series_ids=all_series,
             modified_curve_ids=all_curves,
+            modified_binary_paths=modified_binary_paths,
+            binary_workspace=ws,
+            empty_binary_dirs=empty_binary_dirs,
         )
 
         project.file_path = normalized_path

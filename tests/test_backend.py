@@ -748,6 +748,94 @@ class TestProjectManager(unittest.TestCase):
         all_s = self.pm.collect_all_series(p)
         ids = [item["id"] for item in all_s]
         self.assertIn(s.id, ids)
+    # ── 二进制文件打包进 ZIP 测试 ──────────────────────────
+
+    def test_save_binary_files_inside_zip(self):
+        """保存项目时，导入的源文件、图片应打包进 .aline ZIP。"""
+        import zipfile
+        p = self.pm.create_new("binary_in_zip")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "binary_in_zip.aline"
+            self.pm.save(str(project_file))
+
+            source_root = self.pm._find_folder_by_group_type("source_files")
+            self.assertIsNotNone(source_root)
+
+            src = Path(temp_dir) / "data.csv"
+            src.write_text("x,y\n1,2\n3,4\n", encoding="utf-8")
+            node = self.pm.add_source_file(str(src), parent_id=source_root.id)
+            self.assertIsNotNone(node)
+
+            img = Path(temp_dir) / "chart.png"
+            img.write_bytes(b'fake_png_content')
+            img_work = self.pm.add_image(str(img), name="chart")
+            self.assertIsNotNone(img_work)
+
+            self.pm.save(str(project_file))
+
+            with zipfile.ZipFile(str(project_file), 'r') as zf:
+                names = zf.namelist()
+                self.assertTrue(any(n.startswith('files/source_files/') for n in names),
+                                f"ZIP 中应包含 source_files 条目: {names}")
+                self.assertTrue(any(n.startswith('files/images/') for n in names),
+                                f"ZIP 中应包含 images 条目: {names}")
+
+    def test_reopen_project_with_binary_files(self):
+        """重新打开包含二进制文件的项目后，文件应可通过 workspace 访问。"""
+        p = self.pm.create_new("reopen_binary")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "reopen_binary.aline"
+            self.pm.save(str(project_file))
+
+            src = Path(temp_dir) / "measurements.txt"
+            src.write_text("measured data", encoding="utf-8")
+            node = self.pm.add_source_file(str(src))
+            self.assertIsNotNone(node)
+
+            self.pm.save(str(project_file))
+
+            pid = p.id
+            self.pm.close_project(pid)
+            self.assertIsNone(self.pm.get_project(pid))
+
+            p2 = self.pm.open(str(project_file))
+            self.assertIsNotNone(p2)
+
+            ws = self.pm._get_workspace(p2)
+            self.assertIsNotNone(ws)
+            self.assertTrue(ws.temp_dir.exists())
+
+            if p2.source_files:
+                path = self.pm.resolve_source_file_path(p2.source_files[0], p2)
+                self.assertIsNotNone(path)
+                self.assertTrue(os.path.exists(path),
+                                f"源文件路径应存在: {path}")
+
+    def test_reopen_and_verify_file_content(self):
+        """重新打开项目后，二进制文件内容应完整。"""
+        p = self.pm.create_new("content_test")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_file = Path(temp_dir) / "content_test.aline"
+            self.pm.save(str(project_file))
+
+            src = Path(temp_dir) / "original.csv"
+            original_content = "a,b,c\n1,2,3\n4,5,6\n"
+            src.write_text(original_content, encoding="utf-8")
+            node = self.pm.add_source_file(str(src))
+            self.assertIsNotNone(node)
+
+            self.pm.save(str(project_file))
+
+            pid = p.id
+            self.pm.close_project(pid)
+            p2 = self.pm.open(str(project_file))
+
+            if p2.source_files:
+                path = self.pm.resolve_source_file_path(p2.source_files[0], p2)
+                self.assertTrue(path and os.path.exists(path))
+                with open(path, 'r', encoding='utf-8') as f:
+                    self.assertEqual(f.read(), original_content)
+
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2195,6 +2283,33 @@ class TestAnalysisEngine(unittest.TestCase):
         self.assertNotIn("default_options", entry)
         self.assertFalse(any(field.get("key") == "lines_list" for field in entry["config_fields"]))
         self.assertFalse(any(field.get("key") == "lines_list" for field in entry["normalized_config_fields"]))
+
+    def test_build_extension_entry_ignores_bool_iterable_metadata(self):
+        from core.extension_api import build_extension_entry
+
+        class _BoolMetadataExtension:
+            id = "bool_metadata_probe"
+            type = "bool_metadata_probe"
+            name = "Bool Metadata Probe"
+            description = ""
+            source_kind = "builtin"
+            config_fields = True
+            report_placeholders = True
+            depends_on = True
+            tested_app_range = True
+            capabilities = True
+            authoritative_fields = True
+            phases = True
+
+        entry = build_extension_entry(_BoolMetadataExtension())
+        self.assertEqual(entry["config_fields"], [])
+        self.assertEqual(entry["normalized_config_fields"], [])
+        self.assertEqual(entry["report_placeholders"], [])
+        self.assertEqual(entry["depends_on"], [])
+        self.assertEqual(entry["tested_app_range"], [])
+        self.assertEqual(entry["capabilities"], set())
+        self.assertEqual(entry["authoritative_fields"], set())
+        self.assertEqual(entry["phases"], [])
 
     def test_invoke_plot_extension_handler_respects_plot_phases(self):
         from core.extension_api import PlotExtension, PlotExtensionContext, invoke_plot_extension_handler, build_extension_entry

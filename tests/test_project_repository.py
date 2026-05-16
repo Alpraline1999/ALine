@@ -26,6 +26,9 @@ def _load_project_repository_module():
             self.images = data.get("images", [])
             self.imported_curves = data.get("imported_curves", [])
             self.analyses = data.get("analyses", [])
+            self.source_files = data.get("source_files", [])
+            self.pictures = data.get("pictures", [])
+            self.tree = data.get("tree", None)
 
         @classmethod
         def create_new(cls, name: str):
@@ -102,7 +105,10 @@ class TestProjectRepository(unittest.TestCase):
             data = project.model_dump()
             data.pop("file_path", None)
             data.pop("is_modified", None)
-            file_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            import zipfile
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr('project.json', json.dumps(data, ensure_ascii=False))
+                zf.writestr('meta.json', json.dumps({"format_version": "1"}, ensure_ascii=False))
 
             loaded = repository.open_project(str(file_path))
 

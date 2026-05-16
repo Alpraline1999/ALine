@@ -11,6 +11,33 @@ from models.schemas import ImageWork, PictureAsset, Project, SourceFileAsset
 class ProjectBackupManager:
     manager: Any
 
+    # ── 内部辅助 ────────────────────────────────────────────
+
+    def _rel_root(self, project_file_path: str) -> Path:
+        """返回存储相对路径的计算基准目录。
+
+        有暂存区时返回 ws.temp_dir，否则返回项目父目录。
+        """
+        for p in self.manager._projects:
+            if p.file_path and Path(p.file_path).resolve() == Path(project_file_path).resolve():
+                ws = self.manager._get_workspace(p)
+                if ws is not None:
+                    return ws.temp_dir
+                break
+        return Path(project_file_path).parent
+
+    def _resolve_managed_abs(self, raw_path: str, project_file_path: str) -> str:
+        """将相对路径解析为绝对路径（支持暂存区）。"""
+        for p in self.manager._projects:
+            if p.file_path and Path(p.file_path).resolve() == Path(project_file_path).resolve():
+                ws = self.manager._get_workspace(p)
+                if ws is not None:
+                    return ws.resolve(raw_path)
+                break
+        return str((Path(project_file_path).parent / raw_path).resolve())
+
+    # ── 备份方法 ────────────────────────────────────────────
+
     def backup_image_for_project(
         self,
         image: ImageWork,
@@ -29,14 +56,12 @@ class ProjectBackupManager:
         backup_path = backup_dir / backup_filename
         current_backup_abs = ""
         if image.image_path and not Path(image.image_path).is_absolute():
-            current_backup_abs = str(
-                (Path(project_file_path).parent / image.image_path).resolve()
-            )
+            current_backup_abs = self._resolve_managed_abs(image.image_path, project_file_path)
         if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
             backup_path = self.manager._ensure_unique_path(backup_path, image.id)
         if source_path.resolve() != backup_path.resolve():
             self.manager._copy_file(source_path, backup_path)
-        rel_path = backup_path.relative_to(Path(project_file_path).parent)
+        rel_path = backup_path.relative_to(self._rel_root(project_file_path))
         image.image_path = rel_path.as_posix()
         image.source_image_path = str(source_path)
 
@@ -67,12 +92,12 @@ class ProjectBackupManager:
         backup_path = backup_dir / backup_filename
         current_backup_abs = ""
         if picture.image_path and not Path(picture.image_path).is_absolute():
-            current_backup_abs = str((Path(project_file_path).parent / picture.image_path).resolve())
+            current_backup_abs = self._resolve_managed_abs(picture.image_path, project_file_path)
         if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
             backup_path = self.manager._ensure_unique_path(backup_path, picture.id)
         if source_path.resolve() != backup_path.resolve():
             self.manager._copy_file(source_path, backup_path)
-        rel_path = backup_path.relative_to(Path(project_file_path).parent)
+        rel_path = backup_path.relative_to(self._rel_root(project_file_path))
         picture.image_path = rel_path.as_posix()
 
     def backup_source_file_for_project(
@@ -103,12 +128,12 @@ class ProjectBackupManager:
         backup_path = backup_dir / backup_filename
         current_backup_abs = ""
         if source_file.file_path and not Path(source_file.file_path).is_absolute():
-            current_backup_abs = str((Path(project_file_path).parent / source_file.file_path).resolve())
+            current_backup_abs = self._resolve_managed_abs(source_file.file_path, project_file_path)
         if backup_path.exists() and str(backup_path.resolve()) not in {current_backup_abs, str(source_path.resolve())}:
             backup_path = self.manager._ensure_unique_path(backup_path, source_file.id)
         if source_path.resolve() != backup_path.resolve():
             self.manager._copy_file(source_path, backup_path)
-        rel_path = backup_path.relative_to(Path(project_file_path).parent)
+        rel_path = backup_path.relative_to(self._rel_root(project_file_path))
         source_file.file_path = rel_path.as_posix()
         source_file.source_file_path = origin_abs or str(source_path)
         source_file.file_size = backup_path.stat().st_size
@@ -119,9 +144,15 @@ class ProjectBackupManager:
         raw_path = str(getattr(asset, path_attr, "") or "")
         if not raw_path or Path(raw_path).is_absolute():
             return
-        backup_path = Path(project.file_path).parent / raw_path
+        ws = self.manager._get_workspace(project)
+        if ws is not None:
+            backup_path = Path(ws.resolve(raw_path))
+        else:
+            backup_path = Path(project.file_path).parent / raw_path
         try:
             if backup_path.exists():
                 backup_path.unlink()
         except OSError:
             pass
+        if ws is not None:
+            ws.remove(raw_path)

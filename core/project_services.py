@@ -38,6 +38,8 @@ def build_project_services(
         normalize_path=manager._normalize_path,
         sync_project_backups=manager._sync_project_backups,
         add_recent_project=add_recent,
+        get_binary_workspace=lambda pid: manager._binary_workspaces.get(pid),
+        get_empty_binary_folder_paths=manager._get_empty_binary_folder_paths,
     )
     tree_init_service = ProjectTreeInitService(
         ensure_project_tree_groups=lambda p: (manager._ensure_project_tree_groups(p), None)[1],

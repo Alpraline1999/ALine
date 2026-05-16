@@ -44,7 +44,10 @@ class ZipProjectSerializer:
     @staticmethod
     def save(project: Project, path: str, *,
              modified_series_ids: Optional[Set[str]] = None,
-             modified_curve_ids: Optional[Set[str]] = None) -> None:
+             modified_curve_ids: Optional[Set[str]] = None,
+             modified_binary_paths: Optional[Set[str]] = None,
+             binary_workspace: Any = None,
+             empty_binary_dirs: Optional[Set[str]] = None) -> None:
         """增量保存项目。只写变更的数据块。
 
         Args:
@@ -52,9 +55,14 @@ class ZipProjectSerializer:
             path: 目标 .aline 文件路径。
             modified_series_ids: 本次变更的 DataSeries ID 集合。
             modified_curve_ids: 本次变更的 Curve ID 集合。
+            modified_binary_paths: 本次变更的二进制文件相对路径集合。
+            binary_workspace: ZipBinaryWorkspace 实例，从中读取二进制文件。
+            empty_binary_dirs: 树中空文件夹的 ZIP 相对路径集合（以 / 结尾）。
         """
         modified_series = modified_series_ids or set()
         modified_curves = modified_curve_ids or set()
+        modified_binaries = modified_binary_paths or set()
+        empty_dirs = empty_binary_dirs or set()
 
         # 确保父目录存在
         dir_path = os.path.dirname(path)
@@ -128,6 +136,18 @@ class ZipProjectSerializer:
                                         zf.writestr(name, old_zf.read(name))
                             elif name.startswith('previews/'):
                                 zf.writestr(name, old_zf.read(name))
+                            elif name.startswith('files/'):
+                                if name not in modified_binaries and name not in empty_dirs:
+                                    zf.writestr(name, old_zf.read(name))
+
+                # 写入变更的二进制文件（从暂存区）
+                if binary_workspace is not None and modified_binaries:
+                    binary_workspace.pack_to_zip(zf, modified_binaries)
+
+                # 写入空文件夹条目（确保树中空文件夹在 ZIP 中有对应目录）
+                for dir_path in sorted(empty_dirs):
+                    info = zipfile.ZipInfo(dir_path)
+                    zf.writestr(info, b'')
 
             # 原子替换
             os.replace(tmp_path, path)

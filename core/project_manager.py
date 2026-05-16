@@ -8,11 +8,12 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, cast
+from typing import Any, List, Optional, Set, Tuple, cast
 
 from aline_metadata import CURRENT_PROJECT_VERSION
 from core.analysis_manager import AnalysisManager
 from core.data_file_manager import DataFileManager
+from core.zip_binary_workspace import ZipBinaryWorkspace
 from core.project_serializer import ProjectSerializer
 from core.tree_manager import TreeManager
 from core.global_assets import global_assets
@@ -119,6 +120,7 @@ class ProjectManager:
         self._projects: List[Project] = []
         self._current_project_id: Optional[str] = None
         self._last_operation_error: str = ""
+        self._binary_workspaces: dict[str, "ZipBinaryWorkspace"] = {}
         services = build_project_services(
             self,
             project_file_suffix=_PROJECT_FILE_SUFFIX,
@@ -143,6 +145,96 @@ class ProjectManager:
 
     def _clear_last_operation_error(self) -> None:
         self._last_operation_error = ""
+
+    # ── 暂存区管理 ──────────────────────────────────────────
+
+    def _get_workspace(self, project: Project) -> Optional[ZipBinaryWorkspace]:
+        """获取项目的二进制文件暂存区。"""
+        return self._binary_workspaces.get(project.id)
+
+    def _ensure_workspace(self, project: Project) -> ZipBinaryWorkspace:
+        """确保项目有暂存区，没有则创建。"""
+        ws = self._binary_workspaces.get(project.id)
+        if ws is not None:
+            return ws
+        ws = ZipBinaryWorkspace(project.file_path or "")
+        self._binary_workspaces[project.id] = ws
+        return ws
+
+    def _cleanup_workspace(self, project_id: str) -> None:
+        """清理项目的暂存区。"""
+        ws = self._binary_workspaces.pop(project_id, None)
+        if ws is not None:
+            ws.cleanup()
+
+    def _get_empty_binary_folder_paths(self, project: Project) -> Set[str]:
+        """收集树中空文件夹的 ZIP 相对路径。"""
+        if project.tree is None:
+            return set()
+        group_roots: dict[str, str] = {}
+        for node in project.tree.nodes:
+            if node.kind != "folder" or node.parent_id is not None:
+                continue  # only top-level group roots (no parent)
+            gt: Optional[str] = getattr(node, "group_type", None)
+            if gt is None:
+                continue
+            canonical = self._canonical_group_type(gt)
+            if canonical == "source_files":
+                group_roots[node.id] = "files/source_files/"
+            elif canonical == "pictures":
+                group_roots[node.id] = "files/pictures/"
+            elif canonical == "images":
+                group_roots[node.id] = "files/images/"
+        if not group_roots:
+            return set()
+        # Build set of all file parent dir prefixes from assets
+        file_dirs: Set[str] = set()
+        for sf in project.source_files:
+            p = sf.file_path or ""
+            if p and not Path(p).is_absolute():
+                file_dirs.add(str(Path(p).parent).replace("\\", "/") + "/")
+        for img in project.images:
+            p = img.image_path or ""
+            if p and not Path(p).is_absolute():
+                file_dirs.add(str(Path(p).parent).replace("\\", "/") + "/")
+        for pic in project.pictures:
+            p = pic.image_path or ""
+            if p and not Path(p).is_absolute():
+                file_dirs.add(str(Path(p).parent).replace("\\", "/") + "/")
+        # Find empty folder nodes by walking up parent chain
+        empty: Set[str] = set()
+        for node in project.tree.nodes:
+            if node.kind != "folder":
+                continue
+            if node.id in group_roots:
+                continue  # skip group root folders only
+            # Determine which group root this folder belongs to
+            current_id = node.parent_id
+            parent_root_id: Optional[str] = None
+            while current_id:
+                cur_node = project.tree.get_node(current_id)
+                if cur_node is None:
+                    break
+                if cur_node.id in group_roots:
+                    parent_root_id = cur_node.id
+                    break
+                current_id = cur_node.parent_id
+            if parent_root_id is None:
+                continue
+            prefix = group_roots[parent_root_id]
+            # Build path by walking up from node to group root
+            parts: List[str] = []
+            cur = node
+            while cur is not None and cur.kind == "folder" and cur.id != parent_root_id:
+                parts.append(self._safe_filename(cur.name))
+                cur = project.tree.get_node(cur.parent_id) if cur.parent_id else None
+            if not parts:
+                continue
+            folder_rel = prefix + "/".join(reversed(parts)) + "/"
+            # Check if this folder has any files
+            if not any(f.startswith(folder_rel) for f in file_dirs):
+                empty.add(folder_rel)
+        return empty
 
     def _fail_operation(self, message: str) -> bool:
         self._last_operation_error = message
@@ -369,6 +461,19 @@ class ProjectManager:
                 return p
         return None
 
+    def find_project_containing_node(self, node_id: str) -> Optional[Project]:
+        """按树节点 ID 反查所属项目。
+
+        右键菜单、拖放和其他跨页面入口有时会在当前项目上下文之外
+        触发共享 CRUD，这个辅助方法用于把操作路由回正确项目。
+        """
+        if not node_id:
+            return None
+        for project in self._projects:
+            if project.tree is not None and project.tree.get_node(node_id) is not None:
+                return project
+        return None
+
     def set_current_project(self, project_id: str) -> None:
         if self.get_project(project_id):
             self._current_project_id = project_id
@@ -414,14 +519,14 @@ class ProjectManager:
 
         self._project_tree_init_service.init_new_project_tree(project)
 
+        # 创建暂存区（即使没有项目文件，临时目录用于存放导入的文件）
+        self._ensure_workspace(project)
+
         if create_structure:
             base_dir = self._normalize_path(parent_dir or os.getcwd())
             safe_name = self._safe_filename(name)
             project_dir = Path(base_dir) / safe_name
             project_dir.mkdir(parents=True, exist_ok=True)
-            (project_dir / "files" / "images").mkdir(parents=True, exist_ok=True)
-            (project_dir / "files" / "source_files").mkdir(parents=True, exist_ok=True)
-            (project_dir / "files" / "pictures").mkdir(parents=True, exist_ok=True)
             project_file = project_dir / f"{safe_name}.aline"
             self.save(str(project_file))
 
@@ -442,11 +547,20 @@ class ProjectManager:
 
         self._current_project_id = project.id
 
+        # 创建二进制文件暂存区（按需懒提取）
+        ws = self._ensure_workspace(project)
+
+        # 确保树中空文件夹在工作区有对应目录
+        empty_dirs = self._get_empty_binary_folder_paths(project)
+        for rel_path in empty_dirs:
+            ws.ensure_dir(rel_path)
+
         return project
 
     def save(self, file_path: Optional[str] = None) -> str:
         if self.current_project is None:
             raise ValueError("没有当前项目")
+        self._ensure_project_tree_groups(self.current_project)
         return self._project_repository.save_project(self.current_project, file_path)
 
     def _save_project(self, path: str) -> None:
@@ -458,6 +572,7 @@ class ProjectManager:
         return self._serializer.load(path)
 
     def close_project(self, project_id: str) -> None:
+        self._cleanup_workspace(project_id)
         self._projects = [p for p in self._projects if p.id != project_id]
         if self._current_project_id == project_id:
             self._current_project_id = self._projects[0].id if self._projects else None
@@ -551,7 +666,11 @@ class ProjectManager:
         if not raw_path or Path(raw_path).is_absolute():
             project.is_modified = True
             return True
-        old_path = (Path(project.file_path).parent / raw_path).resolve()
+        old_path_str = self.resolve_image_path(image, project)
+        if not old_path_str:
+            project.is_modified = True
+            return True
+        old_path = Path(old_path_str)
         if not old_path.exists():
             project.is_modified = True
             return True
@@ -561,7 +680,13 @@ class ProjectManager:
             new_path = self._ensure_unique_path(new_path, image.id)
         try:
             old_path.rename(new_path)
-            rel = new_path.relative_to(Path(project.file_path).parent)
+            ws = self._get_workspace(project)
+            if ws is not None and raw_path:
+                ws.remove(raw_path)
+            if ws is not None:
+                rel = new_path.relative_to(ws.temp_dir)
+            else:
+                rel = new_path.relative_to(Path(project.file_path).parent)
             image.image_path = rel.as_posix()
         except OSError:
             image.name = old_name
@@ -594,7 +719,14 @@ class ProjectManager:
         owner = project
         if owner is None:
             owner, _ = self._get_image_owner(image.id)
-        if owner and owner.file_path:
+        if owner is None:
+            return str(path)
+        # 优先从暂存区解析
+        ws = self._get_workspace(owner)
+        if ws is not None:
+            return ws.resolve(raw_path)
+        # fallback: 相对于项目文件
+        if owner.file_path:
             return str((Path(owner.file_path).parent / path).resolve())
         return str(path)
 
@@ -681,7 +813,14 @@ class ProjectManager:
             project.is_modified = True
             return True
         picture_path = Path(raw_path)
-        old_path = picture_path if picture_path.is_absolute() else (Path(project.file_path).parent / picture_path).resolve()
+        if picture_path.is_absolute():
+            old_path = picture_path
+        else:
+            old_path_str = self.resolve_picture_path(picture, project)
+            if not old_path_str:
+                project.is_modified = True
+                return True
+            old_path = Path(old_path_str)
         if not old_path.exists():
             project.is_modified = True
             return True
@@ -692,7 +831,13 @@ class ProjectManager:
         try:
             old_path.rename(new_path)
             try:
-                rel = new_path.relative_to(Path(project.file_path).parent)
+                ws = self._get_workspace(project)
+                if ws is not None and raw_path:
+                    ws.remove(raw_path)
+                if ws is not None:
+                    rel = new_path.relative_to(ws.temp_dir)
+                else:
+                    rel = new_path.relative_to(Path(project.file_path).parent)
                 picture.image_path = rel.as_posix()
             except Exception:
                 picture.image_path = str(new_path)
@@ -713,7 +858,14 @@ class ProjectManager:
         owner = project
         if owner is None:
             owner, _ = self._get_picture_owner(picture.id)
-        if owner and owner.file_path:
+        if owner is None:
+            return str(path)
+        # 优先从暂存区解析
+        ws = self._get_workspace(owner)
+        if ws is not None:
+            return ws.resolve(raw_path)
+        # fallback
+        if owner.file_path:
             return str((Path(owner.file_path).parent / path).resolve())
         return str(path)
 
@@ -734,6 +886,7 @@ class ProjectManager:
         self._clear_last_operation_error()
         p = self.current_project
         if p is None:
+            self._last_operation_error = "没有当前项目"
             return None
         normalized_path = self._normalize_path(file_path)
         if not os.path.exists(normalized_path):
@@ -821,7 +974,11 @@ class ProjectManager:
         if not raw_path or Path(raw_path).is_absolute():
             project.is_modified = True
             return True
-        old_path = (Path(project.file_path).parent / raw_path).resolve()
+        old_path_str = self.resolve_source_file_path(source_file, project)
+        if not old_path_str:
+            project.is_modified = True
+            return True
+        old_path = Path(old_path_str)
         if not old_path.exists():
             project.is_modified = True
             return True
@@ -831,7 +988,13 @@ class ProjectManager:
             new_path = self._ensure_unique_path(new_path, source_file.id)
         try:
             old_path.rename(new_path)
-            rel = new_path.relative_to(Path(project.file_path).parent)
+            ws = self._get_workspace(project)
+            if ws is not None and raw_path:
+                ws.remove(raw_path)
+            if ws is not None:
+                rel = new_path.relative_to(ws.temp_dir)
+            else:
+                rel = new_path.relative_to(Path(project.file_path).parent)
             source_file.file_path = rel.as_posix()
         except OSError:
             source_file.name = old_name
@@ -850,7 +1013,13 @@ class ProjectManager:
         owner = project
         if owner is None:
             owner, _ = self._get_source_file_owner(source_file.id)
-        if owner and owner.file_path:
+        if owner is None:
+            return str(path)
+        # 优先从暂存区
+        ws = self._get_workspace(owner)
+        if ws is not None:
+            return ws.resolve(raw_path)
+        if owner.file_path:
             return str((Path(owner.file_path).parent / path).resolve())
         return str(path)
 
@@ -864,7 +1033,12 @@ class ProjectManager:
         owner = project
         if owner is None:
             owner, _ = self._get_source_file_owner(source_file.id)
-        if owner and owner.file_path:
+        if owner is None:
+            return str(path)
+        ws = self._get_workspace(owner)
+        if ws is not None:
+            return ws.resolve(raw_path)
+        if owner.file_path:
             return str((Path(owner.file_path).parent / path).resolve())
         return str(path)
 
@@ -1863,6 +2037,16 @@ class ProjectManager:
         shutil.copy2(source_path, backup_path)
 
     def _project_assets_dir(self, project_file_path: str, folder_name: str = "images") -> Path:
+        """返回项目二进制文件的存放目录。
+
+        优先使用暂存区（ZIP 内部），fallback 到外部目录。
+        """
+        for p in self._projects:
+            if p.file_path and Path(p.file_path).resolve() == Path(project_file_path).resolve():
+                ws = self._get_workspace(p)
+                if ws is not None:
+                    return ws.temp_dir / "files" / folder_name
+                break
         return Path(project_file_path).parent / "files" / folder_name
 
     def _backup_image_for_project(
@@ -1939,7 +2123,8 @@ class ProjectManager:
             return
         base_dir = self._project_assets_dir(p.file_path, "pictures")
         base_dir.mkdir(parents=True, exist_ok=True)
-        project_root = Path(p.file_path).parent
+        ws = self._get_workspace(p)
+        project_root = ws.temp_dir if ws is not None else Path(p.file_path).parent
         for node in [item for item in p.tree.nodes if item.kind == "picture"]:
             picture = p.find_picture(node.picture_id)
             if picture is None:
@@ -1960,12 +2145,27 @@ class ProjectManager:
                 target_path = self._ensure_unique_path(target_path, picture.id)
             if current_path.resolve() != target_path.resolve():
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(current_path), str(target_path))
+                if ws is not None:
+                    try:
+                        old_rel = str(current_path.relative_to(ws.temp_dir))
+                        new_rel = str(target_path.relative_to(ws.temp_dir))
+                        ws.move(old_rel, new_rel)
+                    except ValueError:
+                        shutil.move(str(current_path), str(target_path))
+                else:
+                    shutil.move(str(current_path), str(target_path))
             try:
                 picture.image_path = target_path.relative_to(project_root).as_posix()
             except Exception:
                 picture.image_path = str(target_path)
-        self._remove_empty_directories(base_dir)
+        # 保留树中存在的空文件夹目录
+        exclude_dirs: Set[Path] = set()
+        for node in p.tree.nodes:
+            if node.kind == "folder":
+                folder_path_str = self.resolve_picture_folder_path(node.id, create=False)
+                if folder_path_str and Path(folder_path_str) != base_dir:
+                    exclude_dirs.add(Path(folder_path_str))
+        self._remove_empty_directories(base_dir, exclude_dirs)
 
     def _sync_source_file_storage(self) -> None:
         p = self.current_project
@@ -1973,7 +2173,8 @@ class ProjectManager:
             return
         base_dir = self._project_assets_dir(p.file_path, "source_files")
         base_dir.mkdir(parents=True, exist_ok=True)
-        project_root = Path(p.file_path).parent
+        ws = self._get_workspace(p)
+        project_root = ws.temp_dir if ws is not None else Path(p.file_path).parent
         for node in [item for item in p.tree.nodes if item.kind == "source_file"]:
             source_file = p.find_source_file(node.source_file_id)
             if source_file is None:
@@ -1982,7 +2183,7 @@ class ProjectManager:
             if not current_path_str:
                 continue
             current_path = Path(current_path_str)
-            if not current_path.exists() or Path(source_file.file_path or "").is_absolute():
+            if not current_path.exists():
                 continue
             target_folder = self.resolve_source_file_folder_path(node.id, create=True)
             if not target_folder:
@@ -1994,20 +2195,37 @@ class ProjectManager:
                 target_path = self._ensure_unique_path(target_path, source_file.id)
             if current_path.resolve() != target_path.resolve():
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(current_path), str(target_path))
+                if ws is not None:
+                    try:
+                        old_rel = str(current_path.relative_to(ws.temp_dir))
+                        new_rel = str(target_path.relative_to(ws.temp_dir))
+                        ws.move(old_rel, new_rel)
+                    except ValueError:
+                        shutil.move(str(current_path), str(target_path))
+                else:
+                    shutil.move(str(current_path), str(target_path))
             try:
                 source_file.file_path = target_path.relative_to(project_root).as_posix()
             except Exception:
                 source_file.file_path = str(target_path)
             if target_path.exists():
                 source_file.file_size = target_path.stat().st_size
-        self._remove_empty_directories(base_dir)
+        # 保留树中存在的空文件夹目录
+        exclude_dirs: Set[Path] = set()
+        for node in p.tree.nodes:
+            if node.kind == "folder":
+                folder_path_str = self.resolve_source_file_folder_path(node.id, create=False)
+                if folder_path_str and Path(folder_path_str) != base_dir:
+                    exclude_dirs.add(Path(folder_path_str))
+        self._remove_empty_directories(base_dir, exclude_dirs)
 
-    def _remove_empty_directories(self, root_dir: Path) -> None:
+    def _remove_empty_directories(self, root_dir: Path, exclude: Optional[Set[Path]] = None) -> None:
         if not root_dir.exists():
             return
         for child in sorted(root_dir.rglob("*"), reverse=True):
             if not child.is_dir():
+                continue
+            if exclude is not None and child in exclude:
                 continue
             try:
                 next(child.iterdir())
@@ -2025,6 +2243,11 @@ class ProjectManager:
         target_file_path: str,
         source_file_path: Optional[str],
     ) -> None:
+        """保存前同步所有二进制资产到暂存区。
+
+        有 workspace 时文件已在其中，备份方法通过 _project_assets_dir()
+        获取正确目录。此处仍调用备份方法以确保一致性。
+        """
         source_project = project.model_copy(deep=False)
         source_project.file_path = source_file_path
         for source_file in project.source_files:
