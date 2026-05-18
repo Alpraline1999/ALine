@@ -1,4 +1,4 @@
-name: Release
+name: Source Release
 
 on:
   push:
@@ -19,8 +19,8 @@ env:
   PYTHONUTF8: "1"
 
 jobs:
-  build-release:
-    name: Build Release Artifact
+  publish-source-release:
+    name: Publish Source Release
     runs-on: ubuntu-latest
 
     steps:
@@ -37,9 +37,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pytest pyinstaller
+          python -m pip install pytest
 
-      - name: Run release quality gates
+      - name: Run source release quality gates
         run: |
           python -m compileall app core extensions models processing ui main.py run.py
           python -m pytest \
@@ -47,20 +47,12 @@ jobs:
             tests/test_settings_page_refresh.py \
             -q
 
-      - name: Build distributable archive
-        run: |
-          python build.py --clean --skip-tests
-
-      - name: Upload release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aline-release-${{ github.sha }}
-          path: dist/*.zip
-          if-no-files-found: error
-
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
           generate_release_notes: true
+          body: |
+            This GitHub release is a source-code milestone only.
+
+            Desktop installers are distributed separately through external channels.

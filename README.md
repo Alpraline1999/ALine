@@ -84,7 +84,8 @@ python run.py
 
 ## 源码发布
 
-源码发布方式适合内部测试、开发协作和已经具备 Python 环境的用户：
+GitHub Public 仓库当前主要提供源码托管、Issue/文档协作和源码版本里程碑发布。
+适合内部测试、开发协作和已经具备 Python 环境的用户：
 
 ```bash
 python -m venv .venv
@@ -111,7 +112,12 @@ python build.py --skip-tests
 GitHub Actions 已预留两条自动化流程：
 
 - `CI`：在 `push` / `pull_request` 时执行编译检查、焦点回归测试，并生成当前 `mypy` 基线报告。
-- `Release`：在推送 `v*` 标签时执行质量门、调用 `build.py --clean --skip-tests` 打包，并上传 `dist/*.zip` 到 GitHub Release。
+- `Source Release`：在推送 `v*` 标签时执行质量门，并在 GitHub 上创建源码版本里程碑 Release；不上传桌面安装包。
+
+当前发布策略：
+
+- GitHub：公开源码、文档、Issue 和源码版本标签。
+- 桌面安装包（Linux / Windows）：通过外部分发渠道单独发布，不通过 GitHub Releases 分发。
 
 ## 开发与测试
 
