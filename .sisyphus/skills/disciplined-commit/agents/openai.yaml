@@ -1,0 +1,4 @@
+interface:
+  display_name: "Disciplined Commit"
+  short_description: "Split changes into validated, well-scoped commits"
+  default_prompt: "Use $disciplined-commit to split my current changes into validated, well-scoped commits."
