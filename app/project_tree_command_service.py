@@ -270,6 +270,7 @@ class ProjectTreeCommandService:
             return bool(item is not None and not item.is_default)
         return kind in {
             "global_pipeline",
+            "global_plot_pipeline",
             "global_ai_prompt",
             "global_ai_skill",
             "global_ai_agent",
@@ -281,6 +282,8 @@ class ProjectTreeCommandService:
             return False
         if kind == "global_pipeline":
             return global_assets.update_saved_pipeline(node_id, name=clean_name)
+        if kind == "global_plot_pipeline":
+            return global_assets.update_saved_plot_pipeline(node_id, name=clean_name)
         if kind == "global_report_template":
             return global_assets.update_report_template(node_id, name=clean_name)
         if kind == "global_curve_style_template":
@@ -303,6 +306,8 @@ class ProjectTreeCommandService:
             return False
         if kind == "global_pipeline":
             return global_assets.delete_saved_pipeline(node_id)
+        if kind == "global_plot_pipeline":
+            return global_assets.delete_saved_plot_pipeline(node_id)
         if kind == "global_report_template":
             return global_assets.delete_report_template(node_id)
         if kind == "global_curve_style_template":

@@ -54,6 +54,7 @@ _BUSINESS_TREE_KINDS = [
     "pipeline", "figure_template", "report_template", "analysis_result",
     "global_pipeline", "global_report_template",
     "global_curve_style_template", "global_plot_style", "global_plot_theme",
+    "global_plot_pipeline",
     "global_extension_config",
     "series", "curve",
 ]
@@ -82,7 +83,7 @@ _PAGE_TREE_FOCUS_KINDS = {
 _PAGE_TREE_FOCUS_GLOBAL_GROUP_KEYS = {
     "homePage": [],
     "dataPage": [],
-    "chartPage": ["curve_styles", "plot_styles", "extension_configs:plot"],
+    "chartPage": ["curve_styles", "plot_styles", "plot_pipelines", "extension_configs:plot"],
     "processPage": ["pipelines", "extension_configs:processing"],
     "analysisPage": ["report_templates", "extension_configs:analysis"],
     "digitizePage": ["extension_configs:digitize"],

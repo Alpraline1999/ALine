@@ -41,6 +41,7 @@ from qfluentwidgets import (
     ListWidget,
     MessageBox,
     PrimaryPushButton,
+    PrimaryToolButton,
     PushButton,
     RoundMenu,
     Slider,
@@ -54,7 +55,6 @@ from qfluentwidgets import (
     ToolTipPosition,
     isDarkTheme,
 )
-
 from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
 from core.extension_api import (
     PlotExtensionContext,
@@ -80,12 +80,14 @@ from models.schemas import (
     PicturePlotExtraVersion,
     PicturePlotSeriesSnapshot,
     PicturePlotSnapshot,
+    SavedPlotPipeline,
 )
 from ui.dialogs.export_flow import choose_picture_export_plan
 from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.dialogs.plot_extension_instance_dialog import PlotExtensionInstanceEditDialog
 from ui.matplotlib_fonts import list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.matplotlib_preview import (
     attach_preview_gesture_buttons,
@@ -525,7 +527,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 lambda: self._style_tabs,
                 TeachingTipTailPosition.BOTTOM,
                 "样式与扩展分开管理",
-                "左侧保留曲线样式、绘图样式和绘图扩展三个页签；右侧仅保留绘图扩展说明和已加载实例。",
+                "左侧保留曲线样式、绘图样式和绘图扩展三个页签；右侧仅保留绘图扩展说明。",
             ),
             OnboardingStep(
                 lambda: self._plot_actions_bar,
@@ -752,54 +754,16 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
 
     def _build_plot_extension_side_panel(self, parent: QWidget) -> QWidget:
         panel = ExtensionConfigPanel("绘图扩展", "应用扩展", parent, mode="help_only", framed=True)
+        panel.set_context("绘图", "预览区")
         panel.set_status_context("plot", "绘图扩展")
-        panel.set_help_area_layout(expanding=False, min_height=124, max_height=124)
-
-        loaded_section = QWidget(panel)
-        loaded_layout = QVBoxLayout(loaded_section)
-        loaded_layout.setContentsMargins(0, 0, 0, 0)
-        loaded_layout.setSpacing(8)
-        loaded_layout.addWidget(make_hsep(loaded_section))
-
-        applied_header = QHBoxLayout()
-        applied_header.setContentsMargins(0, 0, 0, 0)
-        applied_header.setSpacing(6)
-        applied_header.addWidget(make_section_label("已加载扩展", loaded_section))
-        applied_header.addStretch()
-        self._clear_all_plot_extensions_btn = ToolButton(FIF.DELETE, loaded_section)
-        self._set_square_tool_button(self._clear_all_plot_extensions_btn)
-        self._clear_all_plot_extensions_btn.setToolTip("清除全部已加载扩展")
-        self._clear_all_plot_extensions_btn.clicked.connect(self._clear_all_plot_extensions)
-        install_fluent_tooltip(self._clear_all_plot_extensions_btn, delay=300, position=ToolTipPosition.TOP)
-        self._clear_all_plot_extensions_btn.setEnabled(False)
-        applied_header.addWidget(self._clear_all_plot_extensions_btn)
-        self._remove_selected_plot_extension_btn = PushButton("撤销选中", loaded_section)
-        self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
-        self._remove_selected_plot_extension_btn.setEnabled(False)
-        applied_header.addWidget(self._remove_selected_plot_extension_btn)
-        loaded_layout.addLayout(applied_header)
-
-        self._plot_extension_repeat_hint = make_hint_label("同一扩展可重复加载，列表会保留目标曲线和参数摘要。", loaded_section)
-        loaded_layout.addWidget(self._plot_extension_repeat_hint)
-
-        self._plot_extension_applied_list = ListWidget(loaded_section)
-        self._plot_extension_applied_list.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
-        self._plot_extension_applied_list.itemDoubleClicked.connect(self._edit_selected_plot_extension_instance)
-        self._plot_extension_applied_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._plot_extension_applied_list.customContextMenuRequested.connect(self._on_plot_extension_instance_context_menu)
-        loaded_layout.addWidget(self._plot_extension_applied_list, 1)
-
-        panel.add_bottom_widget(loaded_section, stretch=1)
+        panel.configs_changed.connect(self.assets_modified.emit)
+        panel.reload_requested.connect(self._reload_chart_extensions)
+        # 右侧面板仅保留扩展说明/帮助，已加载扩展列表移至左侧绘图扩展标签页
         return panel
 
     def _update_plot_extension_help_area_height(self) -> None:
-        if not hasattr(self, "_extension_panel") or not isinstance(self._extension_panel, ExtensionConfigPanel):
-            return
-        panel_height = max(int(self._extension_panel.height() or 0), 0)
-        target_height = max(124, panel_height // 3) if panel_height else 124
-        self._extension_panel.set_help_area_layout(expanding=False, min_height=target_height, max_height=target_height)
+        # 使用默认布局，与其他页面保持一致
+        pass
 
     def _update_plot_extension_info_panel(self, type_id: Optional[str]) -> None:
         if not hasattr(self, "_extension_panel") or not isinstance(self._extension_panel, ExtensionConfigPanel):
@@ -1414,17 +1378,143 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._plot_extension_target_hint = make_hint_label("", page)
         self._plot_extension_target_hint.setWordWrap(True)
         self._plot_extension_target_hint.hide()
+        layout.addWidget(self._plot_extension_target_hint)
 
-        self._plot_extension_controls = ExtensionConfigPanel("绘图扩展", "应用扩展", page, mode="compact", framed=False)
-        self._plot_extension_controls.setMinimumWidth(0)
-        self._plot_extension_controls.setMaximumWidth(16777215)
-        self._plot_extension_controls.set_status_context("plot", "绘图扩展")
-        self._plot_extension_controls.set_inline_apply_action(visible=True, tooltip="应用当前绘图扩展")
-        self._plot_extension_controls.apply_requested.connect(self._on_chart_extension_apply)
-        self._plot_extension_controls.configs_changed.connect(self.assets_modified.emit)
-        self._plot_extension_controls.reload_requested.connect(self._reload_chart_extensions)
-        self._plot_extension_controls.selection_changed.connect(self._on_plot_extension_type_changed)
-        layout.addWidget(self._plot_extension_controls, 1)
+        # ── Pipeline 模板行 ──
+        template_row = QHBoxLayout()
+        template_row.setContentsMargins(0, 0, 0, 0)
+        template_row.setSpacing(6)
+
+        self._plot_pipeline_template_combo = ComboBox(page)
+        template_row.addWidget(self._plot_pipeline_template_combo, 1)
+
+        load_tpl_btn = ToolButton(FIF.FOLDER, page)
+        load_tpl_btn.setToolTip("加载选中的 Pipeline 模板")
+        load_tpl_btn.clicked.connect(self._load_plot_pipeline)
+        self._set_square_tool_button(load_tpl_btn)
+        install_fluent_tooltip(load_tpl_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        template_row.addWidget(load_tpl_btn)
+
+        save_tpl_btn = ToolButton(FIF.ADD, page)
+        save_tpl_btn.setToolTip("将当前绘图扩展另存为模板")
+        save_tpl_btn.clicked.connect(self._save_plot_pipeline_template)
+        self._set_square_tool_button(save_tpl_btn)
+        install_fluent_tooltip(save_tpl_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        template_row.addWidget(save_tpl_btn)
+
+        overwrite_tpl_btn = ToolButton(FIF.SAVE, page)
+        overwrite_tpl_btn.setToolTip("覆盖当前模板")
+        overwrite_tpl_btn.clicked.connect(self._overwrite_plot_pipeline)
+        self._set_square_tool_button(overwrite_tpl_btn)
+        install_fluent_tooltip(overwrite_tpl_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        template_row.addWidget(overwrite_tpl_btn)
+
+        self._clear_all_plot_extensions_btn = ToolButton(FIF.DELETE, page)
+        self._set_square_tool_button(self._clear_all_plot_extensions_btn)
+        self._clear_all_plot_extensions_btn.setToolTip("清除全部已加载扩展")
+        self._clear_all_plot_extensions_btn.clicked.connect(self._clear_all_plot_extensions)
+        install_fluent_tooltip(self._clear_all_plot_extensions_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        self._clear_all_plot_extensions_btn.setEnabled(False)
+        template_row.addWidget(self._clear_all_plot_extensions_btn)
+        layout.addLayout(template_row)
+
+        # ── 已加载扩展 Pipeline 列表 ──
+        self._plot_extension_applied_list = ListWidget(page)
+        self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
+        self._plot_extension_applied_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._plot_extension_applied_list.customContextMenuRequested.connect(self._on_plot_extension_instance_context_menu)
+        layout.addWidget(self._plot_extension_applied_list, 1)
+
+        # ── 扩展类型选择 + 添加/撤销行 ──
+        add_remove_row = QHBoxLayout()
+        add_remove_row.setContentsMargins(0, 0, 0, 0)
+        add_remove_row.setSpacing(6)
+
+        self._plot_extension_selector = ComboBox(page)
+        add_remove_row.addWidget(self._plot_extension_selector, 1)
+
+        add_btn = ToolButton(FIF.ADD, page)
+        add_btn.setToolTip("添加当前选中的绘图扩展")
+        add_btn.clicked.connect(self._on_add_plot_extension)
+        self._set_square_tool_button(add_btn)
+        install_fluent_tooltip(add_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        add_remove_row.addWidget(add_btn)
+
+        self._remove_selected_plot_extension_btn = ToolButton(FIF.DELETE, page)
+        self._set_square_tool_button(self._remove_selected_plot_extension_btn)
+        self._remove_selected_plot_extension_btn.setToolTip("撤销选中的扩展")
+        self._remove_selected_plot_extension_btn.clicked.connect(self._remove_selected_plot_extension)
+        install_fluent_tooltip(self._remove_selected_plot_extension_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        self._remove_selected_plot_extension_btn.setEnabled(False)
+        add_remove_row.addWidget(self._remove_selected_plot_extension_btn)
+        layout.addLayout(add_remove_row)
+
+        # ── 扩展参数区域（整体放入容器，无选中时隐藏）──
+        self._plot_extension_param_section = QWidget(page)
+        param_layout = QVBoxLayout(self._plot_extension_param_section)
+        param_layout.setContentsMargins(0, 0, 0, 0)
+        param_layout.setSpacing(8)
+
+        param_layout.addWidget(make_hsep(self._plot_extension_param_section))
+        param_layout.addWidget(make_section_label("扩展参数", self._plot_extension_param_section))
+
+        # ── 扩展配置预设行（参数区顶部）──
+        config_row = QHBoxLayout()
+        config_row.setContentsMargins(0, 0, 0, 0)
+        config_row.setSpacing(6)
+
+        self._plot_extension_config_combo = ComboBox(self._plot_extension_param_section)
+        config_row.addWidget(self._plot_extension_config_combo, 1)
+
+        config_load_btn = ToolButton(FIF.FOLDER, self._plot_extension_param_section)
+        config_load_btn.setToolTip("加载当前选中的扩展配置")
+        config_load_btn.clicked.connect(self._load_extension_config)
+        self._set_square_tool_button(config_load_btn)
+        install_fluent_tooltip(config_load_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        config_row.addWidget(config_load_btn)
+
+        config_save_btn = ToolButton(FIF.ADD, self._plot_extension_param_section)
+        config_save_btn.setToolTip("将当前参数另存为全局扩展配置")
+        config_save_btn.clicked.connect(self._save_extension_config)
+        self._set_square_tool_button(config_save_btn)
+        install_fluent_tooltip(config_save_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        config_row.addWidget(config_save_btn)
+
+        config_overwrite_btn = ToolButton(FIF.SAVE, self._plot_extension_param_section)
+        config_overwrite_btn.setToolTip("覆盖当前选中的扩展配置")
+        config_overwrite_btn.clicked.connect(self._overwrite_extension_config)
+        self._set_square_tool_button(config_overwrite_btn)
+        install_fluent_tooltip(config_overwrite_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        config_row.addWidget(config_overwrite_btn)
+
+        self._plot_extension_apply_btn = PrimaryToolButton(FIF.PLAY, self._plot_extension_param_section)
+        self._set_square_tool_button(self._plot_extension_apply_btn)
+        self._plot_extension_apply_btn.setToolTip("将当前参数更新到选中的扩展实例")
+        self._plot_extension_apply_btn.clicked.connect(self._on_update_plot_extension)
+        self._plot_extension_apply_btn.setEnabled(False)
+        install_fluent_tooltip(self._plot_extension_apply_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        config_row.addWidget(self._plot_extension_apply_btn)
+        param_layout.addLayout(config_row)
+
+        # ── 扩展参数表单 ──
+        self._plot_extension_param_form = ExtensionOptionsForm(self._plot_extension_param_section)
+        self._plot_extension_param_form.setMinimumHeight(240)
+        param_layout.addWidget(self._plot_extension_param_form, 1)
+
+        self._plot_extension_param_section.hide()
+        layout.addWidget(self._plot_extension_param_section, 1)
+
+        # ── 通过 combobox 选择后也能同步右侧面板 ──
+        self._plot_extension_selector.currentIndexChanged.connect(self._on_plot_extension_selector_changed)
+
+        layout.addStretch()
+
+        # 记录当前表单正显示的扩展类型（用于判断是否需要重建字段）
+        self._plot_extension_form_current_type: Optional[str] = None
+
+        self._refresh_plot_pipeline_templates()
+        self._refresh_plot_extension_selector()
         return scroll
 
     def on_tree_node_selected(self, kind: str, node_id: str) -> None:
@@ -2105,10 +2195,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         if applied is None:
             return
         menu = RoundMenu(parent=self)
-        edit_action = Action(FIF.EDIT, "编辑")
-        edit_action.triggered.connect(self._edit_selected_plot_extension_instance)
-        menu.addAction(edit_action)
-        menu.addSeparator()
         remove_action = Action(FIF.DELETE, "撤销选中")
         remove_action.triggered.connect(self._remove_selected_plot_extension)
         menu.addAction(remove_action)
@@ -2174,21 +2260,42 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._clear_all_plot_extensions_btn.setEnabled(has_loaded)
         if hasattr(self, "_remove_selected_plot_extension_btn"):
             self._remove_selected_plot_extension_btn.setEnabled(has_selection)
-        if not has_selection or not hasattr(self, "_plot_extension_controls"):
-            current_type = self._plot_extension_controls.current_type() if hasattr(self, "_plot_extension_controls") else None
-            self._update_plot_extension_info_panel(current_type)
+        if hasattr(self, "_plot_extension_apply_btn"):
+            self._plot_extension_apply_btn.setEnabled(has_selection)
+        if not has_selection:
+            if hasattr(self, "_plot_extension_param_section"):
+                self._plot_extension_param_section.hide()
+            self._update_plot_extension_info_panel(self._plot_extension_selector_current_type())
+            self._refresh_extension_config_combo(None)
             return
+        if hasattr(self, "_plot_extension_param_section"):
+            self._plot_extension_param_section.show()
         applied = self._selected_plot_extension_instance()
         if applied is None:
             return
         type_id = str(applied.get("type") or "")
-        target_index = next(
-            (index for index, entry in enumerate(self._plot_extension_controls._entries) if entry.get("type") == type_id),
-            -1,
-        )
-        if target_index >= 0:
-            self._plot_extension_controls._selector.setCurrentIndex(target_index)
-        self._plot_extension_controls._editor.setPlainText(json.dumps(dict(applied.get("options") or {}), ensure_ascii=False, indent=2))
+        extension = extension_registry.get_plot(type_id)
+        if extension is None:
+            self._update_plot_extension_info_panel(type_id)
+            return
+        # 提供曲线候选列表（给 lines/line 类型字段使用）
+        curve_labels = [self._curve_display_name(curve) for curve in self._chart_series]
+        # 如果当前表单的扩展类型与选中条目不同，重建字段
+        if self._plot_extension_form_current_type != type_id:
+            entry = build_extension_entry(extension)
+            fields = list(entry.get("normalized_config_fields") or []) or [
+                {"key": f.key, "label": f.label, "field_type": f.field_type,
+                 "default": f.default, "choices": list(f.choices), "description": f.description,
+                 "required": f.required, "min_value": f.min_value, "max_value": f.max_value}
+                for f in extension.config_fields
+            ]
+            options = dict(applied.get("options") or {})
+            self._plot_extension_param_form.set_fields(fields, options, infer_unknown_fields=True)
+            self._plot_extension_form_current_type = type_id
+        else:
+            self._plot_extension_param_form.set_options(dict(applied.get("options") or {}))
+        self._plot_extension_param_form.set_line_candidates(curve_labels)
+        self._refresh_extension_config_combo(type_id)
         self._update_plot_extension_info_panel(type_id)
 
     def _remove_plot_extension_instance(self, instance_id: str) -> bool:
@@ -2251,32 +2358,294 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._plot_extension_applied_list.setMaximumHeight(16777215)
 
     def _refresh_style_extension_panel(self, _index: Optional[int] = None) -> None:
+        if hasattr(self, "_plot_extension_selector"):
+            self._refresh_plot_extension_selector()
+        self._update_plot_extension_info_panel(self._plot_extension_selector_current_type())
+        self._update_extension_remove_action()
+        self._refresh_plot_extension_list()
+
+    def _plot_extension_entries_list(self) -> List[dict]:
+        if not hasattr(self, "_plot_extension_entry_cache"):
+            self._plot_extension_entry_cache = []
+        return self._plot_extension_entry_cache
+
+    def _plot_extension_selector_current_type(self) -> Optional[str]:
+        if not hasattr(self, "_plot_extension_selector") or not hasattr(self, "_plot_extension_entry_cache"):
+            return None
+        idx = self._plot_extension_selector.currentIndex()
+        if idx < 0 or idx >= len(self._plot_extension_entry_cache):
+            return None
+        return self._plot_extension_entry_cache[idx].get("type")
+
+    def _refresh_plot_extension_selector(self) -> None:
+        if not hasattr(self, "_plot_extension_selector"):
+            return
         plot_entries = self._plot_extension_entries()
+        self._plot_extension_entry_cache = plot_entries
         available_types = {entry["type"] for entry in plot_entries}
-        panel_current_type = self._plot_extension_controls.current_type() if hasattr(self, "_plot_extension_controls") else None
-        current_type = None
-        if panel_current_type in available_types:
-            current_type = panel_current_type
-        else:
+        current_type = self._plot_extension_selector_current_type()
+        if current_type not in available_types:
             current_type = next(
                 (str(entry.get("type")) for entry in reversed(self._applied_plot_extensions) if entry.get("type") in available_types),
                 None,
             ) or next((type_id for type_id in self._plot_extension_options if type_id in available_types), None)
-        if hasattr(self, "_plot_extension_controls"):
-            self._plot_extension_controls.set_panel_title("绘图扩展")
-            self._plot_extension_controls.set_action_text("应用扩展")
-            self._plot_extension_controls.set_entries(
-                plot_entries,
-                saved_options=self._plot_extension_options,
-                current_type=current_type,
-            )
-        self._update_plot_extension_info_panel(current_type)
-        self._update_extension_remove_action()
-        self._refresh_plot_extension_list()
+
+        self._plot_extension_selector.blockSignals(True)
+        self._plot_extension_selector.clear()
+        selected_idx = 0
+        for index, entry in enumerate(plot_entries):
+            self._plot_extension_selector.addItem(entry.get("label", str(entry.get("type", "扩展"))))
+            if entry.get("type") == current_type:
+                selected_idx = index
+        if plot_entries:
+            self._plot_extension_selector.setCurrentIndex(selected_idx)
+        self._plot_extension_selector.blockSignals(False)
+
+        has_entries = bool(plot_entries)
+        if hasattr(self, "_clear_all_plot_extensions_btn"):
+            self._clear_all_plot_extensions_btn.setEnabled(has_entries and bool(self._applied_plot_extensions))
+
+    def _on_add_plot_extension(self) -> None:
+        """从扩展类型选择器添加新的绘图扩展到 Pipeline。"""
+        type_id = self._plot_extension_selector_current_type()
+        if not type_id:
+            return
+        self._apply_plot_extension(type_id)
 
     def _on_chart_extension_apply(self, type_id: str, options: Dict[str, Any]) -> None:
+        """兼容接口：保存选项并应用绘图扩展。"""
         self._plot_extension_options[type_id] = dict(options)
         self._apply_plot_extension(type_id)
+
+    def _on_update_plot_extension(self) -> None:
+        """将表单中的参数应用到当前选中的绘图扩展实例并重绘。"""
+        applied = self._selected_plot_extension_instance()
+        if applied is None:
+            return
+        instance_id = str(applied.get("id") or "")
+        try:
+            options = self._plot_extension_param_form.current_options()
+        except ValueError as exc:
+            InfoBar.error("参数错误", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        target_index = next(
+            (index for index, entry in enumerate(self._applied_plot_extensions) if entry.get("id") == instance_id),
+            -1,
+        )
+        if target_index < 0:
+            return
+        type_id = str(applied.get("type") or "")
+        self._plot_extension_options[type_id] = dict(options)
+        updated = dict(self._applied_plot_extensions[target_index])
+        updated["options"] = dict(options)
+        updated["sequence"] = self._next_style_change_sequence()
+        self._applied_plot_extensions[target_index] = updated
+        self._refresh_plot_extension_list(selected_instance_id=instance_id)
+        self._redraw()
+        extension = extension_registry.get_plot(type_id)
+        InfoBar.success(
+            "已更新",
+            f"绘图扩展 {(extension.name if extension is not None else type_id)} 参数已更新",
+            parent=self,
+            position=InfoBarPosition.TOP,
+        )
+
+    def _on_plot_extension_selector_changed(self, _index: int) -> None:
+        """扩展类型选择器切换时更新右侧面板和表单（未选中 Pipeline 条目时）。"""
+        type_id = self._plot_extension_selector_current_type()
+        self._update_plot_extension_info_panel(type_id)
+        # 未选中 Pipeline 条目时不填充参数区（保持隐藏）
+        if not self._selected_plot_extension_instance():
+            return
+
+    @staticmethod
+    def _config_fields_from_extension(extension, entry: dict) -> List[dict]:
+        fields = list(entry.get("normalized_config_fields") or [])
+        if not fields:
+            fields = [
+                {"key": f.key, "label": f.label, "field_type": f.field_type,
+                 "default": f.default, "choices": list(f.choices), "description": f.description,
+                 "required": f.required, "min_value": f.min_value, "max_value": f.max_value}
+                for f in extension.config_fields
+            ]
+        return fields
+
+    # ── Pipeline 模板管理 ──
+
+    def _refresh_plot_pipeline_templates(self) -> None:
+        if not hasattr(self, "_plot_pipeline_template_combo"):
+            return
+        self._plot_pipeline_template_ids = []
+        self._plot_pipeline_template_combo.clear()
+        for pipeline in global_assets.list_saved_plot_pipelines():
+            self._plot_pipeline_template_combo.addItem(pipeline.name)
+            self._plot_pipeline_template_ids.append(pipeline.id)
+
+    def _selected_plot_pipeline_id(self) -> Optional[str]:
+        idx = self._plot_pipeline_template_combo.currentIndex()
+        if idx < 0 or idx >= len(self._plot_pipeline_template_ids):
+            return None
+        return self._plot_pipeline_template_ids[idx]
+
+    def _load_plot_pipeline(self) -> None:
+        pipeline_id = self._selected_plot_pipeline_id()
+        if not pipeline_id:
+            return
+        self.load_plot_pipeline(pipeline_id)
+
+    def load_plot_pipeline(self, pipeline_id: str) -> None:
+        """公共接口：按 pipeline_id 加载绘图扩展模板。"""
+        pipeline = global_assets.get_saved_plot_pipeline(pipeline_id)
+        if pipeline is None or not pipeline.ops:
+            return
+        self._applied_plot_extensions = [dict(op) for op in pipeline.ops]
+        self._refresh_style_extension_panel()
+        self._redraw()
+        InfoBar.success("已加载", f"已加载绘图扩展模板：{pipeline.name}", parent=self, position=InfoBarPosition.TOP)
+
+    def _save_plot_pipeline_template(self) -> None:
+        if not self._applied_plot_extensions:
+            InfoBar.warning("提示", "当前没有已加载的扩展", parent=self, position=InfoBarPosition.TOP)
+            return
+        from ui.dialogs.fluent_dialogs import TextInputDialog
+        name, ok = TextInputDialog.get_text(self, "另存为绘图扩展模板", "模板名称:", placeholder="输入模板名称")
+        if not ok or not name.strip():
+            return
+        sp = global_assets.add_saved_plot_pipeline(
+            SavedPlotPipeline(name=name.strip(), ops=list(self._applied_plot_extensions))
+        )
+        self._refresh_plot_pipeline_templates()
+        # 选中刚保存的模板
+        for idx, pid in enumerate(self._plot_pipeline_template_ids):
+            if pid == sp.id:
+                self._plot_pipeline_template_combo.setCurrentIndex(idx)
+                break
+        self.assets_modified.emit()
+        InfoBar.success("已保存", f"绘图扩展模板 {name.strip()} 已保存", parent=self, position=InfoBarPosition.TOP)
+
+    def _overwrite_plot_pipeline(self) -> None:
+        pipeline_id = self._selected_plot_pipeline_id()
+        if not pipeline_id:
+            InfoBar.warning("提示", "请先选择一个模板", parent=self, position=InfoBarPosition.TOP)
+            return
+        if not self._applied_plot_extensions:
+            InfoBar.warning("提示", "当前没有已加载的扩展", parent=self, position=InfoBarPosition.TOP)
+            return
+        updated = global_assets.update_saved_plot_pipeline(pipeline_id, ops=list(self._applied_plot_extensions))
+        if updated:
+            self.assets_modified.emit()
+            InfoBar.success("已覆盖", "绘图扩展模板已更新", parent=self, position=InfoBarPosition.TOP)
+
+    # ── 扩展配置预设管理（单扩展类型）──
+
+    def _current_extension_type_for_config(self) -> Optional[str]:
+        # 优先使用 Pipeline 选中条目的类型，否则使用选择器的类型
+        applied = self._selected_plot_extension_instance()
+        if applied is not None:
+            return str(applied.get("type") or "")
+        return self._plot_extension_selector_current_type()
+
+    def _refresh_extension_config_combo(self, type_id: Optional[str]) -> None:
+        if not hasattr(self, "_plot_extension_config_combo"):
+            return
+        self._plot_extension_config_ids = [None]
+        self._plot_extension_config_combo.clear()
+        self._plot_extension_config_combo.addItem("默认配置")
+        category = f"plot:{type_id}" if type_id else ""
+        if category:
+            for cfg in global_assets.list_extension_configs():
+                if cfg.category == category:
+                    self._plot_extension_config_combo.addItem(cfg.name)
+                    self._plot_extension_config_ids.append(cfg.id)
+
+    def _selected_config_id(self) -> Optional[str]:
+        idx = self._plot_extension_config_combo.currentIndex()
+        if idx < 0 or not hasattr(self, "_plot_extension_config_ids") or idx >= len(self._plot_extension_config_ids):
+            return None
+        return self._plot_extension_config_ids[idx]
+
+    def _load_extension_config(self) -> None:
+        type_id = self._current_extension_type_for_config()
+        if not type_id:
+            return
+        config_id = self._selected_config_id()
+        if config_id is None:
+            # 加载默认配置：从已保存的 options 或扩展默认值恢复
+            extension = extension_registry.get_plot(type_id)
+            if extension is None:
+                return
+            entry = build_extension_entry(extension)
+            default_options = dict(self._plot_extension_options.get(type_id, entry.get("resolved_options") or extension.default_options or {}))
+            if self._plot_extension_form_current_type != type_id:
+                fields = self._config_fields_from_extension(extension, entry)
+                self._plot_extension_param_form.set_fields(fields, default_options, infer_unknown_fields=True)
+                self._plot_extension_form_current_type = type_id
+            else:
+                self._plot_extension_param_form.set_options(default_options)
+            return
+        config = global_assets.get_extension_config(config_id)
+        if config is None:
+            return
+        options = dict(config.options or {})
+        if self._plot_extension_form_current_type != type_id:
+            extension = extension_registry.get_plot(type_id)
+            if extension is None:
+                return
+            entry = build_extension_entry(extension)
+            fields = self._config_fields_from_extension(extension, entry)
+            self._plot_extension_param_form.set_fields(fields, options, infer_unknown_fields=True)
+            self._plot_extension_form_current_type = type_id
+        else:
+            self._plot_extension_param_form.set_options(options)
+
+    def _save_extension_config(self) -> None:
+        type_id = self._current_extension_type_for_config()
+        if not type_id:
+            return
+        extension = extension_registry.get_plot(type_id)
+        if extension is None:
+            return
+        try:
+            options = self._plot_extension_param_form.current_options()
+        except ValueError as exc:
+            InfoBar.error("参数错误", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        from ui.dialogs.fluent_dialogs import TextInputDialog
+        name, ok = TextInputDialog.get_text(self, "保存扩展配置", "配置名称:", placeholder="输入配置名称")
+        if not ok or not name.strip():
+            return
+        from core.global_assets import ExtensionConfigPreset
+        global_assets.add_extension_config(
+            ExtensionConfigPreset(
+                category=f"plot:{type_id}",
+                extension_type=type_id,
+                extension_name=extension.name,
+                extension_version=extension.version,
+                name=name.strip(),
+                options=dict(options),
+            )
+        )
+        self._refresh_extension_config_combo(type_id)
+        self.assets_modified.emit()
+        InfoBar.success("已保存", f"扩展配置 {name.strip()} 已保存", parent=self, position=InfoBarPosition.TOP)
+
+    def _overwrite_extension_config(self) -> None:
+        type_id = self._current_extension_type_for_config()
+        if not type_id:
+            return
+        config_id = self._selected_config_id()
+        if config_id is None:
+            InfoBar.warning("提示", "请先选择要覆盖的配置", parent=self, position=InfoBarPosition.TOP)
+            return
+        try:
+            options = self._plot_extension_param_form.current_options()
+        except ValueError as exc:
+            InfoBar.error("参数错误", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        updated = global_assets.update_extension_config(config_id, options=dict(options))
+        if updated:
+            self.assets_modified.emit()
+            InfoBar.success("已覆盖", "扩展配置已更新", parent=self, position=InfoBarPosition.TOP)
 
     def _reload_chart_extensions(self) -> None:
         report = reload_configured_extensions()
@@ -3263,6 +3632,11 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                 warnings.filterwarnings(
                     "error",
                     message="Tight layout not applied.*",
+                    category=UserWarning,
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*not compatible with tight_layout.*",
                     category=UserWarning,
                 )
                 self._figure.tight_layout(pad=1.1)

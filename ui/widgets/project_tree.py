@@ -65,6 +65,7 @@ from .project_tree_menu_commands import ProjectTreeMenuBuilder
 # ── 全局资源导入/导出 类型标记 ──────────────────────────
 _ALINE_EXPORT_TYPE_MAP: dict[str, str] = {
     "global_pipeline": "pipeline",
+    "global_plot_pipeline": "plot_pipeline",
     "global_curve_style_template": "curve_style",
     "global_plot_style": "plot_style",
     "global_report_template": "report_template",
@@ -73,6 +74,7 @@ _ALINE_EXPORT_TYPE_MAP: dict[str, str] = {
 
 _IMPORT_KIND_TO_ASSET_TYPE: dict[str, str] = {
     "pipeline": "pipeline",
+    "plot_pipeline": "plot_pipeline",
     "curve_style": "curve_style",
     "plot_style": "plot_style",
     "report_template": "report_template",
@@ -81,6 +83,7 @@ _IMPORT_KIND_TO_ASSET_TYPE: dict[str, str] = {
 
 _IMPORT_KIND_LABEL: dict[str, str] = {
     "pipeline": "Pipelines",
+    "plot_pipeline": "绘图扩展模板",
     "curve_style": "曲线样式",
     "plot_style": "绘图样式",
     "report_template": "报告模板",
@@ -822,23 +825,43 @@ class ProjectTreeWidget(QWidget):
                 pipelines.addChild(self._make_synthetic_item(item.name, "global_pipeline", item.id, FIF.DEVELOPER_TOOLS))
             root.addChild(pipelines)
             visible_children += 1
-        if _allowed("curve_styles"):
-            curve_group = self._make_synthetic_item("曲线样式", "global_group", "__global_curve_styles__", FIF.PENCIL_INK)
-            curve_templates = getattr(global_assets, "list_curve_style_templates", lambda include_builtin=True: [])(include_builtin=True)
-            for tmpl in sorted(curve_templates, key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name))):
-                curve_group.addChild(self._make_synthetic_item(tmpl.name, "global_curve_style_template", tmpl.id, FIF.PENCIL_INK))
-            root.addChild(curve_group)
-            visible_children += 1
-        if _allowed("plot_styles"):
-            plot_group = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
-            templates = global_assets.list_figure_templates()
-            for tmpl in sorted(
-                templates,
-                key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
-            ):
-                plot_group.addChild(self._make_synthetic_item(tmpl.name, "global_plot_style", make_plot_style_asset_key("template", tmpl.id), FIF.PIE_SINGLE))
-            root.addChild(plot_group)
-            visible_children += 1
+        # ── 绘图资源（统一管理曲线样式、绘图样式、绘图扩展 Pipeline）──
+        has_curves = _allowed("curve_styles")
+        has_plot = _allowed("plot_styles")
+        has_plot_pipelines = _allowed("plot_pipelines")
+        if has_curves or has_plot or has_plot_pipelines:
+            plot_resources = self._make_synthetic_item("绘图资源", "global_group", "__global_plot_resources__", FIF.PALETTE)
+            child_count = 0
+            if has_curves:
+                curve_group = self._make_synthetic_item("曲线样式", "global_group", "__global_curve_styles__", FIF.PENCIL_INK)
+                curve_templates = getattr(global_assets, "list_curve_style_templates", lambda include_builtin=True: [])(include_builtin=True)
+                for tmpl in sorted(curve_templates, key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name))):
+                    curve_group.addChild(self._make_synthetic_item(tmpl.name, "global_curve_style_template", tmpl.id, FIF.PENCIL_INK))
+                plot_resources.addChild(curve_group)
+                child_count += 1
+            if has_plot:
+                plot_group = self._make_synthetic_item("绘图样式", "global_group", "__global_plot_styles__", FIF.PIE_SINGLE)
+                for theme in sorted(
+                    global_assets.list_plot_themes(include_builtin=True),
+                    key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
+                ):
+                    plot_group.addChild(self._make_synthetic_item(theme.name, "global_plot_style", make_plot_style_asset_key("theme", theme.id), FIF.PIE_SINGLE))
+                for tmpl in sorted(
+                    global_assets.list_figure_templates(),
+                    key=lambda t: (0 if bool(getattr(t, "is_builtin", False)) else 1, _sort_text_key(t.name)),
+                ):
+                    plot_group.addChild(self._make_synthetic_item(tmpl.name, "global_plot_style", make_plot_style_asset_key("template", tmpl.id), FIF.PIE_SINGLE))
+                plot_resources.addChild(plot_group)
+                child_count += 1
+            if has_plot_pipelines:
+                plot_pipeline_group = self._make_synthetic_item("绘图扩展模板", "global_group", "__global_plot_pipelines__", FIF.LAYOUT)
+                for pipeline in sorted(global_assets.list_saved_plot_pipelines(), key=lambda p: _sort_text_key(p.name or p.id)):
+                    plot_pipeline_group.addChild(self._make_synthetic_item(pipeline.name, "global_plot_pipeline", pipeline.id, FIF.LAYOUT))
+                plot_resources.addChild(plot_pipeline_group)
+                child_count += 1
+            if child_count > 0:
+                root.addChild(plot_resources)
+                visible_children += 1
         if _allowed("report_templates"):
             report_group = self._make_synthetic_item("报告模板", "global_group", "__global_report_templates__", FIF.DOCUMENT)
             for tmpl in sorted(
@@ -2147,7 +2170,7 @@ class ProjectTreeWidget(QWidget):
         from core.global_assets import global_assets, make_plot_style_asset_key, parse_plot_style_asset_key
         from core.extension_api import extension_registry
         from core.extension_definition import compare_extension_versions
-        from models.schemas import SavedPipeline, FigureConfig, ReportTemplate, CurveStyleTemplate
+        from models.schemas import SavedPipeline, SavedPlotPipeline, FigureConfig, ReportTemplate, CurveStyleTemplate
         from core.global_assets import ExtensionConfigPreset
         from ui.widgets.import_conflict_dialog import ImportConflictDialog
         from ui.dialogs.fluent_dialogs import TextInputDialog
@@ -2157,6 +2180,8 @@ class ProjectTreeWidget(QWidget):
         target_info: Optional[dict] = None
         if group_node_id == "__global_pipelines__":
             target_info = {"kind": "pipeline", "model": SavedPipeline, "list_fn": lambda: global_assets.list_saved_pipelines(), "add_fn": lambda item: global_assets.add_saved_pipeline(item), "get_fn": lambda i: global_assets.get_saved_pipeline(getattr(i, "id", ""))}
+        elif group_node_id == "__global_plot_pipelines__":
+            target_info = {"kind": "plot_pipeline", "model": SavedPlotPipeline, "list_fn": lambda: [t for t in global_assets.list_saved_plot_pipelines() if not getattr(t, "is_builtin", False)], "add_fn": lambda item: global_assets.add_saved_plot_pipeline(item), "get_fn": lambda i: global_assets.get_saved_plot_pipeline(getattr(i, "id", ""))}
         elif group_node_id == "__global_curve_styles__":
             target_info = {"kind": "curve_style", "model": CurveStyleTemplate, "list_fn": lambda: [t for t in global_assets.list_curve_style_templates(include_builtin=True) if not getattr(t, "is_builtin", False)], "add_fn": lambda item: global_assets.add_curve_style_template(item), "get_fn": lambda i: global_assets.get_curve_style_template(getattr(i, "id", ""))}
         elif group_node_id == "__global_plot_styles__":
@@ -2380,6 +2405,8 @@ class ProjectTreeWidget(QWidget):
         item = None
         if kind == "global_pipeline":
             item = global_assets.get_saved_pipeline(node_id)
+        elif kind == "global_plot_pipeline":
+            item = global_assets.get_saved_plot_pipeline(node_id)
         elif kind == "global_curve_style_template":
             item = global_assets.get_curve_style_template(node_id)
         elif kind == "global_plot_style":

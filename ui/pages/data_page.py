@@ -68,7 +68,7 @@ from core.exporter import Exporter
 from core.shortcut_manager import ShortcutBindingSet
 from core.app_context import get_app_context
 from core.ui_preferences import get_data_page_source_favorites, set_data_page_source_favorites
-from models.schemas import Curve, CurveStyleTemplate, DataFile, DataSeries, Dataset, FigureConfig, ReportTemplate, SavedPipeline
+from models.schemas import Curve, CurveStyleTemplate, DataFile, DataSeries, Dataset, FigureConfig, ReportTemplate, SavedPipeline, SavedPlotPipeline
 from app.workspaces.data_workspace import DataWorkspaceController, DataWorkspaceState
 from ui.dialogs.export_flow import choose_curve_file_export_plan, curve_export_file_filter
 from ui.dialogs.fluent_dialogs import TextInputDialog
@@ -2863,8 +2863,10 @@ class DataPage(QWidget):
             mapping = {
                 "__global_root__": "全局资源",
                 "__global_pipelines__": "Pipelines",
+                "__global_plot_resources__": "绘图资源",
                 "__global_curve_styles__": "曲线样式",
                 "__global_plot_styles__": "绘图样式",
+                "__global_plot_pipelines__": "绘图扩展模板",
                 "__global_reports__": "报告模板",
                 "__global_extension_configs__": "扩展配置",
             }
@@ -2883,10 +2885,16 @@ class DataPage(QWidget):
             return item.name or node_id if item is not None else node_id
         if kind == "global_plot_style" and node_id:
             style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "theme":
+                theme = global_assets.get_plot_theme(asset_id)
+                return theme.name if theme is not None else node_id
             item = global_assets.get_figure_template(asset_id)
             return "" if item is None else getattr(item, "name", asset_id) or asset_id
         if kind == "global_report_template" and node_id:
             item = global_assets.get_report_template(node_id)
+            return item.name or node_id if item is not None else node_id
+        if kind == "global_plot_pipeline" and node_id:
+            item = global_assets.get_saved_plot_pipeline(node_id)
             return item.name or node_id if item is not None else node_id
         if kind == "global_extension_config" and node_id:
             item = global_assets.get_extension_config(node_id)
@@ -2936,6 +2944,7 @@ class DataPage(QWidget):
             "global_pipeline": FIF.DEVELOPER_TOOLS,
             "global_curve_style_template": FIF.PENCIL_INK,
             "global_plot_style": FIF.PIE_SINGLE,
+            "global_plot_pipeline": FIF.LAYOUT,
             "global_report_template": FIF.DOCUMENT,
             "global_extension_config": getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS),
         }
@@ -3280,6 +3289,19 @@ class DataPage(QWidget):
             )
         if kind == "global_plot_style":
             style_type, asset_id = parse_plot_style_asset_key(node_id)
+            if style_type == "theme":
+                theme = global_assets.get_plot_theme(asset_id)
+                if theme is None:
+                    return "", [], None
+                return (
+                    theme.name or "绘图主题",
+                    [
+                        f"主题名称: {theme.name or '默认主题'}",
+                        "类型: 绘图主题",
+                        f"画布模式: {theme.canvas_mode or '跟随应用'}",
+                    ],
+                    json.dumps(theme.model_dump(), ensure_ascii=False, indent=2),
+                )
             template = global_assets.get_figure_template(asset_id)
             if template is None:
                 return "", [], None
@@ -3307,6 +3329,20 @@ class DataPage(QWidget):
                     f"内置: {'是' if bool(getattr(template, 'is_builtin', False)) else '否'}",
                 ],
                 template.content or "",
+            )
+        if kind == "global_plot_pipeline":
+            pipeline = global_assets.get_saved_plot_pipeline(node_id)
+            if pipeline is None:
+                return "", [], None
+            title = pipeline.name or "绘图扩展模板"
+            return (
+                title,
+                [
+                    f"模板名称: {pipeline.name or '未命名模板'}",
+                    f"类型: 绘图扩展模板",
+                    f"扩展数: {len(getattr(pipeline, 'ops', []) or [])}",
+                ],
+                json.dumps(pipeline.model_dump(), ensure_ascii=False, indent=2),
             )
         return "", [], None
 
@@ -3337,6 +3373,9 @@ class DataPage(QWidget):
             return
         if kind == "global_report_template":
             self._save_global_report_template(node_id, raw_text)
+            return
+        if kind == "global_plot_pipeline":
+            self._save_global_plot_pipeline(node_id, raw_text)
             return
         InfoBar.warning("保存失败", "当前模板不支持编辑保存", parent=self, position=InfoBarPosition.TOP)
 
@@ -3433,6 +3472,28 @@ class DataPage(QWidget):
         self._refresh_management_panel()
         InfoBar.success("已保存", f'报告模板 "{copied.name}" 已另存', parent=self, position=InfoBarPosition.TOP)
 
+    def _save_global_plot_pipeline(self, pipeline_id: str, raw_text: str) -> None:
+        pipeline = global_assets.get_saved_plot_pipeline(pipeline_id)
+        if pipeline is None:
+            InfoBar.warning("保存失败", "当前绘图扩展模板不存在", parent=self, position=InfoBarPosition.TOP)
+            return
+        try:
+            payload = json.loads(raw_text)
+            model = SavedPlotPipeline.model_validate(payload)
+        except json.JSONDecodeError as exc:
+            InfoBar.warning("保存失败", f"JSON 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列附近", parent=self, position=InfoBarPosition.TOP)
+            return
+        except Exception as exc:
+            InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        if not global_assets.update_saved_plot_pipeline(pipeline_id, name=model.name, ops=list(model.ops), description=model.description):
+            InfoBar.warning("保存失败", "当前绘图扩展模板未能更新", parent=self, position=InfoBarPosition.TOP)
+            return
+        self.project_modified.emit()
+        self._show_global_template_editor("global_plot_pipeline", pipeline_id)
+        self._refresh_management_panel()
+        InfoBar.success("已保存", f'绘图扩展模板 "{model.name or pipeline.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+
     def _reset_selected_extension_config_edit(self) -> None:
         if not self._current_extension_config_id:
             self._reset_selected_preview_editor()
@@ -3512,8 +3573,7 @@ class DataPage(QWidget):
         if kind == "global_root":
             for child_kind, child_id in (
                 ("global_group", "__global_pipelines__"),
-                ("global_group", "__global_curve_styles__"),
-                ("global_group", "__global_plot_styles__"),
+                ("global_group", "__global_plot_resources__"),
                 ("global_group", "__global_reports__"),
                 ("global_group", "__global_extension_configs__"),
             ):
@@ -3523,6 +3583,12 @@ class DataPage(QWidget):
         if kind == "global_group":
             if node_id == "__global_pipelines__":
                 children = [self._build_global_preview_item("global_pipeline", pipeline.id) for pipeline in global_assets.list_saved_pipelines()]
+            elif node_id == "__global_plot_resources__":
+                children = [
+                    self._build_global_preview_item("global_group", "__global_curve_styles__"),
+                    self._build_global_preview_item("global_group", "__global_plot_styles__"),
+                    self._build_global_preview_item("global_group", "__global_plot_pipelines__"),
+                ]
             elif node_id == "__global_curve_styles__":
                 children = [self._build_global_preview_item("global_curve_style_template", style.id) for style in global_assets.list_curve_style_templates()]
             elif node_id == "__global_plot_styles__":
@@ -3534,6 +3600,8 @@ class DataPage(QWidget):
                     self._build_global_preview_item("global_plot_style", f"template:{style.id}")
                     for style in global_assets.list_figure_templates()
                 )
+            elif node_id == "__global_plot_pipelines__":
+                children = [self._build_global_preview_item("global_plot_pipeline", p.id) for p in global_assets.list_saved_plot_pipelines()]
             elif node_id == "__global_reports__":
                 children = [self._build_global_preview_item("global_report_template", template.id) for template in global_assets.list_report_templates(include_builtin=True)]
             elif node_id == "__global_extension_configs__":
@@ -5176,7 +5244,7 @@ class DataPage(QWidget):
             self._set_actions_enabled(False)
             self._refresh_management_panel()
             return
-        if kind in {"global_pipeline", "global_curve_style_template", "global_plot_style", "global_report_template"} and self._show_global_template_editor(kind, node_id):
+        if kind in {"global_pipeline", "global_curve_style_template", "global_plot_style", "global_plot_pipeline", "global_report_template"} and self._show_global_template_editor(kind, node_id):
             self._selected_type = None
             self._selected_id = None
             self._set_actions_enabled(False)

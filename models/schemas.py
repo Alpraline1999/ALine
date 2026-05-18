@@ -678,6 +678,17 @@ class SavedPipeline(BaseModel):
     description: str = ""
 
 
+class SavedPlotPipeline(BaseModel):
+    """可保存/加载的绘图扩展 Pipeline（与 chart_page.py _applied_plot_extensions 格式一致）。"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    ops: List[Dict[str, Any]] = []  # _applied_plot_extensions 格式条目
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    description: str = ""
+
+
 class ReportTemplate(BaseModel):
     """Markdown 格式的分析报告模板。"""
     model_config = ConfigDict(extra="ignore")

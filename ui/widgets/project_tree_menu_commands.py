@@ -291,6 +291,8 @@ class ProjectTreeMenuBuilder:
             manage_entries.append((FIF.PENCIL_INK, "应用到可视化", self._page_dispatcher.make_activation_callback(kind, node_id)))
         elif kind == "global_plot_style":
             manage_entries.append((FIF.PIE_SINGLE, "应用到可视化", self._page_dispatcher.make_activation_callback(kind, node_id)))
+        elif kind == "global_plot_pipeline":
+            manage_entries.append((FIF.LAYOUT, "应用到可视化", self._page_dispatcher.make_activation_callback(kind, node_id)))
         elif kind == "global_group":
             # 导入菜单：分组根节点
             if node_id == "__global_pipelines__":
@@ -298,6 +300,8 @@ class ProjectTreeMenuBuilder:
             elif node_id == "__global_curve_styles__":
                 manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
             elif node_id == "__global_plot_styles__":
+                manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
+            elif node_id == "__global_plot_pipelines__":
                 manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
             elif node_id == "__global_report_templates__":
                 manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
@@ -315,7 +319,7 @@ class ProjectTreeMenuBuilder:
         elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
             manage_entries.append((FIF.EDIT, "在设置中查看", self._page_dispatcher.make_activation_callback(kind, node_id)))
         # 导出菜单：非 builtin 叶子节点
-        if kind in ("global_pipeline", "global_curve_style_template", "global_plot_style", "global_report_template"):
+        if kind in ("global_pipeline", "global_curve_style_template", "global_plot_style", "global_plot_pipeline", "global_report_template"):
             if not node_id.startswith("builtin:"):
                 manage_entries.append((FIF.SAVE, "导出为文件", lambda: self._cmd_export_global_asset(kind, node_id, item.text(0))))
         if self._can_edit_global_asset(kind, node_id):

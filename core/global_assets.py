@@ -33,6 +33,7 @@ from models.schemas import (
     PlotTheme,
     ReportTemplate,
     SavedPipeline,
+    SavedPlotPipeline,
 )
 from core.report_templates import DEFAULT_REPORT_TEMPLATE
 
@@ -65,48 +66,27 @@ def _default_asset_path() -> Path:
 def _builtin_plot_themes() -> List[PlotTheme]:
     return [
         PlotTheme(
-            id="builtin:default",
-            name="默认",
-            description="跟随应用浅色/深色背景，保持较均衡的默认绘图样式。",
-            canvas_mode="app",
-            state=FigureState(theme="默认", grid=True, grid_alpha=0.55, grid_line_width=0.6,
-                              font_size=10, legend_font_size=8, line_width=1.5, marker_size=5.0),
-            is_builtin=True,
-        ),
-        PlotTheme(
-            id="builtin:nature",
-            name="Nature",
-            description="紧凑、克制，适合论文主图。",
+            id="builtin:academic",
+            name="紧凑学术",
+            description="紧凑、克制，适合论文主图与小图幅排版。细线条、小标记。",
             canvas_mode="light",
             grid_color="#d9d9d9",
             foreground_color="#222222",
             background_color="#ffffff",
-            state=FigureState(theme="Nature", grid=True, grid_alpha=0.5, grid_line_width=0.5,
+            state=FigureState(theme="紧凑学术", grid=True, grid_alpha=0.5, grid_line_width=0.5,
                               font_size=9, legend_font_size=8, line_width=1.4, marker_size=4.2),
             is_builtin=True,
         ),
         PlotTheme(
-            id="builtin:ieee",
-            name="IEEE",
-            description="偏工程期刊排版，细字重、较小图幅。",
+            id="builtin:vibrant",
+            name="明快配色",
+            description="高饱和度配色方案，适合演示汇报与数据探索。",
             canvas_mode="light",
-            grid_color="#d0d0d0",
-            foreground_color="#111111",
-            background_color="#ffffff",
-            state=FigureState(theme="IEEE", grid=True, grid_alpha=0.45, grid_line_width=0.45,
-                              font_size=8, legend_font_size=7, line_width=1.2, marker_size=3.8),
-            is_builtin=True,
-        ),
-        PlotTheme(
-            id="builtin:acs",
-            name="ACS",
-            description="强调线宽与标记可读性。",
-            canvas_mode="light",
-            grid_color="#d4d4d4",
-            foreground_color="#202020",
-            background_color="#ffffff",
-            state=FigureState(theme="ACS", grid=True, grid_alpha=0.52, grid_line_width=0.55,
-                              font_size=9, legend_font_size=8, line_width=1.8, marker_size=5.2),
+            grid_color="#e0e0e0",
+            foreground_color="#333333",
+            background_color="#fafafa",
+            state=FigureState(theme="明快配色", grid=True, grid_alpha=0.4, grid_line_width=0.5,
+                              font_size=10, legend_font_size=8, line_width=1.6, marker_size=5.0),
             is_builtin=True,
         ),
         PlotTheme(
@@ -208,6 +188,7 @@ class GlobalAssets(BaseModel):
 
     version: str = _GLOBAL_ASSET_VERSION
     saved_pipelines: List[SavedPipeline] = Field(default_factory=list)
+    plot_pipelines: List[SavedPlotPipeline] = Field(default_factory=list)
     figure_templates: List[FigureConfig] = Field(default_factory=list)
     report_templates: List[ReportTemplate] = Field(default_factory=list)
     curve_style_templates: List[CurveStyleTemplate] = Field(default_factory=list)
@@ -319,6 +300,40 @@ class GlobalAssetManager:
             description=item.description,
         )
         return self.add_saved_pipeline(dup)
+
+    def list_saved_plot_pipelines(self) -> List[SavedPlotPipeline]:
+        return list(self.data.plot_pipelines)
+
+    def get_saved_plot_pipeline(self, pipeline_id: str) -> Optional[SavedPlotPipeline]:
+        return next((item for item in self.data.plot_pipelines if item.id == pipeline_id), None)
+
+    def add_saved_plot_pipeline(self, pipeline: SavedPlotPipeline) -> SavedPlotPipeline:
+        self.data.plot_pipelines.append(pipeline)
+        self.save()
+        return pipeline
+
+    def update_saved_plot_pipeline(self, pipeline_id: str, *, name: Optional[str] = None,
+                                   ops: Optional[List[Dict[str, Any]]] = None,
+                                   description: Optional[str] = None) -> bool:
+        item = self.get_saved_plot_pipeline(pipeline_id)
+        if item is None:
+            return False
+        if name is not None:
+            item.name = name
+        if ops is not None:
+            item.ops = list(ops)
+        if description is not None:
+            item.description = description
+        self.save()
+        return True
+
+    def delete_saved_plot_pipeline(self, pipeline_id: str) -> bool:
+        before = len(self.data.plot_pipelines)
+        self.data.plot_pipelines = [item for item in self.data.plot_pipelines if item.id != pipeline_id]
+        if len(self.data.plot_pipelines) == before:
+            return False
+        self.save()
+        return True
 
     def list_figure_templates(self) -> List[FigureConfig]:
         return list(self.data.figure_templates)

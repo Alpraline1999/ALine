@@ -115,6 +115,11 @@ class TreeCommandRoute:
                 self.process_page.load_pipeline(node_id)
             self.switch_to(self.process_page)
             return
+        if kind == "global_plot_pipeline":
+            self.switch_to(self.chart_page)
+            if hasattr(self.chart_page, "load_plot_pipeline"):
+                self.chart_page.load_plot_pipeline(node_id)
+            return
         if kind in ("global_figure_template", "figure_template"):
             if hasattr(self.chart_page, "load_template"):
                 self.chart_page.load_template(node_id)

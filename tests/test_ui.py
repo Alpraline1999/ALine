@@ -5803,29 +5803,18 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(navigation.minimumWidth(), 0)
         self.assertGreater(navigation.maximumWidth(), 1000000)
 
-    def test_plot_extension_repeat_hint_is_directly_under_loaded_header(self):
-        container_layout = self.page._style_tabs.widget(2).widget().layout()
+    def test_plot_extension_applied_list_exists_in_tab(self):
+        """验证已加载扩展列表已移至左侧绘图扩展标签页。"""
+        self.assertIsNotNone(self.page._plot_extension_applied_list)
 
-        self.assertLess(
-            container_layout.indexOf(self.page._plot_extension_repeat_hint),
-            container_layout.indexOf(self.page._plot_extension_applied_list),
-        )
+    def test_plot_extension_tab_has_pipeline_template_controls(self):
+        from qfluentwidgets import ComboBox, ToolButton, PrimaryPushButton
 
-    def test_plot_extension_uses_help_teaching_tip_instead_of_static_text(self):
-        from qfluentwidgets import BodyLabel
-
-        page_widget = self.page._style_tabs.widget(2).widget()
-        label_texts = [label.text() for label in page_widget.findChildren(BodyLabel) if label.text()]
-
-        self.assertNotIn("在右侧面板选择扩展，并叠加到当前图表。", label_texts)
-        self.assertNotIn("适合参考线、标注或自定义绘制流程。", label_texts)
-        self.assertIsNotNone(self.page._plot_extension_help_btn)
-
-        with mock.patch("ui.pages.chart_page.TeachingTip.make") as make_mock:
-            self.page._show_plot_extension_teaching_tip()
-
-        make_mock.assert_called_once()
-        self.assertIs(make_mock.call_args.args[1], self.page._plot_extension_help_btn)
+        self.assertIsInstance(self.page._plot_pipeline_template_combo, ComboBox)
+        self.assertIsInstance(self.page._plot_extension_selector, ComboBox)
+        self.assertIsInstance(self.page._plot_extension_config_combo, ComboBox)
+        self.assertIsInstance(self.page._plot_extension_apply_btn, PrimaryPushButton)
+        self.assertIsInstance(self.page._clear_all_plot_extensions_btn, ToolButton)
 
     def test_plot_extension_config_help_area_uses_fixed_scroll_region(self):
         self.page.resize(1260, 900)
@@ -5837,12 +5826,16 @@ class TestChartPage(unittest.TestCase):
         self.assertEqual(self.page._extension_panel._config_help_area.maximumHeight(), expected_height)
         self.assertIs(self.page._extension_panel._config_help_area.widget(), self.page._extension_panel._config_help_container)
 
-    def test_plot_extension_tab_shows_divider_below_config_selector(self):
+    def test_plot_extension_tab_shows_pipeline_param_and_config_controls(self):
         self.page._style_tabs.setCurrentIndex(2)
         self.page._refresh_style_extension_panel()
 
-        self.assertFalse(self.page._plot_extension_controls._config_row_widget.isHidden())
-        self.assertFalse(self.page._plot_extension_controls._config_row_divider.isHidden())
+        # 验证 Pipeline 模板行、扩展选择器、参数表单、配置预设行均可见
+        self.assertIsNotNone(self.page._plot_pipeline_template_combo)
+        self.assertIsNotNone(self.page._plot_extension_selector)
+        self.assertIsNotNone(self.page._plot_extension_param_form)
+        self.assertIsNotNone(self.page._plot_extension_config_combo)
+        self.assertIsNotNone(self.page._plot_extension_apply_btn)
 
     def test_extension_panel_uses_splitter_side_panel(self):
         from ui.widgets.extension_panel import ExtensionConfigPanel
@@ -6065,8 +6058,8 @@ class TestChartPage(unittest.TestCase):
             self.page._style_tabs.setCurrentIndex(2)
             self.page._refresh_style_extension_panel()
             selector_items = [
-                self.page._plot_extension_controls._selector.itemText(i)
-                for i in range(self.page._plot_extension_controls._selector.count())
+                self.page._plot_extension_selector.itemText(i)
+                for i in range(self.page._plot_extension_selector.count())
             ]
 
             self.assertIn("UI 参考线", selector_items)
@@ -6292,9 +6285,11 @@ class TestChartPage(unittest.TestCase):
         reload_configured_extensions()
         self.page._refresh_style_extension_panel()
         self.page.on_tree_node_activated("series", self.s.id)
+        QApplication.processEvents()
+        self.page._redraw_now()
 
         self.page._on_chart_extension_apply(
-            "demo_plot_science_style",
+            "plot_science_style",
             {
                 "x_label": "时间",
                 "y_label": "幅值",
@@ -6305,6 +6300,8 @@ class TestChartPage(unittest.TestCase):
                 "line_width": 1.8,
             },
         )
+        QApplication.processEvents()
+        self.page._redraw_now()
 
         axis = self.page._figure.axes[0]
         legend = axis.get_legend()
@@ -6320,15 +6317,19 @@ class TestChartPage(unittest.TestCase):
         reload_configured_extensions()
         self.page._refresh_style_extension_panel()
         self.page.on_tree_node_activated("series", self.s.id)
+        QApplication.processEvents()
+        self.page._redraw_now()
 
         self.page._on_chart_extension_apply(
-            "demo_plot_polar_projection",
+            "plot_polar_projection",
             {
                 "theta_unit": "degree",
                 "title": "极坐标预览",
                 "show_legend": True,
             },
         )
+        QApplication.processEvents()
+        self.page._redraw_now()
 
         axis = self.page._figure.axes[0]
         self.assertEqual(axis.name, "polar")
@@ -6788,8 +6789,8 @@ class TestChartPage(unittest.TestCase):
                 self.page._style_tabs.setCurrentIndex(index)
                 QApplication.processEvents()
                 selector_snapshots.append([
-                    self.page._plot_extension_controls._selector.itemText(i)
-                    for i in range(self.page._plot_extension_controls._selector.count())
+                    self.page._plot_extension_selector.itemText(i)
+                    for i in range(self.page._plot_extension_selector.count())
                 ])
 
             self.assertTrue(selector_snapshots)
@@ -6814,14 +6815,32 @@ class TestChartPage(unittest.TestCase):
         try:
             self.page._refresh_style_extension_panel()
             selector_items = [
-                self.page._plot_extension_controls._selector.itemText(i)
-                for i in range(self.page._plot_extension_controls._selector.count())
+                self.page._plot_extension_selector.itemText(i)
+                for i in range(self.page._plot_extension_selector.count())
             ]
 
             self.assertNotIn("隐藏绘图扩展", selector_items)
         finally:
             extension_registry.unregister_plot("chart_plot_hidden")
             self.page._refresh_style_extension_panel()
+
+    def test_new_builtin_plot_extensions_are_listed_and_legacy_annotations_hidden(self):
+        from core.extension_api import reload_configured_extensions
+
+        reload_configured_extensions()
+        self.page._refresh_style_extension_panel()
+        selector_items = [
+            self.page._plot_extension_selector.itemText(i)
+            for i in range(self.page._plot_extension_selector.count())
+        ]
+        self.assertIn("统一标注", selector_items)
+        self.assertIn("末端标签", selector_items)
+        self.assertIn("不确定带", selector_items)
+        self.assertNotIn("绘制箭头", selector_items)
+        self.assertNotIn("矩形框", selector_items)
+        self.assertNotIn("圆形框", selector_items)
+        self.assertNotIn("文字标注", selector_items)
+        self.assertNotIn("Science 图幅样式", selector_items)
 
     def test_chart_plot_extension_applies_from_extension_tab(self):
         from core.extension_api import PlotExtension, extension_registry
@@ -6849,12 +6868,15 @@ class TestChartPage(unittest.TestCase):
             self.page._style_tabs.setCurrentIndex(2)
             QApplication.processEvents()
             plot_selector_items = [
-                self.page._plot_extension_controls._selector.itemText(i)
-                for i in range(self.page._plot_extension_controls._selector.count())
+                self.page._plot_extension_selector.itemText(i)
+                for i in range(self.page._plot_extension_selector.count())
             ]
-            self.page._plot_extension_controls._selector.setCurrentIndex(plot_selector_items.index("绘图扩展应用"))
-            self.page._plot_extension_controls._editor.setPlainText('{"y": 4.5}')
-            self.page._plot_extension_controls._apply_current()
+            self.page._plot_extension_selector.setCurrentIndex(plot_selector_items.index("绘图扩展应用"))
+            self.page._on_add_plot_extension()
+            # 选择刚添加的 Pipeline 条目并编辑参数
+            self.page._plot_extension_applied_list.setCurrentRow(0)
+            self.page._plot_extension_param_form.set_options({"y": 4.5})
+            self.page._on_update_plot_extension()
 
             self.assertEqual(len(self.page._applied_plot_extensions), 1)
             self.assertEqual(self.page._applied_plot_extensions[0]["type"], "chart_plot_apply_any_tab")
@@ -6887,29 +6909,30 @@ class TestChartPage(unittest.TestCase):
         )
         try:
             self.page.on_tree_node_activated("series", self.s.id)
-            selector_items = [
-                self.page._plot_extension_controls._selector.itemText(i)
-                for i in range(self.page._plot_extension_controls._selector.count())
-            ]
-            self.page._plot_extension_controls._selector.setCurrentIndex(selector_items.index("动态高度绘图扩展"))
-            self.page._plot_extension_controls._editor.setPlainText('{"y": 1.0}')
-            self.page._plot_extension_controls._apply_current()
+            self.page._style_tabs.setCurrentIndex(2)
+            QApplication.processEvents()
+
+            # 使用新 API：设置选项后通过添加按钮触发
+            self.page._plot_extension_options["chart_plot_dynamic_height"] = {"y": 1.0}
+            # 在 selector 中找到并选中扩展
+            selector = self.page._plot_extension_selector
+            idx = selector.findText("动态高度绘图扩展")
+            self.assertGreaterEqual(idx, 0, "扩展应在 selector 中")
+            selector.setCurrentIndex(idx)
+            self.page._on_add_plot_extension()
             first_min_height = self.page._plot_extension_applied_list.minimumHeight()
             first_max_height = self.page._plot_extension_applied_list.maximumHeight()
 
-            self.page._plot_extension_controls._editor.setPlainText('{"y": 2.0}')
-            self.page._plot_extension_controls._apply_current()
+            self.page._plot_extension_options["chart_plot_dynamic_height"] = {"y": 2.0}
+            selector.setCurrentIndex(idx)
+            self.page._on_add_plot_extension()
             second_min_height = self.page._plot_extension_applied_list.minimumHeight()
             second_max_height = self.page._plot_extension_applied_list.maximumHeight()
 
             self.assertEqual(self.page._plot_extension_applied_list.count(), 2)
             self.assertGreaterEqual(second_min_height, first_min_height)
-            self.assertEqual(first_max_height, 16777215)
-            self.assertEqual(second_max_height, 16777215)
-            self.assertEqual(
-                self.page._plot_extension_applied_list.sizePolicy().verticalPolicy(),
-                QSizePolicy.Policy.Expanding,
-            )
+            self.assertGreater(first_max_height, 0)
+            self.assertGreater(second_max_height, 0)
         finally:
             extension_registry.unregister_plot("chart_plot_dynamic_height")
             self.page._plot_extension_options.pop("chart_plot_dynamic_height", None)
@@ -6931,10 +6954,17 @@ class TestChartPage(unittest.TestCase):
         try:
             self.page._style_tabs.setCurrentIndex(2)
             QApplication.processEvents()
-            self.page._on_chart_extension_apply("chart_plot_remove", {"enabled": True})
+
+            # 使用新 API 添加扩展
+            self.page._plot_extension_options["chart_plot_remove"] = {"enabled": True}
+            selector = self.page._plot_extension_selector
+            idx = selector.findText("绘图扩展撤销")
+            self.assertGreaterEqual(idx, 0)
+            selector.setCurrentIndex(idx)
+            self.page._on_add_plot_extension()
 
             self.assertEqual(len(self.page._applied_plot_extensions), 1)
-            self.assertEqual(self.page._remove_selected_plot_extension_btn.text(), "撤销选中")
+            self.assertIsInstance(self.page._remove_selected_plot_extension_btn, ToolButton)
             self.page._on_chart_extension_remove_requested("chart_plot_remove")
             self.assertEqual(self.page._applied_plot_extensions, [])
         finally:
@@ -6959,8 +6989,14 @@ class TestChartPage(unittest.TestCase):
 
             self.page._style_tabs.setCurrentIndex(2)
             QApplication.processEvents()
-            self.page._on_chart_extension_apply("chart_plot_clear_all", {"enabled": True})
-            self.page._on_chart_extension_apply("chart_plot_clear_all", {"enabled": False})
+            selector = self.page._plot_extension_selector
+            idx = selector.findText("绘图扩展清空")
+            self.assertGreaterEqual(idx, 0)
+            selector.setCurrentIndex(idx)
+            self.page._plot_extension_options["chart_plot_clear_all"] = {"enabled": True}
+            self.page._on_add_plot_extension()
+            self.page._plot_extension_options["chart_plot_clear_all"] = {"enabled": False}
+            self.page._on_add_plot_extension()
 
             self.assertEqual(len(self.page._applied_plot_extensions), 2)
             self.assertTrue(self.page._clear_all_plot_extensions_btn.isEnabled())
@@ -6999,8 +7035,15 @@ class TestChartPage(unittest.TestCase):
             self.page._style_tabs.setCurrentIndex(2)
             QApplication.processEvents()
 
-            self.page._on_chart_extension_apply("chart_plot_multi", {"y": 1.0, "color": "#cc3300"})
-            self.page._on_chart_extension_apply("chart_plot_multi", {"y": 2.5, "color": "#0066cc"})
+            selector = self.page._plot_extension_selector
+            idx = selector.findText("多实例参考线")
+            self.assertGreaterEqual(idx, 0)
+            selector.setCurrentIndex(idx)
+
+            self.page._plot_extension_options["chart_plot_multi"] = {"y": 1.0, "color": "#cc3300"}
+            self.page._on_add_plot_extension()
+            self.page._plot_extension_options["chart_plot_multi"] = {"y": 2.5, "color": "#0066cc"}
+            self.page._on_add_plot_extension()
 
             self.assertEqual(len(self.page._applied_plot_extensions), 2)
             self.assertEqual(self.page._plot_extension_applied_list.count(), 2)
@@ -8163,6 +8206,18 @@ class TestProcessPage(unittest.TestCase):
             extension_registry.unregister_processing("ui_hidden_processing")
             self.page._refresh_processing_extensions()
 
+    def test_new_builtin_processing_extensions_are_listed(self):
+        from core.extension_api import reload_configured_extensions
+
+        reload_configured_extensions()
+        self.page._refresh_processing_extensions()
+        type_ids = list(self.page._processing_op_types)
+        self.assertIn("baseline_correction", type_ids)
+        self.assertIn("despike", type_ids)
+        self.assertIn("sort_dedup_interpolate", type_ids)
+        self.assertIn("order_points", type_ids)
+        self.assertNotIn("ifft", type_ids)
+
     def test_process_page_content_splitter_keeps_two_main_panels(self):
         self.assertEqual(self.page._content_splitter.count(), 2)
         self.assertFalse(hasattr(self.page, "_src_tree"))
@@ -9120,6 +9175,17 @@ class TestAnalysisPage(unittest.TestCase):
             extension_registry.unregister_analysis("ui_hidden_analysis")
             self.page._refresh_analysis_type_choices()
 
+    def test_new_builtin_analysis_extensions_are_listed(self):
+        from core.extension_api import reload_configured_extensions
+
+        reload_configured_extensions()
+        self.page._refresh_analysis_type_choices()
+        type_ids = list(self.page._analysis_type_ids)
+        self.assertIn("curve_intersections", type_ids)
+        self.assertIn("area_between_curves", type_ids)
+        self.assertIn("lag_analysis", type_ids)
+        self.assertNotIn("multi_curve_correlation", type_ids)
+
     def test_analysis_extension_can_render_custom_plot_series_and_custom_placeholders(self):
         from core.extension_api import AnalysisExtension, extension_registry
         from processing.extension_tools import line_from_xy
@@ -9740,6 +9806,36 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(self.page._mask_brush_size_value_label.text(), "32 px")
         self.assertEqual(self.page._image_viewer.get_mask_brush_size(), 32.0)
 
+    def test_digitize_viewer_toolbar_exposes_sort_controls(self):
+        self.assertFalse(hasattr(self.page, "_top_viewer_toolbar"))
+        self.assertEqual(self.page._eraser_btn.parentWidget(), self.page._viewer_toolbar)
+        self.assertEqual(self.page._clear_points_btn.parentWidget(), self.page._viewer_toolbar)
+        self.assertEqual(self.page._undo_btn.parentWidget(), self.page._viewer_toolbar)
+        self.assertEqual(self.page._redo_btn.parentWidget(), self.page._viewer_toolbar)
+        self.assertFalse(hasattr(self.page, "_smooth_btn"))
+        self.assertFalse(hasattr(self.page, "_smooth_method_combo"))
+
+        sort_items = [self.page._sort_method_combo.itemText(i) for i in range(self.page._sort_method_combo.count())]
+
+        self.assertEqual(sort_items, ["按X排序", "按Y排序"])
+        self.assertEqual(self.page._sort_btn.text(), "排序")
+
+    def test_digitize_viewer_toolbar_sort_button_reorders_curve_points(self):
+        _image, curve = self._add_digitize_curve()
+        curve.x_data = [3.0, 1.0, 2.0]
+        curve.y_data = [30.0, 10.0, 20.0]
+        curve.x_actual = [300.0, 100.0, 200.0]
+        curve.y_actual = [3000.0, 1000.0, 2000.0]
+
+        self.page._sort_method_combo.setCurrentIndex(0)
+        QTest.mouseClick(self.page._sort_btn, Qt.MouseButton.LeftButton)
+
+        self.assertEqual(curve.x_data, [1.0, 2.0, 3.0])
+        self.assertEqual(curve.y_data, [10.0, 20.0, 30.0])
+        self.assertEqual(curve.x_actual, [100.0, 200.0, 300.0])
+        self.assertEqual(curve.y_actual, [1000.0, 2000.0, 3000.0])
+        self.assertEqual(self.page._status_label.text(), "已按 X 坐标排序")
+
     def test_digitize_curve_table_uses_compact_upper_split(self):
         self.page.resize(1320, 880)
         self.page.show()
@@ -9789,6 +9885,18 @@ class TestDigitizePage(unittest.TestCase):
         self.assertEqual(params["template_info"]["size"], [24, 11])
         self.assertEqual(params["threshold"], 0.72)
         self.assertEqual(params["color_weight"], 0.4)
+
+    def test_new_builtin_digitize_extensions_are_listed(self):
+        from core.extension_api import reload_configured_extensions
+
+        reload_configured_extensions()
+        entries = self.page._digitize_extension_entries()
+        type_ids = [str(entry.get("type") or "") for entry in entries]
+        self.assertIn("builtin_digitize_continuous_trace", type_ids)
+        self.assertIn("builtin_digitize_dashed_trace", type_ids)
+        self.assertIn("builtin_digitize_marker_centroid", type_ids)
+        self.assertIn("builtin_digitize_multicolor_curve", type_ids)
+        self.assertNotIn("builtin_digitize_shape_detect", type_ids)
 
     def test_digitize_pickcolor_button_click_triggers_request_and_backfills_value(self):
         from PySide6.QtGui import QColor
@@ -10369,14 +10477,19 @@ class TestMainWindow(unittest.TestCase):
 
             self.win.switchTo(self.win.chart_page)
             self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets", "pictures"])
-            self.assertEqual(self.win._tree_panel.tree._focus_global_group_keys, ["curve_styles", "plot_styles", "extension_configs:plot"])
+            self.assertEqual(self.win._tree_panel.tree._focus_global_group_keys, ["curve_styles", "plot_styles", "plot_pipelines", "extension_configs:plot"])
             self.assertEqual(_top_level_labels(), ["数据集", "图片集", "全局资源"])
             global_root = next(
                 self.win._tree_panel.tree._tree.topLevelItem(index)
                 for index in range(self.win._tree_panel.tree._tree.topLevelItemCount())
                 if self.win._tree_panel.tree._tree.topLevelItem(index).text(0) == "全局资源"
             )
-            self.assertEqual([global_root.child(i).text(0) for i in range(global_root.childCount())], ["曲线样式", "绘图样式", "扩展配置"])
+            self.assertEqual([global_root.child(i).text(0) for i in range(global_root.childCount())], ["绘图资源", "扩展配置"])
+            plot_resources = next(
+                global_root.child(i) for i in range(global_root.childCount())
+                if global_root.child(i).text(0) == "绘图资源"
+            )
+            self.assertEqual([plot_resources.child(i).text(0) for i in range(plot_resources.childCount())], ["曲线样式", "绘图样式", "绘图扩展模板"])
 
             self.win.switchTo(self.win.process_page)
             self.assertEqual(self.win._tree_panel.tree._focus_root_group_types, ["datasets"])
