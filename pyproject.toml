@@ -4,3 +4,19 @@ python_version = "3.11"
 ignore_missing_imports = true
 warn_unused_ignores = true
 allow_untyped_decorators = true
+explicit_package_bases = true
+exclude = '(^dist/|^build/|^\.venv/|^__pycache__/|^\.mypy_cache/|^\.pytest_cache/)'
+files = [
+    "aline_metadata.py",
+    "build.py",
+    "main.py",
+    "run.py",
+    "app",
+    "core",
+    "digitize",
+    "extensions",
+    "models",
+    "processing",
+    "tests",
+    "ui",
+]
