@@ -81,4 +81,28 @@ class TestSettingsPageRefresh(unittest.TestCase):
                     page.deleteLater()
                     QApplication.processEvents()
             finally:
+                ui_preferences.set_ui_language("zh_CN")
+                reload_translations()
+                ui_preferences._CONFIG_PATH = original_config_path
+
+    def test_refresh_language_ui_translates_external_extension_add_folder_button(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            original_config_path = ui_preferences._CONFIG_PATH
+            ui_preferences._CONFIG_PATH = Path(tmp) / "ui_preferences.json"
+            try:
+                ui_preferences.set_ui_language("en_US")
+                reload_translations()
+
+                page = SettingsPage()
+                try:
+                    self.assertEqual(page._external_extensions_dirs_card.addFolderButton.text(), "Add Folder")
+                    page.refresh_language_ui()
+                    QApplication.processEvents()
+                    self.assertEqual(page._external_extensions_dirs_card.addFolderButton.text(), "Add Folder")
+                finally:
+                    page.deleteLater()
+                    QApplication.processEvents()
+            finally:
+                ui_preferences.set_ui_language("zh_CN")
+                reload_translations()
                 ui_preferences._CONFIG_PATH = original_config_path

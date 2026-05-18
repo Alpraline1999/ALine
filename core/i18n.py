@@ -4,6 +4,24 @@ import gettext
 import sys
 from pathlib import Path
 
+try:
+    from PySide6.QtCore import QCoreApplication, QLibraryInfo, QLocale, QTranslator
+except Exception:  # pragma: no cover - Qt may be unavailable in some non-UI contexts
+    QCoreApplication = None  # type: ignore[assignment]
+    QLibraryInfo = None  # type: ignore[assignment]
+    QLocale = None  # type: ignore[assignment]
+    QTranslator = None  # type: ignore[assignment]
+
+
+_MANUAL_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "en_US": {
+        "添加文件夹": "Add Folder",
+        "选择文件夹": "Choose Folder",
+    },
+}
+
+_qt_translators: list[QTranslator] = []
+
 
 def _current_language() -> str:
     try:
@@ -33,7 +51,38 @@ _translations = gettext.translation(
 )
 
 def _translate(message: str) -> str:
-    return _translations.gettext(message)
+    translated = _translations.gettext(message)
+    if translated != message:
+        return translated
+    return _MANUAL_TRANSLATIONS.get(_current_language(), {}).get(message, message)
+
+
+def _reload_qt_translations() -> None:
+    if QCoreApplication is None or QTranslator is None or QLibraryInfo is None or QLocale is None:
+        return
+    app = QCoreApplication.instance()
+    if app is None:
+        return
+
+    for translator in _qt_translators:
+        app.removeTranslator(translator)
+    _qt_translators.clear()
+
+    language = _current_language()
+    if language == "en_US":
+        return
+
+    try:
+        translations_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    except Exception:
+        return
+
+    locale = QLocale(language)
+    for catalog in ("qtbase", "qt"):
+        translator = QTranslator(app)
+        if translator.load(locale, catalog, "_", translations_path):
+            app.installTranslator(translator)
+            _qt_translators.append(translator)
 
 
 _ = _translate
@@ -47,6 +96,7 @@ def reload_translations() -> gettext.NullTranslations | gettext.GNUTranslations:
         languages=[_current_language()],
         fallback=True,
     )
+    _reload_qt_translations()
     return _translations
 
 

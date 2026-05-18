@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -81,6 +82,73 @@ class TestPhase10Guardrails(unittest.TestCase):
 
         page = SettingsPage()
         self.assertIsInstance(page._external_extensions_dirs_card, MutableFolderListSettingCard)
+        self.assertEqual(page._external_extensions_dirs_card.addFolderButton.text(), "添加文件夹")
+
+    def test_mutable_folder_list_setting_card_add_folder_uses_explicit_dialog_flow(self) -> None:
+        from ui.pages.settings_page_support import MutableFolderListSettingCard
+
+        card = MutableFolderListSettingCard("外部扩展目录", None, [], directory="~", parent=None)
+
+        class _Dialog:
+            def setFileMode(self, _mode) -> None:
+                pass
+
+            def setOption(self, _option, _value=True) -> None:
+                pass
+
+            def exec(self) -> int:
+                return int(1)
+
+            def selectedFiles(self) -> list[str]:
+                return ["~/aline-exts"]
+
+        with mock.patch("ui.pages.settings_page_support.QFileDialog", return_value=_Dialog()) as chooser:
+            card._show_folder_dialog()
+
+        chooser.assert_called_once()
+        self.assertEqual(card.folders, ["~/aline-exts"])
+
+    def test_mutable_folder_list_setting_card_deduplicates_added_folder(self) -> None:
+        from ui.pages.settings_page_support import MutableFolderListSettingCard
+
+        existing = "~/aline-exts"
+        card = MutableFolderListSettingCard("外部扩展目录", None, [existing], directory="~", parent=None)
+
+        class _Dialog:
+            def setFileMode(self, _mode) -> None:
+                pass
+
+            def setOption(self, _option, _value=True) -> None:
+                pass
+
+            def exec(self) -> int:
+                return int(1)
+
+            def selectedFiles(self) -> list[str]:
+                return ["~/aline-exts"]
+
+        with mock.patch("ui.pages.settings_page_support.QFileDialog", return_value=_Dialog()):
+            card._show_folder_dialog()
+
+        self.assertEqual(card.folders, [existing])
+
+    def test_mutable_folder_list_setting_card_setfolders_updates_dialog_directory(self) -> None:
+        from ui.pages.settings_page_support import MutableFolderListSettingCard
+
+        card = MutableFolderListSettingCard("外部扩展目录", None, [], directory="~", parent=None)
+        card.setFolders(["/tmp/aline-exts", "/tmp/aline-exts-2"])
+
+        self.assertEqual(card._dialogDirectory, "/tmp/aline-exts")
+
+    def test_settings_page_uses_cross_platform_default_external_extension_directory(self) -> None:
+        from core.extension_settings import default_external_extensions_directory
+        from ui.pages.settings_page import SettingsPage
+
+        page = SettingsPage()
+        self.assertEqual(
+            page._external_extensions_dirs_card._dialogDirectory,
+            str(default_external_extensions_directory()),
+        )
 
     def test_extension_config_export_and_default_roundtrip(self) -> None:
         from core.global_assets import GlobalAssetManager

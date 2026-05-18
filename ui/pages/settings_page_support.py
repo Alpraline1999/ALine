@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QFormLayout,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QKeySequenceEdit,
@@ -30,6 +31,7 @@ from qfluentwidgets import (
 )
 
 from core.ai.providers import get_provider_preset
+from core.extension_settings import default_external_extensions_directory
 from core.shortcut_manager import shortcut_manager
 from core.ui_preferences import (
     get_tree_name_display_mode,
@@ -59,12 +61,19 @@ class MutableFolderListSettingCard(FolderListSettingCard):
 
         self._config_item = ConfigItem("SettingsPage", "externalExtensionDirs", list(folders or []))
         super().__init__(self._config_item, title, content or "", directory=directory, parent=parent)
+        self.addFolderButton.setText(_("添加文件夹"))
+        try:
+            self.addFolderButton.clicked.disconnect()
+        except RuntimeError:
+            pass
+        self.addFolderButton.clicked.connect(self._show_folder_dialog)
 
     def setFolders(self, folders: list[str]) -> None:
         from qfluentwidgets.common.config import qconfig
 
         normalized = [str(folder).strip() for folder in folders if str(folder).strip()]
         self.folders = normalized
+        self._dialogDirectory = normalized[0] if normalized else str(default_external_extensions_directory())
         qconfig.set(self.configItem, list(self.folders))
         while self.viewLayout.count():
             item = self.viewLayout.takeAt(0)
@@ -75,6 +84,30 @@ class MutableFolderListSettingCard(FolderListSettingCard):
         for folder in self.folders:
             add_folder_item(folder)
         self._adjustViewSize()
+
+    def _show_folder_dialog(self) -> None:
+        from qfluentwidgets.common.config import qconfig
+
+        dialog = QFileDialog(self.window() or self, _("选择文件夹"), self._dialogDirectory)
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+
+        if dialog.exec() != int(QFileDialog.DialogCode.Accepted):
+            return
+
+        selected = dialog.selectedFiles()
+        folder = selected[0] if selected else ""
+
+        if not folder or folder in self.folders:
+            return
+
+        add_folder_item = getattr(self, "_FolderListSettingCard__addFolderItem")
+        add_folder_item(folder)
+        self.folders.append(folder)
+        self._dialogDirectory = folder
+        qconfig.set(self.configItem, list(self.folders))
+        self.folderChanged.emit(self.folders)
 
 
 def build_extension_category_tabs(page, parent: QWidget, *, empty_hints: dict[str, BodyLabel], option_layouts: dict[str, QVBoxLayout]) -> QWidget:
@@ -236,7 +269,7 @@ def build_extensions_tab(page) -> QWidget:
         _("外部扩展目录"),
         _("可添加多个文件夹；保存后会统一扫描并重载。"),
         [],
-        directory="~/.config/aline/extensions",
+        directory=str(default_external_extensions_directory()),
         parent=page._external_extension_card,
     )
     page._bind_theme_text_in_widget(

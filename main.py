@@ -147,6 +147,7 @@ sys.path.insert(0, BASE_DIR)
 
 from core.app_context import AppContext, set_app_context
 from core.extension_api import load_configured_extensions
+from core.i18n import reload_translations
 
 _EXTENSION_LOAD_REPORT = load_configured_extensions(os.path.join(BASE_DIR, "extensions"))
 for _extension_error in _EXTENSION_LOAD_REPORT.get("errors", []):
@@ -157,6 +158,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
+    reload_translations()
 
     icon_path = os.path.join(BASE_DIR, "assets", "icon.ico")
     if os.path.exists(icon_path):
