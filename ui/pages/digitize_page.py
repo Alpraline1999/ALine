@@ -174,15 +174,11 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         center_layout.setContentsMargins(14, 14, 14, 14)
         center_layout.setSpacing(8)
 
-        # 图片查看器上方工具栏（橡皮/清空/撤销/重做，靠右）
-        self._top_viewer_toolbar = self._create_top_viewer_toolbar(center_panel)
-        center_layout.addWidget(self._top_viewer_toolbar)
-
         self._image_viewer = ImageViewer(center_panel)
         self._image_viewer.image_loaded.connect(self._on_image_loaded)
         center_layout.addWidget(self._image_viewer, 1)
 
-        # 图片查看器下方工具栏（颜色/形状/大小/平滑）
+        # 图片查看器下方工具栏（编辑/样式/大小/排序）
         self._viewer_toolbar = self._create_viewer_toolbar(center_panel)
         center_layout.addWidget(self._viewer_toolbar)
 
@@ -470,50 +466,8 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         if self._view_state.right_splitter_initialized:
             self._view_state.right_splitter_user_resized = True
 
-    def _create_top_viewer_toolbar(self, parent) -> QWidget:
-        """创建图片查看器上方工具栏。"""
-        bar = QWidget(parent)
-        bar.setFixedHeight(36)
-        bar_layout = QHBoxLayout(bar)
-        bar_layout.setContentsMargins(4, 2, 4, 2)
-        bar_layout.setSpacing(2)
-
-        # 橡皮擦
-        self._eraser_btn = ToggleToolButton(FIF.ERASE_TOOL, bar)
-        self._eraser_btn.setToolTip("橡皮擦 (E)")
-        self._eraser_btn.setFixedSize(32, 32)
-        self._eraser_btn.clicked.connect(lambda: self._on_tool_clicked("eraser"))
-        bar_layout.addWidget(self._eraser_btn)
-
-        bar_layout.addWidget(make_vsep(bar))
-
-        # 清除所有点
-        self._clear_points_btn = ToolButton(FIF.DELETE, bar)
-        self._clear_points_btn.setToolTip("清除所有点")
-        self._clear_points_btn.setFixedSize(32, 32)
-        self._clear_points_btn.clicked.connect(self._on_clear_all_points)
-        bar_layout.addWidget(self._clear_points_btn)
-
-        # 撤销
-        self._undo_btn = ToolButton(FIF.LEFT_ARROW, bar)
-        self._undo_btn.setToolTip("撤销 (Ctrl+Z)")
-        self._undo_btn.setFixedSize(32, 32)
-        self._undo_btn.clicked.connect(self._undo)
-        bar_layout.addWidget(self._undo_btn)
-
-        # 重做
-        self._redo_btn = ToolButton(FIF.RIGHT_ARROW, bar)
-        self._redo_btn.setToolTip("重做 (Ctrl+Y)")
-        self._redo_btn.setFixedSize(32, 32)
-        self._redo_btn.clicked.connect(self._redo)
-        bar_layout.addWidget(self._redo_btn)
-
-        bar_layout.addStretch()
-
-        return bar
-
     def _create_viewer_toolbar(self, parent) -> QWidget:
-        """创建图片查看器下方工具栏（颜色/形状/大小/平滑）"""
+        """创建图片查看器下方工具栏（编辑/样式/大小/排序）"""
         from qfluentwidgets import PushButton as FPushButton, ComboBox as FComboBox
         from qfluentwidgets import ColorPickerButton
 
@@ -522,6 +476,32 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(4, 2, 4, 2)
         bar_layout.setSpacing(3)
+
+        self._eraser_btn = ToggleToolButton(FIF.ERASE_TOOL, bar)
+        self._eraser_btn.setToolTip("橡皮擦 (E)")
+        self._eraser_btn.setFixedSize(32, 32)
+        self._eraser_btn.clicked.connect(lambda: self._on_tool_clicked("eraser"))
+        bar_layout.addWidget(self._eraser_btn)
+
+        self._clear_points_btn = ToolButton(FIF.DELETE, bar)
+        self._clear_points_btn.setToolTip("清除所有点")
+        self._clear_points_btn.setFixedSize(32, 32)
+        self._clear_points_btn.clicked.connect(self._on_clear_all_points)
+        bar_layout.addWidget(self._clear_points_btn)
+
+        self._undo_btn = ToolButton(FIF.LEFT_ARROW, bar)
+        self._undo_btn.setToolTip("撤销 (Ctrl+Z)")
+        self._undo_btn.setFixedSize(32, 32)
+        self._undo_btn.clicked.connect(self._undo)
+        bar_layout.addWidget(self._undo_btn)
+
+        self._redo_btn = ToolButton(FIF.RIGHT_ARROW, bar)
+        self._redo_btn.setToolTip("重做 (Ctrl+Y)")
+        self._redo_btn.setFixedSize(32, 32)
+        self._redo_btn.clicked.connect(self._redo)
+        bar_layout.addWidget(self._redo_btn)
+
+        bar_layout.addWidget(make_vsep(bar))
 
         # 颜色
         self._color_btn = ColorPickerButton(QColor("#0078D4"), "", bar)
@@ -572,17 +552,16 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
 
         bar_layout.addWidget(make_vsep(bar))
 
-        # 平滑
-        self._smooth_method_combo = FComboBox(bar)
-        self._smooth_method_combo.addItems(["移动平均", "Savitzky-Golay"])
-        self._smooth_method_combo.setFixedWidth(130)
-        bar_layout.addWidget(self._smooth_method_combo)
+        self._sort_method_combo = FComboBox(bar)
+        self._sort_method_combo.addItems(["按X排序", "按Y排序"])
+        self._sort_method_combo.setFixedWidth(110)
+        bar_layout.addWidget(self._sort_method_combo)
 
-        self._smooth_btn = FPushButton("平滑", bar)
-        self._smooth_btn.setIcon(FIF.EDIT)
-        self._smooth_btn.setFixedHeight(33)
-        self._smooth_btn.clicked.connect(self._on_smooth_curve)
-        bar_layout.addWidget(self._smooth_btn)
+        self._sort_btn = FPushButton("排序", bar)
+        self._sort_btn.setIcon(getattr(FIF, "SORT", FIF.EDIT))
+        self._sort_btn.setFixedHeight(33)
+        self._sort_btn.clicked.connect(self._on_sort_curve)
+        bar_layout.addWidget(self._sort_btn)
 
         bar_layout.addStretch()
         return bar
@@ -2056,61 +2035,20 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
         else:
             self._export_target_label.setText("导出目标: 共享树中选择数据文件或数据目录")
 
-    # ==================== 曲线平滑槽函数 ====================
-
-    def _on_smooth_curve(self):
-        """对当前曲线进行平滑处理"""
+    def _on_sort_curve(self):
+        """根据工具栏选择对当前曲线排序"""
         if self._current_curve_id is None:
             InfoBar.warning(title="警告", content="请先选择一条曲线", parent=self, duration=3000)
             return
-        curve = project_manager.get_curve(self._current_curve_id)
-        if curve is None or len(curve.x_data) < 3:
-            InfoBar.info(title="提示", content="曲线点数太少（至少需要 3 个点）", parent=self, duration=3000)
+
+        method = self._sort_method_combo.currentText()
+        if method == "按Y排序":
+            self._on_sort_by_y()
+            self._status_label.setText("已按 Y 坐标排序")
             return
 
-        from processing.smoother import smooth_moving_average, smooth_savgol
-        method = self._smooth_method_combo.currentText()
-
-        # 按 X 排序
-        pairs = sorted(zip(curve.x_data, curve.y_data))
-        x_sorted = [p[0] for p in pairs]
-        y_sorted = [p[1] for p in pairs]
-
-        try:
-            if method == "移动平均":
-                window = max(3, min(7, len(x_sorted) // 3 | 1))
-                x_new, y_new = smooth_moving_average(x_sorted, y_sorted, window=window)
-            else:
-                window = max(5, min(9, len(x_sorted) // 3 | 1))
-                x_new, y_new = smooth_savgol(x_sorted, y_sorted, window=window, poly=2)
-        except Exception as e:
-            InfoBar.error(title="平滑失败", content=str(e), parent=self, duration=5000)
-            return
-
-        # 记录到撤销栈
-        self._record_state("clear_curve", self._current_curve_id, {
-            "points": list(zip(curve.x_data, curve.y_data)),
-            "x_actual": list(curve.x_actual) if curve.x_actual else [],
-            "y_actual": list(curve.y_actual) if curve.y_actual else [],
-        })
-
-        # 更新曲线（重新计算实际坐标）
-        curve.x_data = x_new
-        curve.y_data = y_new
-        curve.x_actual = []
-        curve.y_actual = []
-        for px, py in zip(x_new, y_new):
-            if curve.calibration:
-                xa, ya = project_manager.pixel_to_actual_coords(self._current_curve_id, px, py)
-            else:
-                xa, ya = px, py
-            curve.x_actual.append(xa)
-            curve.y_actual.append(ya)
-
-        self._display_current_curve_on_image()
-        self._update_curve_table()
-        self.project_modified.emit()
-        self._status_label.setText(f"平滑完成（{method}，窗口={window}）")
+        self._on_sort_by_x()
+        self._status_label.setText("已按 X 坐标排序")
 
     def _on_point_size_changed(self, value):
         self._image_viewer.set_point_size(float(value))

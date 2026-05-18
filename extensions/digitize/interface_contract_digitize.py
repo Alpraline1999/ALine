@@ -38,6 +38,7 @@ def register_extensions(registry):
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
+            hidden=True,
             config_fields=[
                 ExtensionConfigField(key="point_count", label="点数量", description="integer 参数示例。", field_type="integer", default=3, min_value=0, max_value=100),
                 ExtensionConfigField(key="spacing", label="点间距", description="number 参数示例。", field_type="number", default=16.0, min_value=1.0, step=1.0),

@@ -2,21 +2,28 @@ from __future__ import annotations
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
 from extensions.analysis.analysis_tools import correlation as _correlation
-from extensions.processing.extension_tools import line_from_xy, line_xy, normalize_lines
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, align_lines_to_common_x, line_from_xy, line_xy, normalize_lines
 
 
 def multi_curve_correlation(lines, params):
-    aligned_lines = normalize_lines(lines)
-    if len(aligned_lines) < 2:
+    normalized_lines = normalize_lines(lines)
+    if len(normalized_lines) < 2:
         raise ValueError("多曲线相关性分析至少需要 2 条输入曲线")
 
     method = str(params.get("method", "pearson") or "pearson").strip().lower()
-    primary = aligned_lines[0]
+    primary = normalized_lines[0]
     _primary_x, primary_y = line_xy(primary)
     comparison_items = []
-    for index, line in enumerate(aligned_lines[1:], start=2):
-        _line_x, line_y = line_xy(line)
-        corr_result = _correlation(primary_y, line_y, method)
+    alignment_messages = []
+    for index, line in enumerate(normalized_lines[1:], start=2):
+        aligned_pair, warnings = align_lines_to_common_x([primary, line], {"align_mode": "auto"})
+        if len(aligned_pair) < 2:
+            continue
+        _pair_x, primary_aligned = line_xy(aligned_pair[0])
+        _line_x, line_y = line_xy(aligned_pair[1])
+        corr_result = _correlation(primary_aligned, line_y, method)
+        if warnings:
+            alignment_messages.extend(warnings)
         comparison_items.append({
             "name": f"line_{index}",
             "correlation": corr_result["r"],
@@ -24,7 +31,7 @@ def multi_curve_correlation(lines, params):
         })
 
     best_match = max(comparison_items, key=lambda item: abs(item["correlation"])) if comparison_items else {"name": "", "correlation": 0.0}
-    average_correlation = sum(item["correlation"] for item in comparison_items) / len(comparison_items)
+    average_correlation = sum(item["correlation"] for item in comparison_items) / len(comparison_items) if comparison_items else 0.0
     line_color = str(params.get("line_color", "#C23B22") or "#C23B22")
     primary_name = "line_1"
     correlation_line = line_from_xy(
@@ -54,7 +61,7 @@ def multi_curve_correlation(lines, params):
         "best_match_name": best_match["name"],
         "best_correlation": best_match["correlation"],
         "average_correlation": average_correlation,
-        "alignment_note": "",
+        "alignment_note": alignment_messages[0] if alignment_messages else "",
         "summary_items": summary_items,
         "comparison_details": comparison_items,
         "x_label": "对比序号",
@@ -83,11 +90,12 @@ def register_extensions(registry):
             name="多曲线相关性",
             handler=multi_curve_correlation,
             description="以第一条输入曲线为主曲线，对其余曲线执行多曲线相关性比较。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             lines_number=(2, -1),
             settings=True,
             source_kind="builtin",
             tool_tier="tool",
+            hidden=True,
             config_fields=[
                 ExtensionConfigField(
                     key="method",

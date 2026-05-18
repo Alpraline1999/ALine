@@ -1,5 +1,6 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
 from core.value_parsing import coerce_float
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION
 
 
 _NAMED_SIZES = {
@@ -30,7 +31,7 @@ def _clamp(value, minimum, maximum, default):
     return max(minimum, min(maximum, number))
 
 
-def _science_style_rcparams():
+def _science_style_rcparams(params):
     import warnings as _w
 
     import matplotlib.pyplot as plt
@@ -42,7 +43,14 @@ def _science_style_rcparams():
         original = plt.rcParams.copy()
         try:
             available = plt.style.available
-            fallback = "seaborn-v0_8" if "seaborn-v0_8" in available else ("ggplot" if "ggplot" in available else "default")
+            fallback = "seaborn-v0_8" if "seaborn-v0_8" in available else (
+                "ggplot" if "ggplot" in available else (
+                    "tableau-colorblind10" if "tableau-colorblind10" in available else "default"
+                )
+            )
+            fallback = str(params.get("fallback_style", fallback))
+            if fallback not in available:
+                fallback = "default"
             plt.style.use(fallback)
             plt.rcParams["text.usetex"] = False
             return dict(plt.rcParams)
@@ -81,7 +89,7 @@ def apply_science_style(plot_context, params):
     if figure is None or axis is None:
         return
 
-    rc_params = _science_style_rcparams()
+    rc_params = _science_style_rcparams(params)
 
     x_label = str(params.get("x_label", "")).strip()
     y_label = str(params.get("y_label", "")).strip()
@@ -138,12 +146,14 @@ def register_extensions(registry):
             name="Science 图幅样式",
             handler=apply_science_style,
             description="套用 scienceplots 论文风格，并叠加当前图幅的少量覆盖设置。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
+            hidden=True,
             phases=("after_plot",),
             config_fields=[
+                ExtensionConfigField(key="fallback_style", description="无 scienceplots 时的回退样式。", field_type="selective", default="seaborn-v0_8", choices=("seaborn-v0_8", "ggplot", "tableau-colorblind10", "default")),
                 ExtensionConfigField(key="x_label", description="X 轴标签；留空则保持当前设置。", field_type="string", default=""),
                 ExtensionConfigField(key="y_label", description="Y 轴标签；留空则保持当前设置。", field_type="string", default=""),
                 ExtensionConfigField(key="axis_label_size", description="坐标轴标签字号。", field_type="integer", default=11),

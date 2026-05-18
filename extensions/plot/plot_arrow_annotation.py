@@ -1,5 +1,6 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
 from core.value_parsing import coerce_float
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION
 
 
 def _coord_system(params):
@@ -53,9 +54,10 @@ def register_extensions(registry):
             handler=draw_arrow_annotation,
             settings=True,
             description="在图中添加一根箭头，可用于强调趋势或关键点。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             source_kind="builtin",
             tool_tier="tool",
+            hidden=True,
             phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),

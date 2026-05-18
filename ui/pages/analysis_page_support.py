@@ -30,6 +30,9 @@ _PREFERRED_ANALYSIS_ORDER = (
     "statistics",
     "correlation",
     "error_compare",
+    "curve_intersections",
+    "area_between_curves",
+    "lag_analysis",
 )
 
 

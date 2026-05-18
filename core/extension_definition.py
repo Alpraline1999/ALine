@@ -110,7 +110,7 @@ _EXTENSION_TOOL_TIER_LABELS = {
 }
 
 _EXTENSION_SOURCE_KINDS = frozenset(_EXTENSION_ORIGIN_LABELS)
-_NON_EXTENSION_MODULE_FILENAMES = frozenset({"extension_tools.py"})
+_NON_EXTENSION_MODULE_FILENAMES = frozenset({"extension_tools.py", "analysis_tools.py"})
 
 
 class ExtensionParams(TypedDict, total=False):

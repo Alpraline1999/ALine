@@ -4,7 +4,7 @@ import numpy as np
 
 from core.extension_api import AnalysisExtension, ExtensionConfigField
 from core.value_parsing import coerce_float
-from extensions.processing.extension_tools import line_from_xy, line_xy, primary_line
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, apply_window, line_from_xy, line_xy, primary_line
 
 
 def _resolve_sampling_rate(xs, params):
@@ -19,17 +19,6 @@ def _resolve_sampling_rate(xs, params):
     return 1.0
 
 
-def _window_values(window_name, size):
-    name = str(window_name or "hann").strip().lower()
-    if name == "hamming":
-        return np.hamming(size)
-    if name == "blackman":
-        return np.blackman(size)
-    if name in {"rect", "rectangle", "boxcar"}:
-        return np.ones(size)
-    return np.hanning(size)
-
-
 def spectrum_analysis(lines, params):
     xs_raw, ys_raw = line_xy(primary_line(lines))
     xs = np.asarray(list(xs_raw), dtype=float)
@@ -41,7 +30,7 @@ def spectrum_analysis(lines, params):
     detrend = bool(params.get("detrend", True))
     centered = ys - float(np.mean(ys)) if detrend else ys
     window_name = str(params.get("window", "hann") or "hann").strip().lower()
-    window = _window_values(window_name, centered.size)
+    window = apply_window(centered.size, window_name)
     spectrum = np.fft.rfft(centered * window)
     freqs = np.fft.rfftfreq(centered.size, d=1.0 / sampling_rate)
     amplitudes = np.abs(spectrum) * (2.0 / max(centered.size, 1))
@@ -120,7 +109,7 @@ def register_extensions(registry):
             name="频谱分析",
             handler=spectrum_analysis,
             description="基于 FFT 计算主曲线的频谱分布，并返回主频与频率分辨率。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             lines_number=(1, 1),
             settings=True,
             source_kind="builtin",

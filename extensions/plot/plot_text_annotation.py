@@ -1,5 +1,6 @@
 from core.extension_api import ExtensionConfigField, PlotExtension
 from core.value_parsing import coerce_float
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION
 
 
 def draw_text_annotation(plot_context, params):
@@ -38,10 +39,11 @@ def register_extensions(registry):
             name="文字标注",
             handler=draw_text_annotation,
             description="在图中添加一段文字，可用于备注说明或结论标注。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             settings=True,
             source_kind="builtin",
             tool_tier="tool",
+            hidden=True,
             phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),

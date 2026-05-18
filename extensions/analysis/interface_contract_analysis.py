@@ -68,6 +68,7 @@ def register_extensions(registry):
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
+            hidden=True,
             config_fields=[
                 ExtensionConfigField(key="title", label="分析标题", description="string 参数示例。", field_type="string", default="接口示例分析"),
                 ExtensionConfigField(key="method", label="分析方法", description="selective 参数示例。", field_type="selective", default="summary", choices=("summary", "quality", "report")),

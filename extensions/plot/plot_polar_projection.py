@@ -3,7 +3,7 @@ from typing import Any, cast
 
 from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
 from core.value_parsing import coerce_float
-from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_xy, series_payloads_to_lines
 
 
 def _context_lines(plot_context, params):
@@ -141,10 +141,10 @@ def register_extensions(registry):
             name="极坐标绘图",
             handler=draw_polar_projection,
             description="将当前选中曲线或首条可见曲线绘制为极坐标图。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             settings=True,
             source_kind="builtin",
-            tool_tier="experimental",
+            tool_tier="tool",
             phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="theta_unit", description="角度数据单位。", field_type="selective", default="degree", choices=("degree", "radian")),

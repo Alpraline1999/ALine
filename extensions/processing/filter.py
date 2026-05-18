@@ -4,6 +4,7 @@ import warnings
 
 from core.extension_api import ExtensionConfigField, ProcessingExtension
 from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy, line_xy, primary_line, resolve_sample_rate
+from processing.smoother import smooth_moving_average
 
 
 def _to_normalized(value: float, sample_rate: float | None, cutoff_mode: str) -> float:
@@ -26,8 +27,10 @@ def _filter_handler(lines, params):
         import numpy as np
         from scipy.signal import butter, filtfilt
     except ImportError:
-        warnings.warn("滤波需要 scipy，请安装 scipy 以启用此功能")
-        return line_from_xy(list(xs), list(ys))
+        fallback_window = max(2, int(options.get("fallback_window", 5) or 5))
+        warnings.warn("scipy 不可用，回退到移动平均滤波")
+        nx, ny = smooth_moving_average(list(xs), list(ys), fallback_window)
+        return line_from_xy(nx, ny)
 
     if mode in ("bandpass", "bandstop"):
         cutoff_low_raw = float(options.get("cutoff_low", 0.1) or 0.1)
@@ -82,6 +85,7 @@ def register_extensions(registry) -> None:
                 ExtensionConfigField(key="cutoff_high", label="高频截止 (band)", field_type="number", default=0.4),
                 ExtensionConfigField(key="order", label="滤波阶数", field_type="integer", default=3, min_value=1),
                 ExtensionConfigField(key="sampling_rate", label="采样率", field_type="number", default=1.0),
+                ExtensionConfigField(key="fallback_window", label="回退窗口（无 scipy 时）", field_type="integer", default=5, min_value=2),
             ],
         )
     )

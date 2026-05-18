@@ -8,7 +8,7 @@ from core.extension_api import AnalysisExtension, ExtensionConfigField
 from extensions.processing.extension_tools import line_from_xy, line_xy, primary_line
 
 
-VERSION = "0.1.0"
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION as VERSION
 
 
 def parse_optional_json_list(value):

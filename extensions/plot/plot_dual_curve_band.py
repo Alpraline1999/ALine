@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
 from core.value_parsing import coerce_float
-from extensions.processing.extension_tools import align_lines_to_common_x, line_xy, series_payloads_to_lines
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, align_lines_to_common_x, line_xy, series_payloads_to_lines
 
 
 def _context_lines(plot_context, params):
@@ -92,7 +92,7 @@ def register_extensions(registry):
             name="双曲线差异带",
             handler=draw_dual_curve_band,
             description="对两条输入曲线自动对齐，并绘制双曲线差异带。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             lines_number=(2, 2),
             settings=True,
             source_kind="builtin",

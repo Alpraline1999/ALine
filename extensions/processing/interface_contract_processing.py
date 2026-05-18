@@ -49,6 +49,7 @@ def register_extensions(registry):
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
+            hidden=True,
             config_fields=[
                 ExtensionConfigField(key="label_prefix", label="结果名前缀", description="string 参数示例。", field_type="string", default="接口示例"),
                 ExtensionConfigField(key="mode", label="处理模式", description="selective 参数示例。", field_type="selective", default="scale", choices=("scale", "offset", "normalize")),

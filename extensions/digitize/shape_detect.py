@@ -6,11 +6,10 @@ import cv2
 import numpy as np
 
 from core.extension_api import DigitizeExtension, ExtensionConfigField
-from extensions.processing.extension_tools import line_from_xy
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy
 
 
 SHAPE_DIGITIZE_EXTENSION_TYPE = "builtin_digitize_shape_detect"
-_BUILTIN_EXTENSION_VERSION = "0.1.0"
 
 
 def _cv2_imread_unicode(image_path: str):
@@ -293,7 +292,7 @@ def _shape_digitize(figure: str, params: Dict[str, Any]):
         mask_include_mode=bool(params.get("mask_include_mode", True)),
         step=5,
         threshold=float(params.get("threshold", 0.65) or 0.65),
-        color_weight=0.7,
+        color_weight = float(params.get("color_weight", 0.7) or 0.7),
     )
     max_matches = max(1, int(params.get("max_matches", 50) or 50))
     if len(points) > max_matches:
@@ -310,9 +309,10 @@ def register_extensions(registry) -> None:
             name="图形识别",
             handler=_shape_digitize,
             description="按截图模板和匹配阈值搜索图中相同形状。",
-            version=_BUILTIN_EXTENSION_VERSION,
+            version=BUILTIN_EXTENSION_VERSION,
             source_kind="builtin",
             tool_tier="experimental",
+            hidden=True,
             settings=True,
             config_fields=[
                 ExtensionConfigField(
@@ -340,6 +340,16 @@ def register_extensions(registry) -> None:
                     default=50,
                     min_value=1,
                     max_value=500,
+                ),
+                ExtensionConfigField(
+                    key="color_weight",
+                    label="颜色权重",
+                    field_type="limited",
+                    default=0.7,
+                    min_value=0.0,
+                    max_value=1.0,
+                    step=0.05,
+                    description="0=仅形状, 1=仅颜色",
                 ),
             ],
         )

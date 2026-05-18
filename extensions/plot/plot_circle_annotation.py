@@ -2,6 +2,7 @@ from matplotlib.patches import Circle
 
 from core.extension_api import ExtensionConfigField, PlotExtension
 from core.value_parsing import coerce_float
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION
 
 
 def draw_circle_annotation(plot_context, params):
@@ -39,10 +40,11 @@ def register_extensions(registry):
             name="圆形框",
             handler=draw_circle_annotation,
             description="在图中绘制圆形框，适合圈出局部特征。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             settings=True,
             source_kind="builtin",
             tool_tier="tool",
+            hidden=True,
             phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="coordinate_mode", description="坐标模式：axes_fraction 使用画布比例坐标，data 使用数据坐标。", field_type="selective", default="axes_fraction", choices=("axes_fraction", "data")),

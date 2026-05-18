@@ -95,7 +95,11 @@ HAS_MATPLOTLIB = _matplotlib is not None
 _PREFERRED_PROCESSING_ORDER = (
     "crop",
     "smooth",
+    "baseline_correction",
+    "despike",
     "normalize",
+    "sort_dedup_interpolate",
+    "order_points",
     "resample",
     "pairwise_compute",
     "fft",

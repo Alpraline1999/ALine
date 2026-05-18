@@ -306,6 +306,117 @@ def handler(figure, params):
 
 这些扩展会正常加载，并标记为 `experimental`。它们既是功能示例，也是接口回归测试入口。
 
+## 发布层级与内置扩展策略
+
+对外发布时，建议把内置扩展分成两层：
+
+- `tool`：默认展示给终端用户，强调通用、稳定、原子、低学习成本。
+- `experimental`：默认隐藏，仅用于接口演示、能力试验或等待产品整合。
+
+面向二维曲线软件，正式发布的内置扩展应优先覆盖四类基础能力：
+
+- 数据整理：排序、去重、插值、裁剪、重采样、平滑、基线校正、归一化。
+- 数值分析：统计、峰值、拟合、相关性、交点、面积差、误差比较。
+- 图表表达：参考线、线尾标签、统一注释、局部放大、不确定性带。
+- 图像数字化：连续曲线、虚线、多色曲线、标记点、单色曲线识别。
+
+不建议对外默认公开的内置扩展通常包括：
+
+- 仅用于接口契约回归的 `interface_contract_*`。
+- 与通用入口重复、会增加认知负担的拆分型绘图扩展，例如把箭头、矩形、圆形、文字各自拆成单独工具。
+- 仍依赖较强假设、适用范围偏窄或更适合沉入页面模板系统的扩展。
+
+## 原子性要求
+
+扩展应当只做一类职责，前置条件通过 pipeline 或显式前序步骤满足，而不是在 handler 内部偷偷代做。
+
+推荐做法：
+
+- `order_points` 只做点序重排。
+- `sort_dedup_interpolate` 只做排序、去重和插值整理。
+- `resample` 只做重采样。
+- `pairwise_compute` 只对已经对齐的两条曲线做逐点运算。
+- `plot_annotation` 作为统一标注入口，不再把箭头、矩形、圆形、文字作为多个公开默认扩展散落给用户。
+
+不推荐做法：
+
+- 在 `pairwise_compute` 内部隐式重采样或自动猜测公共 X 网格。
+- 在平滑扩展内部顺带去重、补点、裁剪。
+- 在某个数字化扩展内部同时承担颜色分离、点序修复、平滑和分析。
+
+这种拆分方式更利于：
+
+- 让用户理解每一步发生了什么。
+- 在二维曲线工作流中复用相同步骤。
+- 单独测试和定位误差来源。
+- 保存为稳定可复现的模板。
+
+## 推荐公开的内置扩展形态
+
+处理扩展建议公开：
+
+- `order_points`
+- `sort_dedup_interpolate`
+- `crop`
+- `despike`
+- `smooth`
+- `filter`
+- `baseline_correction`
+- `normalize`
+- `resample`
+- `derivative`
+- `integral`
+- `transform`
+- `kalman_filter`
+- `fft`
+- `multi_curve_mean`
+- `pairwise_compute`
+
+分析扩展建议公开：
+
+- `statistics`
+- `peak_detect`
+- `curve_fit`
+- `spectrum_analysis`
+- `correlation`
+- `lag_analysis`
+- `curve_intersections`
+- `area_between_curves`
+- `error_compare`
+
+绘图扩展建议公开：
+
+- `plot_annotation`
+- `plot_reference_line`
+- `plot_line_end_label`
+- `plot_uncertainty_band`
+- `plot_dual_curve_band`
+- `plot_local_zoom`
+- `plot_polar_projection`
+
+数字化扩展建议公开：
+
+- `builtin_digitize_color_detect`
+- `builtin_digitize_continuous_trace`
+- `builtin_digitize_dashed_trace`
+- `builtin_digitize_marker_centroid`
+- `builtin_digitize_multicolor_curve`
+
+默认隐藏更合适的内置扩展：
+
+- `interface_contract_processing`
+- `interface_contract_analysis`
+- `interface_contract_plot`
+- `interface_contract_digitize`
+- `builtin_digitize_shape_detect`
+- `ifft`
+- `multi_curve_correlation`
+- `plot_science_style`
+- `plot_arrow_annotation`
+- `plot_rectangle_annotation`
+- `plot_circle_annotation`
+- `plot_text_annotation`
+
 ## 发布检查表
 
 提交扩展前逐项确认：

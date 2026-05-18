@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 from core.extension_api import AnalysisExtension, ExtensionConfigField
-from extensions.processing.extension_tools import line_from_xy, line_xy, primary_line
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION as VERSION, line_from_xy, line_xy, primary_line
 
 
-VERSION = "0.1.0"
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION as VERSION
 
 
 def _filter_indices_by_x_distance(xs: List[float], ys: List[float], indices, min_distance_x: float, *, prefer: str) -> List[int]:
@@ -29,12 +31,10 @@ def detect_peaks(
     min_distance: Optional[int] = 1,
     min_distance_x: Optional[float] = None,
     prominence: Optional[float] = None,
+    width: Optional[int] = None,
+    rel_height: Optional[float] = None,
 ) -> Dict[str, Any]:
-    try:
-        import numpy as np
-        from scipy.signal import find_peaks
-    except ImportError:
-        raise ImportError("需要 numpy 和 scipy")
+    from scipy.signal import find_peaks
 
     y = np.array(ys)
     kwargs: Dict[str, Any] = {}
@@ -44,6 +44,10 @@ def detect_peaks(
         kwargs["height"] = min_height
     if prominence is not None:
         kwargs["prominence"] = prominence
+    if width is not None:
+        kwargs["width"] = max(1, int(width))
+    if rel_height is not None:
+        kwargs["rel_height"] = rel_height
     indices, _props = find_peaks(y, **kwargs)
     if min_distance_x is not None and min_distance_x > 0:
         indices = _filter_indices_by_x_distance(xs, ys, indices, min_distance_x, prefer="higher")
@@ -58,12 +62,10 @@ def detect_valleys(
     min_distance: Optional[int] = 1,
     min_distance_x: Optional[float] = None,
     prominence: Optional[float] = None,
+    width: Optional[int] = None,
+    rel_height: Optional[float] = None,
 ) -> Dict[str, Any]:
-    try:
-        import numpy as np
-        from scipy.signal import find_peaks
-    except ImportError:
-        raise ImportError("需要 numpy 和 scipy")
+    from scipy.signal import find_peaks
 
     y = np.array(ys)
     kwargs: Dict[str, Any] = {}
@@ -73,6 +75,10 @@ def detect_valleys(
         kwargs["height"] = min_depth
     if prominence is not None:
         kwargs["prominence"] = prominence
+    if width is not None:
+        kwargs["width"] = max(1, int(width))
+    if rel_height is not None:
+        kwargs["rel_height"] = rel_height
     indices, _ = find_peaks(-y, **kwargs)
     if min_distance_x is not None and min_distance_x > 0:
         indices = _filter_indices_by_x_distance(xs, ys, indices, min_distance_x, prefer="lower")
@@ -94,6 +100,8 @@ def _handler(lines, params):
         min_distance=params.get("min_distance", 1),
         min_distance_x=params.get("min_distance_x"),
         prominence=params.get("prominence"),
+        width=params.get("width"),
+        rel_height=params.get("rel_height"),
     )
     valleys = detect_valleys(
         xs,
@@ -102,6 +110,8 @@ def _handler(lines, params):
         min_distance=params.get("min_distance", 1),
         min_distance_x=params.get("min_distance_x"),
         prominence=params.get("prominence"),
+        width=params.get("width"),
+        rel_height=params.get("rel_height"),
     )
     result["valleys"] = valleys.get("valleys", [])
     result["valley_count"] = valleys.get("count", 0)
@@ -229,11 +239,18 @@ def register_extensions(registry) -> None:
             settings=True,
             source_kind="builtin",
             config_fields=[
-                ExtensionConfigField(key="min_height", label="最小峰高", field_type="number", default=None),
                 ExtensionConfigField(key="min_distance", label="最小点间距", field_type="integer", default=1, min_value=1),
                 ExtensionConfigField(key="min_distance_x", label="最小 X 间距", field_type="number", default=None),
+                ExtensionConfigField(key="min_height", label="最小峰高", field_type="number", default=None),
                 ExtensionConfigField(key="min_depth", label="最小谷深", field_type="number", default=None),
                 ExtensionConfigField(key="prominence", label="突出度", field_type="number", default=None),
+                ExtensionConfigField(key="width", label="最小峰宽（点数）", field_type="integer", default=None),
+                ExtensionConfigField(key="rel_height", label="峰宽相对高度", field_type="number", default=0.5, min_value=0.0, max_value=1.0),
+            ],
+            tool_tier="tool",
+            report_placeholders=[
+                {"token": "{{peak_count}}", "label": "波峰数", "description": "检测到的波峰数量。"},
+                {"token": "{{valley_count}}", "label": "波谷数", "description": "检测到的波谷数量。"},
             ],
         )
     )

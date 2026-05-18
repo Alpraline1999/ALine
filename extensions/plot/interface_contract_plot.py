@@ -67,6 +67,7 @@ def register_extensions(registry):
             settings=True,
             source_kind="builtin",
             tool_tier="experimental",
+            hidden=True,
             config_fields=[
                 ExtensionConfigField(key="label", label="标注文本", description="string 参数示例。", field_type="string", default="接口示例绘图"),
                 ExtensionConfigField(key="color", label="标注颜色", description="color 参数示例。", field_type="color", default="#0078D4"),

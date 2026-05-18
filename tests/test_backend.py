@@ -2021,7 +2021,9 @@ class TestAnalysisEngine(unittest.TestCase):
         ]
         self.assertTrue(builtin_extensions)
         for extension in builtin_extensions:
-            self.assertEqual(extension.version, "0.1.0", extension.type)
+            if extension.type.startswith("interface_contract"):
+                continue
+            self.assertEqual(extension.version, "1.0.0", extension.type)
 
     def test_core_builtin_analysis_wrappers_expose_extension_metadata(self):
         from core.builtin_extensions import register_core_builtin_extensions
@@ -2058,13 +2060,22 @@ class TestAnalysisEngine(unittest.TestCase):
         color_fields = {field.get("key"): field for field in color_digitize_entry["config_fields"]}
         self.assertEqual(color_digitize_entry["source_kind"], "builtin")
         self.assertEqual(color_digitize_entry["tool_tier"], "tool")
-        self.assertEqual(color_digitize_entry["resolved_options"]["tolerance"], 20)
+        self.assertEqual(color_digitize_entry["resolved_options"]["tolerance"], 0)
         self.assertEqual(color_fields["sampled_color"].get("field_type"), "pickcolor")
 
         shape_fields = {field.get("key"): field for field in shape_digitize_entry["config_fields"]}
         self.assertEqual(shape_digitize_entry["tool_tier"], "experimental")
+        self.assertFalse(shape_digitize_entry["listed"])
         self.assertEqual(shape_digitize_entry["resolved_options"]["threshold"], 0.65)
         self.assertEqual(shape_fields["template_info"].get("field_type"), "shot")
+
+        self.assertFalse(build_extension_entry(registry.get_processing("interface_contract_processing"))["listed"])
+        self.assertFalse(build_extension_entry(registry.get_analysis("interface_contract_analysis"))["listed"])
+        self.assertFalse(build_extension_entry(registry.get_plot("interface_contract_plot"))["listed"])
+        self.assertFalse(build_extension_entry(registry.get_digitize("interface_contract_digitize"))["listed"])
+        self.assertFalse(build_extension_entry(registry.get_processing("ifft"))["listed"])
+        self.assertFalse(build_extension_entry(registry.get_analysis("multi_curve_correlation"))["listed"])
+        self.assertFalse(build_extension_entry(registry.get_plot("plot_science_style"))["listed"])
 
     def test_core_builtin_analysis_handlers_execute_from_individual_modules(self):
         from core.builtin_extensions import register_core_builtin_extensions
@@ -2478,10 +2489,19 @@ class TestAnalysisEngine(unittest.TestCase):
 
         directory = default_extensions_directory()
         expected = {
-            "kalman_filter.py": ("processing", "kalman_filter", {"lines_list", "process_variance", "measurement_variance", "initial_estimate", "initial_error_covariance"}),
+            "baseline_correction.py": ("processing", "baseline_correction", {"method", "percentile"}),
+            "despike.py": ("processing", "despike", {"window", "threshold", "replace_mode"}),
+            "kalman_filter.py": ("processing", "kalman_filter", {"lines_list", "smoothing_preset", "initial_estimate", "initial_error_covariance"}),
             "multi_curve_mean.py": ("processing", "multi_curve_mean", {"lines_list", "result_name", "line_color"}),
+            "order_points.py": ("processing", "order_points", {"axis", "direction", "group_tolerance", "merge_mode"}),
+            "sort_dedup_interpolate.py": ("processing", "sort_dedup_interpolate", {"dedup_mode", "target_spacing", "target_count"}),
+            "curve_intersections.py": ("analysis", "curve_intersections", {"lines_list", "align_mode", "resample_mode", "n", "step"}),
+            "area_between_curves.py": ("analysis", "area_between_curves", {"lines_list", "mode", "align_mode", "resample_mode", "n", "step"}),
+            "lag_analysis.py": ("analysis", "lag_analysis", {"lines_list", "max_lag", "align_mode", "resample_mode", "n", "step"}),
             "spectrum_analysis.py": ("analysis", "spectrum_analysis", {"lines_list", "sampling_rate", "window", "detrend", "max_frequency", "line_color"}),
             "multi_curve_correlation.py": ("analysis", "multi_curve_correlation", {"lines_list", "method", "line_color"}),
+            "plot_annotation.py": ("plot", "plot_annotation", {"mode", "coordinate_mode", "text", "color"}),
+            "plot_line_end_label.py": ("plot", "plot_line_end_label", {"label_template", "precision", "offset_x", "offset_y"}),
             "plot_reference_line.py": ("plot", "plot_reference_line", {"show_reference_line", "line_color", "line_style", "line_width", "offset", "label", "annotate_peak"}),
             "plot_dual_curve_band.py": ("plot", "plot_dual_curve_band", {"lines_list", "align_mode", "resample_mode", "n", "step", "fill_color", "fill_alpha", "label", "annotate_max_gap"}),
             "plot_arrow_annotation.py": ("plot", "plot_arrow_annotation", {"coordinate_mode", "start_x", "start_y", "end_x", "end_y", "text"}),
@@ -2490,6 +2510,11 @@ class TestAnalysisEngine(unittest.TestCase):
             "plot_text_annotation.py": ("plot", "plot_text_annotation", {"coordinate_mode", "x", "y", "text", "color"}),
             "plot_science_style.py": ("plot", "plot_science_style", {"x_label", "y_label", "show_grid", "line_width"}),
             "plot_polar_projection.py": ("plot", "plot_polar_projection", {"theta_unit", "theta_label", "radius_label", "show_grid"}),
+            "plot_uncertainty_band.py": ("plot", "plot_uncertainty_band", {"mode", "fill_color", "fill_alpha", "label"}),
+            "continuous_curve_trace.py": ("digitize", "builtin_digitize_continuous_trace", {"threshold_mode", "threshold", "invert", "step", "max_points"}),
+            "dashed_curve_trace.py": ("digitize", "builtin_digitize_dashed_trace", {"threshold_mode", "threshold", "invert", "step", "max_gap"}),
+            "marker_centroid_detect.py": ("digitize", "builtin_digitize_marker_centroid", {"min_area", "max_area", "sort_axis", "reverse_order"}),
+            "multicolor_curve_detect.py": ("digitize", "builtin_digitize_multicolor_curve", {"cluster_count", "target_cluster", "saturation_min", "value_min"}),
         }
 
         registry = ExtensionRegistry()
@@ -2502,6 +2527,7 @@ class TestAnalysisEngine(unittest.TestCase):
             "processing": registry.get_processing,
             "analysis": registry.get_analysis,
             "plot": registry.get_plot,
+            "digitize": registry.get_digitize,
         }
 
         self.assertEqual(sorted(path.name for path in directory.glob("*.json")), [])
@@ -2511,6 +2537,115 @@ class TestAnalysisEngine(unittest.TestCase):
             self.assertIsNotNone(extension)
             resolved_defaults = extension.resolved_default_options
             self.assertTrue(required_keys.issubset(set(resolved_defaults.keys())))
+
+    def test_processing_cleanup_extensions_execute(self):
+        from extensions.processing.baseline_correction import _handler as baseline_handler
+        from extensions.processing.sort_dedup_interpolate import _handler as sort_handler
+        from extensions.processing.order_points import _handler as order_handler
+
+        baseline = baseline_handler([[[0.0, 2.0], [1.0, 3.0], [2.0, 4.0]]], {"method": "constant"})
+        self.assertEqual([point[1] for point in baseline], [0.0, 1.0, 2.0])
+
+        sorted_line = sort_handler([[[2.0, 4.0], [0.0, 1.0], [2.0, 6.0], [1.0, 3.0]]], {"dedup_mode": "mean"})
+        self.assertEqual([point[0] for point in sorted_line], [0.0, 1.0, 2.0])
+        self.assertEqual(sorted_line[-1][1], 5.0)
+
+        ordered = order_handler([[[3.0, 1.0], [1.0, 2.0], [2.0, 3.0]]], {"axis": "x", "direction": "ascending"})
+        self.assertEqual([point[0] for point in ordered], [1.0, 2.0, 3.0])
+
+    def test_analysis_extensions_compute_expected_summary(self):
+        from extensions.analysis.curve_intersections import _handler as intersections_handler
+        from extensions.analysis.area_between_curves import _handler as area_handler
+        from extensions.analysis.lag_analysis import _handler as lag_handler
+
+        intersections = intersections_handler(
+            [
+                [[0.0, 0.0], [1.0, 1.0]],
+                [[0.0, 1.0], [1.0, 0.0]],
+            ],
+            {"align_mode": "strict"},
+        )
+        self.assertEqual(intersections["intersection_count"], 1)
+
+        area = area_handler(
+            [
+                [[0.0, 0.0], [1.0, 1.0]],
+                [[0.0, 1.0], [1.0, 0.0]],
+            ],
+            {"align_mode": "strict", "mode": "absolute"},
+        )
+        self.assertGreater(area["area"], 0.0)
+
+        lag = lag_handler(
+            [
+                [[0.0, 0.0], [1.0, 1.0], [2.0, 0.0], [3.0, -1.0]],
+                [[0.0, 1.0], [1.0, 0.0], [2.0, -1.0], [3.0, 0.0]],
+            ],
+            {"align_mode": "strict", "max_lag": 2},
+        )
+        self.assertIn("best_lag_samples", lag)
+
+    def test_plot_extensions_render_annotation_and_band(self):
+        import matplotlib.pyplot as plt
+        from core.extension_api import PlotExtensionContext
+        from extensions.plot.plot_annotation import draw_annotation
+        from extensions.plot.plot_line_end_label import draw_line_end_labels
+        from extensions.plot.plot_uncertainty_band import draw_uncertainty_band
+
+        figure = plt.figure()
+        axis = figure.add_subplot(111)
+        axis.plot([0.0, 1.0], [1.0, 2.0], label="A")
+        context = PlotExtensionContext(
+            figure=figure,
+            canvas=None,
+            axis=axis,
+            axes=[axis],
+            visible_series=[{"name": "A", "display_name": "A", "x": [0.0, 1.0], "y": [1.0, 2.0], "y_err": [0.1, 0.2], "style": {"color": "#0078D4"}}],
+            plotted_series=[],
+            selected_series=None,
+            selected_series_identity=None,
+            figure_state={},
+            plot_style_extras={},
+            theme_colors={},
+        )
+        draw_annotation(context, {"mode": "text", "text": "demo", "x": 0.2, "y": 0.8})
+        draw_line_end_labels(context, {"label_template": "{name}: {y}", "show_box": False})
+        draw_uncertainty_band(context, {"mode": "from_errorbar"})
+        self.assertGreaterEqual(len(axis.texts), 2)
+        self.assertGreaterEqual(len(axis.collections), 1)
+        plt.close(figure)
+
+    def test_digitize_extensions_extract_points_from_simple_images(self):
+        import cv2
+        import numpy as np
+
+        from extensions.digitize.continuous_curve_trace import _continuous_trace
+        from extensions.digitize.dashed_curve_trace import _dashed_trace
+        from extensions.digitize.marker_centroid_detect import _centroids
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            curve_path = Path(temp_dir) / "curve.png"
+            marker_path = Path(temp_dir) / "marker.png"
+
+            curve_image = np.full((40, 60, 3), 255, dtype=np.uint8)
+            for x_value in range(5, 55):
+                curve_image[20, x_value] = (0, 0, 0)
+            for x_value in range(5, 55, 6):
+                curve_image[20, x_value:x_value + 3] = (0, 0, 0)
+            cv2.imwrite(str(curve_path), curve_image)
+
+            marker_image = np.full((40, 40, 3), 255, dtype=np.uint8)
+            cv2.circle(marker_image, (10, 10), 3, (0, 0, 255), -1)
+            cv2.circle(marker_image, (30, 25), 3, (0, 0, 255), -1)
+            cv2.imwrite(str(marker_path), marker_image)
+
+            continuous = _continuous_trace(str(curve_path), {"threshold_mode": "manual", "threshold": 200, "invert": True, "step": 2})
+            dashed = _dashed_trace(str(curve_path), {"threshold_mode": "manual", "threshold": 200, "invert": True, "step": 3, "max_gap": 12})
+            centroids = _centroids(str(marker_path), {"sampled_color": {"r": 255, "g": 0, "b": 0}, "tolerance": 12, "min_area": 5, "max_area": 200})
+
+            self.assertGreater(len(continuous), 10)
+            self.assertGreater(len(dashed), 10)
+            self.assertEqual(len(centroids), 2)
 
     def test_repository_plot_extensions_all_support_settings(self):
         from core.extension_api import ExtensionRegistry, default_extensions_directory
@@ -3799,6 +3934,95 @@ class TestSkillRunner(unittest.TestCase):
         d = r.to_dict()
         self.assertFalse(d["success"])
         self.assertIn("NameError", d["error"])
+
+
+# ══════════════════════════════════════════════════════════════════
+# 13. extensions/plot/plot_local_zoom.py
+# ══════════════════════════════════════════════════════════════════
+
+class TestPlotLocalZoom(unittest.TestCase):
+
+    def _plot_context(self, figure, axis, source):
+        from core.extension_types import PlotExtensionContext
+
+        return PlotExtensionContext(
+            figure=figure,
+            canvas=object(),
+            axis=axis,
+            axes=[axis],
+            visible_series=source,
+            plotted_series=source,
+            phase="after_plot",
+            figure_state={},
+            plot_style_extras={},
+            theme_colors={},
+        )
+
+    def test_plot_local_zoom_renders_connector_and_endpoint_decorations(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Circle, ConnectionPatch, Rectangle
+
+        from extensions.plot.plot_local_zoom import draw_local_zoom
+
+        source = [{
+            "name": "demo",
+            "x": [0.0, 1.0, 2.0, 3.0, 4.0],
+            "y": [0.0, 1.0, 0.5, 1.5, 1.0],
+            "style": {"color": "C1", "linestyle": "--", "linewidth": 1.5},
+        }]
+
+        figure, axis = plt.subplots()
+        try:
+            axis.plot(source[0]["x"], source[0]["y"], color="C1", linestyle="--", linewidth=1.5)
+            context = self._plot_context(figure, axis, source)
+            draw_local_zoom(context, {
+                "pct_x1": 80,
+                "pct_x2": 20,
+                "pct_y1": 85,
+                "pct_y2": 15,
+                "inset_pct_x1": 95,
+                "inset_pct_x2": 55,
+                "inset_pct_y1": 90,
+                "inset_pct_y2": 45,
+                "connector_end": "circle",
+            })
+
+            self.assertEqual(len(figure.axes), 2)
+            inset_axis = figure.axes[1]
+            self.assertTrue(any(isinstance(patch, Rectangle) for patch in axis.patches))
+            self.assertTrue(any(isinstance(child, ConnectionPatch) for child in inset_axis.get_children()))
+            self.assertTrue(any(isinstance(child, Circle) for child in inset_axis.get_children()))
+        finally:
+            plt.close(figure)
+
+    def test_plot_local_zoom_honors_false_string_for_connector_toggle(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import ConnectionPatch
+
+        from extensions.plot.plot_local_zoom import draw_local_zoom
+
+        source = [{
+            "name": "demo",
+            "x": [0.0, 1.0, 2.0],
+            "y": [0.0, 1.0, 0.0],
+            "style": {"color": "C0"},
+        }]
+
+        figure, axis = plt.subplots()
+        try:
+            axis.plot(source[0]["x"], source[0]["y"], color="C0")
+            context = self._plot_context(figure, axis, source)
+            draw_local_zoom(context, {"show_connector": "false"})
+
+            self.assertEqual(len(figure.axes), 2)
+            inset_axis = figure.axes[1]
+            self.assertFalse(any(isinstance(child, ConnectionPatch) for child in inset_axis.get_children()))
+        finally:
+            plt.close(figure)
 
 
 # ══════════════════════════════════════════════════════════════════

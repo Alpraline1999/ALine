@@ -4,11 +4,10 @@ from typing import Any, Dict
 
 from core.extension_api import DigitizeExtension, ExtensionConfigField
 from digitize.auto_extractor import AutoExtractor
-from extensions.processing.extension_tools import line_from_xy
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_from_xy
 
 
 COLOR_DIGITIZE_EXTENSION_TYPE = "builtin_digitize_color_detect"
-_BUILTIN_EXTENSION_VERSION = "0.1.0"
 
 
 def _resolve_tolerance(sampled_color: dict, tolerance: int) -> int:
@@ -43,6 +42,11 @@ def _color_digitize(figure: str, params: Dict[str, Any]):
     )
     xs = [float(point[0]) for point in list(points or [])]
     ys = [float(point[1]) for point in list(points or [])]
+    max_points = int(params.get("max_points", 5000) or 5000)
+    if len(xs) > max_points:
+        step = max(1, len(xs) // max_points)
+        xs = xs[::step]
+        ys = ys[::step]
     return line_from_xy(xs, ys)
 
 
@@ -53,7 +57,7 @@ def register_extensions(registry) -> None:
             name="颜色识别",
             handler=_color_digitize,
             description="按采样颜色和容差自动提取图像中的散点位置。",
-            version=_BUILTIN_EXTENSION_VERSION,
+            version=BUILTIN_EXTENSION_VERSION,
             source_kind="builtin",
             tool_tier="tool",
             settings=True,
@@ -82,6 +86,15 @@ def register_extensions(registry) -> None:
                     default=5,
                     min_value=1,
                     max_value=20,
+                ),
+                ExtensionConfigField(
+                    key="max_points",
+                    label="最大点数",
+                    description="输出点数的上限（超限时均匀下采样）。",
+                    field_type="integer",
+                    default=5000,
+                    min_value=100,
+                    max_value=50000,
                 ),
             ],
         )

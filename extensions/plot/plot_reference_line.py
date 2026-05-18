@@ -1,6 +1,6 @@
 from core.extension_api import ExtensionConfigField, PlotExtension, normalize_extension_lines_list
 from core.value_parsing import coerce_float
-from extensions.processing.extension_tools import line_xy, series_payloads_to_lines
+from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION, line_xy, series_payloads_to_lines
 
 
 def _context_series(plot_context, params):
@@ -110,10 +110,10 @@ def register_extensions(registry):
             name="参考线标注",
             handler=draw_reference_overlay,
             description="按当前可见曲线生成均值参考线，并可在峰值处追加注释。",
-            version="0.1.0",
+            version=BUILTIN_EXTENSION_VERSION,
             settings=True,
             source_kind="builtin",
-            tool_tier="experimental",
+            tool_tier="tool",
             phases=("after_plot",),
             config_fields=[
                 ExtensionConfigField(key="show_reference_line", description="在图表上绘制一条水平参考线。", field_type="boolean", default=True),
