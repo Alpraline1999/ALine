@@ -108,6 +108,11 @@ python build.py --no-compress
 python build.py --skip-tests
 ```
 
+GitHub Actions 已预留两条自动化流程：
+
+- `CI`：在 `push` / `pull_request` 时执行编译检查、焦点回归测试，并生成当前 `mypy` 基线报告。
+- `Release`：在推送 `v*` 标签时执行质量门、调用 `build.py --clean --skip-tests` 打包，并上传 `dist/*.zip` 到 GitHub Release。
+
 ## 开发与测试
 
 常用命令：
