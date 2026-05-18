@@ -4,8 +4,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +44,7 @@ ENV_DIR = PACKAGE_ROOT / str(MANIFEST.get("runtime_dir") or "runtime/env")
 ENV_PYTHON = ENV_DIR / "Scripts" / "python.exe"
 EMBED_PTH = PACKAGE_ROOT / str(MANIFEST.get("embedded_pth") or "")
 EMBED_SITE_DIR = PACKAGE_ROOT / str(MANIFEST.get("embedded_site_dir") or "runtime/python/Lib/site-packages")
+BOOTSTRAP_CONSOLE_FLAG = "--bootstrap-console"
 
 
 def _ensure_parent(path: Path) -> None:
@@ -56,10 +59,37 @@ def log(message: str) -> None:
         handle.write(line + "\n")
 
 
-def _run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _log_process_line(prefix: str, line: str) -> None:
+    text = line.rstrip()
+    if text:
+        log(f"{prefix} {text}")
+
+
+def _run(cmd: list[str], *, check: bool = True, stream_output: bool = False) -> subprocess.CompletedProcess[str]:
     log("RUN " + " ".join(cmd))
-    result = subprocess.run(cmd, text=True, capture_output=True)
-    if result.stdout:
+    if stream_output:
+        process = subprocess.Popen(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+        )
+        output_lines: list[str] = []
+        assert process.stdout is not None
+        for line in process.stdout:
+            output_lines.append(line)
+            _log_process_line("PIPE", line)
+        returncode = process.wait()
+        result = subprocess.CompletedProcess(
+            cmd,
+            returncode,
+            stdout="".join(output_lines),
+            stderr="",
+        )
+    else:
+        result = subprocess.run(cmd, text=True, capture_output=True)
+    if result.stdout and not stream_output:
         log("STDOUT " + result.stdout.strip())
     if result.stderr:
         log("STDERR " + result.stderr.strip())
@@ -156,7 +186,17 @@ def _ensure_embedded_site() -> None:
 
 def _pip_install_args() -> list[str]:
     python_path = BASE_PYTHON if RUNTIME_MODE == "embedded" else ENV_PYTHON
-    args = [str(python_path), "-m", "pip", "install", "-r", str(REQUIREMENTS_FILE)]
+    args = [
+        str(python_path),
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-compile",
+        "--no-cache-dir",
+        "-r",
+        str(REQUIREMENTS_FILE),
+    ]
     primary = str(MANIFEST.get("pip_index_url") or "").strip()
     if primary:
         args.extend(["--index-url", primary])
@@ -169,8 +209,31 @@ def _pip_install_args() -> list[str]:
 
 def _install_requirements() -> None:
     python_path = BASE_PYTHON if RUNTIME_MODE == "embedded" else ENV_PYTHON
-    _run([str(python_path), "-m", "pip", "install", "--upgrade", "pip"])
-    _run(_pip_install_args())
+    _run(
+        [
+            str(python_path),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-cache-dir",
+            "--upgrade",
+            "pip",
+        ],
+        stream_output=_in_console_mode(),
+    )
+    _run(_pip_install_args(), stream_output=_in_console_mode())
+
+
+def _prune_runtime_artifacts() -> None:
+    runtime_root = ENV_DIR if RUNTIME_MODE != "embedded" else BASE_PYTHON.parent
+    for directory in sorted(runtime_root.rglob("__pycache__"), reverse=True):
+        if directory.is_dir():
+            shutil.rmtree(directory, ignore_errors=True)
+    for pattern in ("*.pyc", "*.pyo"):
+        for file_path in runtime_root.rglob(pattern):
+            if file_path.is_file():
+                file_path.unlink(missing_ok=True)
 
 
 def _verify_runtime() -> None:
@@ -186,14 +249,55 @@ def _launch_app() -> int:
     env.setdefault("QT_QPA_PLATFORM", "windows")
     cmd = [str(LAUNCH_PYTHON), str(ENTRYPOINT)]
     log("LAUNCH " + " ".join(cmd))
-    return subprocess.call(cmd, env=env, cwd=str(PACKAGE_ROOT))
+    process = subprocess.Popen(cmd, env=env, cwd=str(PACKAGE_ROOT))
+    return process.poll() or 0
+
+
+def _in_console_mode() -> bool:
+    return BOOTSTRAP_CONSOLE_FLAG in sys.argv
+
+
+def _relaunch_in_console() -> int:
+    if os.name != "nt":
+        return 1
+    creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+    cmd = [str(BASE_PYTHON), str(Path(__file__)), BOOTSTRAP_CONSOLE_FLAG]
+    subprocess.Popen(cmd, cwd=str(PACKAGE_ROOT), creationflags=creation_flags)
+    return 0
+
+
+def _pause_before_exit() -> None:
+    if os.name != "nt" or not _in_console_mode():
+        return
+    try:
+        subprocess.run(["cmd", "/c", "pause"], check=False)
+    except OSError:
+        pass
+
+
+def _console_header() -> None:
+    if not _in_console_mode():
+        return
+    lines: Iterable[str] = (
+        "",
+        "ALine 正在准备运行环境。",
+        "首次启动会安装依赖，可能持续数分钟，请不要关闭此窗口。",
+        f"日志文件: {LOG_PATH}",
+        "",
+    )
+    for line in lines:
+        print(line)
 
 
 def main() -> int:
     try:
         log("bootstrap start")
         _ensure_base_runtime()
-        if not _env_is_current():
+        env_current = _env_is_current()
+        if not env_current and not _in_console_mode():
+            return _relaunch_in_console()
+        _console_header()
+        if not env_current:
             log("runtime env is missing or stale; rebuilding")
             if RUNTIME_MODE == "embedded":
                 _ensure_embedded_site()
@@ -201,6 +305,7 @@ def main() -> int:
                 _create_env()
             _ensure_pip()
             _install_requirements()
+            _prune_runtime_artifacts()
             _verify_runtime()
             _write_state()
         else:
@@ -212,6 +317,7 @@ def main() -> int:
         print("ALine bootstrap failed.")
         print(str(exc))
         print(f"See log: {LOG_PATH}")
+        _pause_before_exit()
         return 1
 
 

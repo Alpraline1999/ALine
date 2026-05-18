@@ -272,7 +272,7 @@ def _write_launcher_files(output_dir: Path) -> None:
     )
 
 
-def _write_exe_launcher(output_dir: Path, *, launcher_kind: str = "console") -> Path:
+def _write_exe_launcher(output_dir: Path, *, launcher_kind: str = "gui") -> Path:
     try:
         from distlib.resources import finder
     except ModuleNotFoundError as exc:
@@ -369,7 +369,7 @@ def build_bootstrap(
         runtime_python_version=runtime_python_version,
     )
     _write_launcher_files(output_dir)
-    _write_exe_launcher(output_dir, launcher_kind="console")
+    _write_exe_launcher(output_dir, launcher_kind="gui")
 
     if archive:
         archive_path = _archive_output(output_dir)
