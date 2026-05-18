@@ -247,7 +247,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._legend_anchor_y_draft = ""
         self._preserve_partial_legend_anchor_draft = False
         self._task_manager = TaskManager(self)
-        self._display_dpi = 100.0
+        self._display_dpi = self._initial_display_dpi()
         self._display_canvas_size: Optional[tuple[int, int]] = None
         self._canvas_host: Optional[QScrollArea] = None
         self._plot_extension_teaching_tip = None
@@ -273,10 +273,23 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         if extension_registry.get_plot(_BASE_PLOT_STYLE_EXTENSION_TYPE) is None:
             extension_registry.register_plot(_BASE_PLOT_STYLE_EXTENSION)
 
+    def _initial_display_dpi(self) -> float:
+        screen = self.screen()
+        if screen is None and self.windowHandle() is not None:
+            screen = self.windowHandle().screen()
+        if screen is None:
+            return 100.0
+        try:
+            return max(72.0, float(screen.logicalDotsPerInch()))
+        except Exception:
+            return 100.0
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._display_dpi = self._initial_display_dpi()
         self._update_plot_extension_help_area_height()
         QTimer.singleShot(0, self._sync_chart_left_splitter_sizes)
+        QTimer.singleShot(0, self._sync_canvas_display_geometry)
         if self._theme_refresh_pending:
             self._theme_refresh_pending = False
             self._redraw("theme")
@@ -3569,6 +3582,16 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             target_width = target_height * safe_ratio
         return max(1, int(round(target_width))), max(1, int(round(target_height)))
 
+    def _canvas_device_pixel_ratio(self) -> float:
+        if self._canvas is None:
+            return 1.0
+        ratio = 1.0
+        try:
+            ratio = float(self._canvas.devicePixelRatioF())
+        except Exception:
+            ratio = 1.0
+        return max(1.0, ratio)
+
     def _sync_canvas_display_geometry(self, state: Optional[FigureState] = None) -> None:
         if not HAS_MATPLOTLIB or self._figure is None or self._canvas is None or self._canvas_host is None:
             return
@@ -3581,8 +3604,14 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._display_canvas_size = target_size
             self._canvas.setFixedSize(canvas_width, canvas_height)
             self._canvas.updateGeometry()
-        self._figure.set_dpi(self._display_dpi)
-        self._figure.set_size_inches(canvas_width / self._display_dpi, canvas_height / self._display_dpi, forward=False)
+        device_pixel_ratio = self._canvas_device_pixel_ratio()
+        display_dpi = max(72.0, float(self._display_dpi or 100.0))
+        self._figure.set_dpi(display_dpi)
+        self._figure.set_size_inches(
+            (canvas_width * device_pixel_ratio) / display_dpi,
+            (canvas_height * device_pixel_ratio) / display_dpi,
+            forward=False,
+        )
 
     def _fallback_layout_margins(self, state: Optional[FigureState] = None) -> dict[str, float]:
         state = state or self._figure_state

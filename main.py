@@ -148,6 +148,8 @@ sys.path.insert(0, BASE_DIR)
 from core.app_context import AppContext, set_app_context
 from core.extension_api import load_configured_extensions
 from core.i18n import reload_translations
+from core.ui_preferences import get_ui_font_family
+from ui.theme import apply_application_font_preference, apply_platform_visual_overrides
 
 _EXTENSION_LOAD_REPORT = load_configured_extensions(os.path.join(BASE_DIR, "extensions"))
 for _extension_error in _EXTENSION_LOAD_REPORT.get("errors", []):
@@ -165,6 +167,8 @@ def main():
         app.setWindowIcon(QIcon(icon_path))
 
     setTheme(Theme.AUTO)
+    apply_platform_visual_overrides()
+    apply_application_font_preference(get_ui_font_family())
 
     # 初始化 AppContext（核心服务依赖容器）
     # 重要: 必须复用模块级 project_manager 单例, 不能新建实例,

@@ -16,6 +16,7 @@ class UIPreferences(BaseModel):
 
     tree_name_display_mode: TreeNameDisplayMode = "elide"
     language: str = "zh_CN"
+    ui_font_family: str = ""
     page_tree_focus_mode: bool = False
     home_welcome_dismissed: bool = False
     home_onboarding_completed: bool = False
@@ -61,6 +62,17 @@ def set_ui_language(language: str) -> str:
     prefs.language = clean if clean in {"zh_CN", "en_US"} else "zh_CN"
     prefs.save()
     return prefs.language
+
+
+def get_ui_font_family() -> str:
+    return str(UIPreferences.load().ui_font_family or "").strip()
+
+
+def set_ui_font_family(family: str) -> str:
+    prefs = UIPreferences.load()
+    prefs.ui_font_family = str(family or "").strip()
+    prefs.save()
+    return prefs.ui_font_family
 
 
 def is_page_tree_focus_mode_enabled() -> bool:

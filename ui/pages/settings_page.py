@@ -13,6 +13,8 @@ from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
 
 from ui.theme import (
     accent_color,
+    apply_application_font_preference,
+    apply_platform_visual_overrides,
     body_text_style_sheet,
     border_color,
     card_background_color,
@@ -39,6 +41,7 @@ from core.ui_preferences import (
     TreeNameDisplayMode,
     get_tree_name_display_mode,
     is_page_tree_focus_mode_enabled,
+    set_ui_font_family,
     get_ui_language,
     set_ui_language,
     set_page_tree_focus_mode_enabled,
@@ -71,6 +74,7 @@ class SettingsPage(QWidget):
     tree_display_mode_changed = Signal(str)
     page_tree_focus_mode_changed = Signal(bool)
     language_changed = Signal(str)
+    ui_font_changed = Signal(str)
     extensions_reloaded = Signal()
     project_modified = Signal()
     assets_modified = Signal()
@@ -95,6 +99,9 @@ class SettingsPage(QWidget):
         self._language_combo = None
         self._language_keys = ["zh_CN", "en_US"]
         self._appearance_title = None
+        self._ui_font_title = None
+        self._ui_font_combo = None
+        self._ui_font_keys = [""]
         self._extension_card = None
         self._builtin_extension_card = None
         self._external_extension_card = None
@@ -403,6 +410,7 @@ class SettingsPage(QWidget):
     def on_theme_changed(self, index):
         themes = [Theme.LIGHT, Theme.DARK, Theme.AUTO]
         setTheme(themes[index])
+        apply_platform_visual_overrides()
         QTimer.singleShot(50, self._update_colors)
 
     def _update_colors(self):
@@ -445,6 +453,15 @@ class SettingsPage(QWidget):
         reload_translations()
         self.refresh_language_ui()
         self.language_changed.emit(language)
+
+    def _on_ui_font_changed(self, _index: int) -> None:
+        if self._ui_font_combo is None:
+            return
+        idx = self._ui_font_combo.currentIndex()
+        family = self._ui_font_keys[idx] if 0 <= idx < len(self._ui_font_keys) else ""
+        stored_family = set_ui_font_family(family)
+        applied_family = apply_application_font_preference(stored_family)
+        self.ui_font_changed.emit(applied_family or stored_family)
         from qfluentwidgets import InfoBar, InfoBarPosition
         label_map = {
             "zh_CN": "简体中文",
@@ -533,6 +550,9 @@ class SettingsPage(QWidget):
         self._language_title = None
         self._language_combo = None
         self._appearance_title = None
+        self._ui_font_title = None
+        self._ui_font_combo = None
+        self._ui_font_keys = [""]
         self._extension_card = None
         self._builtin_extension_card = None
         self._external_extension_card = None

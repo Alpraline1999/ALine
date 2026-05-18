@@ -36,10 +36,12 @@ from core.shortcut_manager import shortcut_manager
 from core.ui_preferences import (
     get_tree_name_display_mode,
     get_ui_language,
+    get_ui_font_family,
     is_page_tree_focus_mode_enabled,
     get_auto_save_enabled,
     get_auto_save_interval_seconds,
 )
+from ui.theme import effective_ui_font_family, list_installed_ui_font_families
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.theme import (
     body_text_style_sheet,
@@ -403,6 +405,38 @@ def build_general_tab(page) -> QWidget:
     page.theme_combo.currentIndexChanged.connect(page.on_theme_changed)
     page._attach_setting_card_control(theme_card, page.theme_combo)
     appearance_group.addSettingCard(theme_card)
+
+    font_card = SettingCard(getattr(FIF, "FONT", FIF.INFO), _("界面字体"), _("自动检测系统已安装字体，并立即应用到整个界面。"), appearance_group)
+    page._ui_font_title = font_card.titleLabel
+    page._bind_setting_card_styles(
+        font_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    page._ui_font_combo = ComboBox(font_card)
+    page._ui_font_combo.setMinimumWidth(220)
+    page._ui_font_keys = [""]
+    page._ui_font_combo.addItem(_("跟随系统默认"))
+    installed_fonts = list_installed_ui_font_families()
+    preferred_fonts = []
+    for family in (
+        effective_ui_font_family(get_ui_font_family()),
+        "Segoe UI",
+        "Microsoft YaHei",
+        "PingFang SC",
+        "Noto Sans CJK SC",
+    ):
+        if family and family in installed_fonts and family not in preferred_fonts:
+            preferred_fonts.append(family)
+    for family in preferred_fonts + [name for name in installed_fonts if name not in preferred_fonts]:
+        page._ui_font_keys.append(family)
+        page._ui_font_combo.addItem(family)
+    current_font = get_ui_font_family()
+    current_index = page._ui_font_keys.index(current_font) if current_font in page._ui_font_keys else 0
+    page._ui_font_combo.setCurrentIndex(current_index)
+    page._ui_font_combo.currentIndexChanged.connect(page._on_ui_font_changed)
+    page._attach_setting_card_control(font_card, page._ui_font_combo)
+    appearance_group.addSettingCard(font_card)
 
     tree_mode_card = SettingCard(FIF.INFO, _("项目树长名称显示"), _("控制项目树长名称使用自动换行还是省略显示。"), appearance_group)
     page._tree_display_mode_label = tree_mode_card.titleLabel

@@ -21,6 +21,7 @@ from .pages.data_page import DataPage
 from .pages.process_page import ProcessPage
 from .pages.analysis_page import AnalysisPage
 from .pages.settings_page import SettingsPage
+from .theme import apply_platform_visual_overrides
 from .dialogs.fluent_dialogs import TextInputDialog
 from .dialogs.project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
 from .dialogs.project_tree_manage_dialog import ProjectTreeManageDialog
@@ -405,6 +406,7 @@ class MainWindow(FluentWindow):
         self.home_page.quick_start_requested.connect(self._on_home_quick_start_requested)
         self.settings_page.replay_onboarding_requested.connect(self._replay_home_onboarding)
         self.settings_page.language_changed.connect(self._on_language_changed)
+        self.settings_page.ui_font_changed.connect(self._on_ui_font_changed)
         self.settings_page.extensions_reloaded.connect(self._on_extensions_reloaded)
         self.settings_page.auto_save_settings_changed.connect(self._update_auto_save_timer)
         self.settings_page.project_modified.connect(self._on_project_modified)
@@ -463,6 +465,13 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree.refresh()
         self._update_tree_panel_visibility(self.stackedWidget.currentWidget())
         self._update_window_title()
+
+    def _on_ui_font_changed(self, family: str) -> None:
+        del family
+        self._update_all_pages_theme()
+        if hasattr(self.chart_page, "_sync_canvas_display_geometry"):
+            self.chart_page._sync_canvas_display_geometry()
+        self._tree_panel.tree.refresh()
 
     # ─────────────────────────────────────────────────────────
     # FluentWindow.switchTo 覆盖
@@ -874,6 +883,7 @@ class MainWindow(FluentWindow):
     def _on_theme_changed(self, index: int):
         themes = [Theme.LIGHT, Theme.DARK, Theme.AUTO]
         setTheme(themes[index])
+        apply_platform_visual_overrides()
         QTimer.singleShot(0, self._update_all_pages_theme)
 
     def _update_all_pages_theme(self):

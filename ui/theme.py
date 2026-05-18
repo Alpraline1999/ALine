@@ -1,3 +1,5 @@
+import sys
+
 from qfluentwidgets import ToolTipFilter, ToolTipPosition, isDarkTheme
 
 
@@ -138,6 +140,117 @@ def preview_canvas_grid_color(dark=None):
 def hover_color():
     """悬停高亮颜色"""
     return "#383838" if isDarkTheme() else "#e8f0fe"
+
+
+def list_installed_ui_font_families() -> list[str]:
+    """返回当前系统可用于界面的字体族名称。"""
+    from PySide6.QtGui import QFontDatabase
+
+    families = [str(name).strip() for name in QFontDatabase.families() if str(name).strip()]
+    seen: set[str] = set()
+    result: list[str] = []
+    for family in families:
+        if family.startswith("@") or family in seen:
+            continue
+        seen.add(family)
+        result.append(family)
+    return result
+
+
+def effective_ui_font_family(preferred: str = "") -> str:
+    """返回当前环境下实际应使用的界面字体。"""
+    available = set(list_installed_ui_font_families())
+    if preferred and preferred in available:
+        return preferred
+
+    candidates = [
+        "Segoe UI",
+        "Microsoft YaHei",
+        "PingFang SC",
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "WenQuanYi Micro Hei",
+    ]
+    for family in candidates:
+        if family in available:
+            return family
+    return preferred if preferred else ""
+
+
+def apply_application_font_preference(preferred: str = "") -> str:
+    """把界面字体应用到整个 Qt 应用，返回实际使用的字体族。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return ""
+    family = effective_ui_font_family(preferred)
+    if not family:
+        return ""
+    font = app.font()
+    if font.family() == family:
+        return family
+    font.setFamily(family)
+    app.setFont(font)
+    return family
+
+
+def windows_popup_style_sheet() -> str:
+    """Windows 下为菜单和弹出列表补一层不透明边框，避免透明描边伪影。"""
+    menu_background = card_background_color()
+    menu_border = border_color()
+    menu_text = text_color()
+    menu_hover = hover_color()
+    return f"""
+QMenu,
+RoundMenu,
+MenuActionListWidget,
+ComboBoxMenu,
+LineEditMenu,
+QListView {{
+    background-color: {menu_background};
+    color: {menu_text};
+    border: 1px solid {menu_border};
+    border-radius: 8px;
+}}
+QMenu::item {{
+    background-color: transparent;
+    padding: 6px 12px;
+    border-radius: 4px;
+}}
+QMenu::item:selected {{
+    background-color: {menu_hover};
+}}
+QComboBox QAbstractItemView,
+ComboBox QAbstractItemView,
+EditableComboBox QAbstractItemView,
+QAbstractItemView[isComboPopup=\"true\"] {{
+    background-color: {menu_background};
+    color: {menu_text};
+    border: 1px solid {menu_border};
+    outline: none;
+    selection-background-color: {menu_hover};
+}}
+"""
+
+
+def apply_platform_visual_overrides() -> None:
+    """应用平台级视觉修正。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    if sys.platform.startswith("win"):
+        app.setStyle("Fusion")
+        override = windows_popup_style_sheet().strip()
+        previous_override = str(app.property("_alinePlatformStyleOverride") or "")
+        base_style = app.styleSheet()
+        if previous_override and previous_override in base_style:
+            base_style = base_style.replace(previous_override, "").rstrip()
+        merged = f"{base_style}\n{override}".strip() if base_style else override
+        app.setStyleSheet(merged)
+        app.setProperty("_alinePlatformStyleOverride", override)
 
 
 WORKBENCH_TOOL_PANEL_WIDTH = 340
