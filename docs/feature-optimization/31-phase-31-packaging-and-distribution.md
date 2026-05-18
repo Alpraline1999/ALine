@@ -7,7 +7,7 @@
 **完成定义**：
 - GitHub Public 仓库只承担源码、文档、Issue 和源码版本里程碑发布
 - Linux 不再作为安装包交付目标，默认通过源码构建/运行
-- Windows 提供 bootstrap launcher 方案：分发轻量包，首次启动自动创建运行环境并安装依赖
+- Windows 提供 bootstrap launcher 方案：分发轻量包，首次启动自动修补内嵌 runtime 并安装依赖
 - 打包、首次启动、失败恢复、更新和外部分发策略文档化
 
 ## 当前代码现状
@@ -52,7 +52,7 @@
   - 依赖清单与 bootstrap manifest
 - 第一次启动时：
   - 检查本地运行环境
-  - 创建应用私有 `.venv`
+  - 修补 embeddable runtime 的 `site-packages`
   - 使用预设镜像安装依赖
   - 安装完成后启动 ALine
 - 之后启动：
@@ -97,7 +97,7 @@ python run.py
 Windows bootstrap 方案至少需要以下能力：
 
 - 首次启动状态检测
-- 本地私有运行环境目录规划
+- 包内 embeddable runtime 目录规划
 - `pip` 镜像源与重试策略
 - 安装进度与错误提示
 - 运行日志落盘
@@ -110,14 +110,14 @@ Windows bootstrap 方案至少需要以下能力：
 
 - `python build.py`
   - 保留为完整打包/内部演示/离线包入口
-- `python scripts/build_bootstrap_windows.py`（待新增）
+- `python scripts/build_bootstrap_windows.py`
   - 作为 Windows 轻量启动包构建入口
 
 ## 验收要点
 
 - GitHub 公开仓库可只发布源码，不依赖二进制附件
 - Windows bootstrap 包体积明显低于当前完整 PyInstaller zip
-- Windows 首次启动可自动创建运行环境并进入应用
+- Windows 首次启动可自动安装依赖并进入应用
 - 首次启动失败时有明确日志与重试/修复路径
 - Linux 用户文档默认走源码运行，不再承诺安装包
 

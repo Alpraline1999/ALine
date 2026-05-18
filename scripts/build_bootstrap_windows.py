@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import argparse
+from io import BytesIO
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.request
 import zipfile
 from importlib import metadata
 from pathlib import Path
+from zipfile import ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -27,6 +31,12 @@ DEFAULT_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 DEFAULT_EXTRA_INDEX_URLS = ["https://pypi.org/simple"]
 DEFAULT_LOCK_PYTHON = ROOT / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / "python"
 DEBUG = os.environ.get("ALINE_BOOTSTRAP_DEBUG") == "1"
+DEFAULT_WINDOWS_PYTHON_VERSION = "3.12.10"
+DEFAULT_WINDOWS_EMBED_URL = (
+    f"https://www.python.org/ftp/python/{DEFAULT_WINDOWS_PYTHON_VERSION}/"
+    f"python-{DEFAULT_WINDOWS_PYTHON_VERSION}-embed-amd64.zip"
+)
+DEFAULT_GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 
 SOURCE_ITEMS = [
     "app",
@@ -75,6 +85,21 @@ def _copy_tree(src: Path, dst: Path) -> None:
 def _debug(message: str) -> None:
     if DEBUG:
         print(f"[DEBUG] {message}", file=sys.stderr)
+
+
+def _download_file(url: str, destination: Path) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _debug(f"download {url} -> {destination}")
+    with urllib.request.urlopen(url) as response, destination.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+    return destination
+
+
+def _runtime_python_tag(version: str) -> str:
+    match = re.match(r"^\s*(\d+)\.(\d+)", version)
+    if not match:
+        raise SystemExit(f"Unsupported runtime Python version: {version!r}")
+    return f"python{match.group(1)}{match.group(2)}"
 
 
 def _copy_sources(app_dir: Path) -> None:
@@ -151,22 +176,34 @@ def _write_requirements_lock(bootstrap_dir: Path, *, lock_python: Path | None) -
     return lock_path
 
 
-def _write_manifest(bootstrap_dir: Path, *, base_python_relative: str, runtime_included: bool) -> Path:
+def _write_manifest(
+    bootstrap_dir: Path,
+    *,
+    base_python_relative: str,
+    runtime_included: bool,
+    runtime_python_version: str,
+) -> Path:
     manifest_path = bootstrap_dir / "bootstrap_manifest.json"
+    runtime_python_tag = _runtime_python_tag(runtime_python_version)
     payload = {
         "app_name": APP_NAME,
         "app_version": APP_VERSION,
         "bootstrap_version": "1",
-        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "python_version": runtime_python_version,
         "requirements_file": "bootstrap/requirements-lock.txt",
         "entrypoint": "app/run.py",
-        "runtime_dir": "runtime/env",
+        "runtime_mode": "embedded",
+        "runtime_dir": "runtime/python",
         "base_python": base_python_relative,
+        "launch_python": "runtime/python/pythonw.exe",
         "log_file": "logs/bootstrap.log",
-        "state_file": "runtime/env/.aline-bootstrap-state.json",
+        "state_file": "runtime/python/.aline-bootstrap-state.json",
         "critical_imports": CRITICAL_IMPORTS,
         "pip_index_url": DEFAULT_INDEX_URL,
         "extra_index_urls": DEFAULT_EXTRA_INDEX_URLS,
+        "get_pip_file": "bootstrap/get-pip.py",
+        "embedded_pth": f"runtime/python/{runtime_python_tag}._pth",
+        "embedded_site_dir": "runtime/python/Lib/site-packages",
         "runtime_included": runtime_included,
     }
     manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -195,6 +232,22 @@ def _copy_runtime(output_dir: Path, *, embed_dir: Path | None, embed_zip: Path |
     return False
 
 
+def _download_runtime_bundle(cache_dir: Path, *, url: str) -> Path:
+    archive_name = url.rstrip("/").split("/")[-1]
+    destination = cache_dir / archive_name
+    if destination.exists():
+        _debug(f"reuse cached runtime: {destination}")
+        return destination
+    return _download_file(url, destination)
+
+
+def _ensure_get_pip(bootstrap_dir: Path, *, url: str) -> Path:
+    destination = bootstrap_dir / "get-pip.py"
+    if destination.exists():
+        return destination
+    return _download_file(url, destination)
+
+
 def _write_launcher_files(output_dir: Path) -> None:
     bootstrap_dir = output_dir / "bootstrap"
     bootstrap_dir.mkdir(parents=True, exist_ok=True)
@@ -219,6 +272,49 @@ def _write_launcher_files(output_dir: Path) -> None:
     )
 
 
+def _write_exe_launcher(output_dir: Path, *, launcher_kind: str = "console") -> Path:
+    try:
+        from distlib.resources import finder
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "distlib is required to build ALine Launcher.exe. "
+            "Install it into the build environment first, for example: "
+            f"{sys.executable} -m pip install distlib"
+        ) from exc
+
+    package = "distlib"
+    kind_prefix = "t" if launcher_kind == "console" else "w"
+    resource_name = f"{kind_prefix}64.exe"
+    resource = finder(package).find(resource_name)
+    if not resource:
+        raise SystemExit(f"Unable to find distlib launcher resource: {resource_name}")
+
+    shebang = b"#!runtime\\python\\pythonw.exe\r\n"
+    main_script = (
+        "from pathlib import Path\n"
+        "import runpy\n"
+        "import sys\n"
+        "root = Path(sys.argv[0]).resolve().parent\n"
+        "target = root / 'bootstrap' / 'windows_launcher.py'\n"
+        "runpy.run_path(str(target), run_name='__main__')\n"
+    ).encode("utf-8")
+
+    stream = BytesIO()
+    with ZipFile(stream, "w") as archive:
+        source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+        if source_date_epoch:
+            date_time = time.gmtime(int(source_date_epoch))[:6]
+            info = ZipInfo(filename="__main__.py", date_time=date_time)
+            archive.writestr(info, main_script)
+        else:
+            archive.writestr("__main__.py", main_script)
+
+    exe_bytes = resource.bytes + shebang + stream.getvalue()
+    output_path = output_dir / "ALine Launcher.exe"
+    output_path.write_bytes(exe_bytes)
+    return output_path
+
+
 def _archive_output(output_dir: Path) -> Path:
     archive_path = DIST_DIR / f"{output_dir.name}.zip"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as handle:
@@ -234,6 +330,10 @@ def build_bootstrap(
     python_embed_dir: Path | None,
     python_embed_zip: Path | None,
     lock_python: Path | None,
+    runtime_python_version: str,
+    runtime_download_url: str | None,
+    get_pip_url: str,
+    download_cache_dir: Path,
     allow_missing_runtime: bool,
     archive: bool,
 ) -> Path:
@@ -247,7 +347,11 @@ def build_bootstrap(
     (output_dir / "user-data" / "config").mkdir(parents=True, exist_ok=True)
     (output_dir / "user-data" / "cache").mkdir(parents=True, exist_ok=True)
 
-    runtime_included = _copy_runtime(output_dir, embed_dir=python_embed_dir, embed_zip=python_embed_zip)
+    embed_zip_path = python_embed_zip
+    if embed_zip_path is None and python_embed_dir is None and runtime_download_url:
+        embed_zip_path = _download_runtime_bundle(download_cache_dir, url=runtime_download_url)
+
+    runtime_included = _copy_runtime(output_dir, embed_dir=python_embed_dir, embed_zip=embed_zip_path)
     if not runtime_included and not allow_missing_runtime:
         raise SystemExit(
             "Windows runtime was not provided. Use --python-embed-dir or --python-embed-zip, "
@@ -257,12 +361,15 @@ def build_bootstrap(
     bootstrap_dir = output_dir / "bootstrap"
     bootstrap_dir.mkdir(parents=True, exist_ok=True)
     _write_requirements_lock(bootstrap_dir, lock_python=lock_python)
+    _ensure_get_pip(bootstrap_dir, url=get_pip_url)
     _write_manifest(
         bootstrap_dir,
         base_python_relative="runtime/python/python.exe",
         runtime_included=runtime_included,
+        runtime_python_version=runtime_python_version,
     )
     _write_launcher_files(output_dir)
+    _write_exe_launcher(output_dir, launcher_kind="console")
 
     if archive:
         archive_path = _archive_output(output_dir)
@@ -305,6 +412,27 @@ def parse_args() -> argparse.Namespace:
         help="Python interpreter used to resolve installed dependency versions for requirements-lock.txt.",
     )
     parser.add_argument(
+        "--python-embed-url",
+        default=DEFAULT_WINDOWS_EMBED_URL,
+        help="Download URL for the Windows embeddable Python runtime zip.",
+    )
+    parser.add_argument(
+        "--runtime-python-version",
+        default=DEFAULT_WINDOWS_PYTHON_VERSION,
+        help="Python version bundled into the Windows bootstrap runtime.",
+    )
+    parser.add_argument(
+        "--download-cache-dir",
+        type=Path,
+        default=ROOT / "build" / "bootstrap-cache",
+        help="Directory used to cache downloaded bootstrap runtime assets.",
+    )
+    parser.add_argument(
+        "--get-pip-url",
+        default=DEFAULT_GET_PIP_URL,
+        help="Download URL for get-pip.py.",
+    )
+    parser.add_argument(
         "--allow-missing-runtime",
         action="store_true",
         help="Allow building a bootstrap skeleton package without a bundled Windows runtime.",
@@ -327,6 +455,10 @@ def main() -> None:
         python_embed_dir=args.python_embed_dir.resolve() if args.python_embed_dir else None,
         python_embed_zip=args.python_embed_zip.resolve() if args.python_embed_zip else None,
         lock_python=_preserve_invocation_path(args.lock_python),
+        runtime_python_version=args.runtime_python_version,
+        runtime_download_url=args.python_embed_url if not args.python_embed_dir and not args.python_embed_zip else None,
+        get_pip_url=args.get_pip_url,
+        download_cache_dir=args.download_cache_dir.resolve(),
         allow_missing_runtime=args.allow_missing_runtime,
         archive=not args.no_archive,
     )

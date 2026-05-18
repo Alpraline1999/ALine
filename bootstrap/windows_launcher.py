@@ -32,11 +32,16 @@ def _load_manifest() -> dict[str, object]:
 MANIFEST = _load_manifest()
 LOG_PATH = PACKAGE_ROOT / str(MANIFEST["log_file"])
 BASE_PYTHON = PACKAGE_ROOT / str(MANIFEST["base_python"])
-ENV_DIR = PACKAGE_ROOT / str(MANIFEST["runtime_dir"])
-ENV_PYTHON = ENV_DIR / "Scripts" / "python.exe"
 REQUIREMENTS_FILE = PACKAGE_ROOT / str(MANIFEST["requirements_file"])
 ENTRYPOINT = PACKAGE_ROOT / str(MANIFEST["entrypoint"])
 STATE_PATH = PACKAGE_ROOT / str(MANIFEST["state_file"])
+RUNTIME_MODE = str(MANIFEST.get("runtime_mode") or "venv").strip().lower()
+LAUNCH_PYTHON = PACKAGE_ROOT / str(MANIFEST.get("launch_python") or MANIFEST["base_python"])
+GET_PIP_PATH = PACKAGE_ROOT / str(MANIFEST.get("get_pip_file") or "bootstrap/get-pip.py")
+ENV_DIR = PACKAGE_ROOT / str(MANIFEST.get("runtime_dir") or "runtime/env")
+ENV_PYTHON = ENV_DIR / "Scripts" / "python.exe"
+EMBED_PTH = PACKAGE_ROOT / str(MANIFEST.get("embedded_pth") or "")
+EMBED_SITE_DIR = PACKAGE_ROOT / str(MANIFEST.get("embedded_site_dir") or "runtime/python/Lib/site-packages")
 
 
 def _ensure_parent(path: Path) -> None:
@@ -87,7 +92,8 @@ def _write_state() -> None:
 
 
 def _env_is_current() -> bool:
-    if not ENV_PYTHON.exists():
+    python_path = BASE_PYTHON if RUNTIME_MODE == "embedded" else ENV_PYTHON
+    if not python_path.exists():
         return False
     state = _read_state()
     return (
@@ -113,21 +119,44 @@ def _create_env() -> None:
 
 
 def _ensure_pip() -> None:
-    if ENV_PYTHON.exists():
-        pip_result = _run([str(ENV_PYTHON), "-m", "pip", "--version"], check=False)
+    python_path = BASE_PYTHON if RUNTIME_MODE == "embedded" else ENV_PYTHON
+    if python_path.exists():
+        pip_result = _run([str(python_path), "-m", "pip", "--version"], check=False)
         if pip_result.returncode == 0:
             return
-    ensurepip_result = _run([str(ENV_PYTHON), "-m", "ensurepip", "--upgrade"], check=False)
+    ensurepip_result = _run([str(python_path), "-m", "ensurepip", "--upgrade"], check=False)
     if ensurepip_result.returncode == 0:
         return
-    get_pip = BOOTSTRAP_DIR / "get-pip.py"
-    if not get_pip.exists():
+    if not GET_PIP_PATH.exists():
         raise BootstrapError("pip is unavailable and bootstrap/get-pip.py is missing")
-    _run([str(ENV_PYTHON), str(get_pip)])
+    _run([str(python_path), str(GET_PIP_PATH)])
+
+
+def _ensure_embedded_site() -> None:
+    if not EMBED_PTH:
+        raise BootstrapError("embedded runtime mode requires embedded_pth in manifest")
+    if not EMBED_PTH.exists():
+        raise BootstrapError(f"embedded runtime ._pth file is missing: {EMBED_PTH}")
+    EMBED_SITE_DIR.mkdir(parents=True, exist_ok=True)
+    existing = [line.rstrip("\r\n") for line in EMBED_PTH.read_text(encoding="utf-8").splitlines()]
+    wanted = ["python312.zip", ".", "Lib", "Lib/site-packages", "import site"]
+    merged: list[str] = []
+    seen: set[str] = set()
+    for line in existing + wanted:
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        if text == "#import site":
+            text = "import site"
+        if text not in seen:
+            merged.append(text)
+            seen.add(text)
+    EMBED_PTH.write_text("\n".join(merged) + "\n", encoding="utf-8")
 
 
 def _pip_install_args() -> list[str]:
-    args = [str(ENV_PYTHON), "-m", "pip", "install", "-r", str(REQUIREMENTS_FILE)]
+    python_path = BASE_PYTHON if RUNTIME_MODE == "embedded" else ENV_PYTHON
+    args = [str(python_path), "-m", "pip", "install", "-r", str(REQUIREMENTS_FILE)]
     primary = str(MANIFEST.get("pip_index_url") or "").strip()
     if primary:
         args.extend(["--index-url", primary])
@@ -139,21 +168,23 @@ def _pip_install_args() -> list[str]:
 
 
 def _install_requirements() -> None:
-    _run([str(ENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])
+    python_path = BASE_PYTHON if RUNTIME_MODE == "embedded" else ENV_PYTHON
+    _run([str(python_path), "-m", "pip", "install", "--upgrade", "pip"])
     _run(_pip_install_args())
 
 
 def _verify_runtime() -> None:
     modules = [str(item) for item in MANIFEST.get("critical_imports", [])]
     snippet = "\n".join([f"import {name}" for name in modules])
-    _run([str(ENV_PYTHON), "-c", snippet])
+    python_path = BASE_PYTHON if RUNTIME_MODE == "embedded" else ENV_PYTHON
+    _run([str(python_path), "-c", snippet])
 
 
 def _launch_app() -> int:
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("QT_QPA_PLATFORM", "windows")
-    cmd = [str(ENV_PYTHON), str(ENTRYPOINT)]
+    cmd = [str(LAUNCH_PYTHON), str(ENTRYPOINT)]
     log("LAUNCH " + " ".join(cmd))
     return subprocess.call(cmd, env=env, cwd=str(PACKAGE_ROOT))
 
@@ -164,7 +195,10 @@ def main() -> int:
         _ensure_base_runtime()
         if not _env_is_current():
             log("runtime env is missing or stale; rebuilding")
-            _create_env()
+            if RUNTIME_MODE == "embedded":
+                _ensure_embedded_site()
+            else:
+                _create_env()
             _ensure_pip()
             _install_requirements()
             _verify_runtime()

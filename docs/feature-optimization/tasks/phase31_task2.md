@@ -1,10 +1,12 @@
-# Phase 31 Task 2：Windows Bootstrap Launcher 设计
+# Phase 31 Task 2：Windows Bootstrap Launcher 设计与落地
 
 ## 任务目标
 
-为 Windows 设计一个轻量启动包分发方案，替代“完整 PyInstaller 依赖全打包”的首发路线。
+为 Windows 设计并落地一个轻量启动包分发方案，替代“完整 PyInstaller 依赖全打包”的首发路线。
 
-目标不是立即实现所有细节，而是先固定：
+当前仓库已经完成首版实现。本文件同步记录真实实现边界，而不再停留在纯设计假设。
+
+目标包括：
 
 - 包内目录结构
 - 首次启动状态机
@@ -17,14 +19,14 @@
 推荐采用：
 
 - **Windows bootstrap launcher**
-- **私有应用运行环境**
+- **包内嵌入式 Python runtime**
 - **首次联网安装依赖**
 - **源码与运行环境分离**
 
 不采用：
 
 - 用户系统 Python 直接启动
-- 首发阶段继续以完整 PyInstaller 包为主
+- 首发阶段继续以完整 PyInstaller 包为主分发
 - Linux 同步做 bootstrap
 
 ## 目录结构
@@ -34,14 +36,14 @@
 ```text
 ALine-bootstrap/
 ├── ALine Launcher.exe            # 轻量 GUI/CLI 启动器
+├── ALine Launcher.bat            # 控制台回退入口
 ├── bootstrap/
 │   ├── bootstrap_manifest.json   # 启动包版本、Python 版本、依赖策略
 │   ├── requirements-lock.txt     # 锁定依赖版本
-│   ├── get-pip.py                # 可选，若 embeddable 环境缺 pip
-│   └── wheels/                   # 可选，本地预置少量小型 wheel
+│   ├── get-pip.py                # embeddable Python 缺 pip 时用于补装
+│   └── windows_launcher.py       # 实际 bootstrap 逻辑
 ├── runtime/
-│   ├── python/                   # Windows embeddable Python 或最小运行时
-│   └── env/                      # 首次启动后创建的私有 venv
+│   └── python/                   # Windows embeddable Python 运行时
 ├── app/
 │   ├── run.py
 │   ├── main.py
@@ -66,7 +68,7 @@ ALine-bootstrap/
 说明：
 
 - `runtime/python/` 放最小 Python 运行时，不依赖系统 Python。
-- `runtime/env/` 是第一次启动后创建的真实运行环境。
+- 首版实现不再创建单独 `runtime/env/`，而是直接把依赖安装到 `runtime/python/Lib/site-packages`。
 - `app/` 保持与你当前源码树尽量一致，减少 bootstrap 方案对主工程的侵入。
 - `user-data/` 独立于 `app/`，避免升级时覆盖用户状态。
 
@@ -92,8 +94,8 @@ ALine-bootstrap/
 启动
   -> 检查 bootstrap manifest
   -> 检查 runtime/python 是否存在
-  -> 检查 runtime/env 是否存在
-      -> 不存在：创建 env
+  -> 检查内嵌 runtime 状态文件
+      -> 不存在：初始化 embedded site / pip
       -> 存在：检查版本戳与依赖戳
   -> 若依赖未安装或版本不匹配：执行安装/修复
   -> 校验关键依赖可导入
@@ -104,7 +106,7 @@ ALine-bootstrap/
 
 1. `BOOTSTRAP_INIT`
 2. `CHECK_RUNTIME`
-3. `CREATE_ENV`
+3. `PREPARE_EMBEDDED_RUNTIME`
 4. `INSTALL_DEPS`
 5. `VERIFY_RUNTIME`
 6. `LAUNCH_APP`
@@ -137,10 +139,16 @@ ALine-bootstrap/
   "app_name": "ALine",
   "app_version": "0.1.0",
   "bootstrap_version": "1",
-  "python_version": "3.12",
+  "python_version": "3.12.10",
   "requirements_file": "bootstrap/requirements-lock.txt",
   "entrypoint": "app/run.py",
-  "runtime_dir": "runtime/env",
+  "runtime_mode": "embedded",
+  "runtime_dir": "runtime/python",
+  "base_python": "runtime/python/python.exe",
+  "launch_python": "runtime/python/pythonw.exe",
+  "embedded_pth": "runtime/python/python312._pth",
+  "embedded_site_dir": "runtime/python/Lib/site-packages",
+  "get_pip_file": "bootstrap/get-pip.py",
   "log_file": "logs/bootstrap.log"
 }
 ```
@@ -172,13 +180,13 @@ ALine-bootstrap/
 建议提供三类恢复动作：
 
 1. `重试安装`
-2. `重建运行环境`
+2. `重装嵌入式 runtime 内依赖`
 3. `打开日志目录`
 
 恢复逻辑：
 
 - 普通下载失败：先重试安装
-- 依赖损坏或版本戳异常：删除 `runtime/env` 后重建
+- 依赖损坏或版本戳异常：清理 `Lib/site-packages` 后重装
 - 多次失败：引导用户提交日志或下载离线完整包
 
 ## 升级策略
@@ -192,7 +200,7 @@ ALine-bootstrap/
 若检测到变化：
 
 - 可以先尝试 `pip install -r requirements-lock.txt --upgrade`
-- 若失败，再回退到“重建 env”
+- 若失败，再回退到“重装依赖”
 
 ## 与现有代码的衔接
 
@@ -204,7 +212,7 @@ ALine-bootstrap/
 bootstrap 方案不要求修改业务入口，只要求启动器最终执行：
 
 ```text
-<runtime/env/python.exe> app/run.py
+<runtime/python/pythonw.exe> app/run.py
 ```
 
 因此现有 UI、扩展、项目系统仍保持主工程内演进，不需要为 bootstrap 重写一套入口。
@@ -230,12 +238,10 @@ scripts/build_bootstrap_windows.py
 
 ### B. 启动器
 
-可选两条路线：
+当前实现采用：
 
-1. Python 启动器 + 打成极小 exe
-2. 原生 Windows 小启动器（后续再说）
-
-首发更建议路线 1，开发成本更低。
+1. `bootstrap/windows_launcher.py` 负责安装、校验、日志和启动
+2. 使用 `distlib` Windows launcher stub 生成极小 `ALine Launcher.exe`
 
 ## 不在本任务解决的内容
 
@@ -245,8 +251,24 @@ scripts/build_bootstrap_windows.py
 - 自动更新服务端
 - 安装包签名
 
+## 当前实现补充
+
+当前仓库已新增：
+
+- `bootstrap/windows_launcher.py`
+- `scripts/build_bootstrap_windows.py`
+
+构建脚本支持：
+
+- 下载并缓存官方 Windows embeddable Python zip
+- 下载 `get-pip.py`
+- 复制当前源码树到分发目录
+- 生成锁定版 `requirements-lock.txt`
+- 生成 `ALine Launcher.exe` 与 `.bat` 回退入口
+- 打包为最终 zip
+
 ## 验收口径
 
-- 设计文档足够支持后续直接实现
+- 文档与当前实现一致
 - 目录结构、状态机、恢复路径不再依赖临场决定
 - 启动器职责边界清晰，不侵入主程序业务层

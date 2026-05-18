@@ -96,17 +96,23 @@ python run.py
 
 ## 打包发布
 
-当前正式打包方式恢复为 PyInstaller：
+Windows 当前主分发方式是 bootstrap 启动包。构建脚本会：
+
+- 复制当前源码与资源
+- 注入 Windows embeddable Python runtime
+- 写入锁定依赖清单
+- 生成 `ALine Launcher.exe` 与最终 zip 包
+
+构建命令：
 
 ```bash
-python build.py --clean
+python scripts/build_bootstrap_windows.py
 ```
 
-如需跳过压缩或测试：
+默认产物位置：
 
 ```bash
-python build.py --no-compress
-python build.py --skip-tests
+dist/ALine-bootstrap-0.1.0-windows-x64.zip
 ```
 
 GitHub Actions 已预留两条自动化流程：
@@ -117,7 +123,10 @@ GitHub Actions 已预留两条自动化流程：
 当前发布策略：
 
 - GitHub：公开源码、文档、Issue 和源码版本标签。
-- 桌面安装包（Linux / Windows）：通过外部分发渠道单独发布，不通过 GitHub Releases 分发。
+- Windows：通过外部分发渠道单独发布 bootstrap 压缩包，不通过 GitHub Releases 分发安装包。
+- Linux：不提供安装包，默认通过源码运行。
+
+首次在 Windows 启动时，launcher 会在包内嵌入式 Python 运行时里自动安装依赖；因此首次启动会比后续启动更慢，并且需要联网。
 
 ## 开发与测试
 
