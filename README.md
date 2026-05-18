@@ -133,3 +133,7 @@ python -m pytest tests/test_refactor_guardrails.py -q
 - [docs/refactor/README.md](/home/alpraline/Projects/Python/ALine/docs/refactor/README.md)：重构历史与阶段索引
 - [docs/feature-optimization/README.md](/home/alpraline/Projects/Python/ALine/docs/feature-optimization/README.md)：功能优化阶段索引
 - [extensions/README.md](/home/alpraline/Projects/Python/ALine/extensions/README.md)：扩展开发文档
+
+## License
+
+本项目采用 [MPL-2.0](/home/alpraline/Projects/Python/ALine/LICENSE) 许可发布。
