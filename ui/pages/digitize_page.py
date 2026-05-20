@@ -17,6 +17,7 @@ from core.exporter import Exporter
 from ui.theme import WORKBENCH_TOOL_PANEL_WIDTH, border_color, text_color, placeholder_color, make_section_label, make_hsep, make_vsep
 from ui.widgets import ImageViewer
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.right_panel_container import RightPanelContainer
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
 from ui.dialogs import CalibrationDialog, CoordTypeDialog, PolarCalibrationDialog
@@ -191,8 +192,10 @@ class DigitizePage(ExtensionPanelShellMixin, QWidget):
 
         self._splitter.addWidget(center_panel)
 
-        self._extension_panel = ExtensionConfigPanel("数字化扩展", "应用扩展", self, mode="help_only", framed=True)
-        self._extension_panel.set_status_context("digitize", "数字化扩展")
+        self._extension_panel = RightPanelContainer(
+            "digitize", "数字化扩展", "应用扩展", self, mode="help_only", framed=True,
+        )
+        self._extension_panel.extension_panel.set_status_context("digitize", "数字化扩展")
         self._extension_panel.setMinimumWidth(self._view_state.extension_panel_width)
         self._extension_panel.setMaximumWidth(self._view_state.extension_panel_width)
         self._splitter.addWidget(self._extension_panel)

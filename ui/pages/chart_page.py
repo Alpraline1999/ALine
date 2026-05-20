@@ -91,6 +91,7 @@ from ui.dialogs.fluent_dialogs import SelectionDialog, TextInputDialog
 from ui.dialogs.plot_extension_instance_dialog import PlotExtensionInstanceEditDialog
 from ui.matplotlib_fonts import list_matplotlib_font_families
 from ui.widgets.extension_panel import ExtensionConfigPanel
+from ui.widgets.right_panel_container import RightPanelContainer
 from ui.widgets.extension_options_form import ExtensionOptionsForm
 from ui.widgets.focus_commit import install_click_away_focus_commit
 from ui.widgets.matplotlib_preview import (
@@ -812,13 +813,14 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         scroll.setWidget(page)
         return scroll, page, layout
 
-    def _build_plot_extension_side_panel(self, parent: QWidget) -> QWidget:
-        panel = ExtensionConfigPanel("绘图扩展", "应用扩展", parent, mode="help_only", framed=True)
-        panel.set_context("绘图", "预览区")
-        panel.set_status_context("plot", "绘图扩展")
-        panel.configs_changed.connect(self.assets_modified.emit)
-        panel.reload_requested.connect(self._reload_chart_extensions)
-        # 右侧面板仅保留扩展说明/帮助，已加载扩展列表移至左侧绘图扩展标签页
+    def _build_plot_extension_side_panel(self, parent: QWidget) -> RightPanelContainer:
+        panel = RightPanelContainer(
+            "chart", "绘图扩展", "应用扩展", parent, mode="help_only", framed=True,
+        )
+        panel.extension_panel.set_context("绘图", "预览区")
+        panel.extension_panel.set_status_context("plot", "绘图扩展")
+        panel.extension_panel.configs_changed.connect(self.assets_modified.emit)
+        panel.extension_panel.reload_requested.connect(self._reload_chart_extensions)
         return panel
 
     def _update_plot_extension_help_area_height(self) -> None:
@@ -826,9 +828,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         pass
 
     def _update_plot_extension_info_panel(self, type_id: Optional[str]) -> None:
-        if not hasattr(self, "_extension_panel") or not isinstance(self._extension_panel, ExtensionConfigPanel):
+        if not hasattr(self, "_extension_panel") or not isinstance(getattr(self, "_extension_panel", None), RightPanelContainer):
             return
-        self._extension_panel.set_entries(
+        self._extension_panel.extension_panel.set_entries(
             self._plot_extension_entries(),
             saved_options=self._plot_extension_options,
             current_type=type_id,
