@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QCompleter,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -54,7 +54,7 @@ _CONVERSATIONS_DIR = Path.home() / ".config" / "aline" / "conversations"
 
 
 class MessageBubble(CardWidget):
-    """单条对话气泡，支持文本选择、Fluent 右键菜单和扩展代码保存。"""
+    """Fluent 风格对话气泡，支持文本选择和扩展代码保存。"""
 
     save_requested = Signal(str)
 
@@ -75,35 +75,25 @@ class MessageBubble(CardWidget):
         content_label = BodyLabel(content, self)
         content_label.setWordWrap(True)
         content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        content_label.setStyleSheet(
-            "font-size: 13px; line-height: 1.5;"
-        )
+        content_label.setStyleSheet("font-size: 13px; line-height: 1.5;")
         content_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        content_label.customContextMenuRequested.connect(self._show_context_menu)
+        content_label.customContextMenuRequested.connect(lambda p: self._show_context_menu(content_label, p))
         layout.addWidget(content_label)
 
-        self._save_btn = None
         if role == "assistant":
             code = self._extract_code_block(content)
             if code:
-                self._save_btn = PushButton("保存为扩展", self)
-                self._save_btn.setFixedWidth(120)
-                self._save_btn.clicked.connect(lambda: self.save_requested.emit(code))
-                layout.addWidget(self._save_btn, alignment=Qt.AlignmentFlag.AlignRight)
+                btn = PushButton("保存为扩展", self)
+                btn.setFixedWidth(120)
+                btn.clicked.connect(lambda: self.save_requested.emit(code))
+                layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignRight)
 
-    def _show_context_menu(self, pos):
+    def _show_context_menu(self, label: BodyLabel, pos):
         from qfluentwidgets import RoundMenu, Action, FluentIcon
-        menu = RoundMenu(self)
-        menu.addAction(Action(FluentIcon.COPY, "复制", triggered=lambda: self._copy_text()))
-        menu.addAction(Action(FluentIcon.SELECT_ALL, "全选", triggered=lambda: self._select_all()))
-        menu.exec(self.mapToGlobal(pos))
-
-    def _copy_text(self):
-        QApplication.clipboard().setText(self._content)
-
-    def _select_all(self):
-        for child in self.findChildren(BodyLabel):
-            child.selectAll()
+        menu = RoundMenu(label)
+        menu.addAction(Action(FluentIcon.COPY, "复制", triggered=lambda: QApplication.clipboard().setText(self._content)))
+        menu.addAction(Action(FluentIcon.SELECT_ALL, "全选", triggered=lambda: label.selectAll()))
+        menu.exec(label.mapToGlobal(pos))
 
     @staticmethod
     def _extract_code_block(text: str) -> str:
@@ -262,19 +252,22 @@ class AIAssistantPanel(QWidget):
         input_layout = QHBoxLayout(input_widget)
         input_layout.setContentsMargins(12, 8, 12, 8)
 
-        self._input_edit = QLineEdit(input_widget)
+        self._input_edit = QPlainTextEdit(input_widget)
         self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
-        self._input_edit.setFixedHeight(36)
+        self._input_edit.setMaximumHeight(80)
+        self._input_edit.setMinimumHeight(36)
+        self._input_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        # QCompleter 命令补全
+        # QCompleter 命令补全（QPlainTextEdit 不支持 setCompleter，手动管理弹出）
         from ui.widgets.ai_command_handler import get_command_list
         self._cmd_model = QStringListModel(get_command_list())
-        self._cmd_completer = QCompleter(self._cmd_model, self._input_edit)
+        self._cmd_completer = QCompleter(self._cmd_model, self)
         self._cmd_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._cmd_completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self._cmd_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self._cmd_completer.setMaxVisibleItems(8)
-        self._input_edit.setCompleter(self._cmd_completer)
+        self._cmd_completer.setWidget(self._input_edit)
+        self._input_edit.textChanged.connect(self._on_input_changed)
 
         input_layout.addWidget(self._input_edit, 1)
 
@@ -441,8 +434,17 @@ class AIAssistantPanel(QWidget):
 
     # ── 消息 ──
 
+    def _on_input_changed(self):
+        text = self._input_edit.toPlainText()
+        if text.startswith("/"):
+            self._cmd_completer.setCompletionPrefix(text)
+            if self._cmd_completer.completionCount() > 0:
+                self._cmd_completer.complete()
+                return
+        self._cmd_completer.popup().hide()
+
     def _send_message(self) -> None:
-        text = self._input_edit.text().strip()
+        text = self._input_edit.toPlainText().strip()
         if not text:
             return
         self._input_edit.clear()
