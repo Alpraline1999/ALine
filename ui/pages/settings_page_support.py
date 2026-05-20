@@ -12,22 +12,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
-    BodyLabel,
-    CardWidget,
-    ComboBox,
-    ExpandGroupSettingCard,
-    FolderListSettingCard,
-    FluentIcon as FIF,
-    LineEdit,
-    PlainTextEdit,
-    PrimaryPushButton,
-    PushButton,
-    SettingCard,
-    SettingCardGroup,
-    Slider,
-    SmoothScrollArea,
-    SpinBox,
-    SwitchSettingCard,
+    BodyLabel, CaptionLabel, CardWidget, CheckBox, ComboBox, FluentIcon as FIF,
+    IndeterminateProgressRing, InfoBar, InfoBarPosition, LineEdit, ListWidget,
+    Pivot, PlainTextEdit, PrimaryPushButton, PushButton, RadioButton,
+    SegmentedWidget, SettingCardGroup, SpinBox, StrongBodyLabel, SubtitleLabel,
+    SwitchButton, TextWrap, ToolButton,
 )
 
 from core.ai.providers import get_provider_preset
@@ -778,10 +767,14 @@ def build_ai_tab(page) -> QWidget:
     save_ai_btn.clicked.connect(page._save_ai_config)
     test_ai_btn = PushButton("测试连接")
     test_ai_btn.clicked.connect(page._test_ai_connection)
+    page._ai_test_progress = IndeterminateProgressRing(test_ai_btn)
+    page._ai_test_progress.setFixedSize(20, 20)
+    page._ai_test_progress.hide()
     page._ai_refresh_models_btn = PushButton("探测模型")
     page._ai_refresh_models_btn.clicked.connect(page._refresh_available_models)
     ai_btn_row.addWidget(save_ai_btn)
     ai_btn_row.addWidget(test_ai_btn)
+    ai_btn_row.addWidget(page._ai_test_progress)
     ai_btn_row.addWidget(page._ai_refresh_models_btn)
     ai_btn_row.addStretch()
     ai_layout.addLayout(ai_btn_row)

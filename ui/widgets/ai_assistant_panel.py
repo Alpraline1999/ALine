@@ -184,7 +184,8 @@ class AIAssistantPanel(QWidget):
         nav_layout = QHBoxLayout(nav)
         nav_layout.setContentsMargins(12, 4, 12, 4)
 
-        self._prev_btn = ToolButton(FIF.CHEVRON_LEFT, nav)
+        self._prev_btn = PushButton("< 上一个", nav)
+        self._prev_btn.setFixedWidth(80)
         self._prev_btn.setToolTip("上一个对话")
         self._prev_btn.clicked.connect(self._prev_conversation)
         nav_layout.addWidget(self._prev_btn)
@@ -193,7 +194,8 @@ class AIAssistantPanel(QWidget):
         self._conv_label.setStyleSheet(f"color: {secondary_color()};")
         nav_layout.addWidget(self._conv_label)
 
-        self._next_btn = ToolButton(FIF.CHEVRON_RIGHT, nav)
+        self._next_btn = PushButton("下一个 >", nav)
+        self._next_btn.setFixedWidth(80)
         self._next_btn.setToolTip("下一个对话")
         self._next_btn.clicked.connect(self._next_conversation)
         nav_layout.addWidget(self._next_btn)
@@ -283,11 +285,35 @@ class AIAssistantPanel(QWidget):
         if not self._conversations:
             InfoBar.info("无历史对话", "暂无保存的对话记录。", parent=self, position=InfoBarPosition.TOP)
             return
-        from ui.dialogs.fluent_dialogs import TextInputDialog
-        titles = [f"{i+1}. {c.title}" for i, c in enumerate(self._conversations)]
-        dialog = TextInputDialog("选择对话", "\n".join(titles), self)
+        from qfluentwidgets import MessageBoxBase, ListWidget, PrimaryPushButton
+        from PySide6.QtWidgets import QVBoxLayout
+
+        class _ConversationSelector(MessageBoxBase):
+            def __init__(self, convs, parent=None):
+                super().__init__(parent)
+                self.selected_id = None
+                self.viewLayout.addWidget(SubtitleLabel("选择对话", self.widget))
+                self._list = ListWidget(self.widget)
+                for c in convs:
+                    self._list.addItem(f"{c.title}  ({c.id})")
+                self._list.setCurrentRow(0)
+                self.viewLayout.addWidget(self._list)
+                self._list.itemDoubleClicked.connect(lambda item: self._accept())
+                self.yeshidden = False
+
+            def _accept(self):
+                row = self._list.currentRow()
+                if row >= 0:
+                    self.selected_id = self._conversations[row].id
+                self.accept()
+
+        dialog = _ConversationSelector(self._conversations, self)
         if dialog.exec():
-            pass  # 简化版本：仅展示列表
+            for i, c in enumerate(self._conversations):
+                if c.id == dialog.selected_id:
+                    self._current_conv_index = i
+                    self._refresh_ui()
+                    break
 
     # ── 消息 ──
 

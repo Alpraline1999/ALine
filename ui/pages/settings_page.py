@@ -1057,6 +1057,8 @@ class SettingsPage(QWidget):
         if not self._ai_config_controls_ready():
             return
         self._save_ai_config()
+        if hasattr(self, "_ai_test_progress"):
+            self._ai_test_progress.show()
         InfoBar.info("测试中", "正在测试 AI 连接…", parent=self._notification_parent(), position=InfoBarPosition.TOP)
         import asyncio
         from core.ai_client import AIClient
@@ -1068,7 +1070,6 @@ class SettingsPage(QWidget):
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # 在 Qt 事件循环中异步执行（需要 qasync 或类似库）
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     future = pool.submit(asyncio.run, _test())
@@ -1078,6 +1079,8 @@ class SettingsPage(QWidget):
         except Exception as e:
             ok, msg = False, str(e)
 
+        if hasattr(self, "_ai_test_progress"):
+            self._ai_test_progress.hide()
         if ok:
             InfoBar.success("连接成功", msg, parent=self._notification_parent(), position=InfoBarPosition.TOP)
         else:
