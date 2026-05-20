@@ -15,7 +15,8 @@ from qfluentwidgets import (
     CheckBox,
     ColorPickerButton,
     ComboBox,
-    DoubleSpinBox,
+    CompactDoubleSpinBox,
+    CompactSpinBox,
     FluentIcon as FIF,
     InfoBar,
     InfoBarPosition,
@@ -25,7 +26,6 @@ from qfluentwidgets import (
     PushButton,
     Slider,
     SmoothScrollArea,
-    SpinBox,
     SubtitleLabel,
     ToolButton,
     ToolTip,
@@ -1202,7 +1202,7 @@ class ExtensionOptionsForm(QWidget):
 
     def _create_integer_binding(self, field: Dict[str, Any]) -> _FieldBinding:
         container, _layout, field_row = self._make_field_card(field, min_width=144, min_control_width=60)
-        edit = SpinBox(container)
+        edit = CompactSpinBox(container)
         self._set_expanding_control(edit, 60)
         edit.setKeyboardTracking(False)
         placeholder = str(field.get("placeholder") or "").strip()
@@ -1241,7 +1241,7 @@ class ExtensionOptionsForm(QWidget):
 
     def _create_number_binding(self, field: Dict[str, Any]) -> _FieldBinding:
         container, _layout, field_row = self._make_field_card(field, min_width=144, min_control_width=60)
-        edit = DoubleSpinBox(container)
+        edit = CompactDoubleSpinBox(container)
         self._set_expanding_control(edit, 60)
         edit.setKeyboardTracking(False)
         placeholder = str(field.get("placeholder") or "").strip()

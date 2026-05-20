@@ -14,20 +14,30 @@ _matplotlib, FigureCanvas, Figure, _MATPLOTLIB_ERROR = bootstrap_matplotlib_qtag
 HAS_MATPLOTLIB = _matplotlib is not None
 
 
-_STYLES = [
-    ("实线 —", "-", ""),
-    ("虚线 - -", "--", ""),
-    ("点线 ···", ":", ""),
-    ("点划线 —·", "-.", ""),
-    ("散点 ○", "", "o"),
-    ("散点 □", "", "s"),
-    ("散点 △", "", "^"),
-    ("散点+线 ○—", "-", "o"),
-    ("散点+线 □—", "-", "s"),
+# 线型 - 独立于标记
+_LINE_STYLES = [
+    ("实线 —", "-"),
+    ("虚线 - -", "--"),
+    ("点线 ···", ":"),
+    ("点划线 —·", "-."),
+    ("无线条", "None"),
 ]
-_STYLE_LABELS = [item[0] for item in _STYLES]
-_STYLE_LINESTYLES = [item[1] for item in _STYLES]
-_STYLE_MARKERS = [item[2] for item in _STYLES]
+_LINE_STYLE_LABELS = [item[0] for item in _LINE_STYLES]
+_LINE_STYLE_VALUES = [item[1] for item in _LINE_STYLES]
+
+# 标记类型 - 独立于线型
+_MARKER_TYPES = [
+    ("无标记", ""),
+    ("○ 圆形", "o"),
+    ("□ 方形", "s"),
+    ("△ 正三角", "^"),
+    ("◇ 菱形", "D"),
+    ("✕ 叉号", "x"),
+    ("＋ 加号", "+"),
+    ("▽ 倒三角", "v"),
+]
+_MARKER_LABELS = [item[0] for item in _MARKER_TYPES]
+_MARKER_VALUES = [item[1] for item in _MARKER_TYPES]
 
 _THEME_HINTS = {
     "默认": "跟随应用配色，适合日常预览和交互调参。",

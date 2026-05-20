@@ -463,14 +463,10 @@ class SettingsPage(QWidget):
         applied_family = apply_application_font_preference(stored_family)
         self.ui_font_changed.emit(applied_family or stored_family)
         from qfluentwidgets import InfoBar, InfoBarPosition
-        label_map = {
-            "zh_CN": "简体中文",
-            "en_US": "English",
-        }
-
+        display_name = applied_family or stored_family or "系统默认"
         InfoBar.info(
-            "语言已保存",
-            f"界面语言已切换为 {label_map.get(language, language)}，当前界面已刷新，重启后可完全生效。",
+            "字体已应用",
+            f"界面字体已切换为 {display_name}。",
             parent=self._notification_parent(),
             position=InfoBarPosition.TOP,
         )

@@ -33,6 +33,9 @@ from qfluentwidgets import (
     CheckBox,
     ColorPickerButton,
     ComboBox,
+    CompactDoubleSpinBox,
+    SpinBox,
+    CompactSpinBox,
     FluentIcon as FIF,
     InfoBarIcon,
     InfoBar,
@@ -40,6 +43,7 @@ from qfluentwidgets import (
     LineEdit,
     ListWidget,
     MessageBox,
+    MessageBoxBase,
     PrimaryPushButton,
     PrimaryToolButton,
     PushButton,
@@ -121,11 +125,11 @@ from .chart_page_support import (
     _LEGEND_ALPHA_DEFAULT,
     _MATPLOTLIB_ERROR,
     _PLOT_EXTENSION_TEACHING_TIP_TEXT,
-    _STYLE_LABELS,
-    _STYLE_LINESTYLES,
-    _STYLE_MARKERS,
+    _LINE_STYLE_LABELS,
+    _LINE_STYLE_VALUES,
+    _MARKER_LABELS,
+    _MARKER_VALUES,
     _TICK_DIRECTION_CHOICES,
-    _THEME_HINTS,
     alpha_from_slider_value,
     alpha_slider_value,
     connect_line_edit_commit,
@@ -644,7 +648,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._remove_selected_plot_extension_btn.setEnabled(self._selected_plot_extension_instance() is not None)
 
     def _on_chart_extension_remove_requested(self, type_id: str) -> None:
-        applied = next((entry for entry in reversed(self._applied_plot_extensions) if entry.get("type") == type_id), None)
+        applied = next((entry for entry in self._applied_plot_extensions if entry.get("type") == type_id), None)
         if applied is None:
             return
         self._remove_plot_extension_instance(str(applied.get("id") or ""))
@@ -727,19 +731,62 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._update_alpha_value_label(getattr(self, "_grid_alpha_value_label", None), value)
         self._on_quick_config_changed()
 
-    def _on_legend_anchor_x_text_changed(self, text: str) -> None:
-        self._legend_anchor_x_draft = text.strip()
-
-    def _on_legend_anchor_y_text_changed(self, text: str) -> None:
-        self._legend_anchor_y_draft = text.strip()
-
-    def _on_legend_anchor_x_committed(self) -> None:
-        self._legend_anchor_x_draft = self._legend_anchor_x_edit.text().strip()
+    def _on_canvas_color_changed(self, _color) -> None:
+        self._canvas_color_cb.setChecked(True)
         self._on_quick_config_changed()
 
-    def _on_legend_anchor_y_committed(self) -> None:
-        self._legend_anchor_y_draft = self._legend_anchor_y_edit.text().strip()
+    def _on_legend_edge_color_changed(self, _color) -> None:
+        self._legend_edge_color_cb.setChecked(True)
         self._on_quick_config_changed()
+
+    def _on_legend_face_color_changed(self, _color) -> None:
+        self._legend_face_color_cb.setChecked(True)
+        self._on_quick_config_changed()
+
+    def _on_select_default_curve_style(self) -> None:
+        templates = global_assets.list_curve_style_templates(include_builtin=True)
+        if not templates:
+            InfoBar.warning(
+                "无可用的曲线样式模板",
+                "请先在「曲线样式」模板管理中保存一个曲线样式模板。",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+            return
+        from ui.widgets.extension_options_form import _LineSelectionDialog
+
+        template_names = [tpl.name or tpl.id for tpl in templates]
+        stored_names = self._plot_style_extras.get("default_curve_style_names", []) or []
+        name_to_idx = {tpl.name or tpl.id: i + 1 for i, tpl in enumerate(templates)}
+        selected_indices = [name_to_idx[n] for n in stored_names if n in name_to_idx]
+        chosen, accepted = _LineSelectionDialog.get_indices(
+            self,
+            "选择默认曲线样式",
+            template_names,
+            selected_indices=selected_indices,
+            lines_number=(0, -1),
+            selected_label="已选样式（上=先加载）",
+            available_label="可用样式",
+        )
+        if not accepted:
+            return
+        result_names = [templates[i - 1].name or templates[i - 1].id for i in chosen] if chosen else []
+        if result_names:
+            self._plot_style_extras["default_curve_style_names"] = result_names
+        else:
+            self._plot_style_extras.pop("default_curve_style_names", None)
+        self._update_default_curve_style_button()
+        self._redraw()
+
+    def _update_default_curve_style_button(self) -> None:
+        if not hasattr(self, "_btn_default_curve_style"):
+            return
+        names = self._plot_style_extras.get("default_curve_style_names", []) or []
+        count = len(names)
+        self._btn_default_curve_style.setText(
+            f"默认曲线样式 ({count})" if count else "默认曲线样式")
+        self._btn_default_curve_style.setToolTip(
+            f"已选择 {count} 个曲线样式模板" if count else "选择加载绘图样式时自动应用的曲线样式模板")
 
     @staticmethod
     def _set_square_tool_button(button: ToolButton) -> None:
@@ -757,11 +804,11 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
         page = QWidget(scroll)
         page.setStyleSheet("background: transparent;")
-        page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
         scroll.setWidget(page)
         return scroll, page, layout
 
@@ -824,8 +871,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._style_target_label = make_hint_label("当前选中：未选中", page)
         layout.addWidget(self._style_target_label)
 
+        # ── 线条样式 ──
         layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("基础外观", page))
+        layout.addWidget(make_section_label("线条样式", page))
 
         color_row = QHBoxLayout()
         color_row.addWidget(self._make_style_form_label("颜色:", page))
@@ -843,25 +891,37 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         color_row.addWidget(self._style_reset_color_btn)
         color_row.addWidget(self._make_style_form_label("线型:", page))
         self._style_line_combo = ComboBox(page)
-        self._style_line_combo.addItems(_STYLE_LABELS)
+        self._style_line_combo.addItems(_LINE_STYLE_LABELS)
         self._style_line_combo.setEnabled(False)
+        self._style_line_combo.setMaximumWidth(120)
         self._style_line_combo.currentIndexChanged.connect(self._on_style_line_changed)
-        color_row.addWidget(self._style_line_combo, 1)
+        color_row.addWidget(self._style_line_combo)
+        color_row.addStretch()
         layout.addLayout(color_row)
 
-        layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("线条细节", page))
-
-        line_metric_row = QHBoxLayout()
-        line_metric_row.addWidget(self._make_style_form_label("线宽:", page))
-        self._style_line_width_edit = LineEdit(page)
-        self._style_line_width_edit.setPlaceholderText("1.4")
-        self._style_line_width_edit.setEnabled(False)
-        self._connect_line_edit_commit(self._style_line_width_edit, self._on_style_metrics_changed)
-        self._set_compact_edit_width(self._style_line_width_edit)
-        line_metric_row.addWidget(self._style_line_width_edit)
-        line_metric_row.addStretch()
-        layout.addLayout(line_metric_row)
+        line_width_row = QHBoxLayout()
+        line_width_row.addWidget(self._make_style_form_label("线宽:", page))
+        self._style_line_width_spin = CompactDoubleSpinBox(page)
+        self._style_line_width_spin.setRange(0.1, 20.0)
+        self._style_line_width_spin.setSingleStep(0.1)
+        self._style_line_width_spin.setDecimals(1)
+        self._style_line_width_spin.setValue(1.4)
+        self._style_line_width_spin.setMaximumWidth(80)
+        self._style_line_width_spin.setEnabled(False)
+        self._style_line_width_spin.valueChanged.connect(self._on_style_metrics_changed)
+        line_width_row.addWidget(self._style_line_width_spin)
+        line_width_row.addWidget(self._make_style_form_label("虚线缩放:", page))
+        self._style_dash_scale_spin = CompactDoubleSpinBox(page)
+        self._style_dash_scale_spin.setRange(0.1, 10.0)
+        self._style_dash_scale_spin.setSingleStep(0.1)
+        self._style_dash_scale_spin.setDecimals(1)
+        self._style_dash_scale_spin.setValue(1.0)
+        self._style_dash_scale_spin.setMaximumWidth(80)
+        self._style_dash_scale_spin.setEnabled(False)
+        self._style_dash_scale_spin.valueChanged.connect(self._on_style_metrics_changed)
+        line_width_row.addWidget(self._style_dash_scale_spin)
+        line_width_row.addStretch()
+        layout.addLayout(line_width_row)
 
         opacity_row = QHBoxLayout()
         opacity_row.addWidget(self._make_style_form_label("透明度:", page))
@@ -882,46 +942,43 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._style_opacity_slider.valueChanged.connect(self._on_style_opacity_changed)
         layout.addLayout(opacity_row)
 
-        dash_scale_row = QHBoxLayout()
-        dash_scale_row.addWidget(self._make_style_form_label("虚线缩放:", page))
-        self._style_dash_scale_edit = LineEdit(page)
-        self._style_dash_scale_edit.setPlaceholderText("1.0")
-        self._style_dash_scale_edit.setEnabled(False)
-        self._connect_line_edit_commit(self._style_dash_scale_edit, self._on_style_metrics_changed)
-        self._set_compact_edit_width(self._style_dash_scale_edit)
-        dash_scale_row.addWidget(self._style_dash_scale_edit)
-        dash_scale_row.addStretch()
-        layout.addLayout(dash_scale_row)
-
+        # ── 标记样式 ──
         layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("标记与可见性", page))
+        layout.addWidget(make_section_label("标记样式", page))
 
-        marker_set_row = QHBoxLayout()
-        marker_set_row.addWidget(self._make_style_form_label("点大小:", page))
-        self._style_marker_size_edit = LineEdit(page)
-        self._style_marker_size_edit.setPlaceholderText("5.0")
-        self._style_marker_size_edit.setEnabled(False)
-        self._connect_line_edit_commit(self._style_marker_size_edit, self._on_style_metrics_changed)
-        self._set_compact_edit_width(self._style_marker_size_edit)
-        marker_set_row.addWidget(self._style_marker_size_edit)
+        marker_metric_row = QHBoxLayout()
+        marker_metric_row.addWidget(self._make_style_form_label("大小:", page))
+        self._style_marker_size_spin = CompactDoubleSpinBox(page)
+        self._style_marker_size_spin.setRange(0.1, 50.0)
+        self._style_marker_size_spin.setSingleStep(0.5)
+        self._style_marker_size_spin.setDecimals(1)
+        self._style_marker_size_spin.setValue(5.0)
+        self._style_marker_size_spin.setMaximumWidth(80)
+        self._style_marker_size_spin.setEnabled(False)
+        self._style_marker_size_spin.valueChanged.connect(self._on_style_metrics_changed)
+        marker_metric_row.addWidget(self._style_marker_size_spin)
+        marker_metric_row.addWidget(self._make_style_form_label("样式:", page))
+        self._style_marker_combo = ComboBox(page)
+        self._style_marker_combo.addItems(_MARKER_LABELS)
+        self._style_marker_combo.setEnabled(False)
+        self._style_marker_combo.setMaximumWidth(120)
+        self._style_marker_combo.currentIndexChanged.connect(self._on_style_marker_changed)
+        marker_metric_row.addWidget(self._style_marker_combo)
+        marker_metric_row.addStretch()
+        layout.addLayout(marker_metric_row)
 
-        marker_set_row.addWidget(self._make_style_form_label("点间距:", page))
-        self._style_density_edit = LineEdit(page)
-        self._style_density_edit.setPlaceholderText("1")
-        self._style_density_edit.setEnabled(False)
-        self._connect_line_edit_commit(self._style_density_edit, self._on_style_metrics_changed)
-        self._set_compact_edit_width(self._style_density_edit)
-        marker_set_row.addWidget(self._style_density_edit)
-        marker_set_row.addStretch()
-        layout.addLayout(marker_set_row)
-
-        visibility_row = QHBoxLayout()
-        self._style_visible_cb = CheckBox("显示当前曲线", page)
-        self._style_visible_cb.setEnabled(False)
-        self._style_visible_cb.stateChanged.connect(self._on_style_visibility_changed)
-        visibility_row.addWidget(self._style_visible_cb)
-        visibility_row.addStretch()
-        layout.addLayout(visibility_row)
+        marker_density_row = QHBoxLayout()
+        marker_density_row.addWidget(self._make_style_form_label("标记间距:", page))
+        self._style_density_spin = CompactSpinBox(page)
+        self._style_density_spin.setRange(1, 100)
+        self._style_density_spin.setValue(1)
+        self._style_density_spin.setToolTip("每N个点显示一个标记")
+        self._style_density_spin.setEnabled(False)
+        self._style_density_spin.valueChanged.connect(self._on_style_metrics_changed)
+        self._set_compact_edit_width(self._style_density_spin)
+        marker_density_row.addWidget(self._style_density_spin)
+        marker_density_row.addStretch()
+        layout.addLayout(marker_density_row)
 
         layout.addStretch()
         return scroll
@@ -957,18 +1014,20 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         template_row.addWidget(self._btn_update_template)
         layout.addLayout(template_row)
 
-        self._theme_hint_label = make_hint_label("", page)
-        layout.addWidget(self._theme_hint_label)
-        self._theme_hint_label.hide()
-        self._render_hint_label = make_hint_label("", page)
-        layout.addWidget(self._render_hint_label)
-        self._render_hint_label.hide()
-
+        # ── 坐标轴 ──
         layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("基础配置", page))
+        layout.addWidget(make_section_label("坐标轴", page))
+
+        title_row = QHBoxLayout()
+        title_row.addWidget(self._make_style_form_label("图表标题:", page))
+        self._chart_title_edit = LineEdit(page)
+        self._chart_title_edit.setPlaceholderText("留空则不显示标题")
+        self._connect_line_edit_commit(self._chart_title_edit, self._on_quick_config_changed)
+        title_row.addWidget(self._chart_title_edit)
+        layout.addLayout(title_row)
 
         x_row = QHBoxLayout()
-        x_row.addWidget(self._make_style_form_label("X:", page))
+        x_row.addWidget(self._make_style_form_label("X 轴标签:", page))
         self._x_label_edit = LineEdit(page)
         self._x_label_edit.setPlaceholderText("X")
         self._connect_line_edit_commit(self._x_label_edit, self._on_quick_config_changed)
@@ -976,60 +1035,59 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         layout.addLayout(x_row)
 
         y_row = QHBoxLayout()
-        y_row.addWidget(self._make_style_form_label("Y:", page))
+        y_row.addWidget(self._make_style_form_label("Y 轴标签:", page))
         self._y_label_edit = LineEdit(page)
         self._y_label_edit.setPlaceholderText("Y")
         self._connect_line_edit_commit(self._y_label_edit, self._on_quick_config_changed)
         y_row.addWidget(self._y_label_edit)
         layout.addLayout(y_row)
 
-        self._errbar_cb = CheckBox("显示误差棒", page)
-        self._errbar_cb.stateChanged.connect(self._on_quick_config_changed)
-        layout.addWidget(self._errbar_cb)
-
-        layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("坐标轴", page))
-
         x_range_row = QHBoxLayout()
-        x_range_row.addWidget(self._make_style_form_label("X 最小:", page))
+        x_range_row.addWidget(self._make_style_form_label("X范围:", page))
         self._x_min_edit = LineEdit(page)
         self._x_min_edit.setPlaceholderText("自动")
         self._connect_line_edit_commit(self._x_min_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._x_min_edit)
         x_range_row.addWidget(self._x_min_edit)
-        x_range_row.addWidget(self._make_style_form_label("最大:", page))
         self._x_max_edit = LineEdit(page)
         self._x_max_edit.setPlaceholderText("自动")
         self._connect_line_edit_commit(self._x_max_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._x_max_edit)
+        x_range_row.addWidget(self._make_style_form_label("-", page))
         x_range_row.addWidget(self._x_max_edit)
+        x_range_row.addStretch()
         layout.addLayout(x_range_row)
 
         y_range_row = QHBoxLayout()
-        y_range_row.addWidget(self._make_style_form_label("Y 最小:", page))
+        y_range_row.addWidget(self._make_style_form_label("Y范围:", page))
         self._y_min_edit = LineEdit(page)
         self._y_min_edit.setPlaceholderText("自动")
         self._connect_line_edit_commit(self._y_min_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._y_min_edit)
         y_range_row.addWidget(self._y_min_edit)
-        y_range_row.addWidget(self._make_style_form_label("最大:", page))
         self._y_max_edit = LineEdit(page)
         self._y_max_edit.setPlaceholderText("自动")
         self._connect_line_edit_commit(self._y_max_edit, self._on_quick_config_changed)
         self._set_compact_edit_width(self._y_max_edit)
+        y_range_row.addWidget(self._make_style_form_label("-", page))
         y_range_row.addWidget(self._y_max_edit)
+        y_range_row.addStretch()
         layout.addLayout(y_range_row)
 
-        axis_flag_row = QHBoxLayout()
+        axis_flag_row_1 = QHBoxLayout()
         self._x_log_cb = CheckBox("X 对数坐标", page)
         self._x_log_cb.stateChanged.connect(self._on_quick_config_changed)
-        axis_flag_row.addWidget(self._x_log_cb)
+        axis_flag_row_1.addWidget(self._x_log_cb)
         self._y_log_cb = CheckBox("Y 对数坐标", page)
         self._y_log_cb.stateChanged.connect(self._on_quick_config_changed)
-        axis_flag_row.addWidget(self._y_log_cb)
-        axis_flag_row.addStretch()
-        layout.addLayout(axis_flag_row)
+        axis_flag_row_1.addWidget(self._y_log_cb)
+        self._errbar_cb = CheckBox("误差棒", page)
+        self._errbar_cb.stateChanged.connect(self._on_quick_config_changed)
+        axis_flag_row_1.addWidget(self._errbar_cb)
+        axis_flag_row_1.addStretch()
+        layout.addLayout(axis_flag_row_1)
 
+        # ── 刻度 ──
         layout.addWidget(make_hsep(page))
         layout.addWidget(make_section_label("刻度", page))
 
@@ -1081,93 +1139,96 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         tick_direction_row.addWidget(self._make_style_form_label("方向:", page))
         self._tick_direction_combo = ComboBox(page)
         self._tick_direction_combo.addItems(_TICK_DIRECTION_CHOICES)
+        self._tick_direction_combo.setMaximumWidth(108)
         self._tick_direction_combo.currentIndexChanged.connect(self._on_quick_config_changed)
-        tick_direction_row.addWidget(self._tick_direction_combo, 1)
+        tick_direction_row.addWidget(self._tick_direction_combo)
+        tick_direction_row.addWidget(self._make_style_form_label("字号:", page))
+        self._tick_label_size_spin = CompactSpinBox(page)
+        self._tick_label_size_spin.setRange(4, 40)
+        self._tick_label_size_spin.setMaximumWidth(80)
+        self._tick_label_size_spin.setValue(10)
+        self._tick_label_size_spin.valueChanged.connect(self._on_quick_config_changed)
+        tick_direction_row.addWidget(self._tick_label_size_spin)
+        tick_direction_row.addStretch()
         layout.addLayout(tick_direction_row)
-
-        tick_label_row = QHBoxLayout()
-        tick_label_row.addWidget(self._make_style_form_label("标签字号:", page))
-        self._tick_label_size_edit = LineEdit(page)
-        self._tick_label_size_edit.setPlaceholderText("跟随字号")
-        self._connect_line_edit_commit(self._tick_label_size_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._tick_label_size_edit)
-        tick_label_row.addWidget(self._tick_label_size_edit)
-        tick_label_row.addStretch()
-        layout.addLayout(tick_label_row)
 
         tick_metric_row = QHBoxLayout()
         tick_metric_row.addWidget(self._make_style_form_label("长度:", page))
-        self._tick_length_edit = LineEdit(page)
-        self._tick_length_edit.setPlaceholderText("默认")
-        self._connect_line_edit_commit(self._tick_length_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._tick_length_edit)
-        tick_metric_row.addWidget(self._tick_length_edit)
+        self._tick_length_spin = CompactDoubleSpinBox(page)
+        self._tick_length_spin.setRange(0.0, 20.0)
+        self._tick_length_spin.setSingleStep(0.5)
+        self._tick_length_spin.setDecimals(1)
+        self._tick_length_spin.setValue(4.0)
+        self._tick_length_spin.setMaximumWidth(80)
+        self._tick_length_spin.valueChanged.connect(self._on_quick_config_changed)
+        tick_metric_row.addWidget(self._tick_length_spin)
         tick_metric_row.addWidget(self._make_style_form_label("宽度:", page))
-        self._tick_width_edit = LineEdit(page)
-        self._tick_width_edit.setPlaceholderText("默认")
-        self._connect_line_edit_commit(self._tick_width_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._tick_width_edit)
-        tick_metric_row.addWidget(self._tick_width_edit)
+        self._tick_width_spin = CompactDoubleSpinBox(page)
+        self._tick_width_spin.setRange(0.0, 10.0)
+        self._tick_width_spin.setSingleStep(0.5)
+        self._tick_width_spin.setDecimals(1)
+        self._tick_width_spin.setValue(1.0)
+        self._tick_width_spin.setMaximumWidth(80)
+        self._tick_width_spin.valueChanged.connect(self._on_quick_config_changed)
+        tick_metric_row.addWidget(self._tick_width_spin)
         tick_metric_row.addStretch()
         layout.addLayout(tick_metric_row)
 
+        # ── 图例 ──
         layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("图例与字体", page))
+        layout.addWidget(make_section_label("图例", page))
 
-        legend_row = QHBoxLayout()
-        legend_row.addWidget(self._make_style_form_label("图例位置:", page))
+        legend_visible_row = QHBoxLayout()
+        self._legend_visible_cb = CheckBox("显示图例", page)
+        self._legend_visible_cb.setChecked(True)
+        self._legend_visible_cb.stateChanged.connect(self._on_quick_config_changed)
+        legend_visible_row.addWidget(self._legend_visible_cb)
+        legend_visible_row.addStretch()
+        layout.addLayout(legend_visible_row)
+
+        legend_pos_row = QHBoxLayout()
+        legend_pos_row.addWidget(self._make_style_form_label("锚点位置:", page))
         self._legend_pos_combo = ComboBox(page)
         self._legend_pos_combo.addItems([
             "best", "upper right", "upper left", "lower left", "lower right",
             "right", "center left", "center right", "lower center", "upper center", "center",
         ])
+        self._legend_pos_combo.setMaximumWidth(128)
         self._legend_pos_combo.currentIndexChanged.connect(self._on_quick_config_changed)
-        legend_row.addWidget(self._legend_pos_combo, 1)
+        legend_pos_row.addWidget(self._legend_pos_combo)
+        legend_pos_row.addStretch()
+        layout.addLayout(legend_pos_row)
+
+        legend_row = QHBoxLayout()
+        legend_row.addWidget(self._make_style_form_label("图例字号:", page))
+        self._legend_font_size_spin = CompactSpinBox(page)
+        self._legend_font_size_spin.setRange(4, 40)
+        self._legend_font_size_spin.setMaximumWidth(80)
+        self._legend_font_size_spin.setValue(8)
+        self._legend_font_size_spin.valueChanged.connect(self._on_quick_config_changed)
+        legend_row.addWidget(self._legend_font_size_spin)
+        legend_row.addStretch()
         layout.addLayout(legend_row)
 
         legend_anchor_row = QHBoxLayout()
         legend_anchor_row.addWidget(self._make_style_form_label("锚点 X:", page))
-        self._legend_anchor_x_edit = LineEdit(page)
-        self._legend_anchor_x_edit.setPlaceholderText("留空")
-        self._legend_anchor_x_edit.setToolTip("与上方图例位置配合使用，按坐标轴比例设置 X 锚点，例如 0.02 或 1.0")
-        self._legend_anchor_x_edit.textChanged.connect(self._on_legend_anchor_x_text_changed)
-        self._legend_anchor_x_edit.editingFinished.connect(self._on_legend_anchor_x_committed)
-        self._set_compact_edit_width(self._legend_anchor_x_edit)
-        legend_anchor_row.addWidget(self._legend_anchor_x_edit)
+        self._legend_anchor_x_spin = CompactDoubleSpinBox(page)
+        self._legend_anchor_x_spin.setRange(0.0, 100.0)
+        self._legend_anchor_x_spin.setSingleStep(1.0)
+        self._legend_anchor_x_spin.setDecimals(1)
+        self._legend_anchor_x_spin.setMaximumWidth(80)
+        self._legend_anchor_x_spin.valueChanged.connect(self._on_quick_config_changed)
+        legend_anchor_row.addWidget(self._legend_anchor_x_spin)
         legend_anchor_row.addWidget(self._make_style_form_label("锚点 Y:", page))
-        self._legend_anchor_y_edit = LineEdit(page)
-        self._legend_anchor_y_edit.setPlaceholderText("留空")
-        self._legend_anchor_y_edit.setToolTip("与上方图例位置配合使用，按坐标轴比例设置 Y 锚点，例如 0.98 或 0.5")
-        self._legend_anchor_y_edit.textChanged.connect(self._on_legend_anchor_y_text_changed)
-        self._legend_anchor_y_edit.editingFinished.connect(self._on_legend_anchor_y_committed)
-        self._set_compact_edit_width(self._legend_anchor_y_edit)
-        legend_anchor_row.addWidget(self._legend_anchor_y_edit)
+        self._legend_anchor_y_spin = CompactDoubleSpinBox(page)
+        self._legend_anchor_y_spin.setRange(0.0, 100.0)
+        self._legend_anchor_y_spin.setSingleStep(1.0)
+        self._legend_anchor_y_spin.setDecimals(1)
+        self._legend_anchor_y_spin.setMaximumWidth(80)
+        self._legend_anchor_y_spin.valueChanged.connect(self._on_quick_config_changed)
+        legend_anchor_row.addWidget(self._legend_anchor_y_spin)
         legend_anchor_row.addStretch()
         layout.addLayout(legend_anchor_row)
-
-        font_row = QHBoxLayout()
-        font_row.addWidget(self._make_style_form_label("字体族:", page))
-        self._font_family_combo = ComboBox(page)
-        self._font_family_combo.currentIndexChanged.connect(self._on_quick_config_changed)
-        font_row.addWidget(self._font_family_combo, 1)
-        layout.addLayout(font_row)
-
-        font_size_row = QHBoxLayout()
-        font_size_row.addWidget(self._make_style_form_label("字号:", page))
-        self._font_size_edit = LineEdit(page)
-        self._font_size_edit.setPlaceholderText("10")
-        self._connect_line_edit_commit(self._font_size_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._font_size_edit)
-        font_size_row.addWidget(self._font_size_edit)
-        
-        font_size_row.addWidget(self._make_style_form_label("图例字号:", page))
-        self._legend_font_size_edit = LineEdit(page)
-        self._legend_font_size_edit.setPlaceholderText("8")
-        self._connect_line_edit_commit(self._legend_font_size_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._legend_font_size_edit)
-        font_size_row.addWidget(self._legend_font_size_edit)
-        font_size_row.addStretch()
-        layout.addLayout(font_size_row)
 
         legend_frame_row = QHBoxLayout()
         self._legend_frame_cb = CheckBox("显示图例边框", page)
@@ -1176,6 +1237,18 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         legend_frame_row.addWidget(self._legend_frame_cb)
         legend_frame_row.addStretch()
         layout.addLayout(legend_frame_row)
+
+        legend_edge_color_row = QHBoxLayout()
+        legend_edge_color_row.addWidget(self._make_style_form_label("边框颜色:", page))
+        self._legend_edge_color_btn = ColorPickerButton(QColor("#222222"), "", page, enableAlpha=False)
+        self._set_square_tool_button(self._legend_edge_color_btn)
+        self._legend_edge_color_btn.colorChanged.connect(self._on_legend_edge_color_changed)
+        self._legend_edge_color_cb = CheckBox("", page)
+        self._legend_edge_color_cb.stateChanged.connect(self._on_quick_config_changed)
+        legend_edge_color_row.addWidget(self._legend_edge_color_cb)
+        legend_edge_color_row.addWidget(self._legend_edge_color_btn)
+        legend_edge_color_row.addStretch()
+        layout.addLayout(legend_edge_color_row)
 
         legend_frame_alpha_row = QHBoxLayout()
         legend_frame_alpha_row.addWidget(self._make_style_form_label("边框透明度:", page))
@@ -1195,20 +1268,16 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._legend_frame_alpha_slider.valueChanged.connect(self._on_legend_frame_alpha_changed)
         layout.addLayout(legend_frame_alpha_row)
 
-        legend_edge_color_row = QHBoxLayout()
-        legend_edge_color_row.addWidget(self._make_style_form_label("边框颜色:", page))
-        self._legend_edge_color_edit = LineEdit(page)
-        self._legend_edge_color_edit.setPlaceholderText("留空跟随主题")
-        self._connect_line_edit_commit(self._legend_edge_color_edit, self._on_quick_config_changed)
-        legend_edge_color_row.addWidget(self._legend_edge_color_edit, 1)
-        layout.addLayout(legend_edge_color_row)
-
         legend_face_color_row = QHBoxLayout()
         legend_face_color_row.addWidget(self._make_style_form_label("背景颜色:", page))
-        self._legend_face_color_edit = LineEdit(page)
-        self._legend_face_color_edit.setPlaceholderText("留空跟随画布")
-        self._connect_line_edit_commit(self._legend_face_color_edit, self._on_quick_config_changed)
-        legend_face_color_row.addWidget(self._legend_face_color_edit, 1)
+        self._legend_face_color_btn = ColorPickerButton(QColor("#ffffff"), "", page, enableAlpha=False)
+        self._set_square_tool_button(self._legend_face_color_btn)
+        self._legend_face_color_btn.colorChanged.connect(self._on_legend_face_color_changed)
+        self._legend_face_color_cb = CheckBox("", page)
+        self._legend_face_color_cb.stateChanged.connect(self._on_quick_config_changed)
+        legend_face_color_row.addWidget(self._legend_face_color_cb)
+        legend_face_color_row.addWidget(self._legend_face_color_btn)
+        legend_face_color_row.addStretch()
         layout.addLayout(legend_face_color_row)
 
         legend_face_alpha_row = QHBoxLayout()
@@ -1229,15 +1298,73 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._legend_face_alpha_slider.valueChanged.connect(self._on_legend_face_alpha_changed)
         layout.addLayout(legend_face_alpha_row)
 
+        # ── 画布 ──
         layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("画布与默认样式", page))
+        layout.addWidget(make_section_label("画布", page))
+
+        font_family_row = QHBoxLayout()
+        font_family_row.addWidget(self._make_style_form_label("字体族:", page))
+        self._font_family_combo = ComboBox(page)
+        self._font_family_combo.currentIndexChanged.connect(self._on_quick_config_changed)
+        font_family_row.addWidget(self._font_family_combo, 1)
+        layout.addLayout(font_family_row)
+
+        font_row = QHBoxLayout()
+        font_row.addWidget(self._make_style_form_label("全局字号:", page))
+        self._font_size_spin = CompactSpinBox(page)
+        self._font_size_spin.setRange(4, 40)
+        self._font_size_spin.setMaximumWidth(80)
+        self._font_size_spin.setValue(10)
+        self._font_size_spin.valueChanged.connect(self._on_quick_config_changed)
+        font_row.addWidget(self._font_size_spin)
+        font_row.addStretch()
+        layout.addLayout(font_row)
+
+        figure_size_row = QHBoxLayout()
+        figure_size_row.addWidget(self._make_style_form_label("图宽:", page))
+        self._figure_width_spin = CompactDoubleSpinBox(page)
+        self._figure_width_spin.setRange(1.0, 50.0)
+        self._figure_width_spin.setSingleStep(0.5)
+        self._figure_width_spin.setDecimals(1)
+        self._figure_width_spin.setValue(7.0)
+        self._figure_width_spin.setMaximumWidth(80)
+        self._figure_width_spin.valueChanged.connect(self._on_quick_config_changed)
+        figure_size_row.addWidget(self._figure_width_spin)
+        figure_size_row.addWidget(self._make_style_form_label("图高:", page))
+        self._figure_height_spin = CompactDoubleSpinBox(page)
+        self._figure_height_spin.setRange(1.0, 50.0)
+        self._figure_height_spin.setSingleStep(0.5)
+        self._figure_height_spin.setDecimals(1)
+        self._figure_height_spin.setValue(5.0)
+        self._figure_height_spin.setMaximumWidth(80)
+        self._figure_height_spin.valueChanged.connect(self._on_quick_config_changed)
+        figure_size_row.addWidget(self._figure_height_spin)
+        figure_size_row.addStretch()
+        layout.addLayout(figure_size_row)
+
+        dpi_row = QHBoxLayout()
+        dpi_row.addWidget(self._make_style_form_label("DPI:", page))
+        self._dpi_spin = CompactSpinBox(page)
+        self._dpi_spin.setRange(72, 600)
+        self._dpi_spin.setMaximumWidth(80)
+        self._dpi_spin.setValue(150)
+        self._dpi_spin.setMaximumWidth(80)
+        self._dpi_spin.valueChanged.connect(self._on_quick_config_changed)
+        dpi_row.addWidget(self._dpi_spin)
+        dpi_row.addStretch()
+        layout.addLayout(dpi_row)
 
         canvas_color_row = QHBoxLayout()
         canvas_color_row.addWidget(self._make_style_form_label("画布颜色:", page))
-        self._canvas_color_edit = LineEdit(page)
-        self._canvas_color_edit.setPlaceholderText("留空跟随主题")
-        self._connect_line_edit_commit(self._canvas_color_edit, self._on_quick_config_changed)
-        canvas_color_row.addWidget(self._canvas_color_edit, 1)
+        self._canvas_color_edit = ColorPickerButton(QColor("#ffffff"), "", page, enableAlpha=False)
+        self._canvas_color_edit.setToolTip("画布背景颜色")
+        self._canvas_color_edit.colorChanged.connect(self._on_canvas_color_changed)
+        self._set_square_tool_button(self._canvas_color_edit)
+        self._canvas_color_cb = CheckBox("", page)
+        self._canvas_color_cb.stateChanged.connect(self._on_quick_config_changed)
+        canvas_color_row.addWidget(self._canvas_color_cb)
+        canvas_color_row.addWidget(self._canvas_color_edit)
+        canvas_color_row.addStretch()
         layout.addLayout(canvas_color_row)
 
         canvas_alpha_row = QHBoxLayout()
@@ -1246,71 +1373,19 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._canvas_alpha_slider.setRange(0, 100)
         self._canvas_alpha_slider.setSingleStep(1)
         self._canvas_alpha_slider.setPageStep(5)
-        self._canvas_alpha_slider.setMinimumWidth(132)
+        self._canvas_alpha_slider.setMinimumWidth(100)
         self._canvas_alpha_slider.setValue(self._alpha_slider_value(_CANVAS_ALPHA_DEFAULT))
         canvas_alpha_row.addWidget(self._canvas_alpha_slider, 1)
         self._canvas_alpha_value_label = BodyLabel("1.00", page)
         self._canvas_alpha_value_label.setStyleSheet(secondary_text_style_sheet(font_size=12))
-        self._canvas_alpha_value_label.setMinimumWidth(40)
+        self._canvas_alpha_value_label.setMinimumWidth(36)
         canvas_alpha_row.addWidget(self._canvas_alpha_value_label)
-        canvas_alpha_row.addStretch()
         self._update_alpha_value_label(self._canvas_alpha_value_label, self._canvas_alpha_slider.value())
         self._canvas_alpha_slider.valueChanged.connect(self._on_canvas_alpha_changed)
+        canvas_alpha_row.addStretch()
         layout.addLayout(canvas_alpha_row)
 
-        figure_width_row = QHBoxLayout()
-        figure_width_row.addWidget(self._make_style_form_label("图宽:", page))
-        self._figure_width_edit = LineEdit(page)
-        self._figure_width_edit.setPlaceholderText("7.0")
-        self._connect_line_edit_commit(self._figure_width_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._figure_width_edit)
-        figure_width_row.addWidget(self._figure_width_edit)
-        figure_width_row.addStretch()
-        layout.addLayout(figure_width_row)
-
-        figure_height_row = QHBoxLayout()
-        figure_height_row.addWidget(self._make_style_form_label("图高:", page))
-        self._figure_height_edit = LineEdit(page)
-        self._figure_height_edit.setPlaceholderText("5.0")
-        self._connect_line_edit_commit(self._figure_height_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._figure_height_edit)
-        figure_height_row.addWidget(self._figure_height_edit)
-        figure_height_row.addStretch()
-        layout.addLayout(figure_height_row)
-
-        dpi_row = QHBoxLayout()
-        dpi_row.addWidget(self._make_style_form_label("DPI:", page))
-        self._dpi_edit = LineEdit(page)
-        self._dpi_edit.setPlaceholderText("150")
-        self._connect_line_edit_commit(self._dpi_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._dpi_edit)
-        dpi_row.addWidget(self._dpi_edit)
-        dpi_row.addStretch()
-        layout.addLayout(dpi_row)
-
-        style_row = QHBoxLayout()
-        style_row.addWidget(self._make_style_form_label("默认线宽:", page))
-        self._plot_line_width_edit = LineEdit(page)
-        self._plot_line_width_edit.setPlaceholderText("1.4")
-        self._connect_line_edit_commit(self._plot_line_width_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._plot_line_width_edit)
-        style_row.addWidget(self._plot_line_width_edit)
-        style_row.addStretch()
-        layout.addLayout(style_row)
-
-        marker_row = QHBoxLayout()
-        marker_row.addWidget(self._make_style_form_label("默认点大小:", page))
-        self._plot_marker_size_edit = LineEdit(page)
-        self._plot_marker_size_edit.setPlaceholderText("5.0")
-        self._connect_line_edit_commit(self._plot_marker_size_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._plot_marker_size_edit)
-        marker_row.addWidget(self._plot_marker_size_edit)
-        marker_row.addStretch()
-        layout.addLayout(marker_row)
-
-        layout.addWidget(make_hsep(page))
-        layout.addWidget(make_section_label("网格与边框", page))
-
+        # 网格
         grid_toggle_row = QHBoxLayout()
         self._grid_cb = CheckBox("显示网格", page)
         self._grid_cb.stateChanged.connect(self._on_quick_config_changed)
@@ -1318,67 +1393,80 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         grid_toggle_row.addStretch()
         layout.addLayout(grid_toggle_row)
 
-        grid_style_row = QHBoxLayout()
-        grid_style_row.addWidget(self._make_style_form_label("网格透明度:", page))
+        grid_alpha_row = QHBoxLayout()
+        grid_alpha_row.addWidget(self._make_style_form_label("网格透明度:", page))
         self._grid_alpha_slider = Slider(Qt.Orientation.Horizontal, page)
         self._grid_alpha_slider.setRange(0, 100)
         self._grid_alpha_slider.setSingleStep(1)
         self._grid_alpha_slider.setPageStep(5)
-        self._grid_alpha_slider.setMinimumWidth(132)
+        self._grid_alpha_slider.setMinimumWidth(80)
         self._grid_alpha_slider.setValue(self._alpha_slider_value(_GRID_ALPHA_DEFAULT))
-        grid_style_row.addWidget(self._grid_alpha_slider, 1)
+        grid_alpha_row.addWidget(self._grid_alpha_slider, 1)
         self._grid_alpha_value_label = BodyLabel("0.70", page)
         self._grid_alpha_value_label.setStyleSheet(secondary_text_style_sheet(font_size=12))
-        self._grid_alpha_value_label.setMinimumWidth(40)
-        grid_style_row.addWidget(self._grid_alpha_value_label)
+        self._grid_alpha_value_label.setMinimumWidth(36)
+        grid_alpha_row.addWidget(self._grid_alpha_value_label)
         self._update_alpha_value_label(self._grid_alpha_value_label, self._grid_alpha_slider.value())
         self._grid_alpha_slider.valueChanged.connect(self._on_grid_alpha_changed)
-        grid_style_row.addStretch()
-        layout.addLayout(grid_style_row)
+        grid_alpha_row.addStretch()
+        layout.addLayout(grid_alpha_row)
 
         grid_width_row = QHBoxLayout()
         grid_width_row.addWidget(self._make_style_form_label("网格线宽:", page))
-        self._grid_line_width_edit = LineEdit(page)
-        self._grid_line_width_edit.setPlaceholderText("0.5")
-        self._connect_line_edit_commit(self._grid_line_width_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._grid_line_width_edit)
-        grid_width_row.addWidget(self._grid_line_width_edit)
+        self._grid_line_width_spin = CompactDoubleSpinBox(page)
+        self._grid_line_width_spin.setRange(0.1, 10.0)
+        self._grid_line_width_spin.setSingleStep(0.1)
+        self._grid_line_width_spin.setDecimals(1)
+        self._grid_line_width_spin.setValue(0.5)
+        self._grid_line_width_spin.setMaximumWidth(80)
+        self._grid_line_width_spin.valueChanged.connect(self._on_quick_config_changed)
+        grid_width_row.addWidget(self._grid_line_width_spin)
         grid_width_row.addStretch()
         layout.addLayout(grid_width_row)
 
-        spine_primary_toggle_row = QHBoxLayout()
-        self._spine_bottom_cb = CheckBox("显示底部边框", page)
+        # 边框 (spines)
+        spine_row_1 = QHBoxLayout()
+        self._spine_bottom_cb = CheckBox("底部边框", page)
         self._spine_bottom_cb.setChecked(True)
         self._spine_bottom_cb.stateChanged.connect(self._on_quick_config_changed)
-        spine_primary_toggle_row.addWidget(self._spine_bottom_cb)
-        self._spine_left_cb = CheckBox("显示左侧边框", page)
+        spine_row_1.addWidget(self._spine_bottom_cb)
+        self._spine_left_cb = CheckBox("左侧边框", page)
         self._spine_left_cb.setChecked(True)
         self._spine_left_cb.stateChanged.connect(self._on_quick_config_changed)
-        spine_primary_toggle_row.addWidget(self._spine_left_cb)
-        spine_primary_toggle_row.addStretch()
-        layout.addLayout(spine_primary_toggle_row)
+        spine_row_1.addWidget(self._spine_left_cb)
+        spine_row_1.addStretch()
+        layout.addLayout(spine_row_1)
 
-        spine_secondary_toggle_row = QHBoxLayout()
-        self._spine_top_cb = CheckBox("显示顶部边框", page)
+        spine_row_2 = QHBoxLayout()
+        self._spine_top_cb = CheckBox("顶部边框", page)
         self._spine_top_cb.setChecked(True)
         self._spine_top_cb.stateChanged.connect(self._on_quick_config_changed)
-        spine_secondary_toggle_row.addWidget(self._spine_top_cb)
-        self._spine_right_cb = CheckBox("显示右侧边框", page)
+        spine_row_2.addWidget(self._spine_top_cb)
+        self._spine_right_cb = CheckBox("右侧边框", page)
         self._spine_right_cb.setChecked(True)
         self._spine_right_cb.stateChanged.connect(self._on_quick_config_changed)
-        spine_secondary_toggle_row.addWidget(self._spine_right_cb)
-        spine_secondary_toggle_row.addStretch()
-        layout.addLayout(spine_secondary_toggle_row)
+        spine_row_2.addWidget(self._spine_right_cb)
+        spine_row_2.addStretch()
+        layout.addLayout(spine_row_2)
 
         spine_width_row = QHBoxLayout()
         spine_width_row.addWidget(self._make_style_form_label("边框线宽:", page))
-        self._spine_width_edit = LineEdit(page)
-        self._spine_width_edit.setPlaceholderText("默认")
-        self._connect_line_edit_commit(self._spine_width_edit, self._on_quick_config_changed)
-        self._set_compact_edit_width(self._spine_width_edit)
-        spine_width_row.addWidget(self._spine_width_edit)
+        self._spine_width_spin = CompactDoubleSpinBox(page)
+        self._spine_width_spin.setRange(0.1, 10.0)
+        self._spine_width_spin.setSingleStep(0.1)
+        self._spine_width_spin.setDecimals(1)
+        self._spine_width_spin.setValue(1.0)
+        self._spine_width_spin.setMaximumWidth(80)
+        self._spine_width_spin.valueChanged.connect(self._on_quick_config_changed)
+        spine_width_row.addWidget(self._spine_width_spin)
         spine_width_row.addStretch()
         layout.addLayout(spine_width_row)
+
+        # 默认曲线样式
+        self._btn_default_curve_style = PushButton(FIF.BOOK_SHELF, "默认曲线样式", page)
+        self._btn_default_curve_style.setToolTip("选择加载绘图样式时自动应用的曲线样式模板")
+        self._btn_default_curve_style.clicked.connect(self._on_select_default_curve_style)
+        layout.addWidget(self._btn_default_curve_style)
 
         layout.addStretch()
         return scroll
@@ -1431,13 +1519,39 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         template_row.addWidget(self._clear_all_plot_extensions_btn)
         layout.addLayout(template_row)
 
-        # ── 已加载扩展 Pipeline 列表 ──
+        # ── 已加载扩展 Pipeline 列表 + 排序 ──
+        pipeline_list_row = QHBoxLayout()
+        pipeline_list_row.setContentsMargins(0, 0, 0, 0)
+        pipeline_list_row.setSpacing(6)
+
         self._plot_extension_applied_list = ListWidget(page)
         self._plot_extension_applied_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._plot_extension_applied_list.currentItemChanged.connect(self._on_plot_extension_instance_selection_changed)
         self._plot_extension_applied_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._plot_extension_applied_list.customContextMenuRequested.connect(self._on_plot_extension_instance_context_menu)
-        layout.addWidget(self._plot_extension_applied_list, 1)
+        pipeline_list_row.addWidget(self._plot_extension_applied_list, 1)
+
+        order_column = QVBoxLayout()
+        order_column.setContentsMargins(0, 0, 0, 0)
+        order_column.setSpacing(6)
+        self._plot_ext_up_btn = ToolButton(FIF.UP, page)
+        self._plot_ext_up_btn.setToolTip("上移（提高图层）")
+        self._plot_ext_up_btn.setEnabled(False)
+        self._plot_ext_up_btn.clicked.connect(self._move_plot_extension_up)
+        self._set_square_tool_button(self._plot_ext_up_btn)
+        install_fluent_tooltip(self._plot_ext_up_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        order_column.addWidget(self._plot_ext_up_btn)
+        self._plot_ext_down_btn = ToolButton(FIF.DOWN, page)
+        self._plot_ext_down_btn.setToolTip("下移（降低图层）")
+        self._plot_ext_down_btn.setEnabled(False)
+        self._plot_ext_down_btn.clicked.connect(self._move_plot_extension_down)
+        self._set_square_tool_button(self._plot_ext_down_btn)
+        install_fluent_tooltip(self._plot_ext_down_btn, delay=300, position=ToolTipPosition.BOTTOM)
+        order_column.addWidget(self._plot_ext_down_btn)
+        order_column.addStretch()
+        pipeline_list_row.addLayout(order_column)
+
+        layout.addLayout(pipeline_list_row, 1)
 
         # ── 扩展类型选择 + 添加/撤销行 ──
         add_remove_row = QHBoxLayout()
@@ -2014,8 +2128,8 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     def _plot_style_choices(self) -> List[tuple[str, str]]:
         choices: List[tuple[str, str]] = []
         used_labels: set[str] = set()
-        for theme in global_assets.list_plot_themes(include_builtin=True):
-            label = self._unique_style_label(theme.name or theme.id[:8], used_labels, "内置")
+        for theme in global_assets.list_plot_themes(include_builtin=False):
+            label = self._unique_style_label(theme.name or theme.id[:8], used_labels, "已保存")
             choices.append((label, make_plot_style_asset_key("theme", theme.id or theme.name)))
         for figure in global_assets.list_figure_templates():
             label = self._unique_style_label(figure.name or figure.id[:8], used_labels, "已保存")
@@ -2275,6 +2389,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._remove_selected_plot_extension_btn.setEnabled(has_selection)
         if hasattr(self, "_plot_extension_apply_btn"):
             self._plot_extension_apply_btn.setEnabled(has_selection)
+        self._update_plot_extension_sort_buttons()
         if not has_selection:
             if hasattr(self, "_plot_extension_param_section"):
                 self._plot_extension_param_section.hide()
@@ -2352,6 +2467,38 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             position=InfoBarPosition.TOP,
         )
 
+    def _update_plot_extension_sort_buttons(self) -> None:
+        if not hasattr(self, "_plot_ext_up_btn"):
+            return
+        idx = self._plot_extension_applied_list.currentRow()
+        count = self._plot_extension_applied_list.count()
+        self._plot_ext_up_btn.setEnabled(count > 1 and idx > 0)
+        self._plot_ext_down_btn.setEnabled(count > 1 and 0 <= idx < count - 1)
+
+    def _move_plot_extension_up(self) -> None:
+        idx = self._plot_extension_applied_list.currentRow()
+        if idx <= 0 or idx >= len(self._applied_plot_extensions):
+            return
+        self._applied_plot_extensions[idx], self._applied_plot_extensions[idx - 1] = (
+            self._applied_plot_extensions[idx - 1],
+            self._applied_plot_extensions[idx],
+        )
+        self._refresh_plot_extension_list()
+        self._plot_extension_applied_list.setCurrentRow(idx - 1)
+        self._redraw()
+
+    def _move_plot_extension_down(self) -> None:
+        idx = self._plot_extension_applied_list.currentRow()
+        if idx < 0 or idx >= len(self._applied_plot_extensions) - 1:
+            return
+        self._applied_plot_extensions[idx], self._applied_plot_extensions[idx + 1] = (
+            self._applied_plot_extensions[idx + 1],
+            self._applied_plot_extensions[idx],
+        )
+        self._refresh_plot_extension_list()
+        self._plot_extension_applied_list.setCurrentRow(idx + 1)
+        self._redraw()
+
     def _extension_panel_context_target(self) -> str:
         current_tab = self._style_tabs.currentIndex()
         if current_tab == 0:
@@ -2399,7 +2546,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         current_type = self._plot_extension_selector_current_type()
         if current_type not in available_types:
             current_type = next(
-                (str(entry.get("type")) for entry in reversed(self._applied_plot_extensions) if entry.get("type") in available_types),
+                (str(entry.get("type")) for entry in self._applied_plot_extensions if entry.get("type") in available_types),
                 None,
             ) or next((type_id for type_id in self._plot_extension_options if type_id in available_types), None)
 
@@ -2735,8 +2882,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         choices = self._plot_style_choices()
         self._template_combo.blockSignals(True)
         self._template_combo.clear()
-        self._template_combo.addItem("默认样式")
-        self._plot_style_refs = [None]
+        self._plot_style_refs = []
         for label, node_id in choices:
             self._template_combo.addItem(label)
             self._plot_style_refs.append(node_id)
@@ -2747,7 +2893,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         if target_node_id in self._plot_style_refs:
             self._template_combo.setCurrentIndex(self._plot_style_refs.index(target_node_id))
         else:
-            self._template_combo.setCurrentIndex(0)
+            self._template_combo.setCurrentIndex(0 if self._plot_style_refs else -1)
         self._template_combo.blockSignals(False)
         self._update_template_summary()
         self._refresh_style_extension_panel()
@@ -2771,8 +2917,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         pending_message = ""
         if selected_ref and selected_ref != current_ref:
             pending_message = f"已选择 {self._template_combo.currentText()}，点击加载后应用。\n"
-        elif selected_ref is None and current_ref is not None and self._template_combo.currentIndex() == 0:
-            pending_message = "已选择当前配置，点击加载后将解除样式绑定。\n"
 
         if self._active_template_node_id is not None:
             template = global_assets.get_figure_template(self._active_template_node_id)
@@ -2825,9 +2969,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     def _load_selected_plot_style(self) -> None:
         node_id = self._selected_template_node_id()
         if node_id is None:
-            self._active_template_node_id = None
-            self._applied_plot_style_ref = None
-            self._refresh_template_combo()
             return
         self.load_plot_style(node_id)
 
@@ -2872,7 +3013,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         )
         self._plot_extension_options[type_id] = dict(options)
         applied = self._build_applied_plot_extension(type_id, options)
-        self._applied_plot_extensions.append(applied)
+        self._applied_plot_extensions.insert(0, applied)
         self._refresh_style_extension_panel()
         self._refresh_plot_extension_list(selected_instance_id=str(applied.get("id") or ""))
         self._redraw()
@@ -3047,7 +3188,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             label = self._unique_style_label(
                 item.name or item.id[:8],
                 used_labels,
-                "默认" if getattr(item, "is_builtin", False) else "已保存",
+                "已保存",
             )
             self._curve_style_template_combo.addItem(label)
             self._curve_style_template_ids.append(item.id)
@@ -3090,11 +3231,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._active_curve_style_template_id = None
             self._active_curve_style_ref = None
             self._curve_style_template_label.setText("当前曲线样式未绑定全局模板。")
-            self._btn_update_curve_style_template.setEnabled(False)
-            self._refresh_style_extension_panel()
-            return
-        if getattr(template, "is_builtin", False):
-            self._curve_style_template_label.setText(f"当前使用默认样式: {template.name}")
             self._btn_update_curve_style_template.setEnabled(False)
             self._refresh_style_extension_panel()
             return
@@ -3263,12 +3399,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._record_figure_state_changes(changed_keys)
         if not payload and extra_options is None:
             return
-        preserve_partial_legend_anchor_draft = self._preserve_partial_legend_anchor_draft
-        self._preserve_partial_legend_anchor_draft = extra_options is not None
-        try:
-            self._apply_plot_style_payload(payload, source="extension")
-        finally:
-            self._preserve_partial_legend_anchor_draft = preserve_partial_legend_anchor_draft
+        self._apply_plot_style_payload(payload, source="extension")
 
     def _save_curve_style_template_named(self, name: str) -> bool:
         style = self._current_curve_style()
@@ -3345,6 +3476,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
 
     def _plot_style_extra_options_from_controls(self) -> Dict[str, Any]:
         extras: Dict[str, Any] = {}
+        default_curve_style_names = list(self._plot_style_extras.get("default_curve_style_names", []) or [])
+        if default_curve_style_names:
+            extras["default_curve_style_names"] = copy.deepcopy(default_curve_style_names)
 
         tick_defaults = {
             "bottom": True,
@@ -3373,39 +3507,39 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         tick_direction = self._tick_direction_combo.currentText().strip()
         if tick_direction and tick_direction != "默认":
             tick_params["direction"] = tick_direction
-        tick_label_size = _safe_int(self._tick_label_size_edit.text())
+        tick_label_size = _safe_int(self._tick_label_size_spin.value())
         if tick_label_size is not None and tick_label_size > 0:
             tick_params["labelsize"] = tick_label_size
-        tick_length = _safe_float(self._tick_length_edit.text())
+        tick_length = _safe_float(self._tick_length_spin.value())
         if tick_length is not None and tick_length >= 0:
             tick_params["length"] = tick_length
-        tick_width = _safe_float(self._tick_width_edit.text())
+        tick_width = _safe_float(self._tick_width_spin.value())
         if tick_width is not None and tick_width >= 0:
             tick_params["width"] = tick_width
         if tick_params:
             extras["tick_params"] = tick_params
 
         legend_kwargs: Dict[str, Any] = {}
+        if not self._legend_visible_cb.isChecked():
+            legend_kwargs["_no_legend"] = True
         if not self._legend_frame_cb.isChecked():
             legend_kwargs["frameon"] = False
         legend_frame_alpha = self._alpha_from_slider_value(self._legend_frame_alpha_slider.value())
         if abs(legend_frame_alpha - _LEGEND_ALPHA_DEFAULT) > 1e-6:
             legend_kwargs["edgealpha"] = legend_frame_alpha
-        legend_edge_color = _safe_color(self._legend_edge_color_edit.text())
-        if legend_edge_color:
-            legend_kwargs["edgecolor"] = legend_edge_color
-        legend_face_color = _safe_color(self._legend_face_color_edit.text())
-        if legend_face_color:
-            legend_kwargs["facecolor"] = legend_face_color
+        if self._legend_edge_color_cb.isChecked():
+            legend_kwargs["edgecolor"] = self._legend_edge_color_btn.color.name(QColor.NameFormat.HexRgb)
+        if self._legend_face_color_cb.isChecked():
+            legend_kwargs["facecolor"] = self._legend_face_color_btn.color.name(QColor.NameFormat.HexRgb)
         legend_face_alpha = self._alpha_from_slider_value(self._legend_face_alpha_slider.value())
         if abs(legend_face_alpha - _LEGEND_ALPHA_DEFAULT) > 1e-6:
             legend_kwargs["facealpha"] = legend_face_alpha
-        legend_anchor_x = _safe_float(self._legend_anchor_x_edit.text().strip() or self._legend_anchor_x_draft)
-        legend_anchor_y = _safe_float(self._legend_anchor_y_edit.text().strip() or self._legend_anchor_y_draft)
+        legend_anchor_x = _safe_float(self._legend_anchor_x_spin.value())
+        legend_anchor_y = _safe_float(self._legend_anchor_y_spin.value())
         if legend_anchor_x is not None and legend_anchor_y is not None:
-            legend_kwargs["bbox_to_anchor"] = [legend_anchor_x, legend_anchor_y]
+            legend_kwargs["bbox_to_anchor"] = [legend_anchor_x / 100.0, legend_anchor_y / 100.0]
         if legend_kwargs:
-            if self._legend_frame_cb.isChecked() and any(key in legend_kwargs for key in {"framealpha", "edgecolor", "facecolor"}):
+            if self._legend_frame_cb.isChecked() and any(key in legend_kwargs for key in {"edgealpha", "facealpha", "edgecolor", "facecolor"}):
                 legend_kwargs.setdefault("frameon", True)
             extras["legend_kwargs"] = legend_kwargs
 
@@ -3421,13 +3555,12 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         if spine_visibility:
             extras["spine_visibility"] = spine_visibility
 
-        spine_width = _safe_float(self._spine_width_edit.text())
+        spine_width = _safe_float(self._spine_width_spin.value())
         if spine_width is not None and spine_width >= 0:
             extras["spine_width"] = spine_width
 
-        canvas_color = _safe_color(self._canvas_color_edit.text())
-        if canvas_color:
-            extras["figure_facecolor"] = canvas_color
+        if self._canvas_color_cb.isChecked():
+            extras["figure_facecolor"] = self._canvas_color_edit.color.name(QColor.NameFormat.HexRgb)
         canvas_alpha = self._alpha_from_slider_value(self._canvas_alpha_slider.value())
         if abs(canvas_alpha - _CANVAS_ALPHA_DEFAULT) > 1e-6:
             extras["figure_facealpha"] = canvas_alpha
@@ -3464,9 +3597,12 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._tick_direction_combo.setCurrentIndex(direction_index if direction_index >= 0 else 0)
         self._tick_direction_combo.blockSignals(False)
 
-        _set_line_edit_text(self._tick_label_size_edit, tick_params.get("labelsize"), allow_blank=True)
-        _set_line_edit_text(self._tick_length_edit, tick_params.get("length"), allow_blank=True)
-        _set_line_edit_text(self._tick_width_edit, tick_params.get("width"), allow_blank=True)
+        self._tick_label_size_spin.setMaximumWidth(80)
+        self._tick_label_size_spin.setValue(tick_params.get("labelsize", 10))
+        self._tick_length_spin.setValue(tick_params.get("length", 0.0))
+        self._tick_length_spin.setMaximumWidth(80)
+        self._tick_width_spin.setValue(tick_params.get("width", 0.0))
+        self._tick_width_spin.setMaximumWidth(80)
         legend_frame_alpha = _safe_float(legend_kwargs.get("edgealpha"))
         if legend_frame_alpha is None:
             legend_frame_alpha = _safe_float(legend_kwargs.get("framealpha"))
@@ -3476,8 +3612,22 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             legend_frame_alpha,
             default_alpha=_LEGEND_ALPHA_DEFAULT,
         )
-        _set_line_edit_text(self._legend_edge_color_edit, legend_kwargs.get("edgecolor"), allow_blank=True)
-        _set_line_edit_text(self._legend_face_color_edit, legend_kwargs.get("facecolor"), allow_blank=True)
+        edge_color = legend_kwargs.get("edgecolor")
+        self._legend_edge_color_cb.blockSignals(True)
+        self._legend_edge_color_cb.setChecked(bool(edge_color))
+        self._legend_edge_color_cb.blockSignals(False)
+        if edge_color:
+            self._legend_edge_color_btn.blockSignals(True)
+            self._legend_edge_color_btn.setColor(QColor(edge_color))
+            self._legend_edge_color_btn.blockSignals(False)
+        face_color = legend_kwargs.get("facecolor")
+        self._legend_face_color_cb.blockSignals(True)
+        self._legend_face_color_cb.setChecked(bool(face_color))
+        self._legend_face_color_cb.blockSignals(False)
+        if face_color:
+            self._legend_face_color_btn.blockSignals(True)
+            self._legend_face_color_btn.setColor(QColor(face_color))
+            self._legend_face_color_btn.blockSignals(False)
         legend_face_alpha = _safe_float(legend_kwargs.get("facealpha"))
         if legend_face_alpha is None:
             legend_face_alpha = _safe_float(legend_kwargs.get("framealpha"))
@@ -3489,25 +3639,29 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         )
         legend_anchor = legend_kwargs.get("bbox_to_anchor")
         if isinstance(legend_anchor, (list, tuple)) and len(legend_anchor) >= 2:
-            _set_line_edit_text(self._legend_anchor_x_edit, legend_anchor[0], allow_blank=True)
-            _set_line_edit_text(self._legend_anchor_y_edit, legend_anchor[1], allow_blank=True)
-            self._legend_anchor_x_draft = self._legend_anchor_x_edit.text().strip()
-            self._legend_anchor_y_draft = self._legend_anchor_y_edit.text().strip()
+            self._legend_anchor_x_spin.blockSignals(True)
+            self._legend_anchor_x_spin.setValue(max(0.0, min(100.0, float(legend_anchor[0]) * 100.0)))
+            self._legend_anchor_x_spin.blockSignals(False)
+            self._legend_anchor_y_spin.blockSignals(True)
+            self._legend_anchor_y_spin.setValue(max(0.0, min(100.0, float(legend_anchor[1]) * 100.0)))
+            self._legend_anchor_y_spin.blockSignals(False)
         else:
-            preserve_partial_anchor = bool(
-                self._preserve_partial_legend_anchor_draft
-                and (self._legend_anchor_x_edit.text().strip() or self._legend_anchor_y_edit.text().strip())
-            )
-            _set_line_edit_text(self._legend_anchor_x_edit, None, allow_blank=True)
-            _set_line_edit_text(self._legend_anchor_y_edit, None, allow_blank=True)
-            if not preserve_partial_anchor:
-                self._legend_anchor_x_draft = ""
-                self._legend_anchor_y_draft = ""
-        _set_line_edit_text(
-            self._canvas_color_edit,
-            self._plot_style_extras.get("figure_facecolor") or self._plot_style_extras.get("axes_facecolor"),
-            allow_blank=True,
-        )
+            self._legend_anchor_x_spin.blockSignals(True)
+            self._legend_anchor_x_spin.setValue(0.0)
+            self._legend_anchor_x_spin.blockSignals(False)
+            self._legend_anchor_y_spin.blockSignals(True)
+            self._legend_anchor_y_spin.setValue(0.0)
+            self._legend_anchor_y_spin.blockSignals(False)
+        canvas_color_str = self._plot_style_extras.get("figure_facecolor") or self._plot_style_extras.get("axes_facecolor")
+        self._canvas_color_cb.blockSignals(True)
+        self._canvas_color_cb.setChecked(bool(canvas_color_str))
+        self._canvas_color_cb.blockSignals(False)
+        if canvas_color_str:
+            canvas_qcolor = QColor(canvas_color_str)
+            if canvas_qcolor.isValid():
+                self._canvas_color_edit.blockSignals(True)
+                self._canvas_color_edit.setColor(canvas_qcolor)
+                self._canvas_color_edit.blockSignals(False)
         canvas_alpha = _safe_float(self._plot_style_extras.get("figure_facealpha"))
         if canvas_alpha is None:
             canvas_alpha = _safe_float(self._plot_style_extras.get("axes_facealpha"))
@@ -3517,12 +3671,14 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             canvas_alpha,
             default_alpha=_CANVAS_ALPHA_DEFAULT,
         )
-        _set_line_edit_text(self._spine_width_edit, self._plot_style_extras.get("spine_width"), allow_blank=True)
+        self._spine_width_spin.setValue(self._plot_style_extras.get("spine_width", 0.0))
+        self._update_default_curve_style_button()
 
     def _apply_figure_state(self, state: FigureState, *, apply_extra_controls: bool = True) -> None:
         self._figure_state = state
         self._refresh_template_combo()
 
+        _set_line_edit_text(self._chart_title_edit, state.title)
         _set_line_edit_text(self._x_label_edit, state.x_label)
         _set_line_edit_text(self._y_label_edit, state.y_label)
         _set_line_edit_text(self._x_min_edit, state.x_min, allow_blank=True)
@@ -3530,20 +3686,21 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         _set_line_edit_text(self._y_min_edit, state.y_min, allow_blank=True)
         _set_line_edit_text(self._y_max_edit, state.y_max, allow_blank=True)
         self._refresh_font_family_combo(state.font_family)
-        _set_line_edit_text(self._font_size_edit, state.font_size)
-        _set_line_edit_text(self._legend_font_size_edit, state.legend_font_size)
-        _set_line_edit_text(self._figure_width_edit, state.figure_width)
-        _set_line_edit_text(self._figure_height_edit, state.figure_height)
-        _set_line_edit_text(self._dpi_edit, state.dpi)
-        _set_line_edit_text(self._plot_line_width_edit, state.line_width)
-        _set_line_edit_text(self._plot_marker_size_edit, state.marker_size)
+        self._font_size_spin.setMaximumWidth(80)
+        self._font_size_spin.setValue(state.font_size)
+        self._legend_font_size_spin.setMaximumWidth(80)
+        self._legend_font_size_spin.setValue(state.legend_font_size)
+        self._figure_width_spin.setValue(state.figure_width)
+        self._figure_height_spin.setValue(state.figure_height)
+        self._dpi_spin.setMaximumWidth(80)
+        self._dpi_spin.setValue(state.dpi)
         self._set_alpha_slider_value(
             self._grid_alpha_slider,
             self._grid_alpha_value_label,
             state.grid_alpha,
             default_alpha=_GRID_ALPHA_DEFAULT,
         )
-        _set_line_edit_text(self._grid_line_width_edit, state.grid_line_width)
+        self._grid_line_width_spin.setValue(state.grid_line_width)
 
         self._errbar_cb.blockSignals(True)
         self._errbar_cb.setChecked(state.show_errbar)
@@ -3566,7 +3723,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             self._apply_plot_style_extra_controls()
         theme = global_assets.get_plot_theme(state.theme)
         self._current_plot_theme_id = theme.id if theme is not None else None
-        self._theme_hint_label.setText(_THEME_HINTS.get(state.theme, ""))
         self._update_template_summary()
         self._sync_canvas_display_geometry(state)
 
@@ -3678,11 +3834,12 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     def _sync_state_from_controls(self) -> FigureState:
         self._figure_state = FigureState(
             theme=self._figure_state.theme or "默认",
+            title=self._chart_title_edit.text().strip(),
             x_label=self._x_label_edit.text().strip() or "X",
             y_label=self._y_label_edit.text().strip() or "Y",
-            figure_width=max(0.1, _safe_float_or(self._figure_width_edit.text(), self._figure_state.figure_width)),
-            figure_height=max(0.1, _safe_float_or(self._figure_height_edit.text(), self._figure_state.figure_height)),
-            dpi=max(1, _safe_int_or(self._dpi_edit.text(), self._figure_state.dpi)),
+            figure_width=max(0.1, _safe_float_or(self._figure_width_spin.value(), self._figure_state.figure_width)),
+            figure_height=max(0.1, _safe_float_or(self._figure_height_spin.value(), self._figure_state.figure_height)),
+            dpi=max(1, _safe_int_or(self._dpi_spin.value(), self._figure_state.dpi)),
             show_errbar=self._errbar_cb.isChecked(),
             x_min=_safe_float(self._x_min_edit.text()),
             x_max=_safe_float(self._x_max_edit.text()),
@@ -3692,13 +3849,13 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             y_log=self._y_log_cb.isChecked(),
             grid=self._grid_cb.isChecked(),
             grid_alpha=self._alpha_from_slider_value(self._grid_alpha_slider.value()),
-            grid_line_width=max(0.0, _safe_float_or(self._grid_line_width_edit.text(), self._figure_state.grid_line_width)),
+            grid_line_width=max(0.0, _safe_float_or(self._grid_line_width_spin.value(), self._figure_state.grid_line_width)),
             legend_pos=self._legend_pos_combo.currentText() or self._figure_state.legend_pos,
-            font_size=max(1, _safe_int_or(self._font_size_edit.text(), self._figure_state.font_size)),
+            font_size=max(1, _safe_int_or(self._font_size_spin.value(), self._figure_state.font_size)),
             font_family="" if self._font_family_combo.currentText() == "默认" else self._font_family_combo.currentText().strip(),
-            legend_font_size=max(1, _safe_int_or(self._legend_font_size_edit.text(), self._figure_state.legend_font_size)),
-            line_width=max(0.1, _safe_float_or(self._plot_line_width_edit.text(), self._figure_state.line_width)),
-            marker_size=max(0.1, _safe_float_or(self._plot_marker_size_edit.text(), self._figure_state.marker_size)),
+            legend_font_size=max(1, _safe_int_or(self._legend_font_size_spin.value(), self._figure_state.legend_font_size)),
+            line_width=self._figure_state.line_width,
+            marker_size=self._figure_state.marker_size,
         )
         return self._figure_state
 
@@ -3719,7 +3876,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             extra_options=extra_options,
             changed_extra_paths=changed_extra_paths,
         )
-        self._theme_hint_label.setText(_THEME_HINTS.get(self._figure_state.theme, ""))
         self._redraw()
 
     def _selected_curve(self) -> Optional[dict]:
@@ -4008,13 +4164,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._view_state.last_render_mode = mode
         self._view_state.last_render_total_points = total_points
         self._view_state.last_render_elapsed_ms = max(0.0, float(elapsed_ms or 0.0))
-        if hasattr(self, "_render_hint_label") and self._render_hint_label is not None:
-            if mode == "preview":
-                text = f"最近渲染：预览 · {reason} · {total_points:,} 点"
-            else:
-                text = f"最近渲染：完整 · {reason} · {total_points:,} 点 · {self._view_state.last_render_elapsed_ms:.1f} ms"
-            self._render_hint_label.setText(text)
-            self._render_hint_label.show()
 
     def render_diagnostics(self) -> Dict[str, Any]:
         return {
@@ -4097,7 +4246,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             text_obj.set_color(color)
 
     def _apply_axis_text_style(self, axis, state: FigureState, fg: str) -> None:
-        axis.tick_params(colors=fg, labelcolor=fg, labelsize=state.font_size)
+        axis.tick_params(colors=fg, labelcolor=fg)
         self._apply_text_style(axis.xaxis.label, font_family=state.font_family, font_size=state.font_size, color=fg)
         self._apply_text_style(axis.yaxis.label, font_family=state.font_family, font_size=state.font_size, color=fg)
         self._apply_text_style(axis.title, font_family=state.font_family, font_size=state.font_size, color=fg)
@@ -4197,7 +4346,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         )
         extension_style_layers: List[Dict[str, Any]] = []
 
-        for applied in list(self._applied_plot_extensions):
+        for applied in reversed(list(self._applied_plot_extensions)):
             type_id = str(applied.get("type") or "")
             extension = extension_registry.get_plot(type_id)
             if extension is None:
@@ -4229,6 +4378,27 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         effective_state_payload = self._effective_plot_figure_state_payload(manual_state_payload, extension_style_layers)
         effective_plot_style_extras = self._effective_plot_style_extras(manual_plot_style_extras, extension_style_layers)
         effective_curve_style_payloads = self._effective_curve_style_payloads(base_curve_style_payloads, extension_style_layers)
+
+        # 应用默认曲线样式（从绘图样式中加载的模板）
+        default_style_names = effective_plot_style_extras.get("default_curve_style_names", []) or []
+        if default_style_names:
+            visible_series_ids = sorted(effective_curve_style_payloads.keys())
+            all_templates = global_assets.list_curve_style_templates(include_builtin=True)
+            name_to_tpl = {t.name: t for t in all_templates}
+            for idx, curve_id in enumerate(visible_series_ids):
+                tpl_idx = idx % len(default_style_names)
+                tpl = name_to_tpl.get(default_style_names[tpl_idx])
+                if tpl is not None and tpl.style is not None:
+                    style = tpl.style
+                    payload = effective_curve_style_payloads.setdefault(curve_id, {})
+                    patch = {}
+                    for key in ("color", "linestyle", "marker", "linewidth", "marker_size", "alpha", "markevery", "dash_scale", "visible"):
+                        value = getattr(style, key, None)
+                        if value is not None:
+                            patch[key] = copy.deepcopy(value)
+                    if patch:
+                        payload.update(patch)
+
         state = FigureState(**effective_state_payload)
         self._sync_canvas_display_geometry(state)
         bg, fg, grid_color = self._theme_palette_for_state(state)
@@ -4381,11 +4551,14 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             legend_anchor = legend_kwargs.get("bbox_to_anchor")
             if isinstance(legend_anchor, (list, tuple)) and len(legend_anchor) >= 2:
                 legend_kwargs["bbox_to_anchor"] = (float(legend_anchor[0]), float(legend_anchor[1]))
-            legend = axis.legend(
-                **legend_kwargs,
-            )
+            if not legend_kwargs.get("_no_legend"):
+                legend = axis.legend(
+                    **legend_kwargs,
+                )
 
         if axis is not None and not plot_context.skip_default_formatting:
+            if state.title:
+                axis.set_title(state.title)
             axis.set_xlabel(state.x_label or "X")
             axis.set_ylabel(state.y_label or "Y")
             x_min = state.x_min
@@ -4421,6 +4594,9 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             tick_params = dict(effective_plot_style_extras.get("tick_params", {}) or {})
             if tick_params:
                 axis.tick_params(**tick_params)
+            tick_label_size = max(1, _safe_int_or(tick_params.get("labelsize"), state.font_size))
+            for tick_label in [*axis.get_xticklabels(), *axis.get_yticklabels()]:
+                self._apply_text_style(tick_label, font_family=state.font_family, font_size=tick_label_size, color=fg)
             if legend is not None:
                 legend_frame = legend.get_frame()
                 if legend_edge_alpha is not None or legend_face_alpha is not None:
@@ -4435,7 +4611,7 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
                     self._apply_text_style(text, font_family=state.font_family, font_size=state.legend_font_size, color=fg)
                 self._apply_text_style(legend.get_title(), font_family=state.font_family, font_size=state.legend_font_size, color=fg)
 
-        for applied in list(self._applied_plot_extensions):
+        for applied in reversed(list(self._applied_plot_extensions)):
             type_id = str(applied.get("type") or "")
             extension = extension_registry.get_plot(type_id)
             if extension is None:
@@ -4485,12 +4661,12 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._style_color_btn.setEnabled(enabled)
         self._style_reset_color_btn.setEnabled(enabled)
         self._style_line_combo.setEnabled(enabled)
-        self._style_line_width_edit.setEnabled(enabled)
+        self._style_marker_combo.setEnabled(enabled)
+        self._style_line_width_spin.setEnabled(enabled)
         self._style_opacity_slider.setEnabled(enabled)
-        self._style_dash_scale_edit.setEnabled(enabled)
-        self._style_marker_size_edit.setEnabled(enabled)
-        self._style_density_edit.setEnabled(enabled)
-        self._style_visible_cb.setEnabled(enabled)
+        self._style_dash_scale_spin.setEnabled(enabled)
+        self._style_marker_size_spin.setEnabled(enabled)
+        self._style_density_spin.setEnabled(enabled)
         self._btn_load_curve_style_template.setEnabled(enabled)
         self._btn_save_curve_style_template.setEnabled(enabled)
         if enabled and curve:
@@ -4502,51 +4678,64 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             if style is None:
                 return
             self._update_color_btn(style.color or curve.get("color") or "#888888")
+
+            linestyle = style.linestyle or "-"
             try:
-                idx = next(
-                    index for index, (line_style, marker_style) in enumerate(zip(_STYLE_LINESTYLES, _STYLE_MARKERS))
-                    if line_style == style.linestyle and marker_style == style.marker
-                )
-            except StopIteration:
-                idx = 0
+                line_idx = _LINE_STYLE_VALUES.index(linestyle)
+            except (ValueError, IndexError):
+                line_idx = 0
             self._style_line_combo.blockSignals(True)
-            self._style_line_combo.setCurrentIndex(idx)
+            self._style_line_combo.setCurrentIndex(line_idx)
             self._style_line_combo.blockSignals(False)
-            self._style_line_width_edit.blockSignals(True)
-            self._style_line_width_edit.setText(f"{style.linewidth:g}")
-            self._style_line_width_edit.blockSignals(False)
+
+            marker = style.marker or ""
+            try:
+                marker_idx = _MARKER_VALUES.index(marker)
+            except (ValueError, IndexError):
+                marker_idx = 0
+            self._style_marker_combo.blockSignals(True)
+            self._style_marker_combo.setCurrentIndex(marker_idx)
+            self._style_marker_combo.blockSignals(False)
+            self._style_line_width_spin.blockSignals(True)
+            self._style_line_width_spin.setValue(style.linewidth)
+            self._style_line_width_spin.setMaximumWidth(80)
+            self._style_line_width_spin.blockSignals(False)
             self._style_opacity_slider.blockSignals(True)
             self._style_opacity_slider.setValue(self._alpha_slider_value(style.alpha))
             self._style_opacity_slider.blockSignals(False)
             self._update_style_opacity_value_label(self._style_opacity_slider.value())
-            self._style_dash_scale_edit.blockSignals(True)
-            self._style_dash_scale_edit.setText(f"{style.dash_scale:g}")
-            self._style_dash_scale_edit.blockSignals(False)
-            self._style_marker_size_edit.blockSignals(True)
-            self._style_marker_size_edit.setText(f"{style.marker_size:g}")
-            self._style_marker_size_edit.blockSignals(False)
-            self._style_density_edit.blockSignals(True)
-            self._style_density_edit.setText(str(style.markevery))
-            self._style_density_edit.blockSignals(False)
-            self._style_visible_cb.blockSignals(True)
-            self._style_visible_cb.setChecked(bool(style.visible))
-            self._style_visible_cb.blockSignals(False)
+            self._style_dash_scale_spin.blockSignals(True)
+            self._style_dash_scale_spin.setValue(style.dash_scale)
+            self._style_dash_scale_spin.setMaximumWidth(80)
+            self._style_dash_scale_spin.blockSignals(False)
+            self._style_marker_size_spin.blockSignals(True)
+            self._style_marker_size_spin.setValue(style.marker_size)
+            self._style_marker_size_spin.setMaximumWidth(80)
+            self._style_marker_size_spin.blockSignals(False)
+            self._style_density_spin.blockSignals(True)
+            self._style_density_spin.setValue(style.markevery)
+            self._style_density_spin.setMaximumWidth(80)
+            self._style_density_spin.blockSignals(False)
         else:
             self._style_target = None
             self._style_target_label.setText("当前选中：未选中")
             self._style_target_label.setToolTip("")
             self._update_color_btn("#888888")
-            self._style_line_width_edit.clear()
+            self._style_line_width_spin.setValue(1.4)
+            self._style_line_width_spin.setMaximumWidth(80)
             self._style_opacity_slider.blockSignals(True)
             self._style_opacity_slider.setValue(self._alpha_slider_value(1.0))
             self._style_opacity_slider.blockSignals(False)
             self._update_style_opacity_value_label(self._style_opacity_slider.value())
-            self._style_dash_scale_edit.clear()
-            self._style_marker_size_edit.clear()
-            self._style_density_edit.clear()
-            self._style_visible_cb.blockSignals(True)
-            self._style_visible_cb.setChecked(False)
-            self._style_visible_cb.blockSignals(False)
+            self._style_dash_scale_spin.setValue(1.0)
+            self._style_dash_scale_spin.setMaximumWidth(80)
+            self._style_marker_size_spin.setValue(5.0)
+            self._style_marker_size_spin.setMaximumWidth(80)
+            self._style_density_spin.setValue(1)
+            self._style_density_spin.setMaximumWidth(80)
+            self._style_marker_combo.blockSignals(True)
+            self._style_marker_combo.setCurrentIndex(0)
+            self._style_marker_combo.blockSignals(False)
 
     def _on_style_opacity_changed(self, value: int) -> None:
         self._update_style_opacity_value_label(value)
@@ -4585,29 +4774,31 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
             return
         self._apply_base_curve_style_options(
             {
-                "linestyle": _STYLE_LINESTYLES[idx],
-                "marker": _STYLE_MARKERS[idx],
+                "linestyle": _LINE_STYLE_VALUES[idx],
             }
         )
         self._redraw()
 
-    def _on_style_visibility_changed(self, _state: int) -> None:
+    def _on_style_marker_changed(self, idx: int) -> None:
         if not self._style_target:
             return
-        self._apply_base_curve_style_options({"visible": bool(self._style_visible_cb.isChecked())})
+        self._apply_base_curve_style_options(
+            {
+                "marker": _MARKER_VALUES[idx],
+            }
+        )
         self._redraw()
 
     def _on_style_metrics_changed(self) -> None:
         if not self._style_target:
             return
-        density = max(1, _safe_int_or(self._style_density_edit.text(), 1))
         self._apply_base_curve_style_options(
             {
-                "linewidth": max(0.1, _safe_float_or(self._style_line_width_edit.text(), self._figure_state.line_width)),
+                "linewidth": self._style_line_width_spin.value(),
                 "alpha": self._alpha_from_slider_value(self._style_opacity_slider.value()),
-                "marker_size": max(0.1, _safe_float_or(self._style_marker_size_edit.text(), self._figure_state.marker_size)),
-                "markevery": density,
-                "dash_scale": max(0.1, _safe_float_or(self._style_dash_scale_edit.text(), 1.0)),
+                "marker_size": self._style_marker_size_spin.value(),
+                "markevery": self._style_density_spin.value(),
+                "dash_scale": self._style_dash_scale_spin.value(),
             }
         )
         self._redraw()

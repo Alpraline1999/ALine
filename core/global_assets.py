@@ -26,10 +26,8 @@ from models.schemas import (
     AIAgent,
     AIPrompt,
     AISkill,
-    CurveStyle,
     CurveStyleTemplate,
     FigureConfig,
-    FigureState,
     PlotTheme,
     ReportTemplate,
     SavedPipeline,
@@ -39,7 +37,6 @@ from core.report_templates import DEFAULT_REPORT_TEMPLATE
 
 _GLOBAL_ASSET_VERSION = "1"
 _BUILTIN_DEFAULT_REPORT_TEMPLATE_ID = "builtin:default-report-template"
-_BUILTIN_DEFAULT_CURVE_STYLE_TEMPLATE_ID = "builtin:default-curve-style-template"
 _DEFAULT_EXTENSION_CONFIG_NAME = "默认配置"
 _KNOWN_TEST_REPORT_TEMPLATE_SIGNATURES = {
     ("tmpl1", "# Hello"),
@@ -63,47 +60,6 @@ def _default_asset_path() -> Path:
     return Path.home() / ".config" / "aline" / "global_assets.json"
 
 
-def _builtin_plot_themes() -> List[PlotTheme]:
-    return [
-        PlotTheme(
-            id="builtin:academic",
-            name="紧凑学术",
-            description="紧凑、克制，适合论文主图与小图幅排版。细线条、小标记。",
-            canvas_mode="light",
-            grid_color="#d9d9d9",
-            foreground_color="#222222",
-            background_color="#ffffff",
-            state=FigureState(theme="紧凑学术", grid=True, grid_alpha=0.5, grid_line_width=0.5,
-                              font_size=9, legend_font_size=8, line_width=1.4, marker_size=4.2),
-            is_builtin=True,
-        ),
-        PlotTheme(
-            id="builtin:vibrant",
-            name="明快配色",
-            description="高饱和度配色方案，适合演示汇报与数据探索。",
-            canvas_mode="light",
-            grid_color="#e0e0e0",
-            foreground_color="#333333",
-            background_color="#fafafa",
-            state=FigureState(theme="明快配色", grid=True, grid_alpha=0.4, grid_line_width=0.5,
-                              font_size=10, legend_font_size=8, line_width=1.6, marker_size=5.0),
-            is_builtin=True,
-        ),
-        PlotTheme(
-            id="builtin:bw",
-            name="简洁黑白",
-            description="黑白输出，适合打印和审稿。",
-            canvas_mode="light",
-            grid_color="#cfcfcf",
-            foreground_color="#000000",
-            background_color="#ffffff",
-            state=FigureState(theme="简洁黑白", grid=True, grid_alpha=0.45, grid_line_width=0.55,
-                              font_size=10, legend_font_size=8, line_width=1.5, marker_size=4.4),
-            is_builtin=True,
-        ),
-    ]
-
-
 def _builtin_report_templates() -> List[ReportTemplate]:
     return [
         ReportTemplate(
@@ -113,20 +69,6 @@ def _builtin_report_templates() -> List[ReportTemplate]:
             is_builtin=True,
         )
     ]
-
-
-def _builtin_curve_style_templates() -> List[CurveStyleTemplate]:
-    return [
-        CurveStyleTemplate(
-            id=_BUILTIN_DEFAULT_CURVE_STYLE_TEMPLATE_ID,
-            name="默认样式",
-            description="跟随当前曲线自身颜色与常规线型的默认样式。",
-            style=CurveStyle(),
-            is_builtin=True,
-        )
-    ]
-
-
 def _normalized_report_template_key(template: ReportTemplate) -> tuple[str, str, bool]:
     return (
         (template.name or "").strip(),
@@ -449,10 +391,8 @@ class GlobalAssetManager:
         return True
 
     def list_curve_style_templates(self, include_builtin: bool = True) -> List[CurveStyleTemplate]:
-        user_templates = list(self.data.curve_style_templates)
-        if not include_builtin:
-            return user_templates
-        return _builtin_curve_style_templates() + user_templates
+        del include_builtin
+        return list(self.data.curve_style_templates)
 
     def get_curve_style_template(self, template_id: str) -> Optional[CurveStyleTemplate]:
         for item in self.list_curve_style_templates(include_builtin=True):
@@ -482,19 +422,15 @@ class GlobalAssetManager:
 
     def delete_curve_style_template(self, template_id: str) -> bool:
         before = len(self.data.curve_style_templates)
-        self.data.curve_style_templates = [
-            item for item in self.data.curve_style_templates if item.id != template_id or item.is_builtin
-        ]
+        self.data.curve_style_templates = [item for item in self.data.curve_style_templates if item.id != template_id]
         if len(self.data.curve_style_templates) == before:
             return False
         self.save()
         return True
 
     def list_plot_themes(self, include_builtin: bool = True) -> List[PlotTheme]:
-        user_themes = list(self.data.plot_themes)
-        if not include_builtin:
-            return user_themes
-        return _builtin_plot_themes() + user_themes
+        del include_builtin
+        return list(self.data.plot_themes)
 
     def list_extension_configs(
         self,
@@ -695,7 +631,7 @@ class GlobalAssetManager:
             return None
 
     def get_plot_theme(self, theme_key: str) -> Optional[PlotTheme]:
-        for item in self.list_plot_themes(include_builtin=True):
+        for item in self.list_plot_themes(include_builtin=False):
             if item.id == theme_key or item.name == theme_key:
                 return item
         return None

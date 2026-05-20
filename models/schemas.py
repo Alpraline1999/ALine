@@ -197,6 +197,7 @@ class FigureState(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     theme: str = "默认"
+    title: str = ""
     x_label: str = "X"
     y_label: str = "Y"
     figure_width: float = 7.0
