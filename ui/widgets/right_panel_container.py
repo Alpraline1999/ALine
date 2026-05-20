@@ -76,3 +76,7 @@ class RightPanelContainer(QWidget):
     def set_status_context(self, *args: Any, **kwargs: Any) -> None:
         """委托给扩展面板（兼容 ExtensionPanelShellMixin）"""
         self.extension_panel.set_status_context(*args, **kwargs)
+
+    def set_entries(self, *args: Any, **kwargs: Any) -> None:
+        """委托给扩展面板"""
+        self.extension_panel.set_entries(*args, **kwargs)

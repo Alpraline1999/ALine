@@ -236,6 +236,7 @@ class SettingsPage(QWidget):
 
         tabs.addTab(build_general_tab(self), "常规")
         tabs.addTab(build_extensions_tab(self), "扩展")
+        tabs.addTab(build_ai_tab(self), "AI")
         tabs.addTab(build_shortcuts_tab(self), "快捷键")
 
         root_layout = QVBoxLayout(self)
