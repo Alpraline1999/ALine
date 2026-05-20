@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel
 from PySide6.QtWidgets import (
+    QCompleter,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -269,8 +270,17 @@ class AIAssistantPanel(QWidget):
         self._input_edit = SearchLineEdit(input_widget)
         self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
         self._input_edit.setFixedHeight(36)
-        self._input_edit.textChanged.connect(self._on_input_changed)
         self._input_edit.setClearButtonEnabled(True)
+
+        # 命令自动补全
+        from ui.widgets.ai_command_handler import get_command_list
+        self._cmd_completer = QCompleter(get_command_list(), self._input_edit)
+        self._cmd_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._cmd_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self._cmd_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self._input_edit.setCompleter(self._cmd_completer)
+        self._input_edit.textChanged.connect(self._on_input_changed)
+
         input_layout.addWidget(self._input_edit, 1)
 
         self._send_btn = PrimaryPushButton("发送", input_widget)
@@ -351,15 +361,12 @@ class AIAssistantPanel(QWidget):
     # ── 消息 ──
 
     def _on_input_changed(self, text: str) -> None:
-        """输入变化时检测命令，显示自动补全菜单。"""
-        from ui.widgets.ai_command_handler import get_command_suggestions
-
+        """输入 / 时弹出命令补全菜单。"""
         if text.startswith("/"):
-            suggestions = get_command_suggestions(text)
-            if suggestions:
-                self._input_edit.setPlaceholderText(f"建议: {suggestions[0]}")
-                return
-        self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
+            self._cmd_completer.setCompletionPrefix(text)
+            self._cmd_completer.complete()
+        else:
+            self._cmd_completer.popup().hide()
 
     def _send_message(self) -> None:
         text = self._input_edit.text().strip()

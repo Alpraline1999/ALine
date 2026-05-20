@@ -32,6 +32,16 @@ def register_command(
     return decorator
 
 
+def get_command_list() -> List[str]:
+    """返回所有命令的 / 前缀列表（用于 QCompleter）。"""
+    result = []
+    for cmd_name, cmd_info in _COMMANDS.items():
+        result.append(f"/{cmd_name}  — {cmd_info['description']}")
+        for alias in cmd_info.get("aliases", []):
+            result.append(f"/{alias}")
+    return result
+
+
 def get_command_suggestions(prefix: str) -> List[str]:
     """返回匹配前缀的命令提示列表（用于 SearchLineEdit 自动补全）。"""
     if not prefix.startswith("/"):

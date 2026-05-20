@@ -969,7 +969,7 @@ class SettingsPage(QWidget):
             timeout=self._parse_int(self._ai_timeout_edit.text(), 60, minimum=1),
             temperature=self._parse_float(self._ai_temperature_edit.text(), 0.7, 0.0, 2.0),
             top_p=self._parse_float(self._ai_top_p_edit.text(), 1.0, 0.0, 1.0),
-            max_tokens=self._parse_int(self._ai_max_tokens_edit.text(), 2048, minimum=1),
+            max_tokens=self._parse_int(self._ai_max_tokens_edit.text(), 0, minimum=0),
             system_prompt=self._ai_system_prompt_edit.toPlainText().strip(),
             ollama_keep_alive=self._ai_ollama_keep_alive_edit.text().strip() or "5m",
             ollama_num_ctx=self._parse_int(self._ai_ollama_num_ctx_edit.text(), 4096, minimum=1),

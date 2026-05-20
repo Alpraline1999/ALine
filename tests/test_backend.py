@@ -3113,7 +3113,7 @@ class TestAIClient(unittest.TestCase):
     def test_config_max_tokens_default(self):
         from core.ai_client import AIConfig
         cfg = AIConfig()
-        self.assertEqual(cfg.max_tokens, 8192)
+        self.assertEqual(cfg.max_tokens, 0)
 
     def test_config_temperature_custom(self):
         from core.ai_client import AIConfig

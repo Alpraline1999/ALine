@@ -34,7 +34,7 @@ class AIConfig(BaseModel):
     timeout: int = 60
     temperature: float = 0.7
     top_p: float = 1.0
-    max_tokens: int = 8192
+    max_tokens: int = 0
     show_assistant: bool = True
     system_prompt: str = ""
     ollama_keep_alive: str = "5m"
@@ -179,8 +179,9 @@ class AIClient:
             "messages": request_messages,
             "temperature": self._config.temperature,
             "top_p": self._config.top_p,
-            "max_tokens": self._config.max_tokens,
         }
+        if self._config.max_tokens > 0:
+            payload["max_tokens"] = self._config.max_tokens
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
