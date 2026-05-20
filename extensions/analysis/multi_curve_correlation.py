@@ -21,7 +21,7 @@ def multi_curve_correlation(lines, params):
             continue
         _pair_x, primary_aligned = line_xy(aligned_pair[0])
         _line_x, line_y = line_xy(aligned_pair[1])
-        corr_result = _correlation(primary_aligned, line_y, method)
+        corr_result = _correlation(list(primary_aligned), list(line_y), method)
         if warnings:
             alignment_messages.extend(warnings)
         comparison_items.append({
@@ -94,7 +94,7 @@ def register_extensions(registry):
             lines_number=(2, -1),
             settings=True,
             source_kind="builtin",
-            tool_tier="tool",
+            tool_tier="experimental",
             hidden=True,
             config_fields=[
                 ExtensionConfigField(

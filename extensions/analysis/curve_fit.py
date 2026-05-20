@@ -136,6 +136,7 @@ def _handler(lines, params):
             }
         ]
     result["lines"] = [
+        {"line_name": "原始数据", "line": source_line},
         {"line_name": "拟合曲线", "line": fit_line},
     ]
     # confidence band boundaries
@@ -153,7 +154,7 @@ def _handler(lines, params):
     result["_plot_series"] = [
         {
             "name": "原始数据",
-            "line": source_line,
+            "line": "原始数据",
             "kind": "scatter",
             "color": "#888888",
             "alpha": 0.7,
@@ -183,6 +184,7 @@ def register_extensions(registry) -> None:
             lines_number=(1, 1),
             settings=True,
             source_kind="builtin",
+            tool_tier="tool",
             config_fields=[
                 ExtensionConfigField(
                     key="model",

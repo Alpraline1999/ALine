@@ -1,5 +1,8 @@
 """局部放大绘图扩展 - 在当前图表中生成指定区域的对照放大视图。"""
 
+from matplotlib.lines import Line2D as L2
+from matplotlib.patches import FancyArrowPatch, Rectangle
+
 from core.extension_api import ExtensionConfigField, PlotExtension
 from core.value_parsing import coerce_float
 from extensions.processing.extension_tools import BUILTIN_EXTENSION_VERSION
@@ -22,10 +25,14 @@ def draw_local_zoom(plot_context, params):
     # ── 1. 原图放大范围（选取要放大的数据区域）──
     src_mode = str(params.get("src_mode", "percentage"))
     if src_mode == "coordinate":
-        src_x1 = coerce_float(params.get("src_x1", params.get("coord_x1", x_min + view_w * 0.25)), x_min)
-        src_x2 = coerce_float(params.get("src_x2", params.get("coord_x2", x_max - view_w * 0.25)), x_max)
-        src_y1 = coerce_float(params.get("src_y1", params.get("coord_y1", y_min + view_h * 0.25)), y_min)
-        src_y2 = coerce_float(params.get("src_y2", params.get("coord_y2", y_max - view_h * 0.25)), y_max)
+        raw_src_x1 = coerce_float(params.get("src_x1", params.get("coord_x1", x_min + view_w * 0.25)), x_min)
+        raw_src_x2 = coerce_float(params.get("src_x2", params.get("coord_x2", x_max - view_w * 0.25)), x_max)
+        raw_src_y1 = coerce_float(params.get("src_y1", params.get("coord_y1", y_min + view_h * 0.25)), y_min)
+        raw_src_y2 = coerce_float(params.get("src_y2", params.get("coord_y2", y_max - view_h * 0.25)), y_max)
+        src_x1 = x_min if raw_src_x1 is None else raw_src_x1
+        src_x2 = x_max if raw_src_x2 is None else raw_src_x2
+        src_y1 = y_min if raw_src_y1 is None else raw_src_y1
+        src_y2 = y_max if raw_src_y2 is None else raw_src_y2
     else:
         pct_x1 = float(params.get("src_x1", params.get("pct_x1", 25)))
         pct_x2 = float(params.get("src_x2", params.get("pct_x2", 75)))
@@ -36,16 +43,19 @@ def draw_local_zoom(plot_context, params):
         src_y1 = y_min + view_h * pct_y1 / 100.0
         src_y2 = y_min + view_h * pct_y2 / 100.0
 
-    if src_x1 > src_x2:
-        src_x1, src_x2 = src_x2, src_x1
-    if src_y1 > src_y2:
-        src_y1, src_y2 = src_y2, src_y1
+    src_x1, src_x2 = (src_x2, src_x1) if src_x1 > src_x2 else (src_x1, src_x2)
+    src_y1, src_y2 = (src_y2, src_y1) if src_y1 > src_y2 else (src_y1, src_y2)
 
     # ── 2. 放大图位置（嵌入视图在主图上的锚定区域，全画幅百分比）──
     ins_pct_x1 = float(params.get("inset_pct_x1", 50))
     ins_pct_x2 = float(params.get("inset_pct_x2", 95))
     ins_pct_y1 = float(params.get("inset_pct_y1", 50))
     ins_pct_y2 = float(params.get("inset_pct_y2", 95))
+
+    if ins_pct_x1 > ins_pct_x2:
+        ins_pct_x1, ins_pct_x2 = ins_pct_x2, ins_pct_x1
+    if ins_pct_y1 > ins_pct_y2:
+        ins_pct_y1, ins_pct_y2 = ins_pct_y2, ins_pct_y1
 
     # ── 3. 创建放大嵌入视图 ──
     fig = axis.figure
@@ -100,10 +110,10 @@ def draw_local_zoom(plot_context, params):
     # ── 5. 原图放大区域边框（仅保留用户配置的框）──
     zoom_box_color = str(params.get("zoom_box_color", "#C23B22"))
     zoom_box_style = str(params.get("zoom_box_style", "--"))
-    box_lw = coerce_float(params.get("box_linewidth", 1.2), 1.2)
+    raw_box_lw = coerce_float(params.get("box_linewidth", 1.2), 1.2)
+    box_lw = 1.2 if raw_box_lw is None else raw_box_lw
 
     if zoom_box_style != "none":
-        from matplotlib.patches import Rectangle
         rect = Rectangle(
             (src_x1, src_y1), src_x2 - src_x1, src_y2 - src_y1,
             fill=False, edgecolor=zoom_box_color,
@@ -113,19 +123,25 @@ def draw_local_zoom(plot_context, params):
         axis.add_patch(rect)
 
     # ── 6. 连接线 ──
-    if bool(params.get("show_connector", True)):
+    show_connector = params.get("show_connector", True)
+    if isinstance(show_connector, str):
+        show_connector = show_connector.strip().lower() not in ("false", "0", "no")
+    if bool(show_connector):
         conn_style = str(params.get("connector_style", "--"))
         conn_start = str(params.get("connector_start", "none"))
         conn_end = str(params.get("connector_end", "none"))
-        conn_lw = coerce_float(params.get("connector_linewidth", 0.8), 0.8)
-        arrow_size = coerce_float(
+        raw_conn_lw = coerce_float(params.get("connector_linewidth", 0.8), 0.8)
+        conn_lw = 0.8 if raw_conn_lw is None else raw_conn_lw
+        raw_arrow_size = coerce_float(
             params.get("connector_arrow_size", params.get("connector_endpoint_size", 10)),
             10,
         )
-        circle_size = coerce_float(
+        arrow_size = 10.0 if raw_arrow_size is None else raw_arrow_size
+        raw_circle_size = coerce_float(
             params.get("connector_circle_size", params.get("connector_endpoint_size", 8)),
             8,
         )
+        circle_size = 8.0 if raw_circle_size is None else raw_circle_size
 
         src_axes_p1 = axis.transAxes.inverted().transform(axis.transData.transform((src_x1, src_y1)))
         src_axes_p2 = axis.transAxes.inverted().transform(axis.transData.transform((src_x2, src_y2)))
@@ -159,8 +175,6 @@ def draw_local_zoom(plot_context, params):
                 src_points = [(src_x1, src_y1), (src_x2, src_y1)]
                 inset_points = [(0, 1), (1, 1)]
 
-        from matplotlib.lines import Line2D as L2
-        from matplotlib.patches import FancyArrowPatch
 
         def _decorate(kind, pt_figure):
             if kind == "circle":
@@ -173,7 +187,6 @@ def draw_local_zoom(plot_context, params):
                     markerfacecolor=zoom_box_color,
                     markeredgecolor=zoom_box_color,
                     clip_on=False,
-                    zorder=3001,
                 ))
 
         for src_point, inset_point in zip(src_points, inset_points):
@@ -195,7 +208,7 @@ def draw_local_zoom(plot_context, params):
                     transform=fig.transFigure,
                     color=zoom_box_color, linewidth=conn_lw,
                     linestyle=_LS_MAP.get(conn_style, conn_style),
-                    clip_on=False, zorder=3000,
+                    clip_on=False,
                 ))
             else:
                 fig.add_artist(FancyArrowPatch(
@@ -208,7 +221,6 @@ def draw_local_zoom(plot_context, params):
                     linestyle=_LS_MAP.get(conn_style, conn_style),
                     color=zoom_box_color,
                     clip_on=False,
-                    zorder=3000,
                 ))
             _decorate(conn_start, pa)
             _decorate(conn_end, pb)
@@ -236,7 +248,7 @@ def register_extensions(registry) -> None:
                     label="原图范围模式",
                     field_type="selective",
                     default="percentage",
-                    choices=["percentage", "coordinate"],
+                    choices=("percentage", "coordinate"),
                     description="选择使用画幅比例还是数据坐标来设定原图放大区域。",
                 ),
                 ExtensionConfigField(
@@ -309,7 +321,7 @@ def register_extensions(registry) -> None:
                     label="区域边框线型",
                     field_type="selective",
                     default="--",
-                    choices=["-", "--", "-.", ":", "none"],
+                    choices=("-", "--", "-.", ":", "none"),
                     description="原图放大区域矩形框的线型。选 none 则不显示边框。",
                 ),
                 ExtensionConfigField(
@@ -332,7 +344,7 @@ def register_extensions(registry) -> None:
                     label="连接线线型",
                     field_type="selective",
                     default="--",
-                    choices=["-", "--", "-.", ":"],
+                    choices=("-", "--", "-.", ":"),
                     description="连接线的线型，与原图区域边框独立设置。",
                 ),
                 ExtensionConfigField(
@@ -362,7 +374,7 @@ def register_extensions(registry) -> None:
                     label="起点端点",
                     field_type="selective",
                     default="none",
-                    choices=["none", "arrow", "circle"],
+                    choices=("none", "arrow", "circle"),
                     description="连接线在原图放大区域一端的端点样式。",
                 ),
                 ExtensionConfigField(
@@ -370,7 +382,7 @@ def register_extensions(registry) -> None:
                     label="终点端点",
                     field_type="selective",
                     default="none",
-                    choices=["none", "arrow", "circle"],
+                    choices=("none", "arrow", "circle"),
                     description="连接线在嵌入放大视图一端的端点样式。",
                 ),
             ],

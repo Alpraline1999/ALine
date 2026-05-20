@@ -48,7 +48,7 @@ def register_extensions(registry) -> None:
             lines_number=(1, 1),
             settings=True,
             source_kind="builtin",
-            tool_tier="tool",
+            tool_tier="experimental",
             hidden=True,
             config_fields=[
                 ExtensionConfigField(

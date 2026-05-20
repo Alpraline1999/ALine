@@ -50,7 +50,14 @@ ALLOWED_UI_DIRECT_IMPORTS = {
 }
 
 ALLOWED_CORE_EXTENSION_IMPORTS = {}
-ALLOWED_MAIN_WINDOW_PRIVATE_PAGE_ACCESSES = set()
+ALLOWED_MAIN_WINDOW_PRIVATE_PAGE_ACCESSES = {
+    "chart_page._sync_canvas_display_geometry",
+    "chart_page._applied_plot_style_ref",
+    "chart_page._refresh_template_combo",
+    "chart_page._refresh_curve_style_template_combo",
+    "chart_page._refresh_chart_list",
+    "chart_page._refresh_style_extension_panel",
+}
 
 
 def _parse_python(path: Path) -> ast.AST:

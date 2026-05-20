@@ -22,7 +22,6 @@ _KNOWN_PROCESSING = {
     "filter",
     "ifft",
     "integral",
-    "interface_contract_processing",
     "kalman_filter",
     "multi_curve_mean",
     "normalize",
@@ -39,7 +38,6 @@ _KNOWN_ANALYSIS = {
     "curve_intersections",
     "curve_fit",
     "error_compare",
-    "interface_contract_analysis",
     "lag_analysis",
     "multi_curve_correlation",
     "peak_detect",
@@ -47,8 +45,6 @@ _KNOWN_ANALYSIS = {
     "statistics",
 }
 _KNOWN_PLOT = {
-    "interface_contract_plot",
-    "plot_annotation",
     "plot_arrow_annotation",
     "plot_circle_annotation",
     "plot_dual_curve_band",
@@ -68,7 +64,6 @@ _KNOWN_DIGITIZE = {
     "builtin_digitize_marker_centroid",
     "builtin_digitize_multicolor_curve",
     "builtin_digitize_shape_detect",
-    "interface_contract_digitize",
 }
 
 
