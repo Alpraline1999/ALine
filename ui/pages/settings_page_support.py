@@ -12,11 +12,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
-    BodyLabel, CaptionLabel, CardWidget, CheckBox, ComboBox, FluentIcon as FIF,
-    FolderListSettingCard, IndeterminateProgressRing, InfoBar, InfoBarPosition,
+    BodyLabel, CaptionLabel, CardWidget, CheckBox, ComboBox,
+    ExpandGroupSettingCard, FluentIcon as FIF, FolderListSettingCard,
+    IndeterminateProgressRing, InfoBar, InfoBarPosition,
     LineEdit, ListWidget, Pivot, PlainTextEdit, PrimaryPushButton, PushButton,
-    RadioButton, SegmentedWidget, SettingCardGroup, SpinBox, StrongBodyLabel,
-    SubtitleLabel, SwitchButton, TextWrap, ToolButton,
+    RadioButton, SegmentedWidget, SettingCard, SettingCardGroup, Slider,
+    SmoothScrollArea, SpinBox, StrongBodyLabel, SubtitleLabel,
+    SwitchButton, SwitchSettingCard, TextWrap, ToolButton,
 )
 
 from core.ai.providers import get_provider_preset
