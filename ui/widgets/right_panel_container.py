@@ -42,7 +42,11 @@ class RightPanelContainer(QWidget):
         self._tabs = SegmentedStackWidget(self, fill_width=True)
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
-        # Tab 0: 扩展面板
+        # Tab 0: AI 面板
+        self.ai_panel = AIAssistantPanel(page_name, self)
+        self._tabs.addTab(self.ai_panel, "AI")
+
+        # Tab 1: 扩展面板
         self.extension_panel = ExtensionConfigPanel(
             extension_title or "扩展",
             action_text,
@@ -52,15 +56,11 @@ class RightPanelContainer(QWidget):
         )
         self._tabs.addTab(self.extension_panel, "扩展")
 
-        # Tab 1: AI 面板
-        self.ai_panel = AIAssistantPanel(page_name, self)
-        self._tabs.addTab(self.ai_panel, "AI")
-
         layout.addWidget(self._tabs, 1)
 
     def _on_tab_changed(self, index: int) -> None:
         """切换 tab 时同步 AI 面板的上下文。"""
-        if index == 1:
+        if index == 0:
             self.ai_panel.refresh_context()
 
     def current_index(self) -> int:

@@ -6,9 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
-    QCompleter,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -271,16 +270,6 @@ class AIAssistantPanel(QWidget):
         self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
         self._input_edit.setFixedHeight(36)
         self._input_edit.setClearButtonEnabled(True)
-
-        # 命令自动补全
-        from ui.widgets.ai_command_handler import get_command_list
-        self._cmd_completer = QCompleter(get_command_list(), self._input_edit)
-        self._cmd_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self._cmd_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self._cmd_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self._input_edit.setCompleter(self._cmd_completer)
-        self._input_edit.textChanged.connect(self._on_input_changed)
-
         input_layout.addWidget(self._input_edit, 1)
 
         self._send_btn = PrimaryPushButton("发送", input_widget)
@@ -323,50 +312,99 @@ class AIAssistantPanel(QWidget):
         self._refresh_ui()
 
     def _show_history_menu(self) -> None:
-        """显示对话历史列表（弹出选择器）。"""
+        """显示对话历史列表，支持切换活动/归档、删除。"""
         if not self._conversations:
             InfoBar.info("无历史对话", "暂无保存的对话记录。", parent=self, position=InfoBarPosition.TOP)
             return
-        from qfluentwidgets import MessageBoxBase, ListWidget, PrimaryPushButton
-        from PySide6.QtWidgets import QVBoxLayout
+        from qfluentwidgets import MessageBoxBase, ListWidget, PushButton
+        from PySide6.QtWidgets import QHBoxLayout
 
-        class _ConversationSelector(MessageBoxBase):
-            def __init__(self, convs, parent=None):
+        active_convs = [c for c in self._conversations if not getattr(c, "_archived", False)]
+        archived_convs = [c for c in self._conversations if getattr(c, "_archived", False)]
+
+        class _HistoryDialog(MessageBoxBase):
+            def __init__(self, active, archived, parent=None):
                 super().__init__(parent)
-                self._convs = list(convs)
                 self.selected_id = None
-                self.viewLayout.addWidget(SubtitleLabel("选择对话", self.widget))
+                self._delete_id = None
+                self._active = list(active)
+                self._archived = list(archived)
+                self._show_archived = False
+                self.viewLayout.addWidget(SubtitleLabel("对话历史", self.widget))
+
+                self._tab_btn = PushButton("活动对话", self.widget)
+                self._tab_btn.clicked.connect(self._toggle_tab)
+                self.viewLayout.addWidget(self._tab_btn)
+
                 self._list = ListWidget(self.widget)
-                for c in self._convs:
-                    self._list.addItem(f"{c.title}  ({c.id})")
-                self._list.setCurrentRow(0)
-                self.viewLayout.addWidget(self._list)
-                self._list.itemDoubleClicked.connect(lambda item: self._accept())
+                self._refresh_list()
+                self._list.itemDoubleClicked.connect(lambda item: self._pick())
+                self.viewLayout.addWidget(self._list, 1)
+
+                btn_row = QHBoxLayout()
+                self._action_btn = PushButton("归档", self.widget)
+                self._action_btn.clicked.connect(self._toggle_archive)
+                btn_row.addWidget(self._action_btn)
+                self._del_btn = PushButton("删除", self.widget)
+                self._del_btn.clicked.connect(self._do_delete)
+                btn_row.addWidget(self._del_btn)
+                self.viewLayout.addLayout(btn_row)
                 self.yeshidden = False
 
-            def _accept(self):
+            def _toggle_tab(self):
+                self._show_archived = not self._show_archived
+                self._tab_btn.setText("归档对话" if not self._show_archived else "活动对话")
+                self._action_btn.setText("取消归档" if self._show_archived else "归档")
+                self._refresh_list()
+
+            def _current_convs(self):
+                return self._archived if self._show_archived else self._active
+
+            def _refresh_list(self):
+                self._list.clear()
+                for c in self._current_convs():
+                    self._list.addItem(f"{c.title}  ({c.id})")
+                if self._list.count():
+                    self._list.setCurrentRow(0)
+
+            def _pick(self):
+                convs = self._current_convs()
                 row = self._list.currentRow()
-                if row >= 0:
-                    self.selected_id = self._convs[row].id
+                if 0 <= row < len(convs):
+                    self.selected_id = convs[row].id
                 self.accept()
 
-        dialog = _ConversationSelector(self._conversations, self)
+            def _toggle_archive(self):
+                convs = self._current_convs()
+                row = self._list.currentRow()
+                if row < 0 or row >= len(convs):
+                    return
+                convs[row]._archived = not getattr(convs[row], "_archived", False)
+                convs.pop(row)
+                self._refresh_list()
+
+            def _do_delete(self):
+                convs = self._current_convs()
+                row = self._list.currentRow()
+                if row < 0 or row >= len(convs):
+                    return
+                self._delete_id = convs[row].id
+                convs.pop(row)
+                self._refresh_list()
+
+        dialog = _HistoryDialog(active_convs, archived_convs, self)
         if dialog.exec():
-            for i, c in enumerate(self._conversations):
-                if c.id == dialog.selected_id:
-                    self._current_conv_index = i
-                    self._refresh_ui()
-                    break
+            if dialog._delete_id:
+                self._delete_conversation_file(dialog._delete_id)
+                self._conversations = [c for c in self._conversations if c.id != dialog._delete_id]
+            if dialog.selected_id:
+                for i, c in enumerate(self._conversations):
+                    if c.id == dialog.selected_id:
+                        self._current_conv_index = i
+                        self._refresh_ui()
+                        break
 
     # ── 消息 ──
-
-    def _on_input_changed(self, text: str) -> None:
-        """输入 / 时弹出命令补全菜单。"""
-        if text.startswith("/"):
-            self._cmd_completer.setCompletionPrefix(text)
-            self._cmd_completer.complete()
-        else:
-            self._cmd_completer.popup().hide()
 
     def _send_message(self) -> None:
         text = self._input_edit.text().strip()
