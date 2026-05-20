@@ -36,7 +36,6 @@ from qfluentwidgets import (
     SmoothScrollArea,
     ToolTipFilter,
     ToolTipPosition,
-    PlainTextEdit,
 )
 
 from core.ai.context import AIAssistantContext
@@ -54,18 +53,16 @@ from ui.theme import (
 _CONVERSATIONS_DIR = Path.home() / ".config" / "aline" / "conversations"
 
 
-class MessageBubble(QFrame):
-    """单条对话气泡，支持文本选择和扩展代码保存。"""
+class MessageBubble(CardWidget):
+    """单条对话气泡，支持文本选择、Fluent 右键菜单和扩展代码保存。"""
 
-    save_requested = Signal(str)  # 发送 (code_text) 用于保存扩展
+    save_requested = Signal(str)
 
     def __init__(self, role: str, content: str, parent=None):
         super().__init__(parent)
         self._role = role
         self._content = content
-
-        self.setObjectName("message_bubble")
-        self.setProperty("role", role)
+        self.setBorderRadius(8)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -75,18 +72,16 @@ class MessageBubble(QFrame):
         role_label.setStyleSheet(f"color: {accent_color()}; font-weight: bold; font-size: 12px;")
         layout.addWidget(role_label)
 
-        # BodyLabel 开启文本选择，保持轻量和一致样式
         content_label = BodyLabel(content, self)
         content_label.setWordWrap(True)
         content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         content_label.setStyleSheet(
             "font-size: 13px; line-height: 1.5;"
-            if role == "user"
-            else "font-size: 13px; line-height: 1.5; color: #333;"
         )
+        content_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        content_label.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(content_label)
 
-        # 如果 AI 回复包含代码块，添加"保存为扩展"按钮
         self._save_btn = None
         if role == "assistant":
             code = self._extract_code_block(content)
@@ -96,20 +91,19 @@ class MessageBubble(QFrame):
                 self._save_btn.clicked.connect(lambda: self.save_requested.emit(code))
                 layout.addWidget(self._save_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
-        self.setStyleSheet(
-            """
-            MessageBubble[role="user"] {
-                background: #E8F0FE;
-                border-radius: 8px;
-                margin: 4px 0px;
-            }
-            MessageBubble[role="assistant"] {
-                background: #F5F5F5;
-                border-radius: 8px;
-                margin: 4px 0px;
-            }
-            """
-        )
+    def _show_context_menu(self, pos):
+        from qfluentwidgets import RoundMenu, Action, FluentIcon
+        menu = RoundMenu(self)
+        menu.addAction(Action(FluentIcon.COPY, "复制", triggered=lambda: self._copy_text()))
+        menu.addAction(Action(FluentIcon.SELECT_ALL, "全选", triggered=lambda: self._select_all()))
+        menu.exec(self.mapToGlobal(pos))
+
+    def _copy_text(self):
+        QApplication.clipboard().setText(self._content)
+
+    def _select_all(self):
+        for child in self.findChildren(BodyLabel):
+            child.selectAll()
 
     @staticmethod
     def _extract_code_block(text: str) -> str:
@@ -182,7 +176,8 @@ class AIAssistantPanel(QWidget):
 
         self._setup_ui()
         self._load_conversations()
-        self._new_conversation()
+        if not self._conversations:
+            self._new_conversation()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -271,7 +266,7 @@ class AIAssistantPanel(QWidget):
         self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
         self._input_edit.setFixedHeight(36)
 
-        # QCompleter 命令补全（仅在输入 / 时激活）
+        # QCompleter 命令补全
         from ui.widgets.ai_command_handler import get_command_list
         self._cmd_model = QStringListModel(get_command_list())
         self._cmd_completer = QCompleter(self._cmd_model, self._input_edit)
@@ -367,8 +362,6 @@ class AIAssistantPanel(QWidget):
                 self.viewLayout.addWidget(seg)
                 self.viewLayout.addWidget(self._stack, 1)
 
-                self._refresh_lists()
-
                 btn_row = QHBoxLayout()
                 self._archive_btn = PushButton("归档", self.widget)
                 self._archive_btn.clicked.connect(self._do_archive)
@@ -378,6 +371,8 @@ class AIAssistantPanel(QWidget):
                 btn_row.addWidget(del_btn)
                 self.viewLayout.addLayout(btn_row)
                 self.yeshidden = False
+
+                self._refresh_lists()
 
             def _refresh_lists(self):
                 self._active_list.clear()
