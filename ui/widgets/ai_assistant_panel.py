@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
     QScrollArea,
@@ -27,6 +26,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     ScrollArea,
+    SearchLineEdit,
     SubtitleLabel,
     ToolButton,
     FluentIcon as FIF,
@@ -74,18 +74,16 @@ class MessageBubble(QFrame):
         role_label.setStyleSheet(f"color: {accent_color()}; font-weight: bold; font-size: 12px;")
         layout.addWidget(role_label)
 
-        # 使用 QTextBrowser 支持文本选中和复制
-        browser = QTextBrowser(self)
-        browser.setPlainText(content)
-        browser.setWordWrapMode(True)
-        browser.setOpenExternalLinks(False)
-        browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        browser.setFixedHeight(min(browser.document().size().height() + 10, 400))
-        browser.setStyleSheet(
-            "QTextBrowser { background: transparent; border: none; font-size: 13px; padding: 0px; }"
+        # BodyLabel 开启文本选择，保持轻量和一致样式
+        content_label = BodyLabel(content, self)
+        content_label.setWordWrap(True)
+        content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        content_label.setStyleSheet(
+            "font-size: 13px; line-height: 1.5;"
+            if role == "user"
+            else "font-size: 13px; line-height: 1.5; color: #333;"
         )
-        layout.addWidget(browser)
+        layout.addWidget(content_label)
 
         # 如果 AI 回复包含代码块，添加"保存为扩展"按钮
         self._save_btn = None
@@ -268,10 +266,11 @@ class AIAssistantPanel(QWidget):
         input_layout = QHBoxLayout(input_widget)
         input_layout.setContentsMargins(12, 8, 12, 8)
 
-        self._input_edit = PlainTextEdit(input_widget)
-        self._input_edit.setPlaceholderText("输入问题，如: 帮我写一个处理扩展...")
-        self._input_edit.setMaximumHeight(80)
-        self._input_edit.setMinimumHeight(36)
+        self._input_edit = SearchLineEdit(input_widget)
+        self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
+        self._input_edit.setFixedHeight(36)
+        self._input_edit.textChanged.connect(self._on_input_changed)
+        self._input_edit.setClearButtonEnabled(True)
         input_layout.addWidget(self._input_edit, 1)
 
         self._send_btn = PrimaryPushButton("发送", input_widget)
@@ -351,8 +350,18 @@ class AIAssistantPanel(QWidget):
 
     # ── 消息 ──
 
+    def _on_input_changed(self, text: str) -> None:
+        """输入变化时检测命令，提供自动补全提示。"""
+        from ui.widgets.ai_command_handler import get_command_suggestions
+
+        suggestions = get_command_suggestions(text)
+        if suggestions:
+            self._input_edit.setPlaceholderText(suggestions[0])
+        else:
+            self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
+
     def _send_message(self) -> None:
-        text = self._input_edit.toPlainText().strip()
+        text = self._input_edit.text().strip()
         if not text:
             return
         self._input_edit.clear()
@@ -365,7 +374,16 @@ class AIAssistantPanel(QWidget):
         self._append_bubble("user", text)
         self._save_conversations()
 
-        # 收集上下文并启动 agent
+        # 检测是否为命令
+        from ui.widgets.ai_command_handler import detect_command, execute_command
+        cmd = detect_command(text)
+        if cmd:
+            cmd_name, cmd_label, cmd_args = cmd
+            system_extra, extra_msgs = execute_command(cmd_name, cmd_args)
+            self._show_thinking()
+            self._agent_bridge.start(cmd_args if cmd_args else text, extra_system_prompt=system_extra)
+            return
+
         self.refresh_context()
         self._show_thinking()
         self._agent_bridge.start(text)

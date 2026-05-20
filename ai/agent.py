@@ -36,10 +36,13 @@ class ALineAgent:
         self._client = client or AIClient()
         self._dispatcher = dispatcher or CommandDispatcher()
 
-    async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
-        """流式执行，生成 AgentEvent 序列。"""
-        # 1. 构建系统提示（含项目摘要）
+    async def run(self, user_message: str, extra_system_prompt: str = "") -> AsyncIterator[AgentEvent]:
+        """流式执行，生成 AgentEvent 序列。
+        extra_system_prompt 追加到系统提示（用于命令模式，如 /extension 注入扩展开发规范）。
+        """
         system_prompt = self._build_system_prompt()
+        if extra_system_prompt:
+            system_prompt = f"{system_prompt}\n\n{extra_system_prompt}"
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},

@@ -34,11 +34,12 @@ class AgentBridge(QObject):
             self._agent = ALineAgent()
         return self._agent
 
-    def start(self, user_message: str) -> None:
-        """在后台线程中启动 agent。"""
+    def start(self, user_message: str, extra_system_prompt: str = "") -> None:
+        """在后台线程中启动 agent。extra_system_prompt 追加到系统提示。"""
         if self._running:
             return
         self._running = True
+        self._extra_system = extra_system_prompt
         thread = threading.Thread(target=self._run_agent, args=(user_message,), daemon=True)
         thread.start()
 
@@ -48,7 +49,8 @@ class AgentBridge(QObject):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             agent = self.ensure_agent()
-            async_gen = agent.run(user_message)
+            extra = getattr(self, "_extra_system", "")
+            async_gen = agent.run(user_message, extra_system_prompt=extra)
             while True:
                 try:
                     event = loop.run_until_complete(async_gen.__anext__())
