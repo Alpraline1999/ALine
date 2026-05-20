@@ -244,6 +244,7 @@ class SettingsPage(QWidget):
         root_layout.addWidget(tabs)
 
         self._load_extension_settings()
+        self._load_ai_config()
         self._schedule_extension_category_tab_heights_refresh()
         self._install_tooltip_filters()
         self._click_away_focus_commit = install_click_away_focus_commit(self)
