@@ -300,10 +300,11 @@ class AIAssistantPanel(QWidget):
         class _ConversationSelector(MessageBoxBase):
             def __init__(self, convs, parent=None):
                 super().__init__(parent)
+                self._convs = list(convs)
                 self.selected_id = None
                 self.viewLayout.addWidget(SubtitleLabel("选择对话", self.widget))
                 self._list = ListWidget(self.widget)
-                for c in convs:
+                for c in self._convs:
                     self._list.addItem(f"{c.title}  ({c.id})")
                 self._list.setCurrentRow(0)
                 self.viewLayout.addWidget(self._list)
@@ -313,7 +314,7 @@ class AIAssistantPanel(QWidget):
             def _accept(self):
                 row = self._list.currentRow()
                 if row >= 0:
-                    self.selected_id = self._conversations[row].id
+                    self.selected_id = self._convs[row].id
                 self.accept()
 
         dialog = _ConversationSelector(self._conversations, self)
