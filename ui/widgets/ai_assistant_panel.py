@@ -6,10 +6,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel
 from PySide6.QtWidgets import (
+    QCompleter,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -26,7 +28,6 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     ScrollArea,
-    SearchLineEdit,
     SubtitleLabel,
     ToolButton,
     FluentIcon as FIF,
@@ -266,10 +267,20 @@ class AIAssistantPanel(QWidget):
         input_layout = QHBoxLayout(input_widget)
         input_layout.setContentsMargins(12, 8, 12, 8)
 
-        self._input_edit = SearchLineEdit(input_widget)
+        self._input_edit = QLineEdit(input_widget)
         self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
         self._input_edit.setFixedHeight(36)
-        self._input_edit.setClearButtonEnabled(True)
+
+        # QCompleter 命令补全（仅在输入 / 时激活）
+        from ui.widgets.ai_command_handler import get_command_list
+        self._cmd_model = QStringListModel(get_command_list())
+        self._cmd_completer = QCompleter(self._cmd_model, self._input_edit)
+        self._cmd_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._cmd_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self._cmd_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self._cmd_completer.setMaxVisibleItems(8)
+        self._input_edit.setCompleter(self._cmd_completer)
+
         input_layout.addWidget(self._input_edit, 1)
 
         self._send_btn = PrimaryPushButton("发送", input_widget)
@@ -312,13 +323,14 @@ class AIAssistantPanel(QWidget):
         self._refresh_ui()
 
     def _show_history_menu(self) -> None:
-        """显示对话历史列表，支持切换活动/归档、删除。"""
+        """显示对话历史列表，segment tab 切换活动/归档，支持删除。"""
         if not self._conversations:
             InfoBar.info("无历史对话", "暂无保存的对话记录。", parent=self, position=InfoBarPosition.TOP)
             return
-        from qfluentwidgets import MessageBoxBase, ListWidget, PushButton
-        from PySide6.QtWidgets import QHBoxLayout
+        from PySide6.QtWidgets import QHBoxLayout, QStackedWidget
+        from qfluentwidgets import MessageBoxBase, ListWidget, PushButton, SegmentedWidget
 
+        self._refresh_archive_state()
         active_convs = [c for c in self._conversations if not getattr(c, "_archived", False)]
         archived_convs = [c for c in self._conversations if getattr(c, "_archived", False)]
 
@@ -326,77 +338,105 @@ class AIAssistantPanel(QWidget):
             def __init__(self, active, archived, parent=None):
                 super().__init__(parent)
                 self.selected_id = None
-                self._delete_id = None
-                self._active = list(active)
-                self._archived = list(archived)
-                self._show_archived = False
+                self._delete_ids: list[str] = []
+                self._active = active
+                self._archived = archived
                 self.viewLayout.addWidget(SubtitleLabel("对话历史", self.widget))
 
-                self._tab_btn = PushButton("活动对话", self.widget)
-                self._tab_btn.clicked.connect(self._toggle_tab)
-                self.viewLayout.addWidget(self._tab_btn)
+                seg = SegmentedWidget(self.widget)
+                self._stack = QStackedWidget(self.widget)
 
-                self._list = ListWidget(self.widget)
-                self._refresh_list()
-                self._list.itemDoubleClicked.connect(lambda item: self._pick())
-                self.viewLayout.addWidget(self._list, 1)
+                self._active_list = ListWidget(self.widget)
+                self._active_list.itemDoubleClicked.connect(lambda item: self._accept_active())
+                self._stack.addWidget(self._active_list)
+
+                self._archived_list = ListWidget(self.widget)
+                self._archived_list.itemDoubleClicked.connect(lambda item: self._accept_archived())
+                self._stack.addWidget(self._archived_list)
+
+                def _show_active():
+                    self._stack.setCurrentIndex(0)
+                    self._refresh_lists()
+                def _show_archived():
+                    self._stack.setCurrentIndex(1)
+                    self._refresh_lists()
+                seg.addItem("tab_active", "活动", onClick=lambda: _show_active())
+                seg.addItem("tab_archived", "归档", onClick=lambda: _show_archived())
+                seg.setCurrentItem("tab_active")
+
+                self.viewLayout.addWidget(seg)
+                self.viewLayout.addWidget(self._stack, 1)
+
+                self._refresh_lists()
 
                 btn_row = QHBoxLayout()
-                self._action_btn = PushButton("归档", self.widget)
-                self._action_btn.clicked.connect(self._toggle_archive)
-                btn_row.addWidget(self._action_btn)
-                self._del_btn = PushButton("删除", self.widget)
-                self._del_btn.clicked.connect(self._do_delete)
-                btn_row.addWidget(self._del_btn)
+                self._archive_btn = PushButton("归档", self.widget)
+                self._archive_btn.clicked.connect(self._do_archive)
+                btn_row.addWidget(self._archive_btn)
+                del_btn = PushButton("删除", self.widget)
+                del_btn.clicked.connect(self._do_delete)
+                btn_row.addWidget(del_btn)
                 self.viewLayout.addLayout(btn_row)
                 self.yeshidden = False
 
-            def _toggle_tab(self):
-                self._show_archived = not self._show_archived
-                self._tab_btn.setText("归档对话" if not self._show_archived else "活动对话")
-                self._action_btn.setText("取消归档" if self._show_archived else "归档")
-                self._refresh_list()
+            def _refresh_lists(self):
+                self._active_list.clear()
+                for c in self._active:
+                    self._active_list.addItem(f"{c.title}  ({c.id})")
+                if self._active_list.count():
+                    self._active_list.setCurrentRow(0)
+                self._archived_list.clear()
+                for c in self._archived:
+                    self._archived_list.addItem(f"{c.title}  ({c.id})")
+                if self._archived_list.count():
+                    self._archived_list.setCurrentRow(0)
+                is_archived_view = self._stack.currentIndex() == 1
+                self._archive_btn.setText("取消归档" if is_archived_view else "归档")
 
-            def _current_convs(self):
-                return self._archived if self._show_archived else self._active
+            def _current_list_and_convs(self):
+                if self._stack.currentIndex() == 1:
+                    return self._archived_list, self._archived
+                return self._active_list, self._active
 
-            def _refresh_list(self):
-                self._list.clear()
-                for c in self._current_convs():
-                    self._list.addItem(f"{c.title}  ({c.id})")
-                if self._list.count():
-                    self._list.setCurrentRow(0)
-
-            def _pick(self):
-                convs = self._current_convs()
-                row = self._list.currentRow()
-                if 0 <= row < len(convs):
-                    self.selected_id = convs[row].id
+            def _accept_active(self):
+                row = self._active_list.currentRow()
+                if 0 <= row < len(self._active):
+                    self.selected_id = self._active[row].id
                 self.accept()
 
-            def _toggle_archive(self):
-                convs = self._current_convs()
-                row = self._list.currentRow()
+            def _accept_archived(self):
+                row = self._archived_list.currentRow()
+                if 0 <= row < len(self._archived):
+                    self.selected_id = self._archived[row].id
+                self.accept()
+
+            def _do_archive(self):
+                lst, convs = self._current_list_and_convs()
+                row = lst.currentRow()
                 if row < 0 or row >= len(convs):
                     return
-                convs[row]._archived = not getattr(convs[row], "_archived", False)
+                conv = convs[row]
+                conv._archived = not getattr(conv, "_archived", False)
+                # 移到另一列表
+                target = self._archived if self._stack.currentIndex() == 0 else self._active
+                target.append(conv)
                 convs.pop(row)
-                self._refresh_list()
+                self._refresh_lists()
 
             def _do_delete(self):
-                convs = self._current_convs()
-                row = self._list.currentRow()
+                lst, convs = self._current_list_and_convs()
+                row = lst.currentRow()
                 if row < 0 or row >= len(convs):
                     return
-                self._delete_id = convs[row].id
+                self._delete_ids.append(convs[row].id)
                 convs.pop(row)
-                self._refresh_list()
+                self._refresh_lists()
 
         dialog = _HistoryDialog(active_convs, archived_convs, self)
         if dialog.exec():
-            if dialog._delete_id:
-                self._delete_conversation_file(dialog._delete_id)
-                self._conversations = [c for c in self._conversations if c.id != dialog._delete_id]
+            for did in dialog._delete_ids:
+                self._delete_conversation_file(did)
+                self._conversations = [c for c in self._conversations if c.id != did]
             if dialog.selected_id:
                 for i, c in enumerate(self._conversations):
                     if c.id == dialog.selected_id:
@@ -513,6 +553,18 @@ class AIAssistantPanel(QWidget):
 
     # ── 上下文 ──
 
+    def _refresh_archive_state(self) -> None:
+        """从文件系统恢复对话的归档状态。"""
+        for c in self._conversations:
+            path = self._conversation_path(c.id)
+            if path.exists():
+                try:
+                    import json
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    c._archived = data.get("archived", False)
+                except Exception:
+                    c._archived = False
+
     def refresh_context(self) -> None:
         """当页面切换或用户切换到 AI tab 时刷新上下文。"""
         summary = f"📌 当前: {self._page_name or '未知'}"
@@ -525,8 +577,10 @@ class AIAssistantPanel(QWidget):
 
     def _save_conversations(self) -> None:
         for conv in self._conversations:
+            data = conv.to_dict()
+            data["archived"] = getattr(conv, "_archived", False)
             path = self._conversation_path(conv.id)
-            path.write_text(json.dumps(conv.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _load_conversations(self) -> None:
         if not _CONVERSATIONS_DIR.exists():
