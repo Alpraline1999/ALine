@@ -49,11 +49,17 @@ class ALineAgent:
         yield AgentEvent(type="thinking", content="正在分析请求…")
 
         for _round in range(self.MAX_ROUNDS):
-            resp = await self._client.chat(messages, tools=tools)
+            # 部分 Ollama 模型不支持 function calling，带 tools 会返回 400
+            active_tools = tools if _round == 0 else None
+            resp = await self._client.chat(messages, tools=active_tools)
 
             if resp.error:
-                yield AgentEvent(type="error", content=resp.error)
-                return
+                if active_tools and ("400" in resp.error or "Bad Request" in resp.error):
+                    # 回退：不带 tools 重试
+                    resp = await self._client.chat(messages, tools=None)
+                if resp.error:
+                    yield AgentEvent(type="error", content=resp.error)
+                    return
 
             if not resp.tool_calls:
                 # AI 直接回复，无工具调用
