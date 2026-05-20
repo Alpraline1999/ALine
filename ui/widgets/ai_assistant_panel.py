@@ -351,14 +351,15 @@ class AIAssistantPanel(QWidget):
     # ── 消息 ──
 
     def _on_input_changed(self, text: str) -> None:
-        """输入变化时检测命令，提供自动补全提示。"""
+        """输入变化时检测命令，显示自动补全菜单。"""
         from ui.widgets.ai_command_handler import get_command_suggestions
 
-        suggestions = get_command_suggestions(text)
-        if suggestions:
-            self._input_edit.setPlaceholderText(suggestions[0])
-        else:
-            self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
+        if text.startswith("/"):
+            suggestions = get_command_suggestions(text)
+            if suggestions:
+                self._input_edit.setPlaceholderText(f"建议: {suggestions[0]}")
+                return
+        self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
 
     def _send_message(self) -> None:
         text = self._input_edit.text().strip()
@@ -380,6 +381,13 @@ class AIAssistantPanel(QWidget):
         if cmd:
             cmd_name, cmd_label, cmd_args = cmd
             system_extra, extra_msgs = execute_command(cmd_name, cmd_args)
+            if cmd_name == "help":
+                # /help 直接显示，无需调用 AI
+                self._hide_thinking()
+                conv.add_message("assistant", system_extra)
+                self._append_bubble("assistant", system_extra)
+                self._save_conversations()
+                return
             self._show_thinking()
             self._agent_bridge.start(cmd_args if cmd_args else text, extra_system_prompt=system_extra)
             return

@@ -34,7 +34,7 @@ class AIConfig(BaseModel):
     timeout: int = 60
     temperature: float = 0.7
     top_p: float = 1.0
-    max_tokens: int = 2048
+    max_tokens: int = 8192
     show_assistant: bool = True
     system_prompt: str = ""
     ollama_keep_alive: str = "5m"
