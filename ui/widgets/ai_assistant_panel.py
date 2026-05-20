@@ -38,6 +38,8 @@ from qfluentwidgets import (
 )
 
 from core.ai.context import AIAssistantContext
+from core.ai.agent_runner import AgentBridge
+from core.ai.context_collector import collect_context
 from ui.theme import (
     secondary_color,
     placeholder_color,
@@ -147,6 +149,13 @@ class AIAssistantPanel(QWidget):
 
         # 确保对话目录存在
         _CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # AI Agent 桥接器
+        self._agent_bridge = AgentBridge(self)
+        self._agent_bridge.thinking.connect(self._on_agent_thinking)
+        self._agent_bridge.message.connect(self._on_agent_message)
+        self._agent_bridge.error.connect(self._on_agent_error)
+        self._agent_bridge.finished.connect(self._on_agent_finished)
 
         self._setup_ui()
         self._load_conversations()
@@ -331,20 +340,39 @@ class AIAssistantPanel(QWidget):
         self._append_bubble("user", text)
         self._save_conversations()
 
-        # 模拟 AI 回复（后续接入实际 Agent）
+        # 收集上下文并启动 agent
+        self.refresh_context()
         self._show_thinking()
-        QTimer.singleShot(500, lambda: self._simulate_response(text))
+        self._agent_bridge.start(text)
 
-    def _simulate_response(self, user_text: str) -> None:
-        """临时模拟回复，后续替换为实际 ALineAgent 调用。"""
+    def _on_agent_thinking(self, content: str) -> None:
+        """Agent 思考过程中更新 thinking 提示。"""
+        if hasattr(self, "_thinking_label") and self._thinking_label is not None:
+            self._thinking_label.setText(f"AI 思考中: {content[:60]}...")
+
+    def _on_agent_message(self, content: str) -> None:
+        """收到 AI 的最终回复消息。"""
         self._hide_thinking()
         conv = self._current_conversation()
         if conv is None:
             return
-        reply = f"收到你的问题：{user_text[:50]}。AI 功能正在接入中。"
-        conv.add_message("assistant", reply)
-        self._append_bubble("assistant", reply)
+        conv.add_message("assistant", content)
+        self._append_bubble("assistant", content)
         self._save_conversations()
+
+    def _on_agent_error(self, error: str) -> None:
+        """Agent 出错。"""
+        self._hide_thinking()
+        conv = self._current_conversation()
+        if conv is None:
+            return
+        msg = f"（错误: {error}）"
+        conv.add_message("assistant", msg)
+        self._append_bubble("assistant", msg)
+
+    def _on_agent_finished(self) -> None:
+        """Agent 完成。"""
+        self._hide_thinking()
 
     def _show_thinking(self) -> None:
         self._thinking_label = CaptionLabel("AI 正在思考...", self._messages_widget)
