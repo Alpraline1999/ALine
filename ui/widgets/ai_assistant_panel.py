@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
     QScrollArea,
@@ -53,7 +54,9 @@ _CONVERSATIONS_DIR = Path.home() / ".config" / "aline" / "conversations"
 
 
 class MessageBubble(QFrame):
-    """单条对话气泡。"""
+    """单条对话气泡，支持文本选择和扩展代码保存。"""
+
+    save_requested = Signal(str)  # 发送 (code_text) 用于保存扩展
 
     def __init__(self, role: str, content: str, parent=None):
         super().__init__(parent)
@@ -71,14 +74,28 @@ class MessageBubble(QFrame):
         role_label.setStyleSheet(f"color: {accent_color()}; font-weight: bold; font-size: 12px;")
         layout.addWidget(role_label)
 
-        content_label = BodyLabel(content, self)
-        content_label.setWordWrap(True)
-        content_label.setStyleSheet(
-            "font-size: 13px; line-height: 1.5;"
-            if role == "user"
-            else "font-size: 13px; line-height: 1.5; color: #333;"
+        # 使用 QTextBrowser 支持文本选中和复制
+        browser = QTextBrowser(self)
+        browser.setPlainText(content)
+        browser.setWordWrapMode(True)
+        browser.setOpenExternalLinks(False)
+        browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        browser.setFixedHeight(min(browser.document().size().height() + 10, 400))
+        browser.setStyleSheet(
+            "QTextBrowser { background: transparent; border: none; font-size: 13px; padding: 0px; }"
         )
-        layout.addWidget(content_label)
+        layout.addWidget(browser)
+
+        # 如果 AI 回复包含代码块，添加"保存为扩展"按钮
+        self._save_btn = None
+        if role == "assistant":
+            code = self._extract_code_block(content)
+            if code:
+                self._save_btn = PushButton("保存为扩展", self)
+                self._save_btn.setFixedWidth(120)
+                self._save_btn.clicked.connect(lambda: self.save_requested.emit(code))
+                layout.addWidget(self._save_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
         self.setStyleSheet(
             """
@@ -94,6 +111,13 @@ class MessageBubble(QFrame):
             }
             """
         )
+
+    @staticmethod
+    def _extract_code_block(text: str) -> str:
+        """从 AI 回复中提取第一个 python 代码块。"""
+        import re
+        match = re.search(r"```(?:python)?\s*\n(.*?)\n```", text, re.DOTALL)
+        return match.group(1).strip() if match else ""
 
 
 class Conversation:
@@ -388,10 +412,33 @@ class AIAssistantPanel(QWidget):
 
     def _append_bubble(self, role: str, content: str) -> None:
         bubble = MessageBubble(role, content, self._messages_widget)
+        bubble.save_requested.connect(self._on_save_extension)
         self._messages_layout.insertWidget(self._messages_layout.count() - 1, bubble)
         QTimer.singleShot(50, lambda: self._scroll.verticalScrollBar().setValue(
             self._scroll.verticalScrollBar().maximum()
         ))
+
+    def _on_save_extension(self, code: str) -> None:
+        """保存 AI 生成的扩展代码到外部扩展目录。"""
+        from core.ai.extension_writer import parse_extension_code, save_extension
+
+        ext_type, category, err = parse_extension_code(code)
+        if not ext_type or not category:
+            InfoBar.error("保存失败", err or "无法解析扩展代码", parent=self, position=InfoBarPosition.TOP)
+            return
+
+        ok, msg = save_extension(code, category, ext_type)
+        if ok:
+            InfoBar.success("已保存", f"扩展已保存到 {msg}", parent=self, position=InfoBarPosition.TOP)
+            # 重载扩展
+            try:
+                from core.extension_api import reload_configured_extensions
+                reload_configured_extensions()
+                InfoBar.success("已重载", "扩展已重新加载", parent=self, position=InfoBarPosition.TOP)
+            except Exception as e:
+                InfoBar.warning("扩展已保存", f"重载失败，请手动重载: {e}", parent=self, position=InfoBarPosition.TOP)
+        else:
+            InfoBar.error("保存失败", msg, parent=self, position=InfoBarPosition.TOP)
 
     # ── 上下文 ──
 
