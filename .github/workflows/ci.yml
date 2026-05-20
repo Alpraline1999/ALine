@@ -38,16 +38,29 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pytest mypy
+          python -m pip install pytest pytest-timeout mypy
 
       - name: Compile source tree
         run: |
           python -m compileall app core extensions models processing ui main.py run.py
 
-      - name: Run focused regression suite
+      - name: Run architecture guardrails
         run: |
           python -m pytest \
+            tests/test_architecture_guardrails.py \
             tests/test_phase10_guardrails.py \
+            tests/test_refactor_guardrails.py \
+            -q
+
+      - name: Run backend regression suite
+        run: |
+          python -m pytest \
+            tests/test_backend.py \
+            -q --timeout=120
+
+      - name: Run settings page tests
+        run: |
+          python -m pytest \
             tests/test_settings_page_refresh.py \
             -q
 

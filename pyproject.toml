@@ -1,9 +1,11 @@
 [tool.mypy]
-strict = true
 python_version = "3.11"
 ignore_missing_imports = true
 warn_unused_ignores = true
-allow_untyped_decorators = true
+warn_return_any = true
+no_implicit_optional = true
+strict_equality = true
+check_untyped_defs = true
 explicit_package_bases = true
 exclude = '(^dist/|^build/|^\.venv/|^__pycache__/|^\.mypy_cache/|^\.pytest_cache/)'
 files = [

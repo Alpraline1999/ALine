@@ -37,15 +37,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pytest
+          python -m pip install pytest pytest-timeout
 
       - name: Run source release quality gates
         run: |
           python -m compileall app core extensions models processing ui main.py run.py
           python -m pytest \
+            tests/test_architecture_guardrails.py \
+            tests/test_backend.py \
             tests/test_phase10_guardrails.py \
+            tests/test_refactor_guardrails.py \
             tests/test_settings_page_refresh.py \
-            -q
+            -q --timeout=120
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
