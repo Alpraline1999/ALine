@@ -54,9 +54,9 @@ def _load_project_tree_init_service_module():
     return module
 
 
-module = _load_project_tree_init_service_module()
-ProjectTreeInitService = module.ProjectTreeInitService
-Project = module.Project
+_test_module = _load_project_tree_init_service_module()
+ProjectTreeInitService = _test_module.ProjectTreeInitService
+_TestProject = _test_module.Project
 
 
 class TestProjectTreeInitService(unittest.TestCase):
@@ -68,7 +68,7 @@ class TestProjectTreeInitService(unittest.TestCase):
     def test_init_new_project_tree_sets_up_v03_structure(self) -> None:
         calls: dict[str, list[object]] = {}
         service = self._make_service(calls)
-        project = Project.create_new("New Project")
+        project = _TestProject.create_new("New Project")
 
         service.init_new_project_tree(project)
 
@@ -76,6 +76,12 @@ class TestProjectTreeInitService(unittest.TestCase):
         self.assertIsNotNone(project.aline_version)
         self.assertEqual(len(calls["ensure_groups"]), 1)
 
+
+# 模块级清理：移除在伪造 models.schemas 环境下加载的模块，
+# 防止污染后续测试（这些模块持有伪造类的引用）。
+_contaminated_modules = [name for name in list(sys.modules) if name.startswith("core.project_migration")]
+for _name in _contaminated_modules:
+    sys.modules.pop(_name, None)
 
 if __name__ == "__main__":
     unittest.main()

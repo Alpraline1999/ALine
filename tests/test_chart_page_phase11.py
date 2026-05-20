@@ -54,6 +54,7 @@ class TestChartPagePhase11(unittest.TestCase):
             app.processEvents()
 
     def test_hidden_theme_update_marks_pending_theme_redraw(self) -> None:
+        self.page._view_state.pending_redraw_reason = ""
         with mock.patch.object(self.page, "_redraw") as redraw:
             self.page.update_theme()
         self.assertTrue(self.page._theme_refresh_pending)
@@ -73,6 +74,7 @@ class TestChartPagePhase11(unittest.TestCase):
         curve_a = {"name": "a", "x": list(range(6001)), "y": list(range(6001)), "visible": True}
         curve_b = {"name": "b", "x": list(range(6001)), "y": list(range(6001)), "visible": True}
         self.page._chart_series = [curve_a, curve_b]
+        self.page._view_state.pending_redraw_reason = ""
 
         with mock.patch.object(self.page, "_decimated_redraw") as preview, mock.patch.object(self.page._redraw_timer, "start") as start:
             self.page._schedule_redraw("theme")

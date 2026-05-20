@@ -151,10 +151,9 @@ class TestAsyncPipelineRunner(unittest.TestCase):
             ],
         )
 
-        def do_cancel():
-            runner.cancel()
-
-        QTimer.singleShot(50, do_cancel)
+        # Cancel before entering the event loop so the cancel signal
+        # is queued ahead of any pipeline progress.
+        runner.cancel()
         QTimer.singleShot(30000, loop.quit)
         loop.exec()
 

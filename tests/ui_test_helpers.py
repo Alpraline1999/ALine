@@ -52,13 +52,10 @@ def tearDownModule():
         except RuntimeError:
             continue
     app.processEvents()
-    try:
-        import shiboken6
-        shiboken6.delete(app)
-    except Exception:
-        pass
-    _app = None
     gc.collect()
+    # Keep QApplication alive; destroying it (via shiboken6.delete)
+    # breaks signal/slot for any remaining Python wrapper references
+    # that other test modules may still hold.
 
 
 def make_project(name="ui_test"):

@@ -32,10 +32,10 @@ class TestDialogFocusCommit(unittest.TestCase):
         host.show()
         QApplication.processEvents()
 
-        committed = []
-        install_click_away_focus_commit(edit1, on_focus_out=lambda: committed.append("committed"))
-        edit2.setFocus()
+        install_click_away_focus_commit(host)
+        edit1.setFocus()
+        self.assertTrue(edit1.hasFocus())
         QTest.mouseClick(edit2, Qt.MouseButton.LeftButton)
         QApplication.processEvents()
-        self.assertIn("committed", committed)
+        self.assertFalse(edit1.hasFocus(), "clicking away should clear focus from the editor")
         host.deleteLater()
