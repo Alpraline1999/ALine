@@ -1,14 +1,14 @@
 from typing import Callable, Literal, cast
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
-                               QLabel,
+                               QLabel, QFileDialog,
                                QFrame, QFormLayout, QKeySequenceEdit)
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from qfluentwidgets import (ComboBox, setTheme, Theme, CardWidget, PushButton,
     BodyLabel, SubtitleLabel, TitleLabel, SmoothScrollArea,
     LineEdit, PrimaryPushButton, InfoBar, InfoBarPosition, PlainTextEdit,
     CheckBox, SettingCard, SettingCardGroup, ExpandGroupSettingCard,
-    Slider, SwitchSettingCard,
+    Slider, SwitchButton, SwitchSettingCard, ToolButton,
     FluentIcon as FIF)
 
 from ui.theme import (
@@ -60,7 +60,6 @@ from core.ai.providers import (
 from ui.pages.settings_page_support import (
     MutableFolderListSettingCard,
     build_ai_tab,
-    build_extension_category_tabs,
     build_extensions_tab,
     build_general_tab,
     build_shortcuts_tab,
@@ -102,12 +101,17 @@ class SettingsPage(QWidget):
         self._ui_font_title = None
         self._ui_font_combo = None
         self._ui_font_keys = [""]
+        self._zoom_card = None
+        self._zoom_combo = None
+        self._zoom_keys = [1.0, 1.25, 1.5, 1.75, 2.0, 0.0]
         self._extension_card = None
         self._builtin_extension_card = None
         self._external_extension_card = None
         self._extension_other_settings_card = None
         self._builtin_extension_management_card = None
         self._external_extension_management_card = None
+        self._extension_tabs = None
+        self._external_extension_tabs = None
         self._extension_status_card = None
         self._extension_actions_card = None
         self._extension_title = None
@@ -125,8 +129,6 @@ class SettingsPage(QWidget):
         self._external_extension_number_decimals_value_label = None
         self._refresh_external_extensions_btn = None
         self._builtin_extensions_enabled_checkbox = None
-        self._extension_tabs = None
-        self._external_extension_tabs = None
         self._extension_empty_hints: dict[str, BodyLabel] = {}
         self._extension_option_layouts: dict[str, QVBoxLayout] = {}
         self._external_extension_empty_hints: dict[str, BodyLabel] = {}
@@ -287,6 +289,19 @@ class SettingsPage(QWidget):
             return
         self._view_state.extension_height_refresh_pending = True
         QTimer.singleShot(0, self._refresh_extension_category_tab_heights)
+
+    def _refresh_extension_category_tab_heights(self) -> None:
+        self._view_state.extension_height_refresh_pending = False
+        if not self.isVisible() or not self.isWidgetType():
+            return
+        for tabs in (self._extension_tabs, self._external_extension_tabs):
+            if tabs is None:
+                continue
+            try:
+                tabs.adjustSize()
+                tabs.updateGeometry()
+            except RuntimeError:
+                continue
 
     @staticmethod
     def _apply_card_layout_metrics(layout) -> None:
@@ -522,8 +537,8 @@ class SettingsPage(QWidget):
             self._tabs.setParent(None)
             self._tabs.deleteLater()
 
-        self._extension_height_watch_targets.clear()
         self._theme_style_actions.clear()
+        self._extension_height_watch_targets.clear()
         self._shortcut_edits.clear()
         self._shortcut_rows.clear()
         self._shortcut_labels.clear()
@@ -551,12 +566,17 @@ class SettingsPage(QWidget):
         self._ui_font_title = None
         self._ui_font_combo = None
         self._ui_font_keys = [""]
+        self._zoom_card = None
+        self._zoom_combo = None
+        self._zoom_keys = [1.0, 1.25, 1.5, 1.75, 2.0, 0.0]
         self._extension_card = None
         self._builtin_extension_card = None
         self._external_extension_card = None
         self._extension_other_settings_card = None
         self._builtin_extension_management_card = None
         self._external_extension_management_card = None
+        self._extension_tabs = None
+        self._external_extension_tabs = None
         self._extension_status_card = None
         self._extension_actions_card = None
         self._extension_title = None
@@ -574,8 +594,6 @@ class SettingsPage(QWidget):
         self._external_extension_number_decimals_value_label = None
         self._refresh_external_extensions_btn = None
         self._builtin_extensions_enabled_checkbox = None
-        self._extension_tabs = None
-        self._external_extension_tabs = None
         self._onboarding_label = None
         self._onboarding_hint = None
         self._replay_onboarding_btn = None
@@ -605,14 +623,8 @@ class SettingsPage(QWidget):
         self._builtin_extension_checkbox_groups.clear()
         self._external_extension_checkboxes.clear()
         self._external_extension_checkbox_groups.clear()
-        for layout in [*self._extension_option_layouts.values(), *self._external_extension_option_layouts.values()]:
-            while layout.count() > 0:
-                item = layout.takeAt(0)
-                if item is None:
-                    continue
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
+        for list_widget in [*self._extension_option_layouts.values(), *self._external_extension_option_layouts.values()]:
+            list_widget.clear()
 
     def _register_extension_checkbox(self, source: str, spec_id: str, checkbox: CheckBox) -> None:
         checkbox_map = self._builtin_extension_checkboxes if source == "builtin" else self._external_extension_checkboxes
@@ -667,7 +679,11 @@ class SettingsPage(QWidget):
             "builtin": bool(self._builtin_extensions_enabled_checkbox is not None and self._builtin_extensions_enabled_checkbox.isChecked()),
             "external": bool(self._external_extensions_enabled_checkbox is not None and self._external_extensions_enabled_checkbox.isChecked()),
         }
-        for category, layout in self._extension_option_layouts.items():
+
+        from PySide6.QtWidgets import QListWidgetItem
+        from qfluentwidgets import CheckBox
+
+        for category, list_widget in self._extension_option_layouts.items():
             category_specs = [spec for spec in builtin_specs if category in list(spec.get("categories") or [])]
             hint = self._extension_empty_hints.get(category)
             if hint is not None:
@@ -676,15 +692,18 @@ class SettingsPage(QWidget):
                 spec_id = str(spec.get("id") or "").strip()
                 if not spec_id:
                     continue
-                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._builtin_extension_card)
+                item = QListWidgetItem(list_widget)
+                checkbox = CheckBox(self._extension_spec_display_name(spec, category))
                 checkbox.setChecked(spec_id not in disabled_markers["builtin"])
                 checkbox.setEnabled(source_enabled["builtin"])
                 checkbox.setToolTip(self._extension_spec_tooltip(spec, category))
                 install_fluent_tooltip(checkbox, delay=400)
+                item.setSizeHint(checkbox.sizeHint())
+                list_widget.addItem(item)
+                list_widget.setItemWidget(item, checkbox)
                 self._register_extension_checkbox("builtin", spec_id, checkbox)
-                layout.addWidget(checkbox)
 
-        for category, layout in self._external_extension_option_layouts.items():
+        for category, list_widget in self._external_extension_option_layouts.items():
             category_specs = [spec for spec in external_specs if category in list(spec.get("categories") or [])]
             hint = self._external_extension_empty_hints.get(category)
             if hint is not None:
@@ -693,51 +712,40 @@ class SettingsPage(QWidget):
                 spec_id = str(spec.get("id") or "").strip()
                 if not spec_id:
                     continue
-                checkbox = CheckBox(self._extension_spec_display_name(spec, category), self._external_extension_card)
+                item = QListWidgetItem(list_widget)
+                checkbox = CheckBox(self._extension_spec_display_name(spec, category))
                 checkbox.setChecked(spec_id not in disabled_markers["external"])
                 checkbox.setEnabled(source_enabled["external"])
                 checkbox.setToolTip(self._extension_spec_tooltip(spec, category))
                 install_fluent_tooltip(checkbox, delay=400)
+                item.setSizeHint(checkbox.sizeHint())
+                list_widget.addItem(item)
+                list_widget.setItemWidget(item, checkbox)
                 self._register_extension_checkbox("external", spec_id, checkbox)
-                layout.addWidget(checkbox)
         self._schedule_extension_category_tab_heights_refresh()
 
-    def _refresh_extension_category_tab_heights(self) -> None:
-        self._view_state.extension_height_refresh_pending = False
-        if not self.isVisible() or not self.isWidgetType():
-            return
-        for tabs in (self._extension_tabs, self._external_extension_tabs):
-            if tabs is None:
-                continue
-            try:
-                tabs.adjustSize()
-                tabs.updateGeometry()
-                tabs.setMinimumHeight(
-                    max(
-                        tabs.sizeHint().height() * 3,
-                        tabs.navigationWidget.sizeHint().height(),
-                    )
-                )
-            except RuntimeError:
-                continue
+    def _on_open_extension_manager(self, source: str) -> None:
+        from ui.pages.settings_page_support import ExtensionManageDialog
+        dialog = ExtensionManageDialog(self, source=source, parent=self)
+        dialog.exec()
 
     def _on_builtin_extensions_enabled_changed(self, *_args) -> None:
         enabled = bool(
             self._builtin_extensions_enabled_checkbox is not None
             and self._builtin_extensions_enabled_checkbox.isChecked()
         )
-        for checkboxes in self._builtin_extension_checkbox_groups.values():
-            for checkbox in checkboxes:
-                checkbox.setEnabled(enabled)
+        for switch in self._builtin_extension_checkboxes.values():
+            if isinstance(switch, SwitchButton):
+                switch.setEnabled(enabled)
 
     def _on_external_extensions_enabled_changed(self, *_args) -> None:
         enabled = bool(
             self._external_extensions_enabled_checkbox is not None
             and self._external_extensions_enabled_checkbox.isChecked()
         )
-        for checkboxes in self._external_extension_checkbox_groups.values():
-            for checkbox in checkboxes:
-                checkbox.setEnabled(enabled)
+        for switch in self._external_extension_checkboxes.values():
+            if isinstance(switch, SwitchButton):
+                switch.setEnabled(enabled)
 
     def _load_extension_settings(self) -> None:
         from core.extension_api import list_builtin_extension_specs, list_external_extension_specs
@@ -807,8 +815,8 @@ class SettingsPage(QWidget):
     def _refresh_external_extension_specs(self) -> None:
         from core.extension_api import list_external_extension_specs
 
-        disabled_builtin_ids = [spec_id for spec_id, checkbox in self._builtin_extension_checkboxes.items() if not checkbox.isChecked()]
-        disabled_external_ids = [spec_id for spec_id, checkbox in self._external_extension_checkboxes.items() if not checkbox.isChecked()]
+        disabled_builtin_ids = [spec_id for spec_id, sw in self._builtin_extension_checkboxes.items() if isinstance(sw, SwitchButton) and not sw.isChecked()]
+        disabled_external_ids = [spec_id for spec_id, sw in self._external_extension_checkboxes.items() if isinstance(sw, SwitchButton) and not sw.isChecked()]
         external_dirs = self._current_external_extensions_directories()
         external_specs = list_external_extension_specs(external_dirs or None)
         self._rebuild_builtin_extension_options(
@@ -824,6 +832,124 @@ class SettingsPage(QWidget):
             f"检测到 {len(external_specs)} 个扩展文件",
             parent=self._notification_parent(),
             position=InfoBarPosition.TOP,
+        )
+
+    def _on_add_external_extension(self) -> None:
+        from core.extension_settings import add_external_extension_file
+        from pathlib import Path
+
+        dialog = QFileDialog(self, _("选择扩展文件"), "", "Python 文件 (*.py)")
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+
+        if dialog.exec() != int(QFileDialog.DialogCode.Accepted):
+            return
+
+        selected = dialog.selectedFiles()
+        if not selected:
+            return
+
+        source_path = selected[0]
+        try:
+            target_path = add_external_extension_file(source_path)
+        except (FileExistsError, ValueError, OSError) as exc:
+            InfoBar.error(
+                _("添加失败"),
+                str(exc),
+                parent=self._notification_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        InfoBar.success(
+            _("已添加"),
+            str(target_path),
+            parent=self._notification_parent(),
+            position=InfoBarPosition.TOP,
+        )
+        self._refresh_external_extension_specs()
+
+    def _on_edit_external_extension(self, spec_id: str) -> None:
+        from core.extension_settings import resolve_external_extension_path
+        import subprocess, sys
+
+        file_path = resolve_external_extension_path(spec_id)
+        if file_path is None:
+            InfoBar.error(
+                _("未找到文件"),
+                _("无法定位外部扩展文件: ") + spec_id,
+                parent=self._notification_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["notepad", str(file_path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(file_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(file_path)])
+        except OSError:
+            InfoBar.error(
+                _("无法打开"),
+                _("请手动编辑文件: ") + str(file_path),
+                parent=self._notification_parent(),
+                position=InfoBarPosition.TOP,
+            )
+
+    def _on_delete_external_extension(self, spec_id: str) -> None:
+        from core.extension_settings import delete_external_extension_file, resolve_external_extension_path
+
+        file_path = resolve_external_extension_path(spec_id)
+        if file_path is None:
+            InfoBar.error(
+                _("未找到文件"),
+                _("无法定位外部扩展文件: ") + spec_id,
+                parent=self._notification_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        from qfluentwidgets import MessageBox
+
+        title = _("确认删除")
+        content = _("确定要删除外部扩展文件?\n") + str(file_path.name)
+        msg = MessageBox(title, content, self)
+        if msg.exec():
+            try:
+                delete_external_extension_file(file_path)
+            except (PermissionError, FileNotFoundError, ValueError) as exc:
+                InfoBar.error(
+                    _("删除失败"),
+                    str(exc),
+                    parent=self._notification_parent(),
+                    position=InfoBarPosition.TOP,
+                )
+                return
+
+            InfoBar.success(
+                _("已删除"),
+                str(file_path.name),
+                parent=self._notification_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            self._refresh_external_extension_specs()
+
+    def _on_interface_scale_changed(self, index: int) -> None:
+        keys = getattr(self, "_zoom_keys", [1.0, 1.25, 1.5, 1.75, 2.0, 0.0])
+        # index: 0=100%, 1=125%, 2=150%, 3=175%, 4=200%, 5=跟随系统
+        if index < 0 or index >= len(keys):
+            return
+        scale = keys[index]
+        from core.ui_preferences import set_interface_scale
+        set_interface_scale(scale)
+        InfoBar.success(
+            _("缩放已设置"),
+            _("界面缩放将在重启后生效。"),
+            parent=self._notification_parent(),
+            position=InfoBarPosition.TOP,
+            duration=3000,
         )
 
     def _current_external_extensions_directories(self) -> list[str]:
@@ -862,12 +988,12 @@ class SettingsPage(QWidget):
             and self._external_extensions_enabled_checkbox.isChecked()
         )
         disabled_extension_ids = [
-            spec_id for spec_id, checkbox in self._builtin_extension_checkboxes.items()
-            if not checkbox.isChecked()
+            spec_id for spec_id, sw in self._builtin_extension_checkboxes.items()
+            if isinstance(sw, SwitchButton) and not sw.isChecked()
         ]
         disabled_external_ids = [
-            spec_id for spec_id, checkbox in self._external_extension_checkboxes.items()
-            if not checkbox.isChecked()
+            spec_id for spec_id, sw in self._external_extension_checkboxes.items()
+            if isinstance(sw, SwitchButton) and not sw.isChecked()
         ]
 
         external_dirs = self._current_external_extensions_directories()
@@ -1099,47 +1225,22 @@ class SettingsPage(QWidget):
     def _refresh_ai_tools_panel(self) -> None:
         if not self._ai_tools_controls_ready():
             return
-        from ai.command_layer import COMMANDS
         from core.global_assets import global_assets
 
         self._ai_tool_items = []
-        for name, cmd in COMMANDS.items():
-            self._ai_tool_items.append({
-                "source": "builtin",
-                "type": "内置命令",
-                "name": name,
-                "desc": cmd.desc,
-                "item": None,
-            })
-
         prompts = global_assets.list_ai_prompts()
-        skills = global_assets.list_ai_skills()
-        agents = global_assets.list_ai_agents()
         self._ai_tools_project_label.setText(f"全局资源: {global_assets.asset_path}")
-        self._ai_tools_summary_label.setText(
-            f"内置 {len(COMMANDS)} · Prompt {len(prompts)} · Skill {len(skills)} · Agent {len(agents)}"
-        )
+        self._ai_tools_summary_label.setText(f"Prompt {len(prompts)}")
         for item in prompts:
             self._ai_tool_items.append({
                 "source": "global", "type": "Prompt",
-                "name": item.name, "desc": getattr(item, "description", ""), "item": item,
-            })
-        for item in skills:
-            self._ai_tool_items.append({
-                "source": "global", "type": "Skill",
-                "name": item.name, "desc": getattr(item, "description", ""), "item": item,
-            })
-        for item in agents:
-            self._ai_tool_items.append({
-                "source": "global", "type": "Agent",
                 "name": item.name, "desc": getattr(item, "description", ""), "item": item,
             })
 
         self._ai_tool_selector.blockSignals(True)
         self._ai_tool_selector.clear()
         for t in self._ai_tool_items:
-            prefix = "【内置】" if t["source"] == "builtin" else f"【{t['type']}】"
-            self._ai_tool_selector.addItem(f"{prefix} {t['name']}")
+            self._ai_tool_selector.addItem(f"【Prompt】 {t['name']}")
         self._ai_tool_selector.blockSignals(False)
 
         if self._ai_tool_items:
@@ -1179,7 +1280,7 @@ class SettingsPage(QWidget):
         if t["source"] != "global" or t["item"] is None:
             return
         from ui.dialogs.ai_tool_dialog import AIToolDialog
-        dlg = AIToolDialog(self, tool_type=t["type"].lower(), tool_id=t["item"].id)
+        dlg = AIToolDialog(self, tool_id=t["item"].id)
         if dlg.exec():
             self._refresh_ai_tools_panel()
             self.assets_modified.emit()
@@ -1193,15 +1294,7 @@ class SettingsPage(QWidget):
         if t["source"] != "global" or t["item"] is None:
             return
         from core.global_assets import global_assets
-        tool_type = t["type"].lower()
-        if tool_type == "prompt":
-            ok = global_assets.delete_ai_prompt(t["item"].id)
-        elif tool_type == "skill":
-            ok = global_assets.delete_ai_skill(t["item"].id)
-        elif tool_type == "agent":
-            ok = global_assets.delete_ai_agent(t["item"].id)
-        else:
-            ok = False
+        ok = global_assets.delete_ai_prompt(t["item"].id)
         if not ok:
             return
         self._refresh_ai_tools_panel()
@@ -1209,10 +1302,10 @@ class SettingsPage(QWidget):
         tool_label = f'{t["type"]} "{t["name"]}"'
         InfoBar.success("已删除", f"已删除 {tool_label}", parent=self._notification_parent(), position=InfoBarPosition.TOP)
 
-    def _open_ai_tool_dialog(self, tool_type: Literal["prompt", "skill", "agent"]) -> None:
+    def _open_ai_tool_dialog(self) -> None:
         from ui.dialogs.ai_tool_dialog import AIToolDialog
 
-        dlg = AIToolDialog(self, tool_type=tool_type)
+        dlg = AIToolDialog(self)
         if dlg.exec():
             self._refresh_ai_tools_panel()
             self.assets_modified.emit()

@@ -6,19 +6,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel
+from PySide6.QtCore import QEvent, Qt, Signal, QTimer, QStringListModel, QObject
 from PySide6.QtWidgets import (
+    QApplication,
     QCompleter,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
     QScrollArea,
     QFrame,
-    QApplication,
 )
 from qfluentwidgets import (
     BodyLabel,
@@ -29,6 +28,7 @@ from qfluentwidgets import (
     PushButton,
     ScrollArea,
     SubtitleLabel,
+    TextEdit,
     ToolButton,
     FluentIcon as FIF,
     InfoBar,
@@ -39,18 +39,94 @@ from qfluentwidgets import (
 )
 
 from core.ai.context import AIAssistantContext
-from core.ai.agent_runner import AgentBridge
 from core.ai.context_collector import collect_context
 from ui.theme import (
     secondary_color,
     placeholder_color,
     accent_color,
-    make_hsep,
+    card_background_color,
     install_fluent_tooltip,
 )
 
 
 _CONVERSATIONS_DIR = Path.home() / ".config" / "aline" / "conversations"
+
+
+class _CompleterKeyFilter(QObject):
+    """Enables QCompleter completion on Enter/Tab when popup is visible.
+
+    QTextEdit lacks setCompleter().  Enter/Tab are intercepted in the event
+    filter so they complete + consume the event — without leaking a newline to
+    the editor.  ``activated`` (mouse click) is handled separately.
+    """
+
+    def __init__(self, editor: TextEdit, completer: QCompleter):
+        super().__init__(editor)
+        self._editor = editor
+        self._completer = completer
+        editor.installEventFilter(self)
+        completer.popup().installEventFilter(self)
+        # activated handles mouse-click on popup items
+        completer.activated.connect(self._accept_completion)
+
+    def _accept_completion(self, text: str):
+        """Accept completion (from activated signal = mouse click)."""
+        self._replace_text(text)
+        self._completer.popup().hide()
+
+    def _accept_selected(self):
+        """Accept whatever is currently selected in the popup."""
+        idx = self._completer.popup().currentIndex()
+        if idx.isValid():
+            self._replace_text(idx.data())
+            self._completer.popup().hide()
+            return True
+        return False
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.KeyPress and self._completer.popup().isVisible():
+            if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if self._accept_selected():
+                    return True  # event consumed — no newline leaks to editor
+        return False
+
+    def _replace_text(self, text: str):
+        """Replace editor content with the completed text (cursor at end)."""
+        # Strip the "  — type" suffix from completer items for clean insertion
+        if "  — " in text:
+            text = text.split("  — ", 1)[0]
+        self._editor.blockSignals(True)
+        prefix = self._completer.completionPrefix()
+        full = self._editor.toPlainText()
+        if full.endswith(prefix):
+            self._editor.setPlainText(full[:len(full) - len(prefix)] + text)
+        else:
+            self._editor.setPlainText(text)
+        # Move cursor to end of the completed text
+        cursor = self._editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self._editor.setTextCursor(cursor)
+        self._editor.blockSignals(False)
+
+
+class _ContextMenuFilter(QObject):
+    """Fluent 样式右键菜单（替代默认 OS 菜单）。"""
+
+    def __init__(self, label: BodyLabel, content: str):
+        super().__init__(label)
+        self._label = label
+        self._content = content
+        label.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.ContextMenu:
+            from qfluentwidgets import RoundMenu, Action, FluentIcon
+            menu = RoundMenu("", self._label)
+            menu.addAction(Action(FluentIcon.COPY, "复制", triggered=lambda: QApplication.clipboard().setText(self._content)))
+            menu.addAction(Action("全选", triggered=lambda: self._label.setSelection(0, len(self._label.text()))))
+            menu.exec(self._label.mapToGlobal(event.pos()))
+            return True  # 消费事件，阻止默认 OS 菜单
+        return False
 
 
 class MessageBubble(CardWidget):
@@ -62,7 +138,14 @@ class MessageBubble(CardWidget):
         super().__init__(parent)
         self._role = role
         self._content = content
-        self.setBorderRadius(8)
+
+        # 用户气泡蓝色背景，AI 气泡默认卡片色
+        from qfluentwidgets import isDarkTheme
+        if role == "user":
+            bg = "#1e3a5f" if isDarkTheme() else "#e8f0fe"
+        else:
+            bg = card_background_color()
+        self.setStyleSheet(f"CardWidget {{ background-color: {bg}; border: none; border-radius: 8px; }}")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -76,8 +159,7 @@ class MessageBubble(CardWidget):
         content_label.setWordWrap(True)
         content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         content_label.setStyleSheet("font-size: 13px; line-height: 1.5;")
-        content_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        content_label.customContextMenuRequested.connect(lambda p: self._show_context_menu(content_label, p))
+        self._context_menu = _ContextMenuFilter(content_label, content)
         layout.addWidget(content_label)
 
         if role == "assistant":
@@ -87,13 +169,6 @@ class MessageBubble(CardWidget):
                 btn.setFixedWidth(120)
                 btn.clicked.connect(lambda: self.save_requested.emit(code))
                 layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignRight)
-
-    def _show_context_menu(self, label: BodyLabel, pos):
-        from qfluentwidgets import RoundMenu, Action, FluentIcon
-        menu = RoundMenu(label)
-        menu.addAction(Action(FluentIcon.COPY, "复制", triggered=lambda: QApplication.clipboard().setText(self._content)))
-        menu.addAction(Action(FluentIcon.SELECT_ALL, "全选", triggered=lambda: label.selectAll()))
-        menu.exec(label.mapToGlobal(pos))
 
     @staticmethod
     def _extract_code_block(text: str) -> str:
@@ -147,6 +222,8 @@ class AIAssistantPanel(QWidget):
     与右侧面板中的 ExtensionConfigPanel 通过 SegmentedStackWidget 切换。
     """
 
+    _ai_response_received = Signal(str)
+
     def __init__(self, page_name: str = "", parent=None):
         super().__init__(parent)
         self._page_name = page_name
@@ -157,27 +234,33 @@ class AIAssistantPanel(QWidget):
         # 确保对话目录存在
         _CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-        # AI Agent 桥接器
-        self._agent_bridge = AgentBridge(self)
-        self._agent_bridge.thinking.connect(self._on_agent_thinking)
-        self._agent_bridge.message.connect(self._on_agent_message)
-        self._agent_bridge.error.connect(self._on_agent_error)
-        self._agent_bridge.finished.connect(self._on_agent_finished)
+        # @ 上下文提供者
+        from ui.widgets.ai_context_provider import AIContextProvider
+        self._context_provider = AIContextProvider()
+
+        self._ai_response_received.connect(self._on_ai_response)
 
         self._setup_ui()
         self._load_conversations()
-        if not self._conversations:
-            self._new_conversation()
+        if self._conversations:
+            self._current_conv_index = 0
+            self._refresh_ui()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # 所有控件放入 Fluent 风格卡片（与 ExtensionConfigPanel 一致）
+        card = CardWidget(self)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(14, 14, 14, 14)
+        card_layout.setSpacing(8)
+
         # ── 标题栏 ──
-        header = QWidget(self)
+        header = QWidget(card)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setContentsMargins(0, 0, 0, 0)
 
         title_label = SubtitleLabel("AI 助手", header)
         header_layout.addWidget(title_label)
@@ -193,13 +276,12 @@ class AIAssistantPanel(QWidget):
         self._history_btn.clicked.connect(self._show_history_menu)
         header_layout.addWidget(self._history_btn)
 
-        layout.addWidget(header)
-        layout.addWidget(make_hsep())
+        card_layout.addWidget(header)
 
         # ── 对话导航 ──
-        nav = QWidget(self)
+        nav = QWidget(card)
         nav_layout = QHBoxLayout(nav)
-        nav_layout.setContentsMargins(12, 4, 12, 4)
+        nav_layout.setContentsMargins(0, 2, 0, 2)
 
         self._prev_btn = PushButton("< 上一个", nav)
         self._prev_btn.setFixedWidth(80)
@@ -219,46 +301,49 @@ class AIAssistantPanel(QWidget):
 
         nav_layout.addStretch()
 
-        self._delete_btn = ToolButton(FIF.DELETE, nav)
-        self._delete_btn.setToolTip("删除当前对话")
-        self._delete_btn.clicked.connect(self._delete_conversation)
-        nav_layout.addWidget(self._delete_btn)
+        self._archive_btn = ToolButton(FIF.DOWNLOAD, nav)
+        self._archive_btn.setToolTip("将当前对话移至归档")
+        self._archive_btn.clicked.connect(self._archive_current_conversation)
+        nav_layout.addWidget(self._archive_btn)
 
-        layout.addWidget(nav)
+        card_layout.addWidget(nav)
 
         # ── 上下文摘要 ──
-        self._context_label = CaptionLabel("", self)
-        self._context_label.setContentsMargins(12, 4, 12, 4)
+        self._context_label = CaptionLabel("", card)
+        self._context_label.setContentsMargins(0, 0, 0, 0)
         self._context_label.setStyleSheet(f"color: {placeholder_color()}; font-size: 11px;")
         self._context_label.setWordWrap(True)
-        layout.addWidget(self._context_label)
+        card_layout.addWidget(self._context_label)
 
         # ── 对话消息区域 ──
-        self._scroll = SmoothScrollArea(self)
+        self._scroll = SmoothScrollArea(card)
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setStyleSheet("background: transparent; border: none;")
 
         self._messages_widget = QWidget(self._scroll)
         self._messages_layout = QVBoxLayout(self._messages_widget)
-        self._messages_layout.setContentsMargins(12, 8, 12, 8)
-        self._messages_layout.setSpacing(8)
+        self._messages_layout.setContentsMargins(0, 4, 0, 4)
+        self._messages_layout.setSpacing(6)
         self._messages_layout.addStretch()
         self._scroll.setWidget(self._messages_widget)
 
-        layout.addWidget(self._scroll, 1)
+        card_layout.addWidget(self._scroll, 1)
 
         # ── 输入区 ──
-        input_widget = QWidget(self)
+        input_widget = QWidget(card)
         input_layout = QHBoxLayout(input_widget)
-        input_layout.setContentsMargins(12, 8, 12, 8)
+        input_layout.setContentsMargins(0, 4, 0, 0)
 
-        self._input_edit = QPlainTextEdit(input_widget)
+        self._input_edit = TextEdit(input_widget)
         self._input_edit.setPlaceholderText("输入 /help 查看命令，或直接提问...")
         self._input_edit.setMaximumHeight(80)
         self._input_edit.setMinimumHeight(36)
         self._input_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._input_edit.installEventFilter(self)
 
-        # QCompleter 命令补全（QPlainTextEdit 不支持 setCompleter，手动管理弹出）
+        # QCompleter 命令补全（QTextEdit 不支持 setCompleter，手动管理弹出）
         from ui.widgets.ai_command_handler import get_command_list
         self._cmd_model = QStringListModel(get_command_list())
         self._cmd_completer = QCompleter(self._cmd_model, self)
@@ -268,6 +353,7 @@ class AIAssistantPanel(QWidget):
         self._cmd_completer.setMaxVisibleItems(8)
         self._cmd_completer.setWidget(self._input_edit)
         self._input_edit.textChanged.connect(self._on_input_changed)
+        self._completer_filter = _CompleterKeyFilter(self._input_edit, self._cmd_completer)
 
         input_layout.addWidget(self._input_edit, 1)
 
@@ -276,15 +362,22 @@ class AIAssistantPanel(QWidget):
         self._send_btn.clicked.connect(self._send_message)
         input_layout.addWidget(self._send_btn)
 
-        layout.addWidget(input_widget)
+        card_layout.addWidget(input_widget)
+
+        layout.addWidget(card, 1)
 
     # ── 对话管理 ──
+
+    @staticmethod
+    def _active_conversations(convs: List[Conversation]) -> List[Conversation]:
+        """Return only non-archived conversations."""
+        return [c for c in convs if not getattr(c, "_archived", False)]
 
     def _new_conversation(self) -> None:
         conv = Conversation()
         conv.page = self._page_name
         self._conversations.append(conv)
-        self._current_conv_index = len(self._conversations) - 1
+        self._current_conv_index = len(self._active_conversations(self._conversations)) - 1
         self._refresh_ui()
         self._save_conversations()
 
@@ -294,21 +387,25 @@ class AIAssistantPanel(QWidget):
             self._refresh_ui()
 
     def _next_conversation(self) -> None:
-        if self._current_conv_index < len(self._conversations) - 1:
+        active = self._active_conversations(self._conversations)
+        if self._current_conv_index < len(active) - 1:
             self._current_conv_index += 1
             self._refresh_ui()
 
-    def _delete_conversation(self) -> None:
-        if not self._conversations or self._current_conv_index < 0:
+    def _archive_current_conversation(self) -> None:
+        """Archive current conversation — auto-creates a new one if last."""
+        conv = self._current_conversation()
+        if conv is None:
             return
-        conv = self._conversations[self._current_conv_index]
-        self._conversations.pop(self._current_conv_index)
-        self._delete_conversation_file(conv.id)
-        if not self._conversations:
+        conv._archived = True
+        self._save_conversations()
+        active = self._active_conversations(self._conversations)
+        if not active:
             self._new_conversation()
-        elif self._current_conv_index >= len(self._conversations):
-            self._current_conv_index = len(self._conversations) - 1
-        self._refresh_ui()
+        else:
+            if self._current_conv_index >= len(active):
+                self._current_conv_index = len(active) - 1
+            self._refresh_ui()
 
     def _show_history_menu(self) -> None:
         """显示对话历史列表，segment tab 切换活动/归档，支持删除。"""
@@ -425,23 +522,60 @@ class AIAssistantPanel(QWidget):
             for did in dialog._delete_ids:
                 self._delete_conversation_file(did)
                 self._conversations = [c for c in self._conversations if c.id != did]
+            # Persist archive status changes + deletions to disk
+            self._save_conversations()
+            active = self._active_conversations(self._conversations)
             if dialog.selected_id:
-                for i, c in enumerate(self._conversations):
+                for i, c in enumerate(active):
                     if c.id == dialog.selected_id:
                         self._current_conv_index = i
-                        self._refresh_ui()
                         break
+            if not active:
+                self._new_conversation()
+                return
+            if self._current_conv_index >= len(active):
+                self._current_conv_index = len(active) - 1
+            self._refresh_ui()
+
+    # ── 输入框按键: Enter 发送, Shift+Enter 换行 ──
+
+    def eventFilter(self, obj, event):
+        if obj is self._input_edit and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if event.modifiers() & Qt.ShiftModifier:
+                    return False  # Shift+Enter: 默认换行
+                self._send_message()
+                return True       # Enter: 发送, 不再插入换行
+        return super().eventFilter(obj, event)
 
     # ── 消息 ──
 
     def _on_input_changed(self):
         text = self._input_edit.toPlainText()
         if text.startswith("/"):
+            # /help 命令补全
+            self._cmd_completer.setModel(self._cmd_model)
             self._cmd_completer.setCompletionPrefix(text)
             if self._cmd_completer.completionCount() > 0:
                 self._cmd_completer.complete()
                 return
-        self._cmd_completer.popup().hide()
+            self._cmd_completer.popup().hide()
+        elif "@" in text:
+            # @ 上下文补全
+            idx = text.rfind("@")
+            query = text[idx + 1:]
+            suggestions = self._context_provider.search(query)
+            items = [f"@{s['label']}  — {s['type']}" for s in suggestions]
+            model = QStringListModel(items)
+            self._cmd_completer.setModel(model)
+            self._cmd_completer.setCompletionPrefix(f"@{query}")
+            if self._cmd_completer.completionCount() > 0:
+                self._cmd_completer.complete()
+                return
+            self._cmd_completer.popup().hide()
+        else:
+            self._cmd_completer.popup().hide()
 
     def _send_message(self) -> None:
         text = self._input_edit.toPlainText().strip()
@@ -457,55 +591,72 @@ class AIAssistantPanel(QWidget):
         self._append_bubble("user", text)
         self._save_conversations()
 
-        # 检测是否为命令
+        # 检测命令（/help 直接显示，其他命令注入 extra system prompt）
         from ui.widgets.ai_command_handler import detect_command, execute_command
         cmd = detect_command(text)
+        extra_prompt = ""
+        user_message = text
         if cmd:
             cmd_name, cmd_label, cmd_args = cmd
-            system_extra, extra_msgs = execute_command(cmd_name, cmd_args)
             if cmd_name == "help":
-                # /help 直接显示，无需调用 AI
-                self._hide_thinking()
-                conv.add_message("assistant", system_extra)
-                self._append_bubble("assistant", system_extra)
+                help_text, _ = execute_command("help", cmd_args)
+                conv.add_message("assistant", help_text)
+                self._append_bubble("assistant", help_text)
                 self._save_conversations()
                 return
-            self._show_thinking()
-            self._agent_bridge.start(cmd_args if cmd_args else text, extra_system_prompt=system_extra)
-            return
+            # 非 /help 命令：执行命令获取 extra system prompt，用 args 作为用户消息
+            extra_prompt, _ = execute_command(cmd_name, cmd_args)
+            user_message = cmd_args if cmd_args else text
 
-        self.refresh_context()
+        # --- 新流程: @ 上下文解析 + 单次 AI 调用 ---
+        from core.ai.context_resolver import ContextBundle, ContextResolver
+        from core.ai_client import AIClient
+
         self._show_thinking()
-        self._agent_bridge.start(text)
 
-    def _on_agent_thinking(self, content: str) -> None:
-        """Agent 思考过程中更新 thinking 提示。"""
-        if hasattr(self, "_thinking_label") and self._thinking_label is not None:
-            self._thinking_label.setText(f"AI 思考中: {content[:60]}...")
+        # 1. 解析 @ 上下文
+        bundle = ContextBundle()
+        resolver = ContextResolver()
+        clean_text = resolver.resolve_all(user_message, bundle)
 
-    def _on_agent_message(self, content: str) -> None:
-        """收到 AI 的最终回复消息。"""
+        # 2. 构建 system prompt
+        context_text = self._build_ai_context(bundle)
+        if extra_prompt:
+            context_text = f"{extra_prompt}\n\n{context_text}"
+
+        # 3. 单次 AI 调用（在线程中运行避免阻塞 UI）
+        import asyncio
+        import threading
+
+        def _run():
+            try:
+                response = asyncio.run(AIClient().chat([
+                    {"role": "system", "content": (
+                        "你是 ALine 科研数据管理平台的 AI 助手。\n\n"
+                        f"当前上下文:\n{context_text}"
+                    )},
+                    {"role": "user", "content": clean_text},
+                ]))
+                if response.error:
+                    msg = f"（错误: {response.error}）"
+                else:
+                    msg = response.content or ""
+                self._ai_response_received.emit(msg)
+            except Exception as e:
+                self._ai_response_received.emit(f"（错误: {e}）")
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+    def _on_ai_response(self, msg: str) -> None:
+        """收到 AI 回复（主线程）。"""
         self._hide_thinking()
         conv = self._current_conversation()
         if conv is None:
             return
-        conv.add_message("assistant", content)
-        self._append_bubble("assistant", content)
-        self._save_conversations()
-
-    def _on_agent_error(self, error: str) -> None:
-        """Agent 出错。"""
-        self._hide_thinking()
-        conv = self._current_conversation()
-        if conv is None:
-            return
-        msg = f"（错误: {error}）"
         conv.add_message("assistant", msg)
         self._append_bubble("assistant", msg)
-
-    def _on_agent_finished(self) -> None:
-        """Agent 完成。"""
-        self._hide_thinking()
+        self._save_conversations()
 
     def _show_thinking(self) -> None:
         self._thinking_label = CaptionLabel("AI 正在思考...", self._messages_widget)
@@ -567,6 +718,33 @@ class AIAssistantPanel(QWidget):
         summary = f"📌 当前: {self._page_name or '未知'}"
         self._context_label.setText(summary)
 
+    def _build_ai_context(self, bundle) -> str:
+        """构建注入 AI 的完整上下文文本。"""
+        from core.ai.context_resolver import ContextBundle
+
+        parts = []
+
+        # 自动注入: 页面状态
+        self.refresh_context()
+        parts.append("=== 页面状态 ===")
+        parts.append(self._context_label.text())
+
+        # 自动注入: 对话历史（最近 6 条）
+        conv = self._current_conversation()
+        if conv and conv.messages:
+            parts.append("=== 最近对话 ===")
+            for msg in conv.messages[-6:]:
+                role = "用户" if msg["role"] == "user" else "AI"
+                parts.append(f"[{role}]: {msg['content'][:200]}")
+
+        # @ 注入的上下文
+        ctx = bundle.to_system_text()
+        if ctx:
+            parts.append("=== 选定上下文 ===")
+            parts.append(ctx)
+
+        return "\n".join(parts)
+
     # ── 持久化 ──
 
     def _conversation_path(self, conv_id: str) -> Path:
@@ -598,8 +776,9 @@ class AIAssistantPanel(QWidget):
     # ── 内部辅助 ──
 
     def _current_conversation(self) -> Conversation | None:
-        if 0 <= self._current_conv_index < len(self._conversations):
-            return self._conversations[self._current_conv_index]
+        active = self._active_conversations(self._conversations)
+        if 0 <= self._current_conv_index < len(active):
+            return active[self._current_conv_index]
         return None
 
     def _refresh_ui(self) -> None:
@@ -609,14 +788,15 @@ class AIAssistantPanel(QWidget):
             if item and item.widget():
                 item.widget().deleteLater()
 
+        active = self._active_conversations(self._conversations)
         conv = self._current_conversation()
         if conv:
-            self._conv_label.setText(f"对话 {self._current_conv_index + 1}/{len(self._conversations)}")
+            self._conv_label.setText(f"对话 {self._current_conv_index + 1}/{len(active)}")
             for msg in conv.messages:
                 self._append_bubble(msg["role"], msg["content"])
         else:
             self._conv_label.setText("对话 0/0")
 
         self._prev_btn.setEnabled(self._current_conv_index > 0)
-        self._next_btn.setEnabled(self._current_conv_index < len(self._conversations) - 1)
+        self._next_btn.setEnabled(self._current_conv_index < len(active) - 1)
         self.refresh_context()

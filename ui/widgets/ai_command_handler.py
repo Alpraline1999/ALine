@@ -18,7 +18,6 @@ def register_command(
     category: str = "default",
     aliases: Optional[List[str]] = None,
 ) -> Callable:
-    """装饰器：注册 AI 面板命令。"""
     def decorator(func: Callable) -> Callable:
         _COMMANDS[name] = {
             "name": name,
@@ -33,7 +32,6 @@ def register_command(
 
 
 def get_command_list() -> List[str]:
-    """返回所有命令的 / 前缀列表（用于 QCompleter）。"""
     result = []
     for cmd_name, cmd_info in _COMMANDS.items():
         result.append(f"/{cmd_name}  — {cmd_info['description']}")
@@ -42,25 +40,7 @@ def get_command_list() -> List[str]:
     return result
 
 
-def get_command_suggestions(prefix: str) -> List[str]:
-    """返回匹配前缀的命令提示列表（用于 SearchLineEdit 自动补全）。"""
-    if not prefix.startswith("/"):
-        return []
-    partial = prefix[1:].lower()
-    suggestions = []
-    for cmd_name, cmd_info in _COMMANDS.items():
-        if cmd_name.startswith(partial):
-            suggestions.append(f"/{cmd_name}  — {cmd_info['description']}")
-            continue
-        for alias in cmd_info.get("aliases", []):
-            if alias.startswith(partial):
-                suggestions.append(f"/{cmd_name}  — {cmd_info['description']}")
-                break
-    return suggestions
-
-
 def detect_command(text: str) -> Optional[Tuple[str, str, str]]:
-    """检测文本是否包含命令。返回 (command_name, action_label, args) 或 None。"""
     match = re.match(r"^/(\w+)\s*(.*)", text.strip())
     if not match:
         return None
@@ -68,7 +48,6 @@ def detect_command(text: str) -> Optional[Tuple[str, str, str]]:
     args = match.group(2).strip()
     cmd_info = _COMMANDS.get(cmd_name)
     if cmd_info is None:
-        # 检查别名
         for cname, cinfo in _COMMANDS.items():
             if cmd_name in cinfo.get("aliases", []):
                 return cname, cinfo["label"], args
@@ -77,7 +56,6 @@ def detect_command(text: str) -> Optional[Tuple[str, str, str]]:
 
 
 def execute_command(cmd_name: str, args: str) -> Tuple[str, List[dict]]:
-    """执行命令，返回 (system_prompt_addition, extra_messages)。"""
     cmd_info = _COMMANDS.get(cmd_name)
     if cmd_info is None:
         return "", []
@@ -95,13 +73,11 @@ def execute_command(cmd_name: str, args: str) -> Tuple[str, List[dict]]:
     aliases=["ext", "plugin"],
 )
 def _handle_extension(args: str) -> Tuple[str, List[dict]]:
-    """加载 extensions/README.md 作为系统提示上下文。"""
     readme_text = ""
     if _EXTENSIONS_README_PATH.exists():
         readme_text = _EXTENSIONS_README_PATH.read_text(encoding="utf-8")
     else:
         readme_text = "（未找到 extensions/README.md）"
-
     prompt = (
         "## ALine 扩展开发规范\n\n"
         f"{readme_text}\n\n"
@@ -126,19 +102,10 @@ def _handle_extension(args: str) -> Tuple[str, List[dict]]:
     aliases=["h", "commands"],
 )
 def _handle_help(args: str) -> Tuple[str, List[dict]]:
-    lines = ["## AI 助手命令\n", "输入以下命令获取专项帮助：\n"]
-    categories: Dict[str, List[str]] = {}
+    lines = ["## AI 助手命令\n", "输入以下命令获取帮助：\n"]
     for cmd_name, cmd_info in _COMMANDS.items():
-        cat = cmd_info.get("category", "default")
-        if cat not in categories:
-            categories[cat] = []
         aliases_str = ""
         if cmd_info.get("aliases"):
             aliases_str = f" (别名: {'/'.join(cmd_info['aliases'])})"
-        categories[cat].append(f"- `/{cmd_name}`{aliases_str}：{cmd_info['description']}")
-
-    for cat, items in categories.items():
-        lines.append(f"\n**{cat}**\n")
-        lines.extend(items)
-
+        lines.append(f"- `/{cmd_name}`{aliases_str}：{cmd_info['description']}")
     return "\n".join(lines), []

@@ -3,36 +3,50 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFormLayout,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QKeySequenceEdit,
+    QListWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
-    BodyLabel, CaptionLabel, CardWidget, CheckBox, ComboBox,
+    Action, BodyLabel, CaptionLabel, CardWidget, CheckBox, ComboBox,
     ExpandGroupSettingCard, FluentIcon as FIF, FolderListSettingCard,
     IndeterminateProgressRing, InfoBar, InfoBarPosition,
-    LineEdit, ListWidget, Pivot, PlainTextEdit, PrimaryPushButton, PushButton,
-    RadioButton, SegmentedWidget, SettingCard, SettingCardGroup, Slider,
+    LineEdit, ListWidget, MessageBoxBase, PlainTextEdit,
+    PrimaryPushButton, PushButton,
+    RadioButton, RoundMenu, SegmentedWidget, SettingCard, SettingCardGroup, Slider,
     SmoothScrollArea, SpinBox, StrongBodyLabel, SubtitleLabel,
-    SwitchButton, SwitchSettingCard, TextWrap, ToolButton,
+    SwitchButton, SwitchSettingCard, TableWidget, TextWrap, ToolButton,
 )
 
 from core.ai.providers import get_provider_preset
-from core.extension_settings import default_external_extensions_directory
+from core.extension_api import build_extension_entry
+from core.extension_settings import (
+    default_external_extensions_directory,
+    get_builtin_extension_settings,
+    get_external_extension_settings,
+    set_builtin_extension_settings,
+    set_external_extension_sandbox_enabled,
+    set_external_extension_settings,
+)
 from core.shortcut_manager import shortcut_manager
 from core.ui_preferences import (
-    get_tree_name_display_mode,
-    get_ui_language,
-    get_ui_font_family,
-    is_page_tree_focus_mode_enabled,
     get_auto_save_enabled,
     get_auto_save_interval_seconds,
+    get_interface_scale,
+    get_tree_name_display_mode,
+    get_ui_font_family,
+    get_ui_language,
+    is_page_tree_focus_mode_enabled,
 )
-from ui.theme import effective_ui_font_family, list_installed_ui_font_families
+from ui.theme import effective_ui_font_family, install_fluent_tooltip, list_installed_ui_font_families
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.theme import (
     body_text_style_sheet,
@@ -43,8 +57,7 @@ from ui.theme import (
 )
 from core.i18n import _
 
-_EXTENSION_CATEGORY_TABS_MAX_HEIGHT = 60750
-_EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER = 3
+_EXTENSION_CATEGORIES = (("plot", _("绘图扩展")), ("processing", _("处理扩展")), ("analysis", _("分析扩展")), ("digitize", _("数字化扩展")))
 
 
 class MutableFolderListSettingCard(FolderListSettingCard):
@@ -103,37 +116,266 @@ class MutableFolderListSettingCard(FolderListSettingCard):
         self.folderChanged.emit(self.folders)
 
 
-def build_extension_category_tabs(page, parent: QWidget, *, empty_hints: dict[str, BodyLabel], option_layouts: dict[str, QVBoxLayout]) -> QWidget:
-    tabs = SegmentedStackWidget(parent)
-    tabs.setMaximumHeight(_EXTENSION_CATEGORY_TABS_MAX_HEIGHT)
-    for category, label in (("plot", _("绘图扩展")), ("processing", _("处理扩展")), ("analysis", _("分析扩展")), ("digitize", _("数字化扩展"))):
-        tab_page = QWidget(parent)
-        page_layout = QVBoxLayout(tab_page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(6)
-        empty_hint = BodyLabel(f"{_('当前未发现')}{label}{_('。')}", tab_page)
-        page._bind_theme_label_style(empty_hint, lambda: placeholder_text_style_sheet(font_size=11))
-        page_layout.addWidget(empty_hint)
-        empty_hints[category] = empty_hint
+class ExtensionManageDialog(MessageBoxBase):
+    """Fluent-style dialog for managing extensions with a table of checkbox + name + actions."""
 
-        options_scroll = SmoothScrollArea(tab_page)
-        options_scroll.setWidgetResizable(True)
-        options_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        options_scroll.setStyleSheet("SmoothScrollArea { background: transparent; border: none; }")
+    _CATEGORY_LABELS = _EXTENSION_CATEGORIES
 
-        options_widget = QWidget(options_scroll)
-        options_layout = QVBoxLayout(options_widget)
-        options_layout.setContentsMargins(0, 0, 0, 0)
-        options_layout.setSpacing(6)
-        options_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        options_scroll.setWidget(options_widget)
-        page_layout.addWidget(options_scroll, 1)
-        option_layouts[category] = options_layout
+    def __init__(self, page, *, source: str, parent=None):
+        super().__init__(parent)
+        self._page = page
+        self._source = str(source or "").strip().lower()
+        self.yesButton.hide()
+        self.cancelButton.setText(_("关闭"))
 
-        tabs.addTab(tab_page, label, route_key=category)
-    tabs.setMinimumHeight(max(tabs.sizeHint().height() * _EXTENSION_CATEGORY_TABS_HEIGHT_MULTIPLIER, tabs.navigationWidget.sizeHint().height()))
-    return tabs
+        self._tabs = SegmentedStackWidget(self.widget)
+
+        for category, label in self._CATEGORY_LABELS:
+            tab_page = QWidget(self.widget)
+            layout = QVBoxLayout(tab_page)
+            layout.setContentsMargins(8, 8, 8, 8)
+
+            table = TableWidget(tab_page)
+            table.setBorderVisible(True)
+            table.setBorderRadius(4)
+            table.setColumnCount(4)
+            table.setHorizontalHeaderLabels([
+                _("启用"), _("扩展名称"), _("打开"), _("删除")
+            ])
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            table.setColumnWidth(0, 60)
+            table.setColumnWidth(2, 60)
+            table.setColumnWidth(3, 60)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            table.verticalHeader().hide()
+            layout.addWidget(table, 1)
+            self._tabs.addTab(tab_page, label, route_key=category)
+            self._populate_table(category, table)
+
+        self.viewLayout.addWidget(self._tabs, 1)
+
+        # Bottom buttons row (external only)
+        if self._source == "external":
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(8)
+            refresh_btn = PushButton(FIF.SYNC, _("刷新扫描"))
+            refresh_btn.clicked.connect(self._on_refresh)
+            add_btn = PushButton(FIF.ADD, _("添加文件"))
+            add_btn.clicked.connect(self._on_add_file)
+            btn_row.addWidget(refresh_btn)
+            btn_row.addWidget(add_btn)
+            btn_row.addStretch()
+            self.viewLayout.addLayout(btn_row)
+
+        self.widget.setMinimumWidth(580)
+        self.widget.setMinimumHeight(420)
+
+    def _populate_table(self, category: str, table: TableWidget) -> None:
+        from core.extension_registry import extension_registry
+        table.setRowCount(0)
+
+        category_map = {
+            "plot": extension_registry.list_plot,
+            "processing": extension_registry.list_processing,
+            "analysis": extension_registry.list_analysis,
+            "digitize": extension_registry.list_digitize,
+        }
+        getter = category_map.get(category)
+        if getter is None:
+            return
+
+        details = extension_registry.get_last_load_details()
+        path_by_type: dict[str, str] = {}
+        for entry in details.get("loaded", []):
+            ext_map = entry.get("extensions", {})
+            for tid in ext_map.get(category, []):
+                path_by_type[tid] = str(entry.get("path", "") or "")
+
+        disabled_ids = self._current_disabled_ids()
+
+        rows = []
+        for ext in getter():
+            entry = build_extension_entry(ext)
+            type_id = str(entry.get("type") or "").strip()
+            if not type_id:
+                continue
+            source_kind = str(entry.get("source_kind", "builtin") or "builtin").strip().lower()
+            if source_kind != self._source:
+                continue
+            ext_name = str(entry.get("name") or type_id)
+            file_path = path_by_type.get(type_id, "")
+            rows.append((type_id, ext_name, source_kind, file_path))
+
+        rows.sort(key=lambda r: r[1].lower())
+
+        for row_idx, (type_id, ext_name, source_kind, file_path) in enumerate(rows):
+            table.insertRow(row_idx)
+
+            # Column 0: SwitchButton
+            switch = SwitchButton(table)
+            switch.setOnText("")
+            switch.setOffText("")
+            switch.setChecked(type_id not in disabled_ids)
+            switch.checkedChanged.connect(
+                lambda checked, tid=type_id: self._on_toggle(tid, checked)
+            )
+            switch.setFixedWidth(48)
+            cell_widget = QWidget(table)
+            cell_layout = QHBoxLayout(cell_widget)
+            cell_layout.setContentsMargins(4, 0, 4, 0)
+            cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cell_layout.addWidget(switch)
+            table.setCellWidget(row_idx, 0, cell_widget)
+
+            # Column 1: Extension name
+            name_item = QTableWidgetItem(ext_name)
+            name_item.setToolTip(file_path or "")
+            table.setItem(row_idx, 1, name_item)
+
+            # Column 2: Open button
+            open_btn = ToolButton(FIF.VIEW, table)
+            open_btn.setFixedSize(28, 28)
+            open_btn.setToolTip(_("在编辑器中打开"))
+            install_fluent_tooltip(open_btn, delay=400)
+            open_btn.clicked.connect(lambda checked=False, fp=file_path: self._open_in_editor(fp))
+            open_btn.setEnabled(bool(file_path))
+            cell_widget2 = QWidget(table)
+            cell_layout2 = QHBoxLayout(cell_widget2)
+            cell_layout2.setContentsMargins(4, 0, 4, 0)
+            cell_layout2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cell_layout2.addWidget(open_btn)
+            table.setCellWidget(row_idx, 2, cell_widget2)
+
+            # Column 3: Delete button (external only)
+            if source_kind == "external":
+                del_btn = ToolButton(FIF.DELETE, table)
+                del_btn.setFixedSize(28, 28)
+                del_btn.setToolTip(_("删除扩展"))
+                install_fluent_tooltip(del_btn, delay=400)
+                del_btn.clicked.connect(
+                    lambda checked=False, fp=file_path, tid=type_id: self._on_delete(fp, tid)
+                )
+                cell_widget3 = QWidget(table)
+                cell_layout3 = QHBoxLayout(cell_widget3)
+                cell_layout3.setContentsMargins(4, 0, 4, 0)
+                cell_layout3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell_layout3.addWidget(del_btn)
+                table.setCellWidget(row_idx, 3, cell_widget3)
+
+    def _current_disabled_ids(self) -> set[str]:
+        if self._source == "builtin":
+            _, disabled = get_builtin_extension_settings()
+        else:
+            _, disabled = get_external_extension_settings()
+        return {str(i).strip() for i in disabled}
+
+    def _on_toggle(self, type_id: str, checked: bool) -> None:
+        if self._source == "builtin":
+            load_enabled, disabled = get_builtin_extension_settings()
+            if checked and type_id in disabled:
+                disabled = [i for i in disabled if i != type_id]
+            elif not checked and type_id not in disabled:
+                disabled = list(disabled) + [type_id]
+            set_builtin_extension_settings(load_enabled, disabled)
+        else:
+            load_enabled, disabled = get_external_extension_settings()
+            if checked and type_id in disabled:
+                disabled = [i for i in disabled if i != type_id]
+            elif not checked and type_id not in disabled:
+                disabled = list(disabled) + [type_id]
+            set_external_extension_settings(load_enabled, disabled)
+
+    def _open_in_editor(self, file_path: str) -> None:
+        import subprocess, sys
+        if not file_path:
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["notepad", file_path])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", file_path])
+            else:
+                subprocess.Popen(["xdg-open", file_path])
+        except OSError:
+            pass
+
+    def _on_delete(self, file_path: str, type_id: str) -> None:
+        from core.extension_settings import delete_external_extension_file
+        from pathlib import Path
+        from qfluentwidgets import MessageBox
+
+        name = Path(file_path).name
+        msg = MessageBox(_("确认删除"), _("确定要删除外部扩展文件") + f" {name}?", self)
+        if not msg.exec():
+            return
+        try:
+            delete_external_extension_file(file_path)
+        except (PermissionError, FileNotFoundError, ValueError) as exc:
+            from qfluentwidgets import InfoBar, InfoBarPosition
+            InfoBar.error(_("删除失败"), str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        # Refresh the dialog
+        current_idx = self._tabs.currentIndex()
+        self._tabs.widget(current_idx).deleteLater()
+        for i in range(self._tabs.count()):
+            cat, _cat_label = self._CATEGORY_LABELS[i]
+            tab = self._tabs.widget(i)
+            if tab is not None:
+                old_layout = tab.layout()
+                if old_layout:
+                    QWidget().setLayout(old_layout)
+                new_layout = QVBoxLayout(tab)
+                new_layout.setContentsMargins(8, 8, 8, 8)
+                table = TableWidget(tab)
+                table.setBorderVisible(True)
+                table.setBorderRadius(4)
+                table.setColumnCount(4)
+                table.setHorizontalHeaderLabels([_("启用"), _("扩展名称"), _("打开"), _("删除")])
+                table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+                table.setColumnWidth(0, 60)
+                table.setColumnWidth(2, 60)
+                table.setColumnWidth(3, 60)
+                table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+                table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+                table.verticalHeader().hide()
+                new_layout.addWidget(table, 1)
+                self._populate_table(cat, table)
+        self._tabs.setCurrentIndex(current_idx)
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.success(_("已删除"), name, parent=self, position=InfoBarPosition.TOP)
+
+    def _on_refresh(self) -> None:
+        self._page._refresh_external_extension_specs()
+        # Rebuild all tabs
+        for i in range(self._tabs.count()):
+            cat, _cat_label = self._CATEGORY_LABELS[i]
+            tab = self._tabs.widget(i)
+            if tab is None:
+                continue
+            old_layout = tab.layout()
+            if old_layout:
+                QWidget().setLayout(old_layout)
+            new_layout = QVBoxLayout(tab)
+            new_layout.setContentsMargins(8, 8, 8, 8)
+            table = TableWidget(tab)
+            table.setBorderVisible(True)
+            table.setBorderRadius(4)
+            table.setColumnCount(4)
+            table.setHorizontalHeaderLabels([_("启用"), _("扩展名称"), _("打开"), _("删除")])
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            table.setColumnWidth(0, 60)
+            table.setColumnWidth(2, 60)
+            table.setColumnWidth(3, 60)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            table.verticalHeader().hide()
+            new_layout.addWidget(table, 1)
+            self._populate_table(cat, table)
+
+    def _on_add_file(self) -> None:
+        self._page._on_add_external_extension()
+        self._on_refresh()
 
 
 def build_extensions_tab(page) -> QWidget:
@@ -198,34 +440,19 @@ def build_extensions_tab(page) -> QWidget:
     page._builtin_extensions_enabled_checkbox.checkedChanged.connect(page._on_builtin_extensions_enabled_changed)
     page._extension_hint = page._builtin_extensions_enabled_checkbox.contentLabel
     page._builtin_extension_card.addSettingCard(page._builtin_extensions_enabled_checkbox)
-    page._builtin_extension_management_card = ExpandGroupSettingCard(
-        FIF.DOWNLOAD,
-        _("扩展管理"),
-        _("按类别管理内置扩展的启用状态。"),
+    builtin_mgr_card = SettingCard(
+        FIF.DEVELOPER_TOOLS, _("管理扩展"), _("查看所有扩展，在编辑器中打开，或在文件夹中定位。"),
         page._builtin_extension_card,
     )
-    page._builtin_extension_management_card.setExpand(False)
-    page._bind_theme_text_in_widget(
-        page._builtin_extension_management_card,
-        "扩展管理",
-        body_text_style_sheet,
-        first_only=True,
+    page._bind_setting_card_styles(
+        builtin_mgr_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
     )
-    page._bind_theme_text_in_widget(
-        page._builtin_extension_management_card,
-        "按类别管理内置扩展的启用状态。",
-        lambda: placeholder_text_style_sheet(font_size=11),
-    )
-    page._extension_tabs = build_extension_category_tabs(
-        page,
-        page._builtin_extension_management_card,
-        empty_hints=page._extension_empty_hints,
-        option_layouts=page._extension_option_layouts,
-    )
-    page._builtin_extension_management_card.addGroupWidget(page._extension_tabs)
-    page._builtin_extension_card.addSettingCard(page._builtin_extension_management_card)
-    page._register_extension_height_watch_target(page._builtin_extension_management_card)
-    page._register_extension_height_watch_target(page._extension_tabs)
+    page._builtin_mgr_btn = PushButton(_("打开管理"), builtin_mgr_card)
+    page._builtin_mgr_btn.clicked.connect(lambda: page._on_open_extension_manager("builtin"))
+    page._attach_setting_card_control(builtin_mgr_card, page._builtin_mgr_btn)
+    page._builtin_extension_card.addSettingCard(builtin_mgr_card)
     layout.addWidget(page._builtin_extension_card)
 
     page._external_extension_card = SettingCardGroup(_("外部扩展"), content)
@@ -258,6 +485,9 @@ def build_extensions_tab(page) -> QWidget:
         content_style=lambda: placeholder_text_style_sheet(font_size=11),
     )
     page._external_extension_card.addSettingCard(page._external_extensions_sandbox_checkbox)
+    page._external_extensions_sandbox_checkbox.checkedChanged.connect(
+        lambda checked: set_external_extension_sandbox_enabled(checked)
+    )
     page._external_extensions_dirs_card = MutableFolderListSettingCard(
         _("外部扩展目录"),
         _("可添加多个文件夹；保存后会统一扫描并重载。"),
@@ -278,49 +508,19 @@ def build_extensions_tab(page) -> QWidget:
     )
     page._external_extension_card.addSettingCard(page._external_extensions_dirs_card)
 
-    external_refresh_card = SettingCard(
-        FIF.SYNC,
-        _("刷新外部扩展扫描"),
-        _("按当前目录配置重新探测外部扩展，不会修改保存设置。"),
+    external_mgr_card = SettingCard(
+        FIF.DEVELOPER_TOOLS, _("管理扩展"), _("查看所有扩展，在编辑器中打开，或在文件夹中定位。"),
         page._external_extension_card,
     )
     page._bind_setting_card_styles(
-        external_refresh_card,
+        external_mgr_card,
         title_style=body_text_style_sheet,
         content_style=lambda: placeholder_text_style_sheet(font_size=11),
     )
-    page._refresh_external_extensions_btn = PushButton("立即刷新", external_refresh_card)
-    page._refresh_external_extensions_btn.clicked.connect(page._refresh_external_extension_specs)
-    page._attach_setting_card_control(external_refresh_card, page._refresh_external_extensions_btn)
-    page._external_extension_card.addSettingCard(external_refresh_card)
-    page._external_extension_management_card = ExpandGroupSettingCard(
-        FIF.FOLDER,
-        _("扩展管理"),
-        _("按类别管理外部扩展的启用状态。"),
-        page._external_extension_card,
-    )
-    page._external_extension_management_card.setExpand(False)
-    page._bind_theme_text_in_widget(
-        page._external_extension_management_card,
-        "扩展管理",
-        body_text_style_sheet,
-        first_only=True,
-    )
-    page._bind_theme_text_in_widget(
-        page._external_extension_management_card,
-        "按类别管理外部扩展的启用状态。",
-        lambda: placeholder_text_style_sheet(font_size=11),
-    )
-    page._external_extension_tabs = build_extension_category_tabs(
-        page,
-        page._external_extension_management_card,
-        empty_hints=page._external_extension_empty_hints,
-        option_layouts=page._external_extension_option_layouts,
-    )
-    page._external_extension_management_card.addGroupWidget(page._external_extension_tabs)
-    page._external_extension_card.addSettingCard(page._external_extension_management_card)
-    page._register_extension_height_watch_target(page._external_extension_management_card)
-    page._register_extension_height_watch_target(page._external_extension_tabs)
+    page._external_mgr_btn = PushButton(_("打开管理"), external_mgr_card)
+    page._external_mgr_btn.clicked.connect(lambda: page._on_open_extension_manager("external"))
+    page._attach_setting_card_control(external_mgr_card, page._external_mgr_btn)
+    page._external_extension_card.addSettingCard(external_mgr_card)
     layout.addWidget(page._external_extension_card)
 
     page._extension_other_settings_card = SettingCardGroup(_("其他设置"), content)
@@ -396,6 +596,26 @@ def build_general_tab(page) -> QWidget:
     page.theme_combo.currentIndexChanged.connect(page.on_theme_changed)
     page._attach_setting_card_control(theme_card, page.theme_combo)
     appearance_group.addSettingCard(theme_card)
+
+    # ── 界面缩放 ──
+    zoom_card = SettingCard(getattr(FIF, "ZOOM", FIF.VIEW), _("界面缩放"), _("调整界面元素和字体的大小，重启后生效。"), appearance_group)
+    page._zoom_card = zoom_card
+    page._zoom_card_title = zoom_card.titleLabel
+    page._bind_setting_card_styles(
+        zoom_card,
+        title_style=body_text_style_sheet,
+        content_style=lambda: placeholder_text_style_sheet(font_size=11),
+    )
+    page._zoom_combo = ComboBox(zoom_card)
+    page._zoom_combo.setMinimumWidth(148)
+    page._zoom_combo.addItems(["100%", "125%", "150%", "175%", "200%", _("跟随系统设置")])
+    page._zoom_keys = [1.0, 1.25, 1.5, 1.75, 2.0, 0.0]
+    current_scale = get_interface_scale()
+    current_zoom_index = page._zoom_keys.index(current_scale) if current_scale in page._zoom_keys else len(page._zoom_keys) - 1
+    page._zoom_combo.setCurrentIndex(current_zoom_index)
+    page._zoom_combo.currentIndexChanged.connect(page._on_interface_scale_changed)
+    page._attach_setting_card_control(zoom_card, page._zoom_combo)
+    appearance_group.addSettingCard(zoom_card)
 
     font_card = SettingCard(getattr(FIF, "FONT", FIF.INFO), _("界面字体"), _("自动检测系统已安装字体，并立即应用到整个界面。"), appearance_group)
     page._ui_font_title = font_card.titleLabel
@@ -797,7 +1017,7 @@ def build_ai_tab(page) -> QWidget:
     page._bind_theme_label_style(page._ai_tools_project_label, body_text_style_sheet)
     ai_tools_layout.addWidget(page._ai_tools_project_label)
 
-    page._ai_tools_summary_label = BodyLabel("内置 0 · Prompt 0 · Skill 0 · Agent 0", page._ai_tools_card)
+    page._ai_tools_summary_label = BodyLabel("内置 0 · Prompt 0", page._ai_tools_card)
     page._bind_theme_label_style(page._ai_tools_summary_label, secondary_text_style_sheet)
     ai_tools_layout.addWidget(page._ai_tools_summary_label)
 
@@ -857,16 +1077,10 @@ def build_ai_tab(page) -> QWidget:
     # 创建按钮行
     ai_tools_btn_row = QHBoxLayout()
     new_prompt_btn = PushButton("新建 Prompt", page._ai_tools_card)
-    new_prompt_btn.clicked.connect(lambda: page._open_ai_tool_dialog("prompt"))
-    new_skill_btn = PushButton("新建 Skill", page._ai_tools_card)
-    new_skill_btn.clicked.connect(lambda: page._open_ai_tool_dialog("skill"))
-    new_agent_btn = PushButton("新建 Agent", page._ai_tools_card)
-    new_agent_btn.clicked.connect(lambda: page._open_ai_tool_dialog("agent"))
+    new_prompt_btn.clicked.connect(page._open_ai_tool_dialog)
     refresh_ai_tools_btn = PushButton("刷新", page._ai_tools_card)
     refresh_ai_tools_btn.clicked.connect(page._refresh_ai_tools_panel)
     ai_tools_btn_row.addWidget(new_prompt_btn)
-    ai_tools_btn_row.addWidget(new_skill_btn)
-    ai_tools_btn_row.addWidget(new_agent_btn)
     ai_tools_btn_row.addWidget(refresh_ai_tools_btn)
     ai_tools_btn_row.addStretch()
     ai_tools_layout.addLayout(ai_tools_btn_row)
