@@ -24,6 +24,7 @@ class UIPreferences(BaseModel):
     data_page_source_favorites: list[str] = Field(default_factory=list)
     auto_save_enabled: bool = True
     auto_save_interval_seconds: int = 300
+    interface_scale: float = 0.0  # 0.0 = auto/system, 1.0=100%, 1.25=125%, etc.
 
     @classmethod
     def load(cls) -> "UIPreferences":
@@ -177,3 +178,14 @@ def set_auto_save_interval_seconds(interval: int) -> int:
     prefs.auto_save_interval_seconds = max(30, int(interval))
     prefs.save()
     return int(prefs.auto_save_interval_seconds)
+
+
+def get_interface_scale() -> float:
+    return float(UIPreferences.load().interface_scale or 0.0)
+
+
+def set_interface_scale(scale: float) -> float:
+    prefs = UIPreferences.load()
+    prefs.interface_scale = max(0.0, float(scale))
+    prefs.save()
+    return float(prefs.interface_scale)

@@ -135,17 +135,7 @@ _KIND_CONFIG = {
     "analysis_result": (FIF.SEARCH,          "#D83B01"),
     "ai_tool":         (FIF.CHAT,            "#881798"),   # v0.2 compat
     "ai_prompt":       (FIF.CHAT,            "#881798"),
-    "ai_skill":        (FIF.DEVELOPER_TOOLS, "#881798"),
-    "ai_agent":        (FIF.ROBOT,           "#881798"),
-    "global_pipeline": (FIF.DEVELOPER_TOOLS, "#0078D4"),
-    "global_report_template": (FIF.DOCUMENT, "#8C6C00"),
-    "global_curve_style_template": (FIF.PENCIL_INK, "#107C10"),
-    "global_plot_style": (FIF.PIE_SINGLE,    "#8C6C00"),
-    "global_plot_pipeline": (FIF.LAYOUT,     "#0078D4"),
-    "global_extension_config": (getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "#0078D4"),
-    "global_ai_prompt": (FIF.CHAT,           "#881798"),
-    "global_ai_skill": (FIF.DEVELOPER_TOOLS, "#881798"),
-    "global_ai_agent": (FIF.ROBOT,           "#881798"),
+
 }
 
 # group_type → FluentIcon（系统文件夹专用图标）
@@ -246,7 +236,7 @@ _PROJECT_ROLE = Qt.ItemDataRole.UserRole + 1
 _SYNTHETIC_GLOBAL_KINDS = frozenset({
     "global_root", "global_group", "global_pipeline", "global_plot_pipeline",
     "global_report_template", "global_curve_style_template", "global_plot_style", "global_extension_config",
-    "global_ai_prompt", "global_ai_skill", "global_ai_agent",
+    "global_ai_prompt",
 })
 
 _EXTENSION_CONFIG_GROUPS = [

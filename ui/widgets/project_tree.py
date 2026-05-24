@@ -19,6 +19,7 @@ from qfluentwidgets import (
 from core.global_assets import global_assets, make_plot_style_asset_key
 from core.extension_api import build_extension_entry, extension_registry
 from core.app_context import get_app_context
+from core.i18n import _
 from core.ui_preferences import get_tree_name_display_mode
 from app.project_tree_command_service import ProjectTreeCommandService
 from ui.dialogs.project_close_dialog import ProjectCloseDecision, confirm_unsaved_project_close
@@ -127,6 +128,8 @@ class ProjectTreeWidget(QWidget):
     node_activated   = Signal(str, str)
     project_modified = Signal()
     refreshed = Signal()
+    extension_source_requested = Signal(str, str)  # category, extension_type
+    extension_source_delete_requested = Signal(str, str)  # category, extension_type
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -262,6 +265,10 @@ class ProjectTreeWidget(QWidget):
             _cmd_duplicate_extension_config=self._cmd_duplicate_extension_config,
             _cmd_export_extension_config=self._cmd_export_extension_config,
             _cmd_set_default_extension_config=self._cmd_set_default_extension_config,
+            _cmd_show_extension_source=self._cmd_show_extension_source,
+            _cmd_is_external_extension=self._cmd_is_external_extension,
+            _cmd_delete_external_extension=self._cmd_delete_external_extension,
+            _cmd_create_external_extension=self._cmd_create_external_extension,
             _cmd_delete=self._cmd_delete,
             _cmd_delete_batch=self._cmd_delete_batch,
             _cmd_delete_virtual=self._cmd_delete_virtual,
@@ -927,7 +934,8 @@ class ProjectTreeWidget(QWidget):
             type_id = str(entry.get("type") or "").strip()
             if not type_id:
                 continue
-            if not entry.get("listed", True) or not entry.get("settings"):
+            source_kind = str(entry.get("source_kind", "builtin") or "builtin").strip().lower()
+            if not entry.get("listed", True) or (not entry.get("settings") and source_kind != "external"):
                 continue
             name_map[type_id] = str(entry.get("name") or type_id)
         return name_map
@@ -1233,7 +1241,7 @@ class ProjectTreeWidget(QWidget):
                     continue
                 choices.append((self._folder_path_label(folder.id), folder.id))
             choices.sort(key=lambda item: item[0])
-        elif kind in {"data_file", "source_file", "image_work", "picture", "analysis_result", "pipeline", "figure_template", "report_template", "ai_prompt", "ai_skill", "ai_agent", "ai_tool"} and p.tree is not None:
+        elif kind in {"data_file", "source_file", "image_work", "picture", "analysis_result", "pipeline", "figure_template", "report_template", "ai_prompt", "ai_tool"} and p.tree is not None:
             node = p.tree.get_node(node_id)
             if node is None or getattr(node, "parent_id", None) is None:
                 return []
@@ -2042,6 +2050,41 @@ class ProjectTreeWidget(QWidget):
         if len(parts) == 3 and parts[0] == "__global_extension_configs__":
             return (parts[1], parts[2])
         return None
+
+    def _cmd_show_extension_source(self, category: str, extension_type: str) -> None:
+        self.extension_source_requested.emit(category, extension_type)
+
+    def _cmd_is_external_extension(self, category: str, extension_type: str) -> bool:
+        entry = self._extension_registry_extension_for_category_type(category, extension_type)
+        if entry is None:
+            return False
+        source_kind = str(getattr(entry, "source_kind", "") or "").strip().lower()
+        return source_kind == "external"
+
+    def _cmd_delete_external_extension(self, category: str, extension_type: str) -> None:
+        self.extension_source_delete_requested.emit(category, extension_type)
+
+    def _cmd_create_external_extension(self, category: str) -> None:
+        from core.extension_settings import create_external_extension_file
+        from ui.dialogs.fluent_dialogs import TextInputDialog
+
+        dialog = TextInputDialog(
+            _("新建外部扩展"),
+            _("扩展名称（将作为文件名和 type）:"),
+            parent=self,
+        )
+        if not dialog.exec():
+            return
+        name = dialog.value().strip()
+        if not name:
+            return
+        try:
+            target_path = create_external_extension_file(category, name)
+        except (ValueError, OSError) as exc:
+            self._notify_tree_warning(_("创建失败"), str(exc))
+            return
+        self._notify_tree_success(_("已创建"), str(target_path.name))
+        self.refresh()
 
     def _cmd_create_extension_config(self, group_node_id: str) -> None:
         parsed = self._parse_extension_config_group_node_id(group_node_id)

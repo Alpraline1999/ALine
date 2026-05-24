@@ -2075,9 +2075,6 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
     def _curve_list_label(self, curve: Optional[dict]) -> str:
         if curve is None:
             return "未命名曲线"
-        path_label = self._curve_tree_path_label(curve)
-        if path_label not in {"—", "未关联项目树"}:
-            return path_label
         return self._curve_display_name(curve)
 
     def _update_selected_curve_path_label(self, curve: Optional[dict]) -> None:
@@ -4028,11 +4025,12 @@ class ChartPage(ExtensionPanelShellMixin, QWidget):
         self._chart_list.clear()
         current_item = None
         for curve in self._chart_series:
-            path_label = self._curve_list_label(curve)
-            label = path_label if curve.get("visible", True) else f"[隐藏] {path_label}"
+            display_label = self._curve_list_label(curve)
+            label = display_label if curve.get("visible", True) else f"[隐藏] {display_label}"
+            tree_path = self._curve_tree_path_label(curve)
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, self._curve_key(curve))
-            item.setToolTip(path_label if path_label not in {"—", "未关联项目树"} else self._curve_display_name(curve))
+            item.setToolTip(tree_path if tree_path not in {"—", "未关联项目树"} else display_label)
             if not curve.get("visible", True):
                 item.setForeground(QColor("#888888"))
             self._chart_list.addItem(item)

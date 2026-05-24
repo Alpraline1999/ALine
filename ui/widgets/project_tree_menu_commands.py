@@ -63,6 +63,10 @@ class ProjectTreeMenuBuilder:
         _cmd_duplicate_extension_config: Callable,
         _cmd_export_extension_config: Callable,
         _cmd_set_default_extension_config: Callable,
+        _cmd_show_extension_source: Callable = lambda c, t: None,
+        _cmd_is_external_extension: Callable = lambda c, t: False,
+        _cmd_delete_external_extension: Callable = lambda c, t: None,
+        _cmd_create_external_extension: Callable = lambda c: None,
         _cmd_delete: Callable,
         _cmd_delete_batch: Callable,
         _cmd_delete_virtual: Callable,
@@ -121,6 +125,10 @@ class ProjectTreeMenuBuilder:
         self._cmd_duplicate_extension_config = _cmd_duplicate_extension_config
         self._cmd_export_extension_config = _cmd_export_extension_config
         self._cmd_set_default_extension_config = _cmd_set_default_extension_config
+        self._cmd_show_extension_source = _cmd_show_extension_source
+        self._cmd_is_external_extension = _cmd_is_external_extension
+        self._cmd_delete_external_extension = _cmd_delete_external_extension
+        self._cmd_create_external_extension = _cmd_create_external_extension
         self._cmd_delete = _cmd_delete
         self._cmd_delete_batch = _cmd_delete_batch
         self._cmd_delete_virtual = _cmd_delete_virtual
@@ -307,16 +315,20 @@ class ProjectTreeMenuBuilder:
                 manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
             elif node_id == "__global_extension_configs__":
                 manage_entries.append((FIF.DOWNLOAD, "从文件导入", lambda: self._cmd_import_global_assets(node_id)))
-            # 新建配置（扩展配置子分组专用）
-            if self._parse_extension_config_group_node_id(node_id) is not None:
+            # 扩展配置子分组专用
+            parsed = self._parse_extension_config_group_node_id(node_id)
+            if parsed is not None:
                 manage_entries.append((FIF.ADD, "新建配置", lambda: self._cmd_create_extension_config(node_id)))
+                category, extension_type = parsed
+                if self._cmd_is_external_extension(category, extension_type):
+                    manage_entries.append((FIF.DELETE, "删除扩展", lambda c=category, t=extension_type: self._cmd_delete_external_extension(c, t)))
         elif kind == "global_extension_config":
             manage_entries.append((getattr(FIF, "SETTING", FIF.DEVELOPER_TOOLS), "在数据管理页查看/编辑", self._page_dispatcher.make_activation_callback(kind, node_id)))
             manage_entries.append((FIF.COPY, "创建副本", lambda: self._cmd_duplicate_extension_config(node_id)))
             manage_entries.append((FIF.SAVE, "导出", lambda: self._cmd_export_extension_config(node_id)))
             if not bool(getattr(item, "is_default", False)):
                 manage_entries.append((getattr(FIF, "PIN", FIF.SETTING), "设为默认", lambda: self._cmd_set_default_extension_config(node_id)))
-        elif kind in ("global_ai_prompt", "global_ai_skill", "global_ai_agent"):
+        elif kind in ("global_ai_prompt",):
             manage_entries.append((FIF.EDIT, "在设置中查看", self._page_dispatcher.make_activation_callback(kind, node_id)))
         # 导出菜单：非 builtin 叶子节点
         if kind in ("global_pipeline", "global_curve_style_template", "global_plot_style", "global_plot_pipeline", "global_report_template"):
@@ -360,7 +372,7 @@ class ProjectTreeMenuBuilder:
             self._build_report_template_menu(node_id, item, manage_entries)
         elif kind == "analysis_result":
             self._build_analysis_result_menu(node_id, item, import_entries, manage_entries)
-        elif kind in ("ai_prompt", "ai_skill", "ai_agent", "ai_tool"):
+        elif kind in ("ai_prompt", "ai_tool"):
             self._build_ai_menu(kind, node_id, item, manage_entries)
 
     def _build_folder_menu(self, node_id: str, item, import_entries: list, manage_entries: list) -> None:

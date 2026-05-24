@@ -428,6 +428,8 @@ class MainWindow(FluentWindow):
         self._tree_panel.tree.node_activated.connect(self._dispatch_tree_node_activated)
         self._tree_panel.tree.project_modified.connect(self._on_project_modified)
         self._tree_panel.tree.project_modified.connect(self._tree_panel.tree.refresh)
+        self._tree_panel.tree.extension_source_requested.connect(self._on_extension_source_requested)
+        self._tree_panel.tree.extension_source_delete_requested.connect(self._on_extension_source_delete_requested)
 
         # 页面修改后刷新树
         for page in [self.chart_page, self.digitize_page, self.data_page, self.process_page, self.analysis_page, self.settings_page]:
@@ -855,6 +857,63 @@ class MainWindow(FluentWindow):
     def _on_tree_node_selected_command(self, tree_command: TreeCommand) -> None:
         """单击节点 → 通知当前页面。"""
         self._tree_command_route.dispatch_selected(tree_command.node.kind, tree_command.node.node_id)
+
+    def _on_extension_source_requested(self, category: str, extension_type: str) -> None:
+        node_id = f"__global_extension_configs__:{category}:{extension_type}"
+        self.switchTo(self.data_page)
+        self.data_page.on_tree_node_selected("global_group", node_id)
+
+    def _on_extension_source_delete_requested(self, category: str, extension_type: str) -> None:
+        from core.extension_registry import extension_registry
+        from core.extension_settings import delete_external_extension_file
+        from pathlib import Path
+        from qfluentwidgets import MessageBox
+
+        category_map = {
+            "plot": extension_registry.get_plot,
+            "processing": extension_registry.get_processing,
+            "analysis": extension_registry.get_analysis,
+            "digitize": extension_registry.get_digitize,
+        }
+        getter = category_map.get(category)
+        if getter is None:
+            return
+        extension = getter(extension_type)
+        if extension is None:
+            return
+
+        file_path = str(getattr(extension, "file_path", "") or "").strip()
+        if not file_path:
+            return
+
+        source_kind = str(getattr(extension, "source_kind", "") or "").strip().lower()
+        if source_kind != "external":
+            self._notify_tree_warning(_("无法删除"), _("只能删除外部扩展"))
+            return
+
+        name = str(getattr(extension, "name", "") or extension_type)
+        msg = MessageBox(_("确认删除"), _("确定要删除外部扩展") + f' "{name}"?\n{file_path}', self)
+        if not msg.exec():
+            return
+
+        try:
+            delete_external_extension_file(file_path)
+        except (PermissionError, FileNotFoundError, ValueError) as exc:
+            self._notify_tree_warning(_("删除失败"), str(exc))
+            return
+
+        from core.extension_api import reload_extensions
+        reload_extensions()
+        self._tree_panel.tree.refresh()
+        self._notify_tree_success(_("已删除"), name)
+
+    def _notify_tree_warning(self, title: str, content: str) -> None:
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.warning(title, content, parent=self, position=InfoBarPosition.TOP)
+
+    def _notify_tree_success(self, title: str, content: str) -> None:
+        from qfluentwidgets import InfoBar, InfoBarPosition
+        InfoBar.success(title, content, parent=self, position=InfoBarPosition.TOP)
 
     # ─────────────────────────────────────────────────────────
     # 数据页路由（保留）

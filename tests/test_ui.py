@@ -91,7 +91,6 @@ def _make_project(name="ui_test"):
 _PM_MODULES = [
     "core.project_manager",
     "app.project_tree_command_service",
-    "ai.command_layer",
     "ui.dialogs.export_flow",
     "ui.dialogs.import_dialog",
     "ui.pages.data_page",
@@ -7221,7 +7220,7 @@ class TestChartPage(unittest.TestCase):
         self.assertFalse(state_by_obj_id[other.series[0].id])
         self.assertTrue(self.page._chart_list.item(1).text().startswith("[隐藏]"))
 
-    def test_curve_display_name_only_affects_legend_when_chart_list_shows_tree_path(self):
+    def test_curve_display_name_shown_in_chart_list_and_legend(self):
         if self.page._figure is None:
             self.skipTest("matplotlib unavailable")
 
@@ -7233,8 +7232,8 @@ class TestChartPage(unittest.TestCase):
 
         self.assertEqual(curve["name"], original_name)
         self.assertEqual(curve["display_name"], "图例显示名")
-        self.assertIn(original_name, self.page._chart_list.item(0).text())
-        self.assertNotEqual(self.page._chart_list.item(0).text(), "图例显示名")
+        self.assertEqual(self.page._chart_list.item(0).text(), "图例显示名")
+        self.assertNotIn(original_name, self.page._chart_list.item(0).text())
 
         legend = self.page._figure.axes[0].get_legend()
         self.assertIsNotNone(legend)

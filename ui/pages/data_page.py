@@ -54,6 +54,7 @@ from ui.widgets.matplotlib_preview import (
 from ui.widgets.project_tree_support import folder_display_name, is_protected_folder
 from ui.widgets.navigation_stack import SegmentedStackWidget
 from ui.widgets.onboarding import OnboardingStep, PageOnboardingController
+from core.i18n import _
 from core.extension_api import (
     build_extension_entry,
     extension_entry_display_info,
@@ -305,6 +306,7 @@ class DataPage(QWidget):
         self._preview_editor_kind: str | None = None
         self._preview_editor_node_id: str | None = None
         self._preview_editor_original_text: str = ""
+        self._preview_editor_extra: str = ""
         self._pending_import_states = {
             "source_files": _PendingImportQueueState(),
             "datasets": _PendingImportQueueState(),
@@ -3257,6 +3259,91 @@ class DataPage(QWidget):
         self._extension_preview_panel.setVisible(False)
         return True
 
+    def _show_extension_source_preview(self, node_id: str) -> bool:
+        parts = str(node_id or "").split(":")
+        if len(parts) != 3 or parts[0] != "__global_extension_configs__":
+            return False
+        category, extension_type = parts[1], parts[2]
+
+        from core.extension_registry import extension_registry
+        category_map = {
+            "plot": extension_registry.get_plot,
+            "processing": extension_registry.get_processing,
+            "analysis": extension_registry.get_analysis,
+            "digitize": extension_registry.get_digitize,
+        }
+        getter = category_map.get(category)
+        if getter is None:
+            return False
+        extension = getter(extension_type)
+        if extension is None:
+            return False
+
+        source_kind = str(getattr(extension, "source_kind", "") or "").strip().lower()
+        is_external = source_kind == "external"
+
+        source_path: Path | None = None
+        details = extension_registry.get_last_load_details()
+        for entry in details.get("loaded", []):
+            ext_map = entry.get("extensions", {})
+            if extension_type in ext_map.get(category, []):
+                raw = str(entry.get("path", "") or "").strip()
+                if raw:
+                    try:
+                        source_path = Path(raw).expanduser().resolve(strict=True)
+                    except (OSError, ValueError):
+                        pass
+                break
+
+        if source_path is None or not source_path.exists():
+            return False
+
+        try:
+            source_text = source_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+        self._preview_editor_kind = "extension_source"
+        self._preview_editor_node_id = f"{category}:{extension_type}"
+        self._preview_editor_original_text = source_text
+        self._preview_editor_extra = str(source_path)
+
+        self._show_preview_mode()
+        self._set_preview_text_editor_mode(
+            True,
+            section_label=(_("外部扩展源码编辑") if is_external else _("内置扩展源码预览")),
+            reset_text=_("重置"),
+            save_text=(_("保存源码") if is_external else _("只读")),
+            summary_title=str(getattr(extension, "name", "") or source_path.name),
+            summary_meta=f"{_('文件')}: {source_path.name}\n{_('来源')}: {'外部' if is_external else '内置'}\n{_('类别')}: {category}\n{_('类型')}: {extension_type}",
+        )
+
+        self._preview_image_path = None
+        self._set_source_file_preview_mode_controls_visible(False)
+        self._set_source_file_detail_controls_visible(False)
+        self._set_preview_plot_type_controls_visible(False)
+        self._hide_source_path_links()
+        self._preview_xs = []
+        self._preview_ys = []
+        self._preview_name = str(getattr(extension, "name", "") or source_path.name)
+
+        self._text_preview.setPlainText(source_text)
+        self._text_preview.setReadOnly(not is_external)
+        self._preview_stack.setCurrentWidget(self._text_preview)
+        self._set_preview_summary([self._preview_name])
+        self._set_extension_field_help_height(_EXTENSION_FIELD_HELP_COMPACT_HEIGHT)
+        self._set_extension_preview_help()
+        self._extension_preview_panel.setVisible(False)
+
+        # Show/hide save button based on external status
+        if hasattr(self, "_btn_save_extension_config"):
+            self._btn_save_extension_config.setVisible(is_external)
+            self._btn_save_extension_config.setText(_("保存源码") if is_external else "")
+        if hasattr(self, "_btn_reset_extension_config"):
+            self._btn_reset_extension_config.setVisible(True)
+        self._config_editor_header_panel.setVisible(True)
+        return True
+
     def _global_template_editor_payload(self, kind: str, node_id: str) -> tuple[str, list[str], Optional[str]]:
         if kind == "global_pipeline":
             template = global_assets.get_saved_pipeline(node_id)
@@ -3376,6 +3463,9 @@ class DataPage(QWidget):
             return
         if kind == "global_plot_pipeline":
             self._save_global_plot_pipeline(node_id, raw_text)
+            return
+        if kind == "extension_source":
+            self._save_extension_source_file(node_id, raw_text)
             return
         InfoBar.warning("保存失败", "当前模板不支持编辑保存", parent=self, position=InfoBarPosition.TOP)
 
@@ -3546,6 +3636,25 @@ class DataPage(QWidget):
         self._show_extension_config_editor(config_id)
         self._refresh_management_panel()
         InfoBar.success("已保存", f'配置 "{updated.name}" 已更新', parent=self, position=InfoBarPosition.TOP)
+
+    def _save_extension_source_file(self, node_id: str, raw_text: str) -> None:
+        from pathlib import Path
+        file_path = getattr(self, "_preview_editor_extra", None)
+        if not file_path:
+            InfoBar.warning("保存失败", "未找到扩展文件路径", parent=self, position=InfoBarPosition.TOP)
+            return
+        try:
+            target = Path(file_path).expanduser().resolve(strict=False)
+            if not target.exists():
+                InfoBar.warning("保存失败", "文件不存在", parent=self, position=InfoBarPosition.TOP)
+                return
+            target.write_text(raw_text, encoding="utf-8")
+        except OSError as exc:
+            InfoBar.warning("保存失败", str(exc), parent=self, position=InfoBarPosition.TOP)
+            return
+        self._preview_editor_original_text = raw_text
+        self.project_modified.emit()
+        InfoBar.success("已保存", f"{target.name} 已更新", parent=self, position=InfoBarPosition.TOP)
 
     def _build_global_extension_items(self, category: str) -> list[QTreeWidgetItem]:
         items: list[QTreeWidgetItem] = []
@@ -5245,6 +5354,13 @@ class DataPage(QWidget):
             self._refresh_management_panel()
             return
         if kind in {"global_pipeline", "global_curve_style_template", "global_plot_style", "global_plot_pipeline", "global_report_template"} and self._show_global_template_editor(kind, node_id):
+            self._selected_type = None
+            self._selected_id = None
+            self._set_actions_enabled(False)
+            self._refresh_management_panel()
+            return
+        # 扩展分组节点 → 预览/编辑源码
+        if kind == "global_group" and self._show_extension_source_preview(node_id):
             self._selected_type = None
             self._selected_id = None
             self._set_actions_enabled(False)
