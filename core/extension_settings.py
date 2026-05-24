@@ -172,3 +172,143 @@ def set_builtin_extension_settings(load_builtin: bool, disabled_extension_ids: I
     settings.disabled_builtin_extensions = _normalize_builtin_extension_ids(disabled_extension_ids)
     settings.save()
     return settings
+
+
+# ── 外部扩展文件管理 ──────────────────────────────────────
+
+
+def add_external_extension_file(source_path: str | Path) -> Path:
+    """Copy a .py file into the first external extensions directory and return the target path."""
+    from shutil import copy2
+
+    source = Path(source_path).expanduser().resolve(strict=True)
+    if source.suffix.lower() != ".py":
+        raise ValueError("仅支持 .py 扩展文件")
+
+    directories = get_external_extensions_directories()
+    target_dir = directories[0]
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / source.name
+
+    if target_path.exists():
+        raise FileExistsError(f"文件已存在: {target_path}")
+
+    copy2(str(source), str(target_path))
+    return target_path
+
+
+def delete_external_extension_file(file_path: str | Path) -> None:
+    """Delete an external extension file."""
+    target = Path(file_path).expanduser().resolve(strict=False)
+    directories = get_external_extensions_directories()
+    resolved_dirs = {str(d.resolve(strict=False)) for d in directories}
+
+    if not any(str(target).startswith(d) for d in resolved_dirs):
+        raise PermissionError("只能删除外部扩展目录中的文件")
+
+    if not target.exists():
+        raise FileNotFoundError(f"文件不存在: {target}")
+
+    if target.suffix.lower() != ".py":
+        raise ValueError("仅支持删除 .py 扩展文件")
+
+    target.unlink()
+
+
+def resolve_external_extension_path(spec_id: str) -> Path | None:
+    """Resolve a spec ID to its full file path in external extension directories."""
+    directories = get_external_extensions_directories()
+    spec_name = Path(spec_id).stem.strip()
+    for directory in directories:
+        for py_file in directory.rglob("*.py"):
+            if py_file.stem == spec_name:
+                return py_file
+    return None
+
+
+_EXTENSION_TEMPLATES: dict[str, str] = {
+    "processing": '''from core.extension_api import ProcessingExtension
+
+register_extensions = ...
+
+extension = ProcessingExtension(
+    type="${EXTENSION_TYPE}",
+    name="${EXTENSION_NAME}",
+    description="",
+    parameters=[],
+    lines=1,
+)
+''',
+    "analysis": '''from core.extension_api import AnalysisExtension
+
+register_extensions = ...
+
+extension = AnalysisExtension(
+    type="${EXTENSION_TYPE}",
+    name="${EXTENSION_NAME}",
+    description="",
+    parameters=[],
+    lines=1,
+)
+''',
+    "plot": '''from core.extension_api import PlotExtension
+
+register_extensions = ...
+
+extension = PlotExtension(
+    type="${EXTENSION_TYPE}",
+    name="${EXTENSION_NAME}",
+    description="",
+    parameters=[],
+    lines=1,
+)
+''',
+    "digitize": '''from core.extension_api import DigitizeExtension
+
+register_extensions = ...
+
+extension = DigitizeExtension(
+    type="${EXTENSION_TYPE}",
+    name="${EXTENSION_NAME}",
+    description="",
+    parameters=[],
+    lines=0,
+)
+''',
+}
+
+
+def create_external_extension_file(category: str, extension_name: str) -> Path:
+    """Create a new external extension .py file from a template and return its path."""
+    normalized_category = str(category or "").strip().lower()
+    template = _EXTENSION_TEMPLATES.get(normalized_category)
+    if template is None:
+        raise ValueError(f"不支持的扩展类别: {category}")
+
+    normalized_name = str(extension_name or "").strip()
+    if not normalized_name:
+        raise ValueError("扩展名称不能为空")
+
+    import re
+    safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", normalized_name)
+    extension_type = safe_name
+    file_name = safe_name + ".py"
+
+    directories = get_external_extensions_directories()
+    target_dir = directories[0]
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / file_name
+
+    if target_path.exists():
+        counter = 1
+        while target_path.exists():
+            target_path = target_dir / f"{safe_name}_{counter}.py"
+            counter += 1
+
+    content = (
+        template
+        .replace("${EXTENSION_TYPE}", extension_type)
+        .replace("${EXTENSION_NAME}", normalized_name)
+    )
+    target_path.write_text(content, encoding="utf-8")
+    return target_path

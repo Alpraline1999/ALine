@@ -23,6 +23,9 @@ class AIAssistantContext(BaseModel):
     registered_extension_types: List[str] = []
     registered_extensions_summary: str = ""
 
+    # 通过 @ 选择的上下文（label → content）
+    selected_contexts: Dict[str, str] = {}
+
 
 def build_context_snapshot(
     page_name: str = "",
