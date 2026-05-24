@@ -20,6 +20,8 @@ import tempfile
 import textwrap
 import unittest
 from unittest import mock
+
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -2893,12 +2895,14 @@ class TestCommandLayer(unittest.TestCase):
         cr_module.project_manager = self._orig_cr_pm
         self._restore_assets()
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_get_project_summary(self):
         from ai.command_layer import cmd_get_project_summary
         r = cmd_get_project_summary({})
         self.assertTrue(r.success)
         self.assertEqual(r.data["name"], "ai_test")
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_list_data_files(self):
         from ai.command_layer import cmd_list_data_files
         r = cmd_list_data_files({})
@@ -2906,6 +2910,7 @@ class TestCommandLayer(unittest.TestCase):
         self.assertEqual(len(r.data), 1)
         self.assertEqual(r.data[0]["name"], "data.csv")
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_series_lookup_prefers_exact_then_normalized_and_reports_ambiguity(self):
         from ai.command_series_lookup import resolve_series
         from models.schemas import DataFile, DataSeries
@@ -2927,12 +2932,14 @@ class TestCommandLayer(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertIn("不唯一", error)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_create_folder(self):
         from ai.command_layer import cmd_create_folder
         r = cmd_create_folder({"name": "new_folder"})
         self.assertTrue(r.success)
         self.assertIn("id", r.data)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_apply_pipeline(self):
         from ai.command_layer import cmd_apply_pipeline
         ops = [{"type": "normalize", "params": {"mode": "minmax"}}]
@@ -2941,6 +2948,7 @@ class TestCommandLayer(unittest.TestCase):
         self.assertIn("n", r.data)
         self.assertGreater(r.data["n"], 0)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_save_and_list_pipeline(self):
         from ai.command_layer import cmd_save_pipeline, cmd_list_saved_pipelines
         ops = [{"type": "smooth", "params": {}}]
@@ -2951,6 +2959,7 @@ class TestCommandLayer(unittest.TestCase):
         names = [item["name"] for item in r2.data]
         self.assertIn("my_pipe", names)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_fit_curve_command(self):
         from ai.command_layer import cmd_fit_curve
         r = cmd_fit_curve({"series_id": self.series_id, "model": "poly2"})
@@ -2958,11 +2967,13 @@ class TestCommandLayer(unittest.TestCase):
         self.assertIn("r2", r.data)
         self.assertGreater(r.data["r2"], 0.99)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_detect_peaks_command(self):
         from ai.command_layer import cmd_detect_peaks
         r = cmd_detect_peaks({"series_id": self.series_id, "min_distance": 2})
         self.assertTrue(r.success)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_detect_peaks_command_accepts_series_name(self):
         from ai.command_layer import cmd_detect_peaks
 
@@ -2971,6 +2982,7 @@ class TestCommandLayer(unittest.TestCase):
 
         self.assertTrue(r.success)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_detect_peaks_command_supports_x_distance(self):
         from ai.command_layer import cmd_detect_peaks
 
@@ -2982,12 +2994,14 @@ class TestCommandLayer(unittest.TestCase):
         self.assertTrue(r.success)
         self.assertEqual(r.data["count"], 2)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_compute_statistics_command(self):
         from ai.command_layer import cmd_compute_statistics
         r = cmd_compute_statistics({"series_id": self.series_id})
         self.assertTrue(r.success)
         self.assertIn("y_mean", r.data)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_compute_correlation_command(self):
         from ai.command_layer import cmd_compute_correlation
         from models.schemas import DataFile, DataSeries
@@ -3008,12 +3022,14 @@ class TestCommandLayer(unittest.TestCase):
         self.assertTrue(r.success)
         self.assertIn("r", r.data)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_command_dispatcher_execute(self):
         from ai.command_layer import CommandDispatcher
         d = CommandDispatcher()
         r = d.execute({"action": "get_project_summary", "params": {}})
         self.assertTrue(r.success)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_command_dispatcher_unknown_action(self):
         from ai.command_layer import CommandDispatcher
         d = CommandDispatcher()
@@ -3021,6 +3037,7 @@ class TestCommandLayer(unittest.TestCase):
         self.assertFalse(r.success)
         self.assertIn("未知命令", r.error)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_get_tools_schema_format(self):
         from ai.command_layer import CommandDispatcher, COMMANDS
         d = CommandDispatcher()
@@ -3363,8 +3380,6 @@ class TestSchemasV3(unittest.TestCase):
         from models.schemas import Project
         p = Project.create_new("p")
         self.assertIsInstance(p.ai_prompts, list)
-        self.assertIsInstance(p.ai_skills, list)
-        self.assertIsInstance(p.ai_agents, list)
         self.assertIsInstance(p.report_templates, list)
 
 
@@ -3419,36 +3434,21 @@ class TestProjectManagerV3(unittest.TestCase):
         self.assertTrue(result)
         self.assertIsNone(global_assets.get_ai_prompt(obj.id))
 
+    @pytest.mark.skip(reason="AI Skill/Agent system removed")
     def test_add_ai_skill(self):
-        from core.global_assets import global_assets
+        pass
 
-        obj = self.pm.add_ai_skill("my_skill", "result = 42", "A skill")
-        self.assertIsNotNone(obj)
-        self.assertEqual(obj.name, "my_skill")
-        self.assertEqual(global_assets.get_ai_skill(obj.id).name, "my_skill")
-
+    @pytest.mark.skip(reason="AI Skill/Agent system removed")
     def test_delete_ai_skill(self):
-        from core.global_assets import global_assets
+        pass
 
-        obj = self.pm.add_ai_skill("to_del_skill", "result = 1", "")
-        result = self.pm.delete_ai_skill(obj.id)
-        self.assertTrue(result)
-        self.assertIsNone(global_assets.get_ai_skill(obj.id))
-
+    @pytest.mark.skip(reason="AI Skill/Agent system removed")
     def test_add_ai_agent(self):
-        from core.global_assets import global_assets
+        pass
 
-        obj = self.pm.add_ai_agent("data_agent", "You analyze data.", "Data agent")
-        self.assertIsNotNone(obj)
-        self.assertEqual(global_assets.get_ai_agent(obj.id).name, "data_agent")
-
+    @pytest.mark.skip(reason="AI Skill/Agent system removed")
     def test_delete_ai_agent(self):
-        from core.global_assets import global_assets
-
-        obj = self.pm.add_ai_agent("to_del_agent", "content", "")
-        result = self.pm.delete_ai_agent(obj.id)
-        self.assertTrue(result)
-        self.assertIsNone(global_assets.get_ai_agent(obj.id))
+        pass
 
     def test_add_report_template(self):
         from core.global_assets import global_assets
@@ -3738,6 +3738,7 @@ class TestCommandLayerV3(unittest.TestCase):
         cr_module.project_manager = self._orig_cr
         self._restore_assets()
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_list_image_works_empty(self):
         from ai.command_layer import cmd_list_image_works
         r = cmd_list_image_works({})
@@ -3745,12 +3746,14 @@ class TestCommandLayerV3(unittest.TestCase):
         self.assertIsInstance(r.data, list)
         self.assertEqual(len(r.data), 0)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_list_report_templates_empty(self):
         from ai.command_layer import cmd_list_report_templates
         r = cmd_list_report_templates({})
         self.assertTrue(r.success)
         self.assertIsInstance(r.data, list)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_list_report_templates_after_add(self):
         self.pm.add_report_template("report_template_demo", "# Template")
         from ai.command_layer import cmd_list_report_templates
@@ -3759,6 +3762,7 @@ class TestCommandLayerV3(unittest.TestCase):
         names = [t["name"] for t in r.data]
         self.assertIn("report_template_demo", names)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_save_figure_template_command(self):
         from ai.command_layer import cmd_save_figure_template
         r = cmd_save_figure_template({
@@ -3770,6 +3774,7 @@ class TestCommandLayerV3(unittest.TestCase):
         self.assertTrue(r.success)
         self.assertIn("name", r.data)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_manage_ai_tool_create_prompt(self):
         from ai.command_layer import cmd_manage_ai_tool
         r = cmd_manage_ai_tool({
@@ -3782,6 +3787,7 @@ class TestCommandLayerV3(unittest.TestCase):
         self.assertTrue(r.success)
         self.assertEqual(r.data["type"], "prompt")
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_manage_ai_tool_create_skill(self):
         from ai.command_layer import cmd_manage_ai_tool
         r = cmd_manage_ai_tool({
@@ -3792,6 +3798,7 @@ class TestCommandLayerV3(unittest.TestCase):
         })
         self.assertTrue(r.success)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_manage_ai_tool_delete_prompt(self):
         from ai.command_layer import cmd_manage_ai_tool
         obj = self.pm.add_ai_prompt("to_del_cmd", "content", "")
@@ -3803,6 +3810,7 @@ class TestCommandLayerV3(unittest.TestCase):
         self.assertTrue(r.success)
         self.assertTrue(r.data["deleted"])
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_manage_ai_tool_unknown_type(self):
         from ai.command_layer import cmd_manage_ai_tool
         r = cmd_manage_ai_tool({
@@ -3812,6 +3820,7 @@ class TestCommandLayerV3(unittest.TestCase):
         })
         self.assertFalse(r.success)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_dispatcher_includes_global_ai_tools(self):
         from ai.command_layer import CommandDispatcher, COMMANDS
 
@@ -3828,6 +3837,7 @@ class TestCommandLayerV3(unittest.TestCase):
         self.assertIn(dispatcher._global_tool_name("global_skill", skill.id), names)
         self.assertIn(dispatcher._global_tool_name("global_agent", agent.id), names)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_dispatcher_executes_global_prompt_tool(self):
         from ai.command_layer import CommandDispatcher
 
@@ -3839,12 +3849,14 @@ class TestCommandLayerV3(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.data["content"], "hello")
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_generate_report_default_template(self):
         from ai.command_layer import cmd_generate_report
         r = cmd_generate_report({})
         self.assertTrue(r.success)
         self.assertIn("markdown", r.data)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_export_series_command(self):
         from ai.command_layer import cmd_export_series
         path = tempfile.mktemp(suffix=".csv")
@@ -3862,11 +3874,13 @@ class TestCommandLayerV3(unittest.TestCase):
             if os.path.exists(path):
                 os.unlink(path)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_export_series_missing_params(self):
         from ai.command_layer import cmd_export_series
         r = cmd_export_series({})
         self.assertFalse(r.success)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_commands_dict_has_18_entries(self):
         from ai.command_layer import COMMANDS
         self.assertEqual(len(COMMANDS), 18)
@@ -3882,47 +3896,56 @@ class TestSkillRunner(unittest.TestCase):
         from ai.skill_runner import SkillRunner
         self.runner = SkillRunner()
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_basic_result_captured(self):
         r = self.runner.run("result = 42")
         self.assertTrue(r.success)
         self.assertEqual(r.output, 42)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_arithmetic_expression(self):
         r = self.runner.run("result = 2 ** 10")
         self.assertTrue(r.success)
         self.assertEqual(r.output, 1024)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_stdout_captured(self):
         r = self.runner.run("print('hello_stdout')\nresult = 0")
         self.assertTrue(r.success)
         self.assertIn("hello_stdout", r.stdout)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_error_returns_failure(self):
         r = self.runner.run("result = 1 / 0")
         self.assertFalse(r.success)
         self.assertIn("ZeroDivisionError", r.error)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_undefined_variable_error(self):
         r = self.runner.run("result = undefined_var")
         self.assertFalse(r.success)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_no_result_variable(self):
         r = self.runner.run("x = 5")
         self.assertTrue(r.success)
         self.assertIsNone(r.output)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_math_available(self):
         # math is pre-injected in safe_globals, so can be used directly
         r = self.runner.run("result = math.pi")
         self.assertTrue(r.success)
         self.assertAlmostEqual(r.output, math.pi)
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_to_dict_success(self):
         r = self.runner.run("result = 'ok'")
         d = r.to_dict()
         self.assertTrue(d["success"])
         self.assertEqual(d["output"], "ok")
 
+    @pytest.mark.skip(reason="AI command system removed")
     def test_to_dict_failure(self):
         # Trigger a NameError (result = undefined_var) since ValueError isn't in sandbox
         r = self.runner.run("result = undefined_var")
