@@ -47,14 +47,10 @@ from models.schemas import (
     ReportTemplateNode,
     AIToolNode,
     AIPromptNode,
-    AISkillNode,
-    AIAgentNode,
     ProjectTree,
     SavedPipeline,
     ReportTemplate,
     AIPrompt,
-    AISkill,
-    AIAgent,
     ImageWork,
     PictureAsset,
     PicturePlotSnapshot,
@@ -79,8 +75,6 @@ _GROUP_TYPE_ALIASES = {
     "analysis_result_group": {"analysis_result_group"},
     "ai_group": {"ai_group"},
     "prompt_group": {"prompt_group"},
-    "skill_group": {"skill_group"},
-    "agent_group": {"agent_group"},
 }
 
 _GROUP_DISPLAY_NAMES = {
@@ -95,8 +89,6 @@ _GROUP_DISPLAY_NAMES = {
     "analysis_result_group": "分析结果",
     "ai_group": "AI 工具",
     "prompt_group": "Prompts",
-    "skill_group": "Skills",
-    "agent_group": "Agents",
 }
 
 _TOOL_NODE_PARENT_GROUP = {
@@ -104,8 +96,6 @@ _TOOL_NODE_PARENT_GROUP = {
     "figure_template": "figure_template_group",
     "report_template": "report_template_group",
     "ai_prompt": "prompt_group",
-    "ai_skill": "skill_group",
-    "ai_agent": "agent_group",
 }
 
 _NON_REMOVABLE_FOLDER_GROUP_TYPES = set(_GROUP_DISPLAY_NAMES.keys())
@@ -1352,28 +1342,6 @@ class ProjectManager:
 
     def delete_ai_prompt(self, prompt_id: str) -> bool:
         return global_assets.delete_ai_prompt(prompt_id)
-
-    def add_ai_skill(self, name: str, code: str = "", description: str = "") -> Optional[AISkill]:
-        if self.current_project is None:
-            return None
-        return global_assets.add_ai_skill(name, code, description)
-
-    def get_ai_skill(self, skill_id: str) -> Optional[AISkill]:
-        return global_assets.get_ai_skill(skill_id)
-
-    def delete_ai_skill(self, skill_id: str) -> bool:
-        return global_assets.delete_ai_skill(skill_id)
-
-    def add_ai_agent(self, name: str, system_prompt: str = "", description: str = "") -> Optional[AIAgent]:
-        if self.current_project is None:
-            return None
-        return global_assets.add_ai_agent(name, system_prompt, description)
-
-    def get_ai_agent(self, agent_id: str) -> Optional[AIAgent]:
-        return global_assets.get_ai_agent(agent_id)
-
-    def delete_ai_agent(self, agent_id: str) -> bool:
-        return global_assets.delete_ai_agent(agent_id)
 
     def get_series_remark(self, series_id: str) -> str:
         series = self.get_series_from_node("series", series_id)

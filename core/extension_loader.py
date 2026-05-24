@@ -85,6 +85,14 @@ def _load_file(filepath: str, source_kind: str, report: LoadReport) -> None:
         extension_registry.load_from_file(filepath)
         after = extension_registry._registry_snapshot()
         registered = extension_registry._diff_registry_snapshot(before, after)
+        # Override source_kind on all registered extension objects to match the
+        # directory-based detection (external files MUST get source_kind='external')
+        if source_kind == "external":
+            for category, type_ids in registered.items():
+                for type_id in type_ids:
+                    ext = _get_extension(category, type_id)
+                    if ext is not None:
+                        object.__setattr__(ext, "source_kind", "external")
         report.success.append({
             "file": filepath,
             "module": Path(filepath).stem,
@@ -93,6 +101,19 @@ def _load_file(filepath: str, source_kind: str, report: LoadReport) -> None:
         })
     except Exception as exc:
         report.errors.append(f"{filepath}: {exc}")
+
+
+def _get_extension(category: str, type_id: str):
+    """Get extension object by category and type_id."""
+    if category == "processing":
+        return extension_registry.get_processing(type_id)
+    if category == "analysis":
+        return extension_registry.get_analysis(type_id)
+    if category == "plot":
+        return extension_registry.get_plot(type_id)
+    if category == "digitize":
+        return extension_registry.get_digitize(type_id)
+    return None
 
 
 def _build_detail_report(report: LoadReport, default_dir: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -135,13 +156,13 @@ def _wrap_external_extensions_with_sandbox() -> None:
     if not get_external_extension_sandbox_enabled():
         return
 
-    categories: dict[Any, str] = {
-        extension_registry._processing: "processing",
-        extension_registry._analysis: "analysis",
-        extension_registry._digitize: "digitize",
+    categories: dict[str, Any] = {
+        "processing": extension_registry._processing,
+        "analysis": extension_registry._analysis,
+        "digitize": extension_registry._digitize,
     }
-    for store, _category in categories.items():
-        store_dict = cast(dict[str, Any], store)
+    for _category, store_dict in categories.items():
+        store_dict = cast(dict[str, Any], store_dict)
         for type_id, ext in list(store_dict.items()):
             if normalize_extension_source_kind(getattr(ext, "source_kind", "builtin")) != "external":
                 continue

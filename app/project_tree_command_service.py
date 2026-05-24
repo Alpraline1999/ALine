@@ -272,8 +272,6 @@ class ProjectTreeCommandService:
             "global_pipeline",
             "global_plot_pipeline",
             "global_ai_prompt",
-            "global_ai_skill",
-            "global_ai_agent",
         }
 
     def rename_global_asset(self, kind: str, node_id: str, new_name: str) -> bool:
@@ -295,10 +293,6 @@ class ProjectTreeCommandService:
             return global_assets.update_extension_config(node_id, name=clean_name) is not None
         if kind == "global_ai_prompt":
             return global_assets.update_ai_prompt(node_id, name=clean_name)
-        if kind == "global_ai_skill":
-            return global_assets.update_ai_skill(node_id, name=clean_name)
-        if kind == "global_ai_agent":
-            return global_assets.update_ai_agent(node_id, name=clean_name)
         return False
 
     def delete_global_asset(self, kind: str, node_id: str) -> bool:
@@ -319,10 +313,6 @@ class ProjectTreeCommandService:
             return global_assets.delete_extension_config(node_id)
         if kind == "global_ai_prompt":
             return global_assets.delete_ai_prompt(node_id)
-        if kind == "global_ai_skill":
-            return global_assets.delete_ai_skill(node_id)
-        if kind == "global_ai_agent":
-            return global_assets.delete_ai_agent(node_id)
         return False
 
     def update_node_remark(self, kind: str, node_id: str, remark: str) -> bool:

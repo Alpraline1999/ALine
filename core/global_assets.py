@@ -23,9 +23,7 @@ _T = TypeVar("_T", bound=BaseModel)
 
 from core.extension_api import normalize_extension_version
 from models.schemas import (
-    AIAgent,
     AIPrompt,
-    AISkill,
     CurveStyleTemplate,
     FigureConfig,
     PlotTheme,
@@ -137,8 +135,6 @@ class GlobalAssets(BaseModel):
     plot_themes: List[PlotTheme] = Field(default_factory=list)
     extension_configs: List[ExtensionConfigPreset] = Field(default_factory=list)
     ai_prompts: List[AIPrompt] = Field(default_factory=list)
-    ai_skills: List[AISkill] = Field(default_factory=list)
-    ai_agents: List[AIAgent] = Field(default_factory=list)
 
 
 class GlobalAssetManager:
@@ -723,99 +719,7 @@ class GlobalAssetManager:
         self.save()
         return True
 
-    def list_ai_skills(self) -> List[AISkill]:
-        return list(self.data.ai_skills)
 
-    def get_ai_skill(self, skill_id: str) -> Optional[AISkill]:
-        return next((item for item in self.data.ai_skills if item.id == skill_id), None)
-
-    def add_ai_skill(self, name: str, code: str = "", description: str = "") -> AISkill:
-        item = AISkill(name=name, code=code, description=description)
-        self.data.ai_skills.append(item)
-        self.save()
-        return item
-
-    def ensure_ai_skill(self, skill: AISkill) -> AISkill:
-        item = self.get_ai_skill(skill.id)
-        if item is None:
-            item = self._clone(skill, AISkill)
-            self.data.ai_skills.append(item)
-        else:
-            item.name = skill.name
-            item.code = skill.code
-            item.description = skill.description
-        self.save()
-        return item
-
-    def update_ai_skill(self, skill_id: str, *, name: Optional[str] = None,
-                        code: Optional[str] = None,
-                        description: Optional[str] = None) -> bool:
-        item = self.get_ai_skill(skill_id)
-        if item is None:
-            return False
-        if name is not None:
-            item.name = name
-        if code is not None:
-            item.code = code
-        if description is not None:
-            item.description = description
-        self.save()
-        return True
-
-    def delete_ai_skill(self, skill_id: str) -> bool:
-        before = len(self.data.ai_skills)
-        self.data.ai_skills = [item for item in self.data.ai_skills if item.id != skill_id]
-        if len(self.data.ai_skills) == before:
-            return False
-        self.save()
-        return True
-
-    def list_ai_agents(self) -> List[AIAgent]:
-        return list(self.data.ai_agents)
-
-    def get_ai_agent(self, agent_id: str) -> Optional[AIAgent]:
-        return next((item for item in self.data.ai_agents if item.id == agent_id), None)
-
-    def add_ai_agent(self, name: str, system_prompt: str = "", description: str = "") -> AIAgent:
-        item = AIAgent(name=name, system_prompt=system_prompt, description=description)
-        self.data.ai_agents.append(item)
-        self.save()
-        return item
-
-    def ensure_ai_agent(self, agent: AIAgent) -> AIAgent:
-        item = self.get_ai_agent(agent.id)
-        if item is None:
-            item = self._clone(agent, AIAgent)
-            self.data.ai_agents.append(item)
-        else:
-            item.name = agent.name
-            item.system_prompt = agent.system_prompt
-            item.description = agent.description
-        self.save()
-        return item
-
-    def update_ai_agent(self, agent_id: str, *, name: Optional[str] = None,
-                        system_prompt: Optional[str] = None,
-                        description: Optional[str] = None) -> bool:
-        item = self.get_ai_agent(agent_id)
-        if item is None:
-            return False
-        if name is not None:
-            item.name = name
-        if system_prompt is not None:
-            item.system_prompt = system_prompt
-        if description is not None:
-            item.description = description
-        self.save()
-        return True
-
-    def delete_ai_agent(self, agent_id: str) -> bool:
-        before = len(self.data.ai_agents)
-        self.data.ai_agents = [item for item in self.data.ai_agents if item.id != agent_id]
-        if len(self.data.ai_agents) == before:
-            return False
-        self.save()
-        return True
 
     def export_to_json(self) -> dict[str, Any]:
         """Export all global assets to a JSON-serializable dict."""

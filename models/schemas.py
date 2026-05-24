@@ -352,8 +352,6 @@ class Project(BaseModel):
     saved_pipelines: List["SavedPipeline"] = []
     report_templates: List["ReportTemplate"] = []
     ai_prompts: List["AIPrompt"] = []
-    ai_skills: List["AISkill"] = []
-    ai_agents: List["AIAgent"] = []
     tree: Optional["ProjectTree"] = None
 
     model_config = ConfigDict(extra="ignore")
@@ -539,6 +537,7 @@ class AIPromptNode(_NodeBase):
     prompt_id: str = ""
 
 
+# v0.3 AI 工具节点（已弃用，保留以便反序列化旧项目）
 class AISkillNode(_NodeBase):
     kind: Literal["ai_skill"] = "ai_skill"
     skill_id: str = ""
@@ -560,7 +559,8 @@ TreeNodeUnion = Annotated[
     Union[
         FolderNode, DataFileNode, SourceFileNode, ImageWorkNode, PictureNode,
         PipelineNode, FigureTemplateNode, ReportTemplateNode, AnalysisResultNode,
-        AIPromptNode, AISkillNode, AIAgentNode,
+        AIPromptNode,
+        AISkillNode, AIAgentNode,  # 已弃用，保留反序列化
         AIToolNode,
     ],
     Field(discriminator="kind")
@@ -713,19 +713,4 @@ class AIPrompt(BaseModel):
     description: str = ""
 
 
-class AISkill(BaseModel):
-    model_config = ConfigDict(extra="ignore")
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str = ""
-    code: str = ""
-    description: str = ""
-
-
-class AIAgent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str = ""
-    system_prompt: str = ""
-    description: str = ""

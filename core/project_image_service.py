@@ -79,8 +79,6 @@ _TOOL_NODE_PARENT_GROUP = {
     "figure_template": "figure_template_group",
     "report_template": "report_template_group",
     "ai_prompt": "prompt_group",
-    "ai_skill": "skill_group",
-    "ai_agent": "agent_group",
 }
 
 _NON_REMOVABLE_FOLDER_GROUP_TYPES = set(_GROUP_DISPLAY_NAMES.keys())

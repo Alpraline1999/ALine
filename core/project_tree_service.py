@@ -82,10 +82,6 @@ class ProjectTreeService:
             global_assets.update_report_template(node.template_id, name=new_name)
         elif node.kind == "ai_prompt":
             global_assets.update_ai_prompt(node.prompt_id, name=new_name)
-        elif node.kind == "ai_skill":
-            global_assets.update_ai_skill(node.skill_id, name=new_name)
-        elif node.kind == "ai_agent":
-            global_assets.update_ai_agent(node.agent_id, name=new_name)
         node.name = new_name
         collection_group = self.node_collection_group_type(node.id)
         if node.kind in {"folder", "picture"} and collection_group == "pictures":
@@ -139,15 +135,9 @@ class ProjectTreeService:
                 project.analyses = [item for item in project.analyses if item.id != node.analysis_id]
             elif node.kind == "ai_prompt":
                 global_assets.delete_ai_prompt(node.prompt_id)
-            elif node.kind == "ai_skill":
-                global_assets.delete_ai_skill(node.skill_id)
-            elif node.kind == "ai_agent":
-                global_assets.delete_ai_agent(node.agent_id)
             elif node.kind == "ai_tool":
                 tool_id = getattr(node, "tool_id", "")
                 global_assets.delete_ai_prompt(tool_id)
-                global_assets.delete_ai_skill(tool_id)
-                global_assets.delete_ai_agent(tool_id)
 
         project.tree.nodes = [item for item in project.tree.nodes if item.id not in ids_to_delete]
         project.is_modified = True
