@@ -148,7 +148,7 @@ sys.path.insert(0, BASE_DIR)
 from core.app_context import AppContext, set_app_context
 from core.extension_api import load_configured_extensions
 from core.i18n import reload_translations
-from core.ui_preferences import get_ui_font_family
+from core.ui_preferences import get_ui_font_family, get_interface_scale
 from ui.theme import apply_application_font_preference, apply_platform_visual_overrides
 
 _EXTENSION_LOAD_REPORT = load_configured_extensions(os.path.join(BASE_DIR, "extensions"))
@@ -157,6 +157,11 @@ for _extension_error in _EXTENSION_LOAD_REPORT.get("errors", []):
 
 
 def main():
+    # Apply saved interface scale factor before QApplication is created
+    _scale = get_interface_scale()
+    if _scale > 0:
+        os.environ["QT_SCALE_FACTOR"] = str(_scale)
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
@@ -196,9 +201,9 @@ def main():
 
     from ui.main_window import MainWindow
     window = MainWindow()
-    minWidth, minHeight = 1600, 1000
+    minWidth, minHeight = 640, 480
     window.setMinimumSize(minWidth, minHeight)
-    window.resize(minWidth, minHeight)
+    window.resize(1600, 1000)
     window.show()
 
     sys.exit(app.exec())
