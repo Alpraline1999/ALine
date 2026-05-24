@@ -156,4 +156,4 @@ python -m pytest tests/test_refactor_guardrails.py -q
 
 ## License
 
-本项目采用 [MPL-2.0](/home/alpraline/Projects/Python/ALine/LICENSE) 许可发布。
+本项目采用 [GPL-3.0](/home/alpraline/Projects/Python/ALine/LICENSE) 许可发布。
