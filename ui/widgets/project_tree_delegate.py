@@ -36,9 +36,19 @@ class ProjectTreeWrapAnywhereDelegate(TreeItemDelegate):
 
         painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
         item_option.text = ""
-        super().paint(painter, item_option, index)
-
         style = item_option.widget.style() if item_option.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item_option, painter, item_option.widget)
+
+        if index.data(Qt.ItemDataRole.CheckStateRole) is not None:
+            self._drawCheckBox(painter, item_option, index)
+
+        if item_option.state & (QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver):
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            self._drawBackground(painter, item_option, index)
+            self._drawIndicator(painter, item_option, index)
+            painter.restore()
+
         text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, item_option, item_option.widget)
         if not text_rect.isValid() or text_rect.width() <= 0:
             return

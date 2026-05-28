@@ -1031,6 +1031,34 @@ class TestProjectTreeWidget(unittest.TestCase):
         dialog._data_file_target_combo.setCurrentIndex.assert_called_once_with(1)
         dialog._data_file_target_combo.setEnabled.assert_called_once_with(False)
 
+    def test_delegate_paint_wrap_mode_does_not_call_base_paint(self):
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        tree = self.widget._tree
+        delegate = tree.itemDelegate()
+
+        self.widget.set_name_display_mode("wrap")
+        QApplication.processEvents()
+
+        test_item = tree.create_item("A very long node name that should wrap anywhere in the tree view delegate")
+        tree.addTopLevelItem(test_item)
+        tree.show()
+        QApplication.processEvents()
+
+        image = QImage(320, 100, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
+        painter = QPainter(image)
+        try:
+            option = QStyleOptionViewItem()
+            option.rect = QRect(0, 0, 320, 100)
+            option.widget = tree
+            with mock.patch("qfluentwidgets.components.widgets.tree_view.TreeItemDelegate.paint", side_effect=AssertionError("base paint should not run in wrap mode")):
+                delegate.paint(painter, option, tree.indexFromItem(test_item, 0))
+        finally:
+            painter.end()
+
     def test_delegate_paint_wrap_mode_does_not_crash_with_sample_item(self):
         from ui.widgets.project_tree_delegate import ProjectTreeWrapAnywhereDelegate
 
@@ -1272,6 +1300,62 @@ class TestNavigationStack(unittest.TestCase):
 
         self.assertLessEqual(root.sizeHint(0).width(), max(120, self.widget._tree.viewport().width()))
         self.assertLess(root.sizeHint(0).width(), self.widget._tree.fontMetrics().horizontalAdvance(root.text(0)))
+
+    def test_wrapped_item_size_hints_refresh_after_viewport_resize(self):
+        self.widget.set_name_display_mode("wrap")
+        self.p.name = "eta1_wave_data_elevation_profile_reference_baseline_measurement"
+        self.widget.resize(220, 480)
+        self.widget._tree.resize(220, 480)
+        self.widget.show()
+        self.widget.refresh()
+        QApplication.processEvents()
+
+        root = self.widget._tree.topLevelItem(0)
+        self.assertIsNotNone(root)
+        initial_height = root.sizeHint(0).height()
+
+        self.widget.resize(420, 480)
+        self.widget._tree.resize(420, 480)
+        QApplication.processEvents()
+
+        resized_height = root.sizeHint(0).height()
+        self.assertGreater(initial_height, self.widget._tree.fontMetrics().lineSpacing() + 10)
+        self.assertLess(resized_height, initial_height)
+
+    def test_lazy_loaded_children_refresh_wrapped_size_hints(self):
+        from models.schemas import DataFile, DataSeries
+
+        self.widget.set_name_display_mode("wrap")
+        datasets_root = self.pm._find_folder_by_group_type("datasets")
+        self.assertIsNotNone(datasets_root)
+        data_file = DataFile(
+            name="long_series.csv",
+            series=[
+                DataSeries(
+                    name="eta1_wave_data_elevation_profile_reference_baseline_measurement",
+                    x=[0.0],
+                    y=[1.0],
+                )
+            ],
+        )
+        self.pm.add_data_file(data_file, parent_id=datasets_root.id)
+
+        self.widget.resize(220, 480)
+        self.widget._tree.resize(220, 480)
+        self.widget.show()
+        self.widget.refresh()
+        QApplication.processEvents()
+
+        data_file_node = next(n for n in self.p.tree.nodes if n.kind == "data_file" and n.data_file_id == data_file.id)
+        item = self.widget._find_item(data_file_node.id)
+        self.assertIsNotNone(item)
+
+        item.setExpanded(True)
+        QApplication.processEvents()
+
+        self.assertGreater(item.childCount(), 0)
+        child = item.child(0)
+        self.assertGreater(child.sizeHint(0).height(), self.widget._tree.fontMetrics().lineSpacing() + 10)
 
     def test_wrapped_delegate_paints_long_labels_without_import_errors(self):
         from PySide6.QtCore import QRect

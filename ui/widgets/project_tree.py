@@ -180,6 +180,7 @@ class ProjectTreeWidget(QWidget):
         self._focused_item_keys: List[str] = []
         self._focused_item_key: Optional[str] = None
         self._fluent_tooltip: Optional[ToolTip] = None
+        self._wrapped_item_size_hint_update_pending = False
         self._name_display_mode = "elide"
         self._SYNTHETIC_GLOBAL_KINDS = _SYNTHETIC_GLOBAL_KINDS
         self._MANAGED_FOLDER_GROUP_TYPES = _MANAGED_FOLDER_GROUP_TYPES
@@ -373,6 +374,9 @@ class ProjectTreeWidget(QWidget):
         self.refresh()
 
     def _schedule_wrapped_item_size_hint_update(self) -> None:
+        if self._name_display_mode != "wrap" or self._wrapped_item_size_hint_update_pending:
+            return
+        self._wrapped_item_size_hint_update_pending = True
         QTimer.singleShot(0, self._update_wrapped_item_size_hints)
 
     def refreshed_emit(self) -> None:
@@ -735,6 +739,7 @@ class ProjectTreeWidget(QWidget):
             self._build_virtual_children(project, "image_work", node_id, item)
         elif kind == "folder" or kind in _ROOT_GROUP_TYPES:
             self._build_children(project, node_id, item)
+        self._schedule_wrapped_item_size_hint_update()
 
     def _build_virtual_children(self, project, kind: str, node_id: str, parent_item: ProjectTreeItem) -> None:
         if kind == "data_file":
@@ -1062,6 +1067,9 @@ class ProjectTreeWidget(QWidget):
             if event.type() == QEvent.Type.ToolTip:
                 self._show_fluent_tooltip_for_event(event)
                 return True
+            if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+                self._schedule_wrapped_item_size_hint_update()
+                return False
             if event.type() == QEvent.Type.MouseButtonPress:
                 self._hide_fluent_tooltip()
                 item = self._tree.itemAt(event.pos())
@@ -1909,6 +1917,7 @@ class ProjectTreeWidget(QWidget):
     # ─────────────────────────────────────────────────────────
 
     def _update_wrapped_item_size_hints(self) -> None:
+        self._wrapped_item_size_hint_update_pending = False
         viewport_width = max(180, self._tree.viewport().width())
         def _walk(item: Optional[ProjectTreeItem], depth: int) -> None:
             if item is None:
@@ -1934,6 +1943,7 @@ class ProjectTreeWidget(QWidget):
             except RuntimeError:
                 continue
             _walk(top_item, 0)
+        self._tree.doItemsLayout()
 
     def _update_wrapped_item_size_hint_for_item(self, item: Optional[ProjectTreeItem]) -> None:
         if item is None:
